@@ -1,0 +1,54 @@
+Film "rgb"
+    "string filename" [ "crown-step34-rosetta-mask-mix.exr" ]
+    "integer yresolution" [ 128 ]
+    "integer xresolution" [ 128 ]
+
+LookAt 0 0 6
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float lensradius" [ 0 ]
+    "float focaldistance" [ 6 ]
+    "float fov" [ 34 ]
+Sampler "halton"
+    "integer pixelsamples" [ 64 ]
+Integrator "volpath"
+    "integer maxdepth" [ 64 ]
+
+WorldBegin
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 12 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0 0 -1 0 0 -1 0 0 -1 0 0 -1 ]
+        "point3 P" [ -4 4 3 4 4 3 4 1 3 -4 1 3 ]
+AttributeEnd
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.18 0.18 0.18 ]
+    Shape "sphere"
+        "float radius" [ 50 ]
+AttributeEnd
+
+Texture "rosetta-mask-float" "float" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/pearl_tray/deco_mask.png" ]
+MakeNamedMaterial "mask-black"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0 0 0 ]
+MakeNamedMaterial "mask-white"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 1 1 1 ]
+MakeNamedMaterial "mask-mix"
+    "string type" [ "mix" ]
+    "string materials" [ "mask-black" "mask-white" ]
+    "texture amount" [ "rosetta-mask-float" ]
+
+NamedMaterial "mask-mix"
+Shape "trianglemesh"
+    "integer indices" [ 0 1 2 0 2 3 ]
+    "point2 uv" [ 0 0 1 0 1 1 0 1 ]
+    "point3 P" [ -1 -1 0 1 -1 0 1 1 0 -1 1 0 ]

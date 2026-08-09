@@ -1,0 +1,24 @@
+Integrator "path"
+    "integer maxdepth" [ 2 ]
+Sampler "independent"
+    "integer pixelsamples" [ 8 ]
+Film "rgb"
+    "string filename" [ "simple-point-sphere.exr" ]
+    "integer xresolution" [ 32 ]
+    "integer yresolution" [ 32 ]
+LookAt 0 0 4
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float fov" [ 30 ]
+
+WorldBegin
+
+LightSource "point"
+    "rgb I" [ 60 60 60 ]
+    "point3 from" [ 1.5 1.5 3 ]
+
+Material "diffuse"
+    "rgb reflectance" [ 0.7 0.2 0.2 ]
+Shape "sphere"
+    "float radius" [ 1 ]

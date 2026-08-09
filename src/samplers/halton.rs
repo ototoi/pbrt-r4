@@ -1,31 +1,297 @@
-use crate::core::lowdiscrepancy::primes::{PRIMES, PRIME_SUMS};
-use crate::core::prelude::*;
+use crate::base::camera::CameraSample;
+use crate::options::*;
+use crate::paramdict::*;
+use crate::samplers::*;
+
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::lowdiscrepancy::primes::PRIMES;
+use crate::util::lowdiscrepancy::DigitPermutation;
+use crate::util::lowdiscrepancy::*;
+use crate::util::profile::*;
+use crate::util::sampling::*;
 
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::OnceLock;
-use std::sync::RwLock;
 
 const K_MAX_RESOLUTION: i32 = 128;
-static RADICAL_INVERSE_PERMUTATIONS: OnceLock<Vec<u16>> = OnceLock::new();
 
-fn get_radical_inverse_permutations() -> &'static Vec<u16> {
-    let v = RADICAL_INVERSE_PERMUTATIONS.get_or_init(|| -> Vec<u16> {
-        let mut v = Vec::new();
-        let mut rng = RNG::new();
-        compute_radical_inverse_permutations(&mut v, &mut rng);
-        return v;
-    });
-    return v;
+/// `digit_permutations` is ~7 MB (`Vec<u16>` with one entry per
+/// prime in `PRIMES` summed); cloning a `HaltonSampler` per rayon
+/// work-item deep-copied that table, peaking at gigabytes of RSS.
+/// Wrap it in `Arc` so clones share the storage.
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct HaltonSampler {
+    pub base: BaseSampler,
+    pub samples_per_pixel: u32,
+    pub randomize: RandomizeStrategy,
+    pub digit_permutations: Arc<Vec<DigitPermutation>>,
+    pub base_scales: [i32; 2],
+    pub base_exponents: [i32; 2],
+    pub mult_inverse: [i32; 2],
+    pub halton_index: i64,
+    pub dimension: u32,
+}
+
+impl HaltonSampler {
+    pub fn new(
+        samples_per_pixel: u32,
+        full_resolution: Point2i,
+        randomize: RandomizeStrategy,
+        seed: u32,
+    ) -> Self {
+        let digit_permutations =
+            Arc::new(if matches!(randomize, RandomizeStrategy::PermuteDigits) {
+                compute_radical_inverse_permutations_with_seed(seed)
+            } else {
+                Vec::new()
+            });
+
+        let mut base_scales = [1, 1];
+        let mut base_exponents = [0, 0];
+        for i in 0..2 {
+            let base = if i == 0 { 2 } else { 3 };
+            let mut scale = 1;
+            let mut exp = 0;
+            while scale < i32::min(full_resolution[i], K_MAX_RESOLUTION) {
+                scale *= base;
+                exp += 1;
+            }
+            base_scales[i] = scale;
+            base_exponents[i] = exp;
+        }
+
+        let mult_inverse = [
+            multiplicative_inverse(base_scales[1] as i64, base_scales[0] as i64) as i32,
+            multiplicative_inverse(base_scales[0] as i64, base_scales[1] as i64) as i32,
+        ];
+
+        Self {
+            base: BaseSampler::new(samples_per_pixel),
+            samples_per_pixel,
+            randomize,
+            digit_permutations,
+            base_scales,
+            base_exponents,
+            mult_inverse,
+            halton_index: 0,
+            dimension: 2,
+        }
+    }
+
+    pub fn start_pixel(&mut self, p: &Point2i) {
+        self.base.start_pixel(p);
+        self.fill_sample_arrays();
+        self.start_pixel_sample(0, 0);
+    }
+
+    pub fn get_1d(&mut self) -> Float {
+        let _p = ProfilePhase::new(Prof::GetSample);
+        if self.dimension >= PRIMES.len() as u32 {
+            self.dimension = 2;
+        }
+        let dim = self.dimension;
+        self.dimension += 1;
+        self.sample_dimension(dim)
+    }
+
+    pub fn get_2d(&mut self) -> Point2f {
+        let _p = ProfilePhase::new(Prof::GetSample);
+        if self.dimension + 1 >= PRIMES.len() as u32 {
+            self.dimension = 2;
+        }
+        let dim = self.dimension;
+        self.dimension += 2;
+        Point2f::new(self.sample_dimension(dim), self.sample_dimension(dim + 1))
+    }
+
+    pub fn get_pixel_2d(&mut self) -> Point2f {
+        Point2f::new(
+            radical_inverse(0, (self.halton_index >> self.base_exponents[0]) as u64),
+            radical_inverse(1, (self.halton_index / self.base_scales[1] as i64) as u64),
+        )
+    }
+
+    pub fn get_camera_sample(&mut self, p_raster: &Point2i) -> CameraSample {
+        CameraSample {
+            p_film: Point2f::new(p_raster.x as Float, p_raster.y as Float) + self.get_pixel_2d(),
+            time: self.get_1d(),
+            p_lens: self.get_2d(),
+            filter_weight: 1.0,
+        }
+    }
+
+    pub fn request_1d_array(&mut self, n: u32) {
+        self.base.request_1d_array(n);
+    }
+
+    pub fn request_2d_array(&mut self, n: u32) {
+        self.base.request_2d_array(n);
+    }
+
+    pub fn get_1d_array(&mut self, n: u32) -> Option<Vec<Float>> {
+        self.base.get_1d_array(n)
+    }
+
+    pub fn get_2d_array(&mut self, n: u32) -> Option<Vec<Vector2f>> {
+        self.base.get_2d_array(n)
+    }
+
+    pub fn start_next_sample(&mut self) -> bool {
+        let ok = self.base.start_next_sample();
+        if ok {
+            self.start_pixel_sample(self.base.current_pixel_sample_index, 0);
+        }
+        ok
+    }
+
+    pub fn set_sample_number(&mut self, sample_num: u32) -> bool {
+        let ok = self.base.set_sample_number(sample_num);
+        if ok {
+            self.start_pixel_sample(sample_num, 0);
+        }
+        ok
+    }
+
+    pub fn get_samples_per_pixel(&self) -> u32 {
+        self.samples_per_pixel
+    }
+
+    pub fn create(
+        params: &ParameterDictionary,
+        full_resolution: Point2i,
+    ) -> Result<HaltonSampler, PbrtError> {
+        let mut nsamp = params.get_one_int("pixelsamples", 16) as u32;
+        let randomize = parse_halton_randomize_strategy(
+            params.get_one_string("randomization", "permutedigits"),
+        )?;
+        let seed = params.get_one_int("seed", PbrtOptions::get().seed as i32) as u32;
+        {
+            let options = PbrtOptions::get();
+            if options.quick_render {
+                nsamp = 1;
+            }
+        }
+        Ok(HaltonSampler::new(nsamp, full_resolution, randomize, seed))
+    }
+
+    pub fn start_pixel_sample(&mut self, sample_index: u32, dim: u32) {
+        self.halton_index = 0;
+        let sample_stride = (self.base_scales[0] * self.base_scales[1]) as i64;
+        if sample_stride > 1 {
+            let pm = Point2i::new(
+                math_mod(self.base.current_pixel[0] as i64, K_MAX_RESOLUTION as i64) as i32,
+                math_mod(self.base.current_pixel[1] as i64, K_MAX_RESOLUTION as i64) as i32,
+            );
+            for i in 0..2 {
+                let dim_offset = if i == 0 {
+                    inverse_radical_inverse(2, pm[i] as u64, self.base_exponents[i] as usize)
+                } else {
+                    inverse_radical_inverse(3, pm[i] as u64, self.base_exponents[i] as usize)
+                };
+                self.halton_index += (dim_offset
+                    * ((sample_stride as i32 / self.base_scales[i]) * self.mult_inverse[i]) as u64)
+                    as i64;
+            }
+            self.halton_index %= sample_stride;
+        }
+
+        self.halton_index += sample_index as i64 * sample_stride;
+        self.dimension = u32::max(2, dim);
+    }
+
+    fn sample_dimension(&self, dimension: u32) -> Float {
+        match self.randomize {
+            RandomizeStrategy::None => radical_inverse(dimension, self.halton_index as u64),
+            RandomizeStrategy::PermuteDigits => {
+                if dimension == 0 {
+                    radical_inverse(
+                        dimension,
+                        (self.halton_index >> self.base_exponents[0]) as u64,
+                    )
+                } else if dimension == 1 {
+                    radical_inverse(
+                        dimension,
+                        (self.halton_index / self.base_scales[1] as i64) as u64,
+                    )
+                } else {
+                    let wrapped_dim = wrap_dimension(dimension);
+                    scrambled_radical_inverse(
+                        wrapped_dim,
+                        self.halton_index as u64,
+                        permutation_for_dimension(wrapped_dim, &self.digit_permutations),
+                    )
+                }
+            }
+            RandomizeStrategy::Owen => owen_scrambled_radical_inverse(
+                dimension,
+                self.halton_index as u64,
+                mix_bits(1 + ((dimension as u64) << 4)) as u32,
+            ),
+            RandomizeStrategy::FastOwen => owen_scrambled_radical_inverse(
+                dimension,
+                self.halton_index as u64,
+                mix_bits(1 + ((dimension as u64) << 4)) as u32,
+            ),
+        }
+    }
+
+    fn fill_sample_arrays(&mut self) {
+        let mut dim = 5u32;
+        for i in 0..self.base.samples1d_array_sizes.len() {
+            let samples = self.samples_per_pixel * self.base.samples1d_array_sizes[i];
+            for j in 0..samples {
+                self.start_pixel_sample(j, dim);
+                self.base.sample_array1d[i][j as usize] = self.sample_dimension(dim);
+            }
+            dim += 1;
+        }
+        for i in 0..self.base.samples2d_array_sizes.len() {
+            let samples = self.samples_per_pixel * self.base.samples2d_array_sizes[i];
+            for j in 0..samples {
+                self.start_pixel_sample(j, dim);
+                self.base.sample_array2d[i][j as usize] =
+                    Point2f::new(self.sample_dimension(dim), self.sample_dimension(dim + 1));
+            }
+            dim += 2;
+        }
+    }
+}
+
+fn parse_halton_randomize_strategy(value: String) -> Result<RandomizeStrategy, PbrtError> {
+    match value.as_str() {
+        "none" => Ok(RandomizeStrategy::None),
+        "permutedigits" => Ok(RandomizeStrategy::PermuteDigits),
+        "owen" => Ok(RandomizeStrategy::Owen),
+        "fastowen" => Err(PbrtError::error(
+            "\"fastowen\" randomization not supported by Halton sampler.",
+        )),
+        _ => Err(PbrtError::error(&format!(
+            "{}: unknown randomization strategy given to HaltonSampler",
+            value
+        ))),
+    }
+}
+
+fn compute_radical_inverse_permutations_with_seed(seed: u32) -> Vec<DigitPermutation> {
+    // pbrt-v4 `ComputeRadicalInversePermutations(seed)` (lowdiscrepancy.cpp:47).
+    compute_radical_inverse_permutations(seed)
+}
+
+fn wrap_dimension(dim: u32) -> u32 {
+    (dim as usize % PRIMES.len()) as u32
+}
+
+pub fn permutation_for_dimension(dim: u32, perms: &[DigitPermutation]) -> &DigitPermutation {
+    &perms[wrap_dimension(dim) as usize]
 }
 
 fn math_mod(a: i64, b: i64) -> u64 {
     let result = a - (a / b) * b;
-    return if result < 0 {
+    if result < 0 {
         (result + b) as u64
     } else {
         result as u64
-    };
+    }
 }
 
 fn extended_gcd(a: u64, b: u64) -> (i64, i64) {
@@ -34,265 +300,70 @@ fn extended_gcd(a: u64, b: u64) -> (i64, i64) {
     }
     let d = (a / b) as i64;
     let (xp, yp) = extended_gcd(b, a % b);
-    return (yp, xp - (d * yp));
+    (yp, xp - (d * yp))
 }
 
 fn multiplicative_inverse(a: i64, n: i64) -> u64 {
-    let (x, _y) = extended_gcd(a as u64, n as u64);
-    return math_mod(x, n);
+    let (x, _) = extended_gcd(a as u64, n as u64);
+    math_mod(x, n)
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct HaltonSampler {
-    base: BaseGlobalSampler,
-    base_scales: [i32; 2],
-    base_exponents: [i32; 2],
-    sample_stride: i32,
-    mult_inverse: [i32; 2],
-    pixel_for_offset: Arc<Mutex<Point2i>>,
-    offset_for_current_pixel: Arc<Mutex<i64>>,
-    sample_at_pixel_center: bool,
+fn owen_scrambled_radical_inverse(base_index: u32, a: u64, hash: u32) -> Float {
+    let base = PRIMES[base_index as usize] as u64;
+    let mut a = a;
+    let inv_base = 1.0 / base as Float;
+    let mut inv_base_n = 1.0;
+    let mut reversed_digits = 0u64;
+    while 1.0 - inv_base_n < 1.0 {
+        let next = a / base;
+        let mut digit_value = (a - next * base) as u32;
+        let digit_hash = mix_bits((hash ^ reversed_digits as u32) as u64) as u32;
+        digit_value = permutation_element(digit_value, base as u32, digit_hash);
+        reversed_digits = reversed_digits * base + digit_value as u64;
+        inv_base_n *= inv_base;
+        a = next;
+    }
+    Float::min(inv_base_n * reversed_digits as Float, ONE_MINUS_EPSILON)
 }
 
-impl HaltonSampler {
-    pub fn new(samples_per_pixel: u32, sample_bounds: &Bounds2i, sample_at_center: bool) -> Self {
-        let _ = get_radical_inverse_permutations();
-
-        // Find radical inverse base scales and exponents that cover sampling area
-        let res = sample_bounds.max - sample_bounds.min;
-        const BASES: [i32; 2] = [2, 3];
-
-        let mut base_scales = [1, 1];
-        let mut base_exponents = [1, 1];
-        for i in 0..2 {
-            //let base = if i == 0 { 2 } else { 3 };
-            let base = BASES[i];
-            let mut scale = 1;
-            let mut exp = 0;
-            while scale < i32::min(res[i], K_MAX_RESOLUTION) {
-                scale *= base;
-                exp += 1;
-            }
-            base_scales[i] = scale;
-            base_exponents[i] = exp;
-        }
-
-        // Compute stride in samples for visiting each pixel area
-        let sample_stride = base_scales[0] * base_scales[1];
-        let mult_inverse = [
-            multiplicative_inverse(base_scales[1] as i64, base_scales[0] as i64) as i32,
-            multiplicative_inverse(base_scales[0] as i64, base_scales[1] as i64) as i32,
-        ];
-
-        let pixel_for_offset = Arc::new(Mutex::new(Point2i::new(i32::MAX, i32::MAX)));
-        let offset_for_current_pixel = Arc::new(Mutex::new(0));
-        let base = BaseGlobalSampler::new(samples_per_pixel);
-
-        HaltonSampler {
-            base,
-            base_scales,
-            base_exponents,
-            sample_stride,
-            mult_inverse,
-            pixel_for_offset,
-            offset_for_current_pixel,
-            sample_at_pixel_center: sample_at_center,
+fn permutation_element(mut i: u32, l: u32, p: u32) -> u32 {
+    let mut w = l - 1;
+    w |= w >> 1;
+    w |= w >> 2;
+    w |= w >> 4;
+    w |= w >> 8;
+    w |= w >> 16;
+    loop {
+        i ^= p;
+        i = i.wrapping_mul(0xe170893d);
+        i ^= p >> 16;
+        i ^= (i & w) >> 4;
+        i ^= p >> 8;
+        i = i.wrapping_mul(0x0929eb3f);
+        i ^= p >> 23;
+        i ^= (i & w) >> 1;
+        i = i.wrapping_mul(1 | (p >> 27));
+        i = i.wrapping_mul(0x6935fa69);
+        i ^= (i & w) >> 11;
+        i = i.wrapping_mul(0x74dcb303);
+        i ^= (i & w) >> 2;
+        i = i.wrapping_mul(0x9e501cc3);
+        i ^= (i & w) >> 2;
+        i = i.wrapping_mul(0xc860a3df);
+        i &= w;
+        i ^= i >> 5;
+        if i < l {
+            break;
         }
     }
-
-    fn permutation_for_dimension(dim: u32) -> &'static [u16] {
-        let table_size = PRIMES.len();
-        if dim as usize >= table_size {
-            panic!("HaltonSampler can only sample {} dimensions.", table_size);
-        }
-        let start = PRIME_SUMS[dim as usize] as usize;
-        let rip = get_radical_inverse_permutations();
-        return &rip[start..];
-    }
+    (i + p) % l
 }
 
-impl GlobalSampler for HaltonSampler {
-    fn get_index_for_sample(&self, sample_num: i64) -> i64 {
-        let sample_stride = self.sample_stride as i64;
-        if self.base.base.current_pixel != *self.pixel_for_offset.lock().unwrap() {
-            // Compute Halton sample offset for _currentPixel_
-            *self.offset_for_current_pixel.lock().unwrap() = 0;
-            if sample_stride > 1 {
-                let pm = [
-                    math_mod(
-                        self.base.base.current_pixel[0] as i64,
-                        K_MAX_RESOLUTION as i64,
-                    ),
-                    math_mod(
-                        self.base.base.current_pixel[1] as i64,
-                        K_MAX_RESOLUTION as i64,
-                    ),
-                ];
-                const BASES: [u64; 2] = [2, 3];
-                for i in 0..2 {
-                    let dim_offset =
-                        inverse_radical_inverse(BASES[i], pm[i], self.base_exponents[i] as usize);
-                    let addition = (dim_offset
-                        * ((self.sample_stride / self.base_scales[i]) * self.mult_inverse[i])
-                            as u64) as i64;
-                    let mut offset = self.offset_for_current_pixel.lock().unwrap();
-                    *offset = *offset + addition;
-                }
-                let offset_value = *self.offset_for_current_pixel.lock().unwrap() % sample_stride;
-                *self.offset_for_current_pixel.lock().unwrap() = offset_value;
-            }
-            *self.pixel_for_offset.lock().unwrap() = self.base.base.current_pixel;
-        }
-        return *self.offset_for_current_pixel.lock().unwrap() + sample_num * sample_stride;
-    }
-
-    fn sample_dimension(&self, index: i64, dim: u32) -> Float {
-        if self.sample_at_pixel_center && (dim == 0 || dim == 1) {
-            return 0.5;
-        }
-        return match dim {
-            0 => radical_inverse(dim, (index >> self.base_exponents[0]) as u64),
-            1 => radical_inverse(dim, (index / self.base_scales[1] as i64) as u64),
-            _ => scrambled_radical_inverse(
-                dim,
-                index as u64,
-                HaltonSampler::permutation_for_dimension(dim),
-            ),
-        };
-    }
-
-    fn get_base(&mut self) -> &mut BaseGlobalSampler {
-        return &mut self.base;
-    }
-}
-
-impl Sampler for HaltonSampler {
-    fn start_pixel(&mut self, p: &Point2i) {
-        let _p = ProfilePhase::new(Prof::StartPixel);
-
-        self.base.base.start_pixel(p);
-        self.base.dimension = 0;
-        self.base.interval_sample_index = self.get_index_for_sample(0);
-        self.base.array_end_dim = BaseGlobalSampler::array_start_dim
-            + (self.base.base.sample_array1d.len() + 2 * self.base.base.sample_array2d.len())
-                as u32;
-        let samples1d_array_sizes = self.base.base.samples1d_array_sizes.len();
-        // Compute 1D array samples for _GlobalSampler_
-        {
-            let l = samples1d_array_sizes;
-            for i in 0..l {
-                let n_samples =
-                    self.base.base.samples1d_array_sizes[i] * self.base.base.samples_per_pixel;
-                for j in 0..n_samples {
-                    let index = self.get_index_for_sample(j as i64);
-                    self.base.base.sample_array1d[i][j as usize] =
-                        self.sample_dimension(index, self.base.array_end_dim + i as u32);
-                }
-            }
-        }
-        // Compute 2D array samples for _GlobalSampler_
-        {
-            let dim = BaseGlobalSampler::array_start_dim + samples1d_array_sizes as u32;
-            let l = self.base.base.samples2d_array_sizes.len();
-            for i in 0..l {
-                let n_samples =
-                    self.base.base.samples2d_array_sizes[i] * self.base.base.samples_per_pixel;
-                for j in 0..n_samples {
-                    let index = self.get_index_for_sample(j as i64);
-                    self.base.base.sample_array2d[i][j as usize].x =
-                        self.sample_dimension(index, dim);
-                    self.base.base.sample_array2d[i][j as usize].y =
-                        self.sample_dimension(index, dim + 1);
-                }
-            }
-        }
-    }
-
-    fn start_next_sample(&mut self) -> bool {
-        self.base.dimension = 0;
-        self.base.interval_sample_index =
-            self.get_index_for_sample((self.base.base.current_pixel_sample_index + 1) as i64);
-        return self.base.base.start_next_sample();
-    }
-
-    fn set_sample_number(&mut self, sample_num: u32) -> bool {
-        self.base.dimension = 0;
-        self.base.interval_sample_index = self.get_index_for_sample(sample_num as i64);
-        return self.base.base.set_sample_number(sample_num);
-    }
-
-    fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
-
-        if self.base.dimension >= BaseGlobalSampler::array_start_dim
-            && self.base.dimension < self.base.array_end_dim
-        {
-            self.base.dimension = self.base.array_end_dim;
-        }
-        let d = self.base.dimension;
-        let x = self.sample_dimension(self.base.interval_sample_index, d);
-        self.base.dimension += 1;
-        return x;
-    }
-
-    fn get_2d(&mut self) -> Vector2f {
-        let _p = ProfilePhase::new(Prof::GetSample);
-
-        if self.base.dimension + 1 >= BaseGlobalSampler::array_start_dim
-            && self.base.dimension < self.base.array_end_dim
-        {
-            self.base.dimension = self.base.array_end_dim;
-        }
-        let d = self.base.dimension;
-        let x = self.sample_dimension(self.base.interval_sample_index, d);
-        let y = self.sample_dimension(self.base.interval_sample_index, d + 1);
-        let p = Point2f::new(x, y);
-        self.base.dimension += 2;
-        return p;
-    }
-
-    fn request_1d_array(&mut self, n: u32) {
-        self.base.request_1d_array(n);
-    }
-    fn request_2d_array(&mut self, n: u32) {
-        self.base.request_2d_array(n);
-    }
-    fn get_1d_array(&mut self, n: u32) -> Option<Vec<Float>> {
-        return self.base.get_1d_array(n);
-    }
-    fn get_2d_array(&mut self, n: u32) -> Option<Vec<Vector2f>> {
-        return self.base.get_2d_array(n);
-    }
-
-    fn clone_with_seed(&self, _seed: u32) -> Arc<RwLock<dyn Sampler>> {
-        return Arc::new(RwLock::new(self.clone()));
-    }
-    fn get_samples_per_pixel(&self) -> u32 {
-        return self.base.base.samples_per_pixel;
-    }
-}
-
-pub fn create_halton_sampler(
-    params: &ParamSet,
-    sample_bounds: &Bounds2i,
-) -> Result<Arc<RwLock<dyn Sampler>>, PbrtError> {
-    let mut nsamp = params.find_one_int("pixelsamples", 16) as u32;
-    let sample_at_center = params.find_one_bool("samplepixelcenter", false);
-
-    // pbrt-r3
-    let _ = get_radical_inverse_permutations();
-    // pbrt-r3
-
-    {
-        let options = PbrtOptions::get();
-        if options.quick_render {
-            nsamp = 1;
-        }
-    }
-
-    return Ok(Arc::new(RwLock::new(HaltonSampler::new(
-        nsamp,
-        sample_bounds,
-        sample_at_center,
-    ))));
+fn mix_bits(mut v: u64) -> u64 {
+    v ^= v >> 31;
+    v = v.wrapping_mul(0x7fb5d329728ea185);
+    v ^= v >> 27;
+    v = v.wrapping_mul(0x81dadef4bc2dd44d);
+    v ^= v >> 33;
+    v
 }

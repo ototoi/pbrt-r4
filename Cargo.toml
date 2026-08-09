@@ -1,15 +1,15 @@
 [package]
-name = "pbrt-r3"
-version = "3.2.0"
+name = "pbrt-r4"
+version = "4.0.0"
 edition = "2021"
 build = "build/main.rs"
-default-run = "pbrt-r3"
+default-run = "pbrt-r4"
 authors = ["Toru Matsuoka <tx.matsuoka@gmail.com>"]
 categories = ["graphics", "rendering", "command-line-utilities", "concurrency"]
 keywords = ["pbrt", "ray-tracing", "rendering", "global-illumination"]
-description = "A Rust implementation of pbrt-v3"
-repository = "https://github.com/ototoi/pbrt-r3"
-license = "BSD-2-Clause"
+description = "A Rust implementation of pbrt-v4"
+repository = "https://github.com/ototoi/pbrt-r4"
+license = "Apache-2.0"
 readme = "README.md"
 
 [features]
@@ -17,34 +17,37 @@ default = []
 profile = []
 stats = []
 float-as-double = []
-sampled-spectrum = []
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.4.10", features = ["derive", "env"] }
-env_logger = "0.10.1"
-flate2 = "1.1.0"
-image = "0.24.5"
-indicatif = "0.17.3"
-log = "0.4.20"
-nom = "7.1.1"
-ply-rs = "0.1.3"
-rayon = "1.7.0"
-rust-crypto = "0.2.36"
-serde = { version = "1.0.183", features = ["derive"] }
-serde_json = "1.0.104"
-tar = "0.4.44"
-tempfile = "3.19.1"
+clap = { version = "=4.4.10", features = ["derive", "env"] }
+env_logger = "=0.10.1"
+exr = "=1.74.0"
+flate2 = "=1.1.0"
+half = "=2.2.1"
+image = "=0.24.5"
+indicatif = "=0.17.3"
+log = "=0.4.20"
+nanovdb-rs = "=0.0.5"
+nom = "=7.1.1"
+ply-rs = "=0.1.3"
+qoi = "=0.4.1"
+rayon = "=1.7.0"
+rust-crypto = "=0.2.36"
+serde = { version = "1.0.194", features = ["derive"] }
+serde_json = "=1.0.104"
+tar = "=0.4.44"
+tempfile = "=3.19.1"
 
 [dev-dependencies]
-libm = "0.2.11"
+libm = "=0.2.11"
 
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
+#[profile.release]
+#opt-level = 3
+#lto = "fat"
+#codegen-units = 1
 
 [lints.clippy]
 needless_return = "allow"
@@ -58,5 +61,11 @@ erasing_op = "allow"
 bool_assert_comparison = "allow"
 
 [[bin]]
-name = "pbrt-r3"
-path = "src/bin/pbrt.rs"
+name = "pbrt-r4"
+path = "src/cmd/pbrt.rs"
+
+# `[profile.release]` left at cargo defaults (opt-level=3, no LTO).
+# We tried `lto = "fat"` + `codegen-units = 1`: small win (~5%) on the
+# BSSRDF-heavy head.pbrt path but slightly regressed (5-10%) simple
+# sphere scenes, and tripled the link step. `lto = "thin"` was a wash.
+# Leaving it off keeps `cargo build --release` snappy (~8 s).

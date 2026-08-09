@@ -1,4 +1,4 @@
-pub mod create_light;
+pub mod base;
 pub mod diffuse;
 pub mod distant;
 pub mod goniometric;
@@ -6,8 +6,9 @@ pub mod infinite;
 pub mod point;
 pub mod projection;
 pub mod spot;
+pub mod visibility_tester;
 
-pub use create_light::*;
+pub use base::*;
 pub use diffuse::*;
 pub use distant::*;
 pub use goniometric::*;
@@ -15,3 +16,4 @@ pub use infinite::*;
 pub use point::*;
 pub use projection::*;
 pub use spot::*;
+pub use visibility_tester::VisibilityTester;

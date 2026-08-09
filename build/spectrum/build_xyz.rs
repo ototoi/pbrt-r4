@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 pub fn build_core(path: &str) {
-    let mut m: Vec<(&str, [Float; SPECTRAL_SAMPLES])> = Vec::new();
+    let mut m: Vec<(&str, [Float; N_SPECTRUM_SAMPLES])> = Vec::new();
     m.push((
         "CIE_X",
         sample_spectrum(&cie_data::CIE_LAMBDA, &cie_data::CIE_X),
@@ -25,10 +25,13 @@ pub fn build_core(path: &str) {
     ));
 
     let mut contents = String::from("");
-    contents += "use crate::core::base::Float;\n";
+    contents += "use crate::util::base::Float;\n";
     contents += "\n";
 
-    contents += &format!("const SPECTRAL_SAMPLES: usize = {};\n", SPECTRAL_SAMPLES);
+    contents += &format!(
+        "const N_SPECTRUM_SAMPLES: usize = {};\n",
+        N_SPECTRUM_SAMPLES
+    );
     contents += "\n";
     for (key, v) in m.iter() {
         let name = format!("ARRAY_{}", *key);
@@ -40,8 +43,16 @@ pub fn build_core(path: &str) {
 }
 
 pub fn build() {
-    println!("cargo:rerun-if-changed=build/spectrum/cie_data.rs;build/spectrum/build_xyz.rs");
-    let depends = ["build/spectrum/cie_data.rs", "build/spectrum/build_xyz.rs"];
+    println!(
+        "cargo:rerun-if-changed=build/spectrum/cie_data.rs;build/spectrum/build_xyz.rs;build/spectrum/utils.rs;build/spectrum/config.rs;build/spectrum/spectrum_config.rs"
+    );
+    let depends = [
+        "build/spectrum/cie_data.rs",
+        "build/spectrum/build_xyz.rs",
+        "build/spectrum/utils.rs",
+        "build/spectrum/config.rs",
+        "build/spectrum/spectrum_config.rs",
+    ];
     let target = "spectrum_data_xyz.rs";
     let out_dir = env::var("OUT_DIR").unwrap();
     let path = Path::new(&out_dir).join(target);

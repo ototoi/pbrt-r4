@@ -1,6 +1,7 @@
 pub mod alphamask;
+pub mod base_shape;
+pub mod bilinearmesh;
 pub mod cone;
-pub mod create_shape;
 pub mod curve;
 pub mod cylinder;
 pub mod disk;
@@ -14,8 +15,9 @@ pub mod sphere;
 pub mod triangle;
 
 pub use alphamask::*;
+pub use base_shape::*;
+pub use bilinearmesh::*;
 pub use cone::*;
-pub use create_shape::*;
 pub use curve::*;
 pub use cylinder::*;
 pub use disk::*;

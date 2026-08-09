@@ -1,4 +1,12 @@
-use crate::core::prelude::*;
+use crate::interaction::*;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+use crate::util::sampling::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 #[inline]
 fn radians(x: Float) -> Float {
@@ -32,10 +40,32 @@ impl Disk {
             phi_max,
         }
     }
+
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+    ) -> Result<Self, PbrtError> {
+        let height = params.get_one_float("height", 0.0);
+        let radius = params.get_one_float("radius", 1.0);
+        let inner_radius = params.get_one_float("innerradius", 0.0);
+        let phimax = params.get_one_float("phimax", 360.0);
+
+        Ok(Self::new(
+            o2w,
+            w2o,
+            reverse_orientation,
+            height,
+            radius,
+            inner_radius,
+            phimax,
+        ))
+    }
 }
 
-impl Shape for Disk {
-    fn object_bound(&self) -> Bounds3f {
+impl Disk {
+    pub fn object_bound(&self) -> Bounds3f {
         let radius = self.radius;
         let height = self.height;
         return Bounds3f::new(
@@ -43,19 +73,35 @@ impl Shape for Disk {
             &Point3f::new(radius, radius, height + 0.001),
         );
     }
-    fn world_bound(&self) -> Bounds3f {
+    pub fn world_bound(&self) -> Bounds3f {
         return self
             .base
             .object_to_world
             .transform_bounds(&self.object_bound());
     }
-    fn intersect(&self, r: &Ray) -> Option<(Float, SurfaceInteraction)> {
+
+    /// pbrt-v4 `Disk::NormalBounds` (shapes.cpp:89). Disks lie on a
+    /// single plane so the normal is a single direction (the object-
+    /// space +z transformed to render space, optionally flipped by
+    /// `reverseOrientation`).
+    pub fn normal_bounds(&self) -> DirectionCone {
+        use crate::util::base::{Normal3f, Vector3f};
+        let mut n: Normal3f = self
+            .base
+            .object_to_world
+            .transform_normal(&Normal3f::new(0.0, 0.0, 1.0))
+            .normalize();
+        if self.base.reverse_orientation {
+            n = -n;
+        }
+        DirectionCone::from_direction(Vector3f::from(n))
+    }
+    pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
         let (ray, _o_err, _d_err) = self.base.world_to_object.transform_ray(r);
 
         // Compute plane intersection for disk
 
         // Reject disk intersections for rays parallel to the disk's plane
-        let t_max = ray.t_max.get();
         let height = self.height;
         if ray.d.z == 0.0 {
             return None;
@@ -68,7 +114,7 @@ impl Shape for Disk {
         // See if hit point is inside disk radii and $\phimax$
         let radius = self.radius;
         let inner_radius = self.inner_radius;
-        let mut p_hit = ray.o + ray.d * t_shape_hit; //TODO
+        let mut p_hit = ray.o + ray.d * t_shape_hit;
         let dist2 = p_hit.x * p_hit.x + p_hit.y * p_hit.y;
         if dist2 > radius * radius || dist2 < inner_radius * inner_radius {
             return None;
@@ -92,10 +138,7 @@ impl Shape for Disk {
         let dndu = Vector3f::new(0.0, 0.0, 0.0);
         let dndv = Vector3f::new(0.0, 0.0, 0.0);
 
-        let mut n = self.base.calc_normal(&dpdu, &dpdv);
-        if Vector3f::dot(&ray.d, &n) > 0.0 {
-            n *= -1.0;
-        }
+        let n = self.base.calc_normal(&dpdu, &dpdv);
 
         // Refine disk intersection point
         p_hit.z = height;
@@ -120,16 +163,15 @@ impl Shape for Disk {
             .base
             .object_to_world
             .transform_surface_interaction(&isect);
-        return Some((t_shape_hit, isect));
+        return Some(ShapeIntersection::new(isect, t_shape_hit));
     }
 
-    fn intersect_p(&self, r: &Ray) -> bool {
+    pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
         let (ray, _o_err, _d_err) = self.base.world_to_object.transform_ray(r);
 
         // Compute plane intersection for disk
 
         // Reject disk intersections for rays parallel to the disk's plane
-        let t_max = ray.t_max.get();
         let height = self.height;
         if ray.d.z == 0.0 {
             return false;
@@ -142,7 +184,7 @@ impl Shape for Disk {
         // See if hit point is inside disk radii and $\phimax$
         let radius = self.radius;
         let inner_radius = self.inner_radius;
-        let p_hit = ray.o + ray.d * t_shape_hit; //TODO
+        let p_hit = ray.o + ray.d * t_shape_hit;
         let dist2 = p_hit.x * p_hit.x + p_hit.y * p_hit.y;
         if dist2 > radius * radius || dist2 < inner_radius * inner_radius {
             return false;
@@ -161,14 +203,14 @@ impl Shape for Disk {
         return true;
     }
 
-    fn area(&self) -> Float {
+    pub fn area(&self) -> Float {
         let radius = self.radius;
         let inner_radius = self.inner_radius;
         let phi_max = self.phi_max;
         return phi_max * 0.5 * (radius * radius - inner_radius * inner_radius);
     }
 
-    fn sample(&self, u: &Point2f) -> Option<(Interaction, Float)> {
+    pub fn sample(&self, u: &Point2f) -> Option<(Interaction, Float)> {
         let radius = self.radius;
         let height = self.height;
         let pd = concentric_sample_disk(u);
@@ -189,26 +231,71 @@ impl Shape for Disk {
         let it = Interaction::from_surface_sample(&p, &p_error, &n);
         return Some((it, pdf));
     }
+
+    pub fn pdf(&self, _inter: &Interaction) -> Float {
+        Float::recip(self.area())
+    }
+
+    pub fn sample_from(&self, inter: &Interaction, u: &Point2f) -> Option<(Interaction, Float)> {
+        let (intr, pdf) = self.sample(u)?;
+        assert!(intr.is_surface_interaction());
+        let wi = intr.get_p() - inter.get_p();
+        if wi.length_squared() <= 0.0 {
+            return None;
+        } else {
+            assert!(intr.get_n().length() > 0.0);
+            let wi = wi.normalize();
+            let pdf = pdf * Vector3f::distance_squared(&inter.get_p(), &intr.get_p())
+                / Vector3f::abs_dot(&intr.get_n(), &-wi);
+            if pdf <= 0.0 || pdf.is_infinite() {
+                return None;
+            }
+            return Some((intr, pdf));
+        }
+    }
+
+    pub fn pdf_from(&self, inter: &Interaction, wi: &Vector3f) -> Float {
+        let ray = inter.spawn_ray(wi);
+        if let Some(si) = self.intersect(&ray, Float::INFINITY) {
+            let isect_light = si.intr;
+            assert!(isect_light.n.length() > 0.0);
+
+            let pdf = Vector3f::distance_squared(&inter.get_p(), &isect_light.p)
+                / (Vector3f::abs_dot(&isect_light.n, &(-*wi)) * self.area());
+            if pdf.is_infinite() {
+                return 0.0;
+            }
+            return pdf;
+        } else {
+            return 0.0;
+        }
+    }
+
+    pub fn solid_angle(&self, p: &Point3f, n_samples: i32) -> Float {
+        use crate::util::lowdiscrepancy::*;
+        let mut it = BaseInteraction::default();
+        it.p = *p;
+        it.wo = Vector3f::new(0.0, 0.0, 1.0);
+        let inter = Interaction::from(it);
+        let mut solid_angle = 0.0;
+        for i in 0..n_samples {
+            let u = Point2f::new(radical_inverse(0, i as u64), radical_inverse(1, i as u64));
+            if let Some((p_shape, pdf)) = self.sample_from(&inter, &u) {
+                let r = Ray::new(p, &(p_shape.get_p() - *p), 0.999, 0.0);
+                if !self.intersect_p(&r, 0.999) {
+                    solid_angle += 1.0 / pdf
+                }
+            }
+        }
+        return solid_angle / n_samples as Float;
+    }
 }
 
 pub fn create_disk_shape(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
+    params: &ParameterDictionary,
 ) -> Result<Disk, PbrtError> {
-    let height = params.find_one_float("height", 0.0);
-    let radius = params.find_one_float("radius", 1.0);
-    let inner_radius = params.find_one_float("innerradius", 0.0);
-    let phimax = params.find_one_float("phimax", 360.0);
-
-    return Ok(Disk::new(
-        o2w,
-        w2o,
-        reverse_orientation,
-        height,
-        radius,
-        inner_radius,
-        phimax,
-    ));
+    Disk::create(o2w, w2o, reverse_orientation, params)
 }

@@ -1,7 +1,19 @@
-pub mod create_medium;
+pub mod cloud;
 pub mod grid;
 pub mod homogeneous;
+pub mod majorant_iterator;
+pub mod medium;
+pub mod medium_interface;
+pub mod nanovdb;
+pub mod phase_function;
+pub mod rgb_grid;
+pub mod sample_grid;
 
-pub use create_medium::*;
-pub use grid::GridDensityMedium;
-pub use homogeneous::HomogeneousMedium;
+pub use cloud::*;
+pub use grid::*;
+pub use homogeneous::*;
+pub use medium::*;
+pub use medium_interface::*;
+pub use nanovdb::*;
+pub use phase_function::*;
+pub use rgb_grid::*;

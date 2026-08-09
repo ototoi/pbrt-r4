@@ -1,5 +1,5 @@
 // Imported from animatedtransform.cpp
-use pbrt_r3::core::prelude::*;
+use pbrt_r4::prelude::*;
 
 fn random_transform(rng: &mut RNG) -> Transform {
     let mut t = Transform::identity();
@@ -62,7 +62,7 @@ fn animated_transform_randoms() {
         // Generate a pair of random transformation matrices.
         let t0 = random_transform(&mut rng);
         let t1 = random_transform(&mut rng);
-        let at = AnimatedTransform::new(&t0, 0.0, &t1, 1.0);
+        let at = AnimatedTransform::new(&t0, 0.0, &t1, 1.0).unwrap();
 
         for _ in 0..5 {
             // Generate a pair of random transformation matrices.

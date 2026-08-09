@@ -1,0 +1,22 @@
+Integrator "path"
+    "integer maxdepth" [ 1 ]
+Sampler "independent"
+    "integer pixelsamples" [ 4 ]
+Film "rgb"
+    "string filename" [ "simple-emissive-sphere.exr" ]
+    "integer xresolution" [ 32 ]
+    "integer yresolution" [ 32 ]
+LookAt 0 0 3
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float fov" [ 30 ]
+
+WorldBegin
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "rgb L" [ 8 8 8 ]
+    Shape "sphere"
+        "float radius" [ 0.75 ]
+AttributeEnd

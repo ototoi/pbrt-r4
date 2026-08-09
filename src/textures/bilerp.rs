@@ -1,7 +1,12 @@
-use crate::core::prelude::*;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::textures::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
 
 use std::ops::*;
-use std::sync::Arc;
 
 pub struct BilerpTexture<T> {
     mapping: TextureMapping2D,
@@ -11,53 +16,57 @@ pub struct BilerpTexture<T> {
     v11: T,
 }
 
-impl<T: Copy> BilerpTexture<T> {
+impl<T: Clone + Add<T, Output = T> + Mul<Float, Output = T>> BilerpTexture<T> {
     pub fn new(mapping: TextureMapping2D, v00: &T, v01: &T, v10: &T, v11: &T) -> Self {
         return BilerpTexture::<T> {
             mapping,
-            v00: *v00,
-            v01: *v01,
-            v10: *v10,
-            v11: *v11,
+            v00: v00.clone(),
+            v01: v01.clone(),
+            v10: v10.clone(),
+            v11: v11.clone(),
         };
     }
-}
 
-impl<T: Copy + Add<T, Output = T> + Mul<Float, Output = T>> Texture<T> for BilerpTexture<T> {
-    fn evaluate(&self, si: &SurfaceInteraction) -> T {
-        let (st, _dstdx, _dstdy) = self.mapping.map(si);
+    pub fn evaluate(&self, ctx: &TextureEvalContext) -> T {
+        let (st, _dstdx, _dstdy) = self.mapping.map(ctx);
         let a = (1.0 - st[0]) * (1.0 - st[1]);
         let b = (1.0 - st[0]) * (st[1]);
         let c = (st[0]) * (1.0 - st[1]);
         let d = (st[0]) * (st[1]);
-        return self.v00 * a + self.v01 * b + self.v10 * c + self.v11 * d;
+        return self.v00.clone() * a
+            + self.v01.clone() * b
+            + self.v10.clone() * c
+            + self.v11.clone() * d;
     }
 }
 
-pub fn create_bilerp_float_texture(
-    tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Float>>, PbrtError> {
-    let map = create_texture_mapping2d(tex2world, tp)?;
-    let v00 = tp.find_float("v00", 0.0);
-    let v01 = tp.find_float("v01", 1.0);
-    let v10 = tp.find_float("v10", 0.0);
-    let v11 = tp.find_float("v11", 1.0);
-    return Ok(Arc::new(BilerpTexture::<Float>::new(
-        map, &v00, &v01, &v10, &v11,
-    )));
+impl BilerpTexture<Float> {
+    pub fn create(
+        render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+    ) -> Result<FloatTexture, PbrtError> {
+        let map = TextureMapping2D::create(render_from_texture, parameters.parameter_dictionary())?;
+        let v00 = parameters.get_one_float("v00", 0.0);
+        let v01 = parameters.get_one_float("v01", 1.0);
+        let v10 = parameters.get_one_float("v10", 0.0);
+        let v11 = parameters.get_one_float("v11", 1.0);
+        Ok(FloatTexture::Bilerp(BilerpTexture::<Float>::new(
+            map, &v00, &v01, &v10, &v11,
+        )))
+    }
 }
 
-pub fn create_bilerp_spectrum_texture(
-    tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Spectrum>>, PbrtError> {
-    let map = create_texture_mapping2d(tex2world, tp)?;
-    let v00 = tp.find_spectrum("v00", &Spectrum::zero());
-    let v01 = tp.find_spectrum("v01", &Spectrum::one());
-    let v10 = tp.find_spectrum("v10", &Spectrum::zero());
-    let v11 = tp.find_spectrum("v11", &Spectrum::one());
-    return Ok(Arc::new(BilerpTexture::<Spectrum>::new(
-        map, &v00, &v01, &v10, &v11,
-    )));
+impl BilerpTexture<Spectrum> {
+    pub fn create(
+        render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+        spectrum_type: SpectrumType,
+    ) -> Result<Self, PbrtError> {
+        let map = TextureMapping2D::create(render_from_texture, parameters.parameter_dictionary())?;
+        let v00 = parameters.get_one_spectrum_typed("v00", &Spectrum::zero(), spectrum_type);
+        let v01 = parameters.get_one_spectrum_typed("v01", &Spectrum::one(), spectrum_type);
+        let v10 = parameters.get_one_spectrum_typed("v10", &Spectrum::zero(), spectrum_type);
+        let v11 = parameters.get_one_spectrum_typed("v11", &Spectrum::one(), spectrum_type);
+        Ok(BilerpTexture::<Spectrum>::new(map, &v00, &v01, &v10, &v11))
+    }
 }

@@ -1,90 +1,133 @@
-use crate::core::prelude::*;
+use super::majorant_iterator::HomogeneousMajorantIterator;
+use super::medium::get_medium_scattering_properties;
+use super::phase_function::HGPhaseFunction;
+use super::phase_function::PhaseFunction;
+use crate::base::{MediumCoefficients, MediumProperties, MediumSigma};
+use crate::paramdict::ParameterDictionary;
+use crate::util::error::PbrtError;
+
+use crate::util::base::*;
+use crate::util::geometry::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
 
 use std::sync::Arc;
 
-/*
-    const Spectrum sigma_a, sigma_s, sigma_t;
-    const Float g;
-*/
 #[derive(Debug, Clone)]
 pub struct HomogeneousMedium {
-    pub sigma_a: Spectrum,
-    pub sigma_s: Spectrum,
-    pub sigma_t: Spectrum,
-    pub g: Float,
+    sigma_a_spec: DenselySampledSpectrum,
+    sigma_s_spec: DenselySampledSpectrum,
+    le_spec: DenselySampledSpectrum,
+    phase: Arc<PhaseFunction>,
 }
 
 impl HomogeneousMedium {
-    pub fn new(sigma_a: &Spectrum, sigma_s: &Spectrum, g: Float) -> Self {
-        HomogeneousMedium {
-            sigma_a: *sigma_a,
-            sigma_s: *sigma_s,
-            sigma_t: *sigma_a + *sigma_s,
+    pub fn create(parameters: &ParameterDictionary) -> Result<Self, PbrtError> {
+        let preset = parameters.get_one_string("preset", "");
+        let (sig_a_default, sig_s_default) =
+            if let Some((sigma_a, sigma_s)) = get_medium_scattering_properties(&preset) {
+                (sigma_a, sigma_s)
+            } else {
+                if !preset.is_empty() {
+                    log::warn!("Medium preset \"{}\" not found.", preset);
+                }
+                (Spectrum::one(), Spectrum::one())
+            };
+        let sigma_a =
+            parameters.get_one_spectrum_typed("sigma_a", &sig_a_default, SpectrumType::Unbounded);
+        let sigma_s =
+            parameters.get_one_spectrum_typed("sigma_s", &sig_s_default, SpectrumType::Unbounded);
+        let sigma_scale = parameters.get_one_float("scale", 1.0);
+
+        let le_default = Spectrum::zero();
+        let le = parameters.get_one_spectrum_typed("Le", &le_default, SpectrumType::Illuminant);
+        let photometric = spectrum_to_photometric(&le);
+        let le_scale = parameters.get_one_float("Lescale", 1.0)
+            / if photometric > 0.0 { photometric } else { 1.0 };
+        let g = parameters.get_one_float("g", 0.0);
+
+        Ok(Self::new(&sigma_a, &sigma_s, sigma_scale, &le, le_scale, g))
+    }
+
+    pub fn new_with_sources(sigma_a_source: Spectrum, sigma_s_source: Spectrum, g: Float) -> Self {
+        Self::new(
+            &sigma_a_source,
+            &sigma_s_source,
+            1.0,
+            &Spectrum::zero(),
+            1.0,
             g,
+        )
+    }
+
+    pub fn new(
+        sigma_a: &Spectrum,
+        sigma_s: &Spectrum,
+        sigma_scale: Float,
+        le: &Spectrum,
+        le_scale: Float,
+        g: Float,
+    ) -> Self {
+        let mut sigma_a_spec = DenselySampledSpectrum::from_spectrum(sigma_a);
+        sigma_a_spec.scale(sigma_scale);
+        let mut sigma_s_spec = DenselySampledSpectrum::from_spectrum(sigma_s);
+        sigma_s_spec.scale(sigma_scale);
+        let mut le_spec = DenselySampledSpectrum::from_spectrum(le);
+        le_spec.scale(le_scale);
+
+        HomogeneousMedium {
+            sigma_a_spec,
+            sigma_s_spec,
+            le_spec,
+            phase: Arc::new(PhaseFunction::from(HGPhaseFunction::new(g))),
         }
     }
 }
 
-impl Medium for HomogeneousMedium {
-    fn tr(&self, ray: &Ray, _sampler: &mut dyn Sampler) -> Spectrum {
-        let _p = ProfilePhase::new(Prof::MediumTr);
-        let sigma_t = self.sigma_t;
-        let ray_length = ray.d.length();
-        let tmax = ray.t_max.get();
-        return (-sigma_t * Float::min(ray_length * tmax, std::f32::MAX as Float)).exp();
+impl HomogeneousMedium {
+    pub fn is_emissive(&self) -> bool {
+        self.le_spec.max_value() > 0.0
     }
-    fn sample(
+
+    pub fn sample_point(&self, _p: &Point3f, lambda: &SampledWavelengths) -> MediumProperties {
+        MediumProperties::new(
+            self.sigma_a_spec.sample(lambda),
+            self.sigma_s_spec.sample(lambda),
+            Arc::clone(&self.phase),
+            self.le_spec.sample(lambda),
+        )
+    }
+
+    pub fn sample_point_coefficients(
         &self,
-        ray: &Ray,
-        sampler: &mut dyn Sampler,
-        _arena: &mut MemoryArena,
-    ) -> (Spectrum, Option<MediumInteraction>) {
-        let _p = ProfilePhase::new(Prof::MediumSample);
-        // Sample a channel and distance along the ray
-        let channel = usize::min(
-            (sampler.get_1d() * Spectrum::N_SAMPLES as Float) as usize,
-            Spectrum::N_SAMPLES - 1,
-        );
-        let dist = -Float::ln(1.0 - sampler.get_1d()) / self.sigma_t[channel];
-        let t_max = ray.t_max.get();
-        let t = Float::min(dist / ray.d.length(), t_max);
-        let sampled_medium = t < t_max;
+        _p: &Point3f,
+        lambda: &SampledWavelengths,
+    ) -> MediumCoefficients {
+        MediumCoefficients::new(
+            self.sigma_a_spec.sample(lambda),
+            self.sigma_s_spec.sample(lambda),
+            self.le_spec.sample(lambda),
+        )
+    }
 
-        let mi = if sampled_medium {
-            let phase: Arc<dyn PhaseFunction> = Arc::new(HenyeyGreenstein::new(self.g));
-            Some(MediumInteraction::new(
-                &ray.position(t),
-                &(-ray.d),
-                ray.time,
-                &phase,
-            ))
-        } else {
-            None
-        };
+    pub fn sample_point_sigma(&self, _p: &Point3f, lambda: &SampledWavelengths) -> MediumSigma {
+        MediumSigma::new(
+            self.sigma_a_spec.sample(lambda),
+            self.sigma_s_spec.sample(lambda),
+        )
+    }
 
-        // Compute the transmittance and sampling density
-        let tr = (-self.sigma_t * Float::min(t, std::f32::MAX as Float) * ray.d.length()).exp();
-        // Return weighting factor for scattering from homogeneous medium
-        let density = if sampled_medium {
-            self.sigma_t * tr
-        } else {
-            tr
-        };
-        let mut pdf = 0.0;
-        for i in 0..Spectrum::N_SAMPLES {
-            pdf += density[i];
-        }
-        pdf /= Spectrum::N_SAMPLES as Float;
-
-        if pdf == 0.0 {
-            pdf = 1.0;
-        }
-
-        let spec = if sampled_medium {
-            tr * self.sigma_s / pdf
-        } else {
-            tr / pdf
-        };
-        return (spec, mi);
+    pub fn sample_ray(
+        &self,
+        _ray: &Ray,
+        t_max: Float,
+        lambda: &SampledWavelengths,
+    ) -> Option<HomogeneousMajorantIterator> {
+        // v4 `HomogeneousMedium::SampleRay` (media.h:1149): just emit
+        // one segment that spans the whole ray segment with the
+        // pre-sampled sigma_t. `SampledSpectrum` lives on the stack
+        // so no heap traffic per segment.
+        let sigma_t_packet = self.sigma_a_spec.sample(lambda) + self.sigma_s_spec.sample(lambda);
+        Some(HomogeneousMajorantIterator::new(0.0, t_max, sigma_t_packet))
     }
 }

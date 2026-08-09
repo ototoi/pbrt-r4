@@ -1,6 +1,20 @@
-use crate::core::prelude::*;
+use crate::interaction::*;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::stats::*;
 
 use std::sync::Arc;
+
+const GAMMA3: Float = (3.0 * MACHINE_EPSILON) / (1.0 - (3.0 * MACHINE_EPSILON));
+
+fn radians(x: Float) -> Float {
+    return x * PI / 180.0;
+}
 
 thread_local!(static TESTS: StatPercent = StatPercent::new("Intersections/Ray-curve intersection tests"));
 thread_local!(static REFINEMENT_LEVEL: StatIntDistribution = StatIntDistribution::new("Intersections/Curve refinement level"));
@@ -254,10 +268,8 @@ fn recursive_intersect(
                     if is_shadow {
                         return Some(t_t_hit);
                     }
-                    //if t_t_hit.0 < t_max {
                     t_max = Float::min(t_max, t_t_hit.0);
                     t_hit = Some(t_t_hit);
-                    //}
                 }
             }
         }
@@ -323,9 +335,7 @@ fn recursive_intersect(
 
         // Compute hit _t_ and partial derivatives for curve intersection
 
-        // FIXME: this tHit isn't quite right for ribbons...
         let t_hit = pc.z / ray_length;
-        //println!("{}", t_hit);
 
         TESTS.with(|stat| stat.add_num(1));
 
@@ -337,7 +347,6 @@ fn recursive_intersect(
                 p_error_coef * hit_width,
                 p_error_coef * hit_width,
             );
-            //let p_error = ray_to_object.transform_vector(&p_error);//object space;
 
             // Compute $\dpdu$ and $\dpdv$ for curve intersection
             let (_, dpdu) = eval_bezier(&common.cp_obj, u); //object space
@@ -351,9 +360,6 @@ fn recursive_intersect(
                 let dpdu_plane = object_to_ray.transform_vector(&dpdu).normalize(); //ray space
                 let p_plane = Vector3f::new(0.0, 0.0, 1.0);
                 let mut dpdv_plane = Vector3f::cross(&p_plane, &dpdu_plane);
-                //let mut dpdv_plane =
-                //    Vector3f::normalize(&Vector3f::new(-dpdu_plane.y, dpdu_plane.x, 0.0))
-                //        * hit_width;
                 if t == CurveType::Cylinder {
                     // Rotate _dpdvPlane_ to give cylindrical appearance
                     let theta = lerp(v, -90.0, 90.0);
@@ -366,13 +372,9 @@ fn recursive_intersect(
             let uv = Point2f::new(u, v); //u, v
             let wo = -ray.d;
             let mut n = common.base.calc_normal(&dpdu, &dpdv);
-            //if t == CurveType::Cylinder {
-            //    n = (p - p_center).normalize();
-            //} else {
             if Vector3f::dot(&ray.d, &n) > 0.0 {
                 n *= -1.0;
             }
-            //}
             let si = SurfaceInteraction::new(
                 &p,
                 &p_error,
@@ -414,9 +416,19 @@ impl Curve {
         }
     }
 
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+    ) -> Result<Vec<Curve>, PbrtError> {
+        create_curve_shape(o2w, w2o, reverse_orientation, params)
+    }
+
     fn intersect_common(
         &self,
         r: &Ray,
+        t_max: Float,
         is_shadow: bool,
     ) -> Option<(Float, Option<SurfaceInteraction>)> {
         TESTS.with(|stat| stat.add_denom(1));
@@ -426,10 +438,6 @@ impl Curve {
         let common = self.common.as_ref();
         // Transform _Ray_ to object space
         let (ray, _o_err, _d_err) = common.base.world_to_object.transform_ray(r);
-        //let ray_length = ray.d.length();
-        let t_max = ray.t_max.get();
-        //println!("rl:{}, tmax:{}", ray_length, t_max);
-
         // Compute object-space control points for curve segment, _cpObj_
         let cp_obj = [
             blossom_bezier(&common.cp_obj, u_min, u_min, u_min),
@@ -523,9 +531,7 @@ impl Curve {
         let eps = Float::max(common.width[0], common.width[1]) * 0.05; // width / 20
 
         // Compute log base 4 by dividing log2 in half.
-        //let r0 = log2(1.41421356237 * 6.0 * l0 / (8.0 * eps)) / 2;
         let r0 = log2(SQRT_2 * 6.0 * l0 / (8.0 * eps)) / 2;
-        //let r0 = log2(1.41421356237 * 6.0 * l0 / (8.0 * eps) * 16.0) / 2;//x16
 
         let max_depth = i32::clamp(r0, 0, 10); //
 
@@ -545,8 +551,8 @@ impl Curve {
     }
 }
 
-impl Shape for Curve {
-    fn object_bound(&self) -> Bounds3f {
+impl Curve {
+    pub fn object_bound(&self) -> Bounds3f {
         let u_min = self.u_min;
         let u_max = self.u_max;
         let common = self.common.as_ref();
@@ -566,26 +572,30 @@ impl Shape for Curve {
         return b;
     }
 
-    fn world_bound(&self) -> Bounds3f {
+    pub fn world_bound(&self) -> Bounds3f {
         let common = self.common.as_ref();
         let b = self.object_bound();
         let b = common.base.object_to_world.transform_bounds(&b);
         return b;
     }
 
-    fn intersect(&self, r: &Ray) -> Option<(Float, SurfaceInteraction)> {
-        if let Some((t_hit, isect)) = self.intersect_common(r, false) {
-            return Some((t_hit, isect.unwrap()));
+    pub fn normal_bounds(&self) -> DirectionCone {
+        DirectionCone::entire_sphere()
+    }
+
+    pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
+        if let Some((t_hit, isect)) = self.intersect_common(r, t_max, false) {
+            return Some(ShapeIntersection::new(isect.unwrap(), t_hit));
         } else {
             return None;
         }
     }
 
-    fn intersect_p(&self, r: &Ray) -> bool {
-        return self.intersect_common(r, true).is_some();
+    pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
+        return self.intersect_common(r, t_max, true).is_some();
     }
 
-    fn area(&self) -> Float {
+    pub fn area(&self) -> Float {
         // Compute object-space control points for curve segment, _cpObj_
         let u_min = self.u_min;
         let u_max = self.u_max;
@@ -606,9 +616,129 @@ impl Shape for Curve {
         return approx_length * avg_width;
     }
 
-    fn sample(&self, _u: &Point2f) -> Option<(Interaction, Float)> {
-        //LOG(FATAL) << "Curve::Sample not implemented.";
-        return None;
+    pub fn sample(&self, u: &Point2f) -> Option<(Interaction, Float)> {
+        let common = self.common.as_ref();
+        let cp_obj = [
+            blossom_bezier(&common.cp_obj, self.u_min, self.u_min, self.u_min),
+            blossom_bezier(&common.cp_obj, self.u_min, self.u_min, self.u_max),
+            blossom_bezier(&common.cp_obj, self.u_min, self.u_max, self.u_max),
+            blossom_bezier(&common.cp_obj, self.u_max, self.u_max, self.u_max),
+        ];
+
+        let u_curve = Float::clamp(u.x, 0.0, 1.0 - 1e-6);
+        let v_curve = Float::clamp(u.y, 0.0, 1.0 - 1e-6);
+        let u_global = lerp(u_curve, self.u_min, self.u_max);
+        let width = lerp(u_global, common.width[0], common.width[1]);
+        if width <= 0.0 {
+            return None;
+        }
+
+        let (p_center, dpdu_obj) = eval_bezier(&cp_obj, u_curve);
+        if dpdu_obj.length_squared() == 0.0 {
+            return None;
+        }
+
+        let tangent = dpdu_obj.normalize();
+        let (sx, sy) = coordinate_system(&tangent);
+        let mut dpdv_obj = sx * width;
+        let n_obj = match common.t {
+            CurveType::Ribbon => {
+                if let Some(n) = &common.normals {
+                    let sin0 =
+                        Float::sin((1.0 - u_global) * n.normal_angle) * n.inv_sin_normal_angle;
+                    let sin1 = Float::sin(u_global * n.normal_angle) * n.inv_sin_normal_angle;
+                    let n_hit = (sin0 * n.n[0] + sin1 * n.n[1]).normalize();
+                    dpdv_obj = Vector3f::cross(&n_hit, &tangent).normalize() * width;
+                    n_hit
+                } else {
+                    common.base.calc_normal(&dpdu_obj, &dpdv_obj)
+                }
+            }
+            CurveType::Cylinder => {
+                // Match the existing intersection model: vary normal orientation across width.
+                let theta = radians(lerp(v_curve, -90.0, 90.0));
+                let around = Float::cos(theta) * sx + Float::sin(theta) * sy;
+                dpdv_obj = around.normalize() * width;
+                common.base.calc_normal(&dpdu_obj, &dpdv_obj)
+            }
+            CurveType::Flat => common.base.calc_normal(&dpdu_obj, &dpdv_obj),
+        };
+
+        let p_obj = p_center + (v_curve - 0.5) * dpdv_obj;
+        let p_obj_error = GAMMA3 * Vector3f::new(p_obj.x, p_obj.y, p_obj.z).abs();
+        let (p, p_error) = common
+            .base
+            .object_to_world
+            .transform_point_with_abs_error(&p_obj, &p_obj_error);
+        let n_world = common
+            .base
+            .object_to_world
+            .transform_normal(&n_obj)
+            .normalize();
+        let pdf = Float::recip(self.area());
+        if !pdf.is_finite() || pdf <= 0.0 {
+            return None;
+        }
+        let it = Interaction::from_surface_sample(&p, &p_error, &n_world);
+        Some((it, pdf))
+    }
+
+    pub fn pdf(&self, _inter: &Interaction) -> Float {
+        Float::recip(self.area())
+    }
+
+    pub fn sample_from(&self, inter: &Interaction, u: &Point2f) -> Option<(Interaction, Float)> {
+        let (intr, pdf) = self.sample(u)?;
+        assert!(intr.is_surface_interaction());
+        let wi = intr.get_p() - inter.get_p();
+        if wi.length_squared() <= 0.0 {
+            return None;
+        } else {
+            assert!(intr.get_n().length() > 0.0);
+            let wi = wi.normalize();
+            let pdf = pdf * Vector3f::distance_squared(&inter.get_p(), &intr.get_p())
+                / Vector3f::abs_dot(&intr.get_n(), &-wi);
+            if pdf <= 0.0 || pdf.is_infinite() {
+                return None;
+            }
+            return Some((intr, pdf));
+        }
+    }
+
+    pub fn pdf_from(&self, inter: &Interaction, wi: &Vector3f) -> Float {
+        let ray = inter.spawn_ray(wi);
+        if let Some(si) = self.intersect(&ray, Float::INFINITY) {
+            let isect_light = si.intr;
+            assert!(isect_light.n.length() > 0.0);
+
+            let pdf = Vector3f::distance_squared(&inter.get_p(), &isect_light.p)
+                / (Vector3f::abs_dot(&isect_light.n, &(-*wi)) * self.area());
+            if pdf.is_infinite() {
+                return 0.0;
+            }
+            return pdf;
+        } else {
+            return 0.0;
+        }
+    }
+
+    pub fn solid_angle(&self, p: &Point3f, n_samples: i32) -> Float {
+        use crate::util::lowdiscrepancy::*;
+        let mut it = BaseInteraction::default();
+        it.p = *p;
+        it.wo = Vector3f::new(0.0, 0.0, 1.0);
+        let inter = Interaction::from(it);
+        let mut solid_angle = 0.0;
+        for i in 0..n_samples {
+            let u = Point2f::new(radical_inverse(0, i as u64), radical_inverse(1, i as u64));
+            if let Some((p_shape, pdf)) = self.sample_from(&inter, &u) {
+                let r = Ray::new(p, &(p_shape.get_p() - *p), 0.999, 0.0);
+                if !self.intersect_p(&r, 0.999) {
+                    solid_angle += 1.0 / pdf
+                }
+            }
+        }
+        return solid_angle / n_samples as Float;
     }
 }
 
@@ -622,8 +752,8 @@ fn create_curve(
     t: CurveType,
     norm: &Option<Vec<Normal3f>>,
     split_depth: i32,
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
-    let mut segments: Vec<Arc<dyn Shape>> = Vec::new();
+) -> Result<Vec<Curve>, PbrtError> {
+    let mut segments: Vec<Curve> = Vec::new();
     let common = Arc::new(CurveCommon::new(
         o2w,
         w2o,
@@ -639,7 +769,7 @@ fn create_curve(
     for i in 0..n_segments {
         let u_min = (i as Float) / (n_segments as Float);
         let u_max = ((i + 1) as Float) / (n_segments as Float);
-        let curve = Arc::new(Curve::new(&common, u_min, u_max));
+        let curve = Curve::new(&common, u_min, u_max);
         segments.push(curve);
     }
     N_SPLIT_CURVES.with(|c| c.add(n_segments as u64));
@@ -652,7 +782,7 @@ fn get_curve_type(s: &str) -> Result<CurveType, PbrtError> {
         "ribbon" => Ok(CurveType::Ribbon),
         "cylinder" => Ok(CurveType::Cylinder),
         _ => {
-            let msg = format!("Unknown curve type \"{}\".  Using \"cylinder\".", s);
+            let msg = format!("Unknown curve type \"{}\".", s);
             return Err(PbrtError::error(&msg));
         }
     };
@@ -671,13 +801,13 @@ pub fn create_curve_shape(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
-    let width = params.find_one_float("width", 1.0);
-    let width0 = params.find_one_float("width0", width);
-    let width1 = params.find_one_float("width1", width);
+    params: &ParameterDictionary,
+) -> Result<Vec<Curve>, PbrtError> {
+    let width = params.get_one_float("width", 1.0);
+    let width0 = params.get_one_float("width0", width);
+    let width1 = params.get_one_float("width1", width);
 
-    let degree = params.find_one_int("degree", 3);
+    let degree = params.get_one_int("degree", 3);
     if degree != 2 && degree != 3 {
         let msg = format!(
             "Invalid degree {}: only degree 2 and 3 curves are supported.",
@@ -686,17 +816,26 @@ pub fn create_curve_shape(
         return Err(PbrtError::error(&msg));
     }
     let degree = degree as usize;
-    let basis = params.find_one_string("basis", "bezier");
+    let basis = params.get_one_string("basis", "bezier");
     if basis != "bezier" && basis != "bspline" {
         let msg = format!(
             "Invalid basis \"{}\": only \"bezier\" and \"bspline\" are supported.",
-            degree
+            basis
         );
         return Err(PbrtError::error(&msg));
     }
     let cp = params.get_points_ref("P").ok_or("\"P\"")?;
     let cp = convert_to_point(&cp);
     let ncp = cp.len();
+    if ncp < degree + 1 {
+        let msg = format!(
+            "Invalid number of control points {}: at least {} are required for degree {} curves.",
+            ncp,
+            degree + 1,
+            degree
+        );
+        return Err(PbrtError::error(&msg));
+    }
     let n_segments: usize = match &basis as &str {
         "bezier" => {
             // After the first segment, which uses degree+1 control points,
@@ -711,23 +850,29 @@ pub fn create_curve_shape(
             }
             (ncp - 1) / degree
         }
-        "bspline" => ncp - degree,
+        "bspline" => {
+            if ncp < degree {
+                let msg = format!(
+                    "Invalid number of control points {}: at least {} are required for degree {} B-spline curves.",
+                    ncp, degree, degree
+                );
+                return Err(PbrtError::error(&msg));
+            }
+            ncp - degree
+        }
         _ => {
-            panic!();
+            let msg = format!(
+                "Unexpected basis \"{}\" after validation in create_curve_shape.",
+                basis
+            );
+            return Err(PbrtError::error(&msg));
         }
     };
 
-    let curve_type = params.find_one_string("type", "flat");
+    let curve_type = params.get_one_string("type", "flat");
     let curve_type = get_curve_type(&curve_type)?;
 
     let n = params.get_points_ref("N");
-    /*
-    let mut n = if let Some(nn) = n.as_ref() {
-        Some(convert_to_point(nn))
-    } else {
-        None
-    };
-    */
     let mut n = n.as_ref().map(|nn| convert_to_point(nn));
     if let Some(nn) = n.as_ref() {
         let nnorm = nn.len();
@@ -745,10 +890,10 @@ pub fn create_curve_shape(
             ));
         }
     }
-    let sd = params.find_one_float("splitdepth", 3.0) as i32;
-    let sd = params.find_one_int("splitdepth", sd);
+    let sd = params.get_one_float("splitdepth", 3.0) as i32;
+    let sd = params.get_one_int("splitdepth", sd);
 
-    let mut curves: Vec<Arc<dyn Shape>> = Vec::new();
+    let mut curves: Vec<Curve> = Vec::new();
     for seg in 0..n_segments {
         // First, compute the cubic Bezier control points for the current
         // segment and store them in segCpBezier. (It is admittedly
@@ -772,7 +917,6 @@ pub fn create_curve_shape(
             } else {
                 //for i in 0..4 {
                 //    seg_cp_bezier[i] = cp_base[i];
-                //}
                 seg_cp_bezier.copy_from_slice(&cp_base[..4]);
             }
         } else {

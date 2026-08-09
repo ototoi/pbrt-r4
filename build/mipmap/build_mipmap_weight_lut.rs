@@ -25,7 +25,7 @@ pub fn build_core(path: &str) {
     let mipmap_weight_lut = create_mipmap_weight_lut();
     let mut contents = String::from("");
 
-    contents += "use crate::core::base::Float;\n";
+    contents += "use crate::util::base::Float;\n";
     contents += "\n";
     contents += "#[rustfmt::skip]\n";
     contents += &format!(

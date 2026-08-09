@@ -1,0 +1,96 @@
+Film "rgb"
+    "string filename" [ "/Users/toru/src/others/pbrt-r4-devkit/works/20260505/step97/r4-crown-step13-textured-material-panels-nobump-128-16spp.exr" ]
+    "integer yresolution" [ 128 ]
+    "integer xresolution" [ 128 ]
+
+LookAt 0 0 6
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float lensradius" [ 0 ]
+    "float focaldistance" [ 6 ]
+    "float fov" [ 34 ]
+Sampler "halton"
+    "integer pixelsamples" [ 16 ]
+Integrator "volpath"
+    "integer maxdepth" [ 64 ]
+
+WorldBegin
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 12 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0 0 -1 0 0 -1 0 0 -1 0 0 -1 ]
+        "point3 P" [ -4 4 3 4 4 3 4 1 3 -4 1 3 ]
+AttributeEnd
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.18 0.18 0.18 ]
+    Shape "sphere"
+        "float radius" [ 50 ]
+AttributeEnd
+
+Texture "mitra_inlay-kd-tex" "spectrum" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/mitra/mitra_border_color.png" ]
+Texture "mitra_inlay-kd" "spectrum" "scale"
+    "float scale" [ 1.5 ]
+    "texture tex" [ "mitra_inlay-kd-tex" ]
+MakeNamedMaterial "mitra_inlay"
+    "string type" [ "coateddiffuse" ]
+    "texture reflectance" [ "mitra_inlay-kd" ]
+    "float roughness" [ 0.010408 ]
+
+Texture "rosetta-deco-mask" "float" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/pearl_tray/deco_mask.png" ]
+MakeNamedMaterial "rosetta_gold"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "deco-mask-white"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.7 0.7 0.7 ]
+MakeNamedMaterial "rosetta_deco_deco_mask"
+    "string type" [ "mix" ]
+    "string materials" [ "deco-mask-white" "rosetta_gold" ]
+    "texture amount" [ "rosetta-deco-mask" ]
+
+Texture "mitra_right_back-roughness-tex" "float" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/mitra/right_front_spec.png" ]
+Texture "mitra_right_back-roughness" "float" "scale"
+    "float scale" [ 0.1 ]
+    "texture tex" [ "mitra_right_back-roughness-tex" ]
+MakeNamedMaterial "mitra_right_back"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+    "texture roughness" [ "mitra_right_back-roughness" ]
+
+AttributeBegin
+    Translate -2.2 0 0
+    NamedMaterial "mitra_inlay"
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "point2 uv" [ 0 0 1 0 1 1 0 1 ]
+        "point3 P" [ -1 -1 0 1 -1 0 1 1 0 -1 1 0 ]
+AttributeEnd
+
+AttributeBegin
+    NamedMaterial "rosetta_deco_deco_mask"
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "point2 uv" [ 0 0 1 0 1 1 0 1 ]
+        "point3 P" [ -1 -1 0 1 -1 0 1 1 0 -1 1 0 ]
+AttributeEnd
+
+AttributeBegin
+    Translate 2.2 0 0
+    NamedMaterial "mitra_right_back"
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "point2 uv" [ 0 0 1 0 1 1 0 1 ]
+        "point3 P" [ -1 -1 0 1 -1 0 1 1 0 -1 1 0 ]
+AttributeEnd

@@ -1,0 +1,21 @@
+Integrator "path"
+    "integer maxdepth" [ 1 ]
+Sampler "independent"
+    "integer pixelsamples" [ 1 ]
+Film "gbuffer"
+    "string filename" [ "film-gbuffer-smoke.exr" ]
+    "integer xresolution" [ 16 ]
+    "integer yresolution" [ 16 ]
+    "string coordinatesystem" [ "camera" ]
+LookAt 0 0 5
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float fov" [ 30 ]
+
+WorldBegin
+
+Material "diffuse"
+    "rgb reflectance" [ 0.7 0.7 0.7 ]
+Shape "sphere"
+    "float radius" [ 1 ]

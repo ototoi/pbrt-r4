@@ -1,192 +1,271 @@
-use crate::core::prelude::*;
-use crate::media::*;
+use super::material_eval_context::MaterialEvalContext;
+use super::normal_bump::{apply_normal_or_bump, get_normal_map, NormalMap};
+use crate::bssrdf::{
+    compute_beam_diffusion_bssrdf, subsurface_from_diffuse_sampled, BSSRDFTable, TabulatedBSSRDF,
+};
+use crate::bxdfs::DielectricBxDF;
+use crate::interaction::SurfaceInteraction;
+use crate::media::get_medium_scattering_properties;
+use crate::paramdict::TextureParameterDictionary;
+use crate::textures::*;
+use crate::util::base::*;
+use crate::util::distribution::TrowbridgeReitzDistribution;
+use crate::util::error::*;
+use crate::util::spectrum::*;
 
 use std::sync::Arc;
 
-use log::*;
-
-struct SubsurfaceMaterial {
+pub struct SubsurfaceMaterial {
     scale: Float,
-    kr: Arc<dyn Texture<Spectrum>>,
-    kt: Arc<dyn Texture<Spectrum>>,
-    sigma_a: Arc<dyn Texture<Spectrum>>,
-    sigma_s: Arc<dyn Texture<Spectrum>>,
+    sigma_a: Option<Arc<SpectrumTexture>>,
+    sigma_s: Option<Arc<SpectrumTexture>>,
+    reflectance: Option<Arc<SpectrumTexture>>,
+    mfp: Option<Arc<SpectrumTexture>>,
     eta: Float,
-    u_roughness: Arc<dyn Texture<Float>>,
-    v_roughness: Arc<dyn Texture<Float>>,
-    bumpmap: Option<Arc<dyn Texture<Float>>>,
-    remaproughness: bool,
+    u_roughness: Arc<FloatTexture>,
+    v_roughness: Arc<FloatTexture>,
+    remap_roughness: bool,
+    displacement: Option<Arc<FloatTexture>>,
+    normal_map: Option<Arc<NormalMap>>,
     table: Arc<BSSRDFTable>,
 }
 
 impl SubsurfaceMaterial {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scale: Float,
-        kr: &Arc<dyn Texture<Spectrum>>,
-        kt: &Arc<dyn Texture<Spectrum>>,
-        sigma_a: &Arc<dyn Texture<Spectrum>>,
-        sigma_s: &Arc<dyn Texture<Spectrum>>,
+        sigma_a: &Option<Arc<SpectrumTexture>>,
+        sigma_s: &Option<Arc<SpectrumTexture>>,
+        reflectance: &Option<Arc<SpectrumTexture>>,
+        mfp: &Option<Arc<SpectrumTexture>>,
         g: Float,
         eta: Float,
-        u_roughness: &Arc<dyn Texture<Float>>,
-        v_roughness: &Arc<dyn Texture<Float>>,
-        bumpmap: &Option<Arc<dyn Texture<Float>>>,
-        remaproughness: bool,
+        u_roughness: &Arc<FloatTexture>,
+        v_roughness: &Arc<FloatTexture>,
+        remap_roughness: bool,
+        displacement: &Option<Arc<FloatTexture>>,
+        normal_map: &Option<Arc<NormalMap>>,
     ) -> Self {
         let mut table = BSSRDFTable::new(100, 64);
         compute_beam_diffusion_bssrdf(g, eta, &mut table);
 
-        SubsurfaceMaterial {
+        Self {
             scale,
-            kr: kr.clone(),
-            kt: kt.clone(),
             sigma_a: sigma_a.clone(),
             sigma_s: sigma_s.clone(),
+            reflectance: reflectance.clone(),
+            mfp: mfp.clone(),
             eta,
             u_roughness: u_roughness.clone(),
             v_roughness: v_roughness.clone(),
-            bumpmap: bumpmap.clone(),
-            remaproughness,
+            remap_roughness,
+            displacement: displacement.clone(),
+            normal_map: normal_map.clone(),
             table: Arc::new(table),
         }
     }
-}
 
-impl Material for SubsurfaceMaterial {
-    fn compute_scattering_functions(
+    pub fn apply_displacement(&self, si: &mut SurfaceInteraction) {
+        apply_normal_or_bump(&self.normal_map, &self.displacement, si);
+    }
+
+    pub fn get_bxdf<E: TextureEvaluator>(
         &self,
-        si: &mut SurfaceInteraction,
-        arena: &mut MemoryArena,
-        mode: TransportMode,
-        allow_multiple_lobes: bool,
-    ) {
-        // Perform bump mapping with _bumpMap_, if present
-        if let Some(bump) = self.bumpmap.as_ref() {
-            self.bump(bump, si);
+        tex_eval: &E,
+        ctx: &MaterialEvalContext,
+        _lambda: &SampledWavelengths,
+    ) -> DielectricBxDF {
+        let texture_ctx = ctx.texture_context();
+        let mut u_rough = tex_eval
+            .evaluate_float(self.u_roughness.as_ref(), texture_ctx)
+            .clamp(0.0, 1.0);
+        let mut v_rough = tex_eval
+            .evaluate_float(self.v_roughness.as_ref(), texture_ctx)
+            .clamp(0.0, 1.0);
+        if self.remap_roughness {
+            u_rough = TrowbridgeReitzDistribution::roughness_to_alpha(u_rough);
+            v_rough = TrowbridgeReitzDistribution::roughness_to_alpha(v_rough);
+        }
+        let distrib = TrowbridgeReitzDistribution::new(u_rough, v_rough, true);
+        DielectricBxDF::new(self.eta, distrib)
+    }
+
+    /// pbrt-v4 `SubsurfaceMaterial::GetBSSRDF` (materials.h:747-765) —
+    /// evaluate `sigma_a` / `sigma_s` (or reflectance + mfp) at the
+    /// current pixel's wavelengths, returning a `SampledSpectrum` pair
+    /// instead of allocating a `DenselySampledSpectrum` per shade.
+    pub fn get_bssrdf<E: TextureEvaluator>(
+        &self,
+        tex_eval: &E,
+        ctx: &MaterialEvalContext,
+        lambda: &SampledWavelengths,
+    ) -> Option<TabulatedBSSRDF> {
+        let (sigma_a, sigma_s) = self.evaluate_scattering(tex_eval, ctx, lambda);
+        if (sigma_a + sigma_s).is_black() {
+            return None;
         }
 
-        // Initialize BSDF for _SubsurfaceMaterial_
-        let eta = self.eta;
-        let r = self.kr.as_ref().evaluate(si);
-        let t = self.kt.as_ref().evaluate(si);
+        Some(TabulatedBSSRDF::new(
+            ctx.texture_ctx.p,
+            ctx.ns,
+            ctx.wo,
+            self.eta,
+            sigma_a,
+            sigma_s,
+            self.table.clone(),
+        ))
+    }
 
-        {
-            let mut b = arena.alloc_bsdf(si, eta);
-            if !r.is_black() || !t.is_black() {
-                {
-                    let mut u_rough = self.u_roughness.as_ref().evaluate(si);
-                    let mut v_rough = self.v_roughness.as_ref().evaluate(si);
-                    let is_specular = u_rough == 0.0 && v_rough == 0.0;
-                    if is_specular && allow_multiple_lobes {
-                        let reflection: Arc<dyn BxDF> =
-                            Arc::new(FresnelSpecular::new(&r, &t, 1.0, eta, mode));
-                        b.add(&reflection);
-                    } else {
-                        if self.remaproughness {
-                            u_rough = TrowbridgeReitzDistribution::roughness_to_alpha(u_rough);
-                            v_rough = TrowbridgeReitzDistribution::roughness_to_alpha(v_rough);
-                        }
-                        if !r.is_black() {
-                            let fresnel: Box<dyn Fresnel> =
-                                Box::new(FresnelDielectric::new(1.0, eta));
-                            if is_specular {
-                                let reflection: Arc<dyn BxDF> =
-                                    Arc::new(SpecularReflection::new(&r, fresnel));
-                                b.add(&reflection);
-                            } else {
-                                let distrib: Box<dyn MicrofacetDistribution> = Box::new(
-                                    TrowbridgeReitzDistribution::new(u_rough, v_rough, true),
-                                );
-                                let reflection: Arc<dyn BxDF> =
-                                    Arc::new(MicrofacetReflection::new(&r, distrib, fresnel));
-                                b.add(&reflection);
-                            }
-                        }
-                        if !t.is_black() {
-                            if is_specular {
-                                let trans: Arc<dyn BxDF> =
-                                    Arc::new(SpecularTransmission::new(&t, 1.0, eta, mode));
-                                b.add(&trans);
-                            } else {
-                                let distrib: Box<dyn MicrofacetDistribution> = Box::new(
-                                    TrowbridgeReitzDistribution::new(u_rough, v_rough, true),
-                                );
-                                let trans: Arc<dyn BxDF> = Arc::new(MicrofacetTransmission::new(
-                                    &t, distrib, 1.0, eta, mode,
-                                ));
-                                b.add(&trans);
-                            }
-                        }
-                    }
+    fn evaluate_scattering<E: TextureEvaluator>(
+        &self,
+        tex_eval: &E,
+        ctx: &MaterialEvalContext,
+        lambda: &SampledWavelengths,
+    ) -> (SampledSpectrum, SampledSpectrum) {
+        let texture_ctx = ctx.texture_context();
+        if let (Some(sigma_a), Some(sigma_s)) = (&self.sigma_a, &self.sigma_s) {
+            let sigma_a = (tex_eval.evaluate_spectrum(sigma_a.as_ref(), texture_ctx, lambda)
+                * self.scale)
+                .clamp_zero();
+            let sigma_s = (tex_eval.evaluate_spectrum(sigma_s.as_ref(), texture_ctx, lambda)
+                * self.scale)
+                .clamp_zero();
+            return (sigma_a, sigma_s);
+        }
+
+        let reflectance = self
+            .reflectance
+            .as_ref()
+            .map(|tex| {
+                tex_eval
+                    .evaluate_spectrum(tex.as_ref(), texture_ctx, lambda)
+                    .clamp(0.0, 1.0)
+            })
+            .unwrap_or_else(SampledSpectrum::zero);
+        let mfp = self
+            .mfp
+            .as_ref()
+            .map(|tex| {
+                (tex_eval.evaluate_spectrum(tex.as_ref(), texture_ctx, lambda) * self.scale)
+                    .clamp_zero()
+            })
+            .unwrap_or_else(SampledSpectrum::one);
+        subsurface_from_diffuse_sampled(&self.table, &reflectance, &mfp)
+    }
+
+    pub fn create(mp: &TextureParameterDictionary) -> Result<SubsurfaceMaterial, PbrtError> {
+        let g_default = mp.get_one_float("g", 0.0);
+        let name = mp.get_one_string("name", "");
+        let (sigma_a, sigma_s, reflectance, mfp, g) = if !name.is_empty() {
+            if let Some((preset_sigma_a, preset_sigma_s)) = get_medium_scattering_properties(&name)
+            {
+                if g_default != 0.0 {
+                    log::warn!(
+                        "Material \"subsurface\": non-zero g ignored with named preset \"{}\".",
+                        name
+                    );
                 }
-
-                {
-                    let scale = self.scale;
-                    let sig_a = self.sigma_a.as_ref().evaluate(si).clamp_zero() * scale;
-                    let sig_s = self.sigma_s.as_ref().evaluate(si).clamp_zero() * scale;
-
-                    let material = self as BSSRDFMaterialRawPointer;
-                    let bssrdf: Arc<dyn BSSRDF> = Arc::new(TabulatedBSSRDF::new(
-                        si,
-                        eta,
-                        material,
-                        mode,
-                        &sig_a,
-                        &sig_s,
-                        &self.table,
-                    ));
-                    si.bssrdf = Some(bssrdf);
-                }
+                (
+                    Some(constant_spectrum_texture(preset_sigma_a)),
+                    Some(constant_spectrum_texture(preset_sigma_s)),
+                    None,
+                    None,
+                    0.0,
+                )
+            } else {
+                return Err(PbrtError::error(&format!(
+                    "Material \"subsurface\": preset \"{}\" was not found.",
+                    name
+                )));
             }
-            si.bsdf = Some(Arc::new(b));
+        } else {
+            let sigma_a =
+                mp.get_spectrum_texture_or_null_typed("sigma_a", SpectrumType::Unbounded)?;
+            let sigma_s =
+                mp.get_spectrum_texture_or_null_typed("sigma_s", SpectrumType::Unbounded)?;
+            if sigma_a.is_some() ^ sigma_s.is_some() {
+                return Err(PbrtError::error(
+                "Material \"subsurface\": both \"sigma_a\" and \"sigma_s\" are required together.",
+            ));
+            }
+
+            if sigma_a.is_none() && sigma_s.is_none() {
+                let reflectance =
+                    mp.get_spectrum_texture_or_null_typed("reflectance", SpectrumType::Albedo)?;
+                if reflectance.is_some() {
+                    (
+                        None,
+                        None,
+                        reflectance,
+                        Some(mp.get_spectrum_texture_typed(
+                            "mfp",
+                            &Spectrum::one(),
+                            SpectrumType::Unbounded,
+                        )?),
+                        g_default,
+                    )
+                } else {
+                    (
+                        Some(constant_spectrum_texture(Spectrum::from([
+                            0.0011, 0.0024, 0.014,
+                        ]))),
+                        Some(constant_spectrum_texture(Spectrum::from([
+                            2.55, 3.21, 3.77,
+                        ]))),
+                        None,
+                        None,
+                        g_default,
+                    )
+                }
+            } else {
+                (sigma_a, sigma_s, None, None, g_default)
+            }
+        };
+
+        let mut eta = mp
+            .get_spectrum_or_null_typed("eta", SpectrumType::Unbounded)
+            .map(|eta_spec| {
+                let lambda = SampledWavelengths::sample_visible(0.5);
+                eta_from_spectrum(eta_spec.clamp_zero(), &lambda, 1.33)
+            })
+            .unwrap_or_else(|| mp.get_one_float("eta", 1.33));
+        if eta <= 0.0 {
+            log::warn!(
+                "Material \"subsurface\": invalid eta {}. Falling back to 1.33",
+                eta
+            );
+            eta = 1.33;
         }
+
+        let scale = mp.get_one_float("scale", 1.0);
+        let roughness = mp.get_float_texture("roughness", 0.0)?;
+        let u_roughness = mp
+            .get_float_texture_or_null("uroughness")?
+            .unwrap_or_else(|| roughness.clone());
+        let v_roughness = mp
+            .get_float_texture_or_null("vroughness")?
+            .unwrap_or_else(|| roughness.clone());
+        let remap_roughness = mp.get_one_bool("remaproughness", true);
+        let displacement = mp.get_float_texture_or_null("displacement")?;
+        let normal_map = get_normal_map(mp)?;
+
+        Ok(SubsurfaceMaterial::new(
+            scale,
+            &sigma_a,
+            &sigma_s,
+            &reflectance,
+            &mfp,
+            g,
+            eta,
+            &u_roughness,
+            &v_roughness,
+            remap_roughness,
+            &displacement,
+            &normal_map,
+        ))
     }
 }
 
-pub fn create_subsurface_material(mp: &TextureParams) -> Result<Arc<dyn Material>, PbrtError> {
-    const SIG_A_RGB: [Float; 3] = [0.0011, 0.0024, 0.014];
-    const SIG_S_RGB: [Float; 3] = [2.55, 3.21, 3.77];
-    let mut sig_a = Spectrum::from(SIG_A_RGB);
-    let mut sig_s = Spectrum::from(SIG_S_RGB);
-
-    let mut g = mp.find_float("g", 0.0);
-    let name = mp.find_string("name", "");
-    if !name.is_empty() {
-        if let Some((a, s)) = get_medium_scattering_properties(&name) {
-            sig_a = a;
-            sig_s = s;
-            //Enforce g=0 (the database specifies reduced scattering coefficients)
-            g = 0.0;
-        } else {
-            warn!("Named material \"{}\" not found.  Using defaults.", name);
-        }
-    }
-
-    let scale = mp.find_float("scale", 1.0);
-    let eta = mp.find_float("eta", 1.33);
-
-    let sigma_a = mp.get_spectrum_texture("sigma_a", &sig_a);
-    let sigma_s = mp.get_spectrum_texture("sigma_s", &sig_s);
-
-    let kr = mp.get_spectrum_texture("Kr", &Spectrum::from(1.0));
-    let kt = mp.get_spectrum_texture("Kt", &Spectrum::from(1.0));
-
-    let uroughness = mp.get_float_texture("uroughness", 0.0);
-    let vroughness = mp.get_float_texture("vroughness", 0.0);
-    let bumpmap = mp.get_float_texture_or_null("bumpmap");
-    let remaproughness = mp.find_bool("remaproughness", true);
-
-    return Ok(Arc::new(SubsurfaceMaterial::new(
-        scale,
-        &kr,
-        &kt,
-        &sigma_a,
-        &sigma_s,
-        g,
-        eta,
-        &uroughness,
-        &vroughness,
-        &bumpmap,
-        remaproughness,
-    )));
+fn constant_spectrum_texture(value: Spectrum) -> Arc<SpectrumTexture> {
+    Arc::new(SpectrumTexture::Constant(ConstantTexture::new(&value)))
 }

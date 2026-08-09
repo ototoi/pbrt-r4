@@ -1,4 +1,10 @@
-use crate::core::prelude::*;
+use crate::displays::*;
+
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+use crate::util::imageio::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -10,7 +16,6 @@ pub struct SequentialDisplay {
     buffer: RwLock<Vec<f32>>,
     output_dir: PathBuf,
     channel_names: Vec<String>,
-    //pub prev_call_time: std::time::Instant,
 }
 
 impl SequentialDisplay {
@@ -65,14 +70,11 @@ impl Display for SequentialDisplay {
         self.resolution = *resolution;
         self.count.store(0, std::sync::atomic::Ordering::Relaxed);
         self.channel_names = channel_names.iter().map(|s| s.to_string()).collect();
-        //self.prev_call_time = std::time::Instant::now();
         Ok(())
     }
 
     fn update(&mut self, tile: &DisplayTile) -> Result<(), PbrtError> {
         self.update_buffer(tile)?;
-        //let diff = self.prev_call_time.elapsed();
-        //if diff.as_millis() > 1000 {
         let count = self
             .count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -91,8 +93,6 @@ impl Display for SequentialDisplay {
         ));
         let resolution = Vector2i::from((self.resolution[0] as i32, self.resolution[1] as i32));
         write_image(filepath.to_str().unwrap(), &pixels, &bounds, &resolution)?;
-        //self.prev_call_time = std::time::Instant::now();
-        //}
         Ok(())
     }
 

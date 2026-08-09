@@ -1,8 +1,27 @@
-use crate::core::prelude::*;
+use crate::base::shape::Shape;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::util::base::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::sync::Arc;
 
 use super::create_triangle_mesh;
+
+pub struct NURBS;
+
+impl NURBS {
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+        create_nurbs(o2w, w2o, reverse_orientation, params)
+    }
+}
 
 // knot example
 // 1 patch
@@ -158,8 +177,6 @@ fn nurbs_evaluate_surface(
         iso[i as usize] = nurbs_evaluate(u_order, u_knot, &offset_cp, 1, u).0;
     }
 
-    //unimplemented!();
-    //println!("v_first_cp: {}", v_first_cp);
     let offset_cp = OffsetArray::new(-v_first_cp, &iso);
     let (_p, dpdv) = nurbs_evaluate(v_order, v_knot, &offset_cp, 1, v);
 
@@ -181,7 +198,7 @@ fn create_tesselated_mesh(
     vrange: (Float, Float),
     dicev: usize,
     pw: &[Homogeneous3],
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
+) -> Result<Vec<Arc<Shape>>, PbrtError> {
     let u0 = urange.0;
     let u1 = urange.1;
     let v0 = vrange.0;
@@ -236,8 +253,7 @@ fn create_tesselated_mesh(
             index += 3;
         }
     }
-    //println!("vertex_indices: {:?}", vertex_indices);
-    let params = ParamSet::new();
+    let params = ParameterDictionary::new();
     let mesh = create_triangle_mesh(
         o2w,
         w2o,
@@ -248,11 +264,15 @@ fn create_tesselated_mesh(
         eval_ns,
         uvs,
         &params,
-    );
+    )?;
+    let mesh: Vec<Arc<Shape>> = mesh
+        .into_iter()
+        .map(|tri| Arc::new(Shape::Triangle(tri)))
+        .collect();
     return Ok(mesh);
 }
 
-fn get_points(params: &ParamSet) -> Option<(Vec<Float>, bool)> {
+fn get_points(params: &ParameterDictionary) -> Option<(Vec<Float>, bool)> {
     let p = params.get_points("P");
     if !p.is_empty() {
         return Some((p, false));
@@ -268,15 +288,15 @@ pub fn create_nurbs(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
-    let nu = params.find_one_int("nu", -1);
+    params: &ParameterDictionary,
+) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    let nu = params.get_one_int("nu", -1);
     if nu == -1 {
         return Err(PbrtError::error(
             "Must provide number of control points \"nu\" with NURBS shape.",
         ));
     }
-    let uorder = params.find_one_int("uorder", -1);
+    let uorder = params.get_one_int("uorder", -1);
     if uorder == -1 {
         return Err(PbrtError::error(
             "Must provide u order \"uorder\" with NURBS shape.",
@@ -299,13 +319,13 @@ pub fn create_nurbs(
         return Err(PbrtError::error(&msg));
     }
 
-    let nv = params.find_one_int("nv", -1);
+    let nv = params.get_one_int("nv", -1);
     if nv == -1 {
         return Err(PbrtError::error(
             "Must provide number of control points \"nv\" with NURBS shape.",
         ));
     }
-    let vorder = params.find_one_int("vorder", -1);
+    let vorder = params.get_one_int("vorder", -1);
     if vorder == -1 {
         return Err(PbrtError::error(
             "Must provide v order \"vorder\" with NURBS shape.",
@@ -368,18 +388,18 @@ pub fn create_nurbs(
     let u1x = uknots[nu]; //[0, 1, 2, 3, 4, 5, 6, 7] -> 4
     let v0x = vknots[vorder - 1];
     let v1x = vknots[nv];
-    let u0 = params.find_one_float("u0", u0x); //
-    let u1 = params.find_one_float("u1", u1x); //
-    let v0 = params.find_one_float("v0", v0x); //
-    let v1 = params.find_one_float("v1", v1x); //
+    let u0 = params.get_one_float("u0", u0x); //
+    let u1 = params.get_one_float("u1", u1x); //
+    let v0 = params.get_one_float("v0", v0x); //
+    let v1 = params.get_one_float("v1", v1x); //
 
     let u0 = Float::clamp(u0, u0x, u1x);
     let u1 = Float::clamp(u1, u0x, u1x);
     let v0 = Float::clamp(v0, v0x, v1x);
     let v1 = Float::clamp(v1, v0x, v1x);
 
-    let diceu = params.find_one_int("diceu", 30); //pbrt-r3
-    let dicev = params.find_one_int("dicev", 30); //pbrt-r3
+    let diceu = params.get_one_int("diceu", 30);
+    let dicev = params.get_one_int("dicev", 30);
 
     let diceu = diceu.max(2) as usize;
     let dicev = dicev.max(2) as usize;

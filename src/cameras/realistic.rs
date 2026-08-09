@@ -1,20 +1,22 @@
-use crate::core::camera::*;
-use crate::core::error::*;
-use crate::core::film::*;
-use crate::core::geometry::*;
-//use crate::core::interaction::*;
-//use crate::core::light::*;
-use crate::core::base::*;
-use crate::core::lowdiscrepancy::*;
-use crate::core::medium::*;
-use crate::core::misc::*;
-use crate::core::param_set::*;
-use crate::core::profile::*;
-use crate::core::reflection::*;
-//use crate::core::sampling::*;
-//use crate::core::spectrum::*;
-use crate::core::stats::*;
-use crate::core::transform::*;
+use crate::base::camera::{Camera, CameraRay, CameraRayDifferential, CameraSample, CameraWiSample};
+use crate::cameras::*;
+use crate::film::*;
+use crate::interaction::*;
+use crate::lights::*;
+use crate::media::*;
+use crate::paramdict::*;
+
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+use crate::util::lowdiscrepancy::*;
+use crate::util::misc::*;
+use crate::util::profile::*;
+use crate::util::sampling::*;
+use crate::util::scattering::*; // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
+use crate::util::stats::*;
+use crate::util::transform::*; // For refract and other scattering functions
 
 use log::*;
 
@@ -57,19 +59,13 @@ impl BaseRealisticCamera {
         let mut film_distance_lower = film_distance;
         let mut film_distance_upper = film_distance;
         {
-            //let mut count = 0;
             while self.focus_distance(film_distance_lower) > focus_distance {
                 film_distance_lower *= 1.005;
-                //count += 1;
-                //println!("count lower:{}", count);
             }
         }
         {
-            //let mut count = 0;
             while self.focus_distance(film_distance_upper) < focus_distance {
                 film_distance_upper /= 1.005;
-                //count += 1;
-                //println!("count upper:{}", count);
             }
         }
 
@@ -88,15 +84,13 @@ impl BaseRealisticCamera {
 
     pub fn focus_distance(&self, film_distance: Float) -> Float {
         // Find offset ray from film center through lens
-        //let film = self.get_film();
         let film = self.base.film.as_ref().read().unwrap();
-        let bounds = self.bound_exit_pupil(0.0, 0.001 * film.diagonal);
+        let bounds = self.bound_exit_pupil(0.0, 0.001 * film.diagonal());
 
         // Try some different and decreasing scaling factor to find focus ray
         // more quickly when `aperturediameter` is too small.
         // (e.g. 2 [mm] for `aperturediameter` with wide.22mm.dat),
         let mut found_ray: Option<Ray> = None;
-        //const SCALE_FACTORS: [Float; 3] = [0.1, 0.01, 0.001];
         for scale in [0.1, 0.01, 0.001] {
             let lu = scale * bounds.max[0];
             let ro = Point3f::new(0.0, 0.0, self.lens_rear_z() - film_distance);
@@ -116,9 +110,6 @@ impl BaseRealisticCamera {
             }
             return z_focus;
         } else {
-            //let msg = format!("Focus ray at lens pos({},0) didn't make it through the lenses with film distance {}?!??\n", lu, film_distance);
-            //println!("error:{}", msg);
-            //
             return Float::INFINITY;
         }
     }
@@ -148,10 +139,9 @@ impl BaseRealisticCamera {
     }
 
     pub fn compute_thick_lens_approximation(&self) -> ([Float; 2], [Float; 2]) {
-        //let film = self.get_film();
         let film = self.base.film.as_ref().read().unwrap();
         // Find height $x$ from optical axis for parallel rays
-        let x = 0.001 * film.diagonal;
+        let x = 0.001 * film.diagonal();
 
         // Compute cardinal points for film side of lens system
         let ro = Point3f::new(x, 0.0, self.lens_front_z() + 1.0);
@@ -405,18 +395,67 @@ fn get_lens_to_camera_transform() -> &'static Transform {
 }
 
 impl RealisticCamera {
+    pub fn create(
+        params: &ParameterDictionary,
+        cam2world: &AnimatedTransform,
+        film: &Arc<RwLock<Film>>,
+        medium: &Option<Arc<Medium>>,
+    ) -> Result<Self, PbrtError> {
+        let mut shutteropen = params.get_one_float("shutteropen", 0.0);
+        let mut shutterclose = params.get_one_float("shutterclose", 1.0);
+        if shutterclose < shutteropen {
+            warn!(
+                "Shutter close time [{}] < shutter open [{}].  Swapping them.",
+                shutterclose, shutteropen
+            );
+            std::mem::swap(&mut shutteropen, &mut shutterclose);
+        }
+
+        // Realistic camera-specific parameters
+        let lens_file = params.get_one_filename("lensfile", "");
+        let aperture_diameter = params.get_one_float("aperturediameter", 1.0);
+        let focus_distance = params.get_one_float("focusdistance", 10.0);
+        let simple_weighting = params.get_one_bool("simpleweighting", true);
+
+        if lens_file == "" || !Path::new(&lens_file).exists() {
+            let msg = format!("No lens description file supplied!");
+            return Err(PbrtError::error(&msg));
+        }
+        // Load element data from lens description file
+
+        let lens_data = read_float_file(&lens_file).map_err(|_| {
+            let msg = format!("Error reading lens specification file \"{}\".", lens_file);
+            PbrtError::error(&msg)
+        })?;
+
+        if (lens_data.len() % 4) != 0 {
+            let msg = format!("Excess values in lens specification file \"{}\"; must be multiple-of-four values, read {}.", lens_file, lens_data.len());
+            return Err(PbrtError::error(&msg));
+        }
+
+        if simple_weighting {
+            warn!("\"simpleweighting\" option with RealisticCamera no longer necessarily matches regular camera images. Further, pixel values will vary a bit depending on the aperture size. See this discussion for details: https://github.com/mmp/pbrt-v3/issues/162#issuecomment-348625837");
+        }
+
+        let base_params =
+            CameraBaseParameters::new(cam2world, shutteropen, shutterclose, film, medium);
+        Ok(Self::new(
+            base_params,
+            aperture_diameter,
+            focus_distance,
+            simple_weighting,
+            &lens_data,
+        ))
+    }
+
     pub fn new(
-        camera_to_world: &AnimatedTransform,
-        shutter_open: Float,
-        shutter_close: Float,
+        base_params: CameraBaseParameters,
         aperture_diameter: Float,
         focus_distance: Float,
         simple_weighting: bool,
         lens_data: &[Float],
-        film: &Arc<RwLock<Film>>,
-        medium: &Option<Arc<dyn Medium>>,
     ) -> Self {
-        let base = BaseCamera::new(camera_to_world, shutter_open, shutter_close, film, medium);
+        let base = BaseCamera::new(base_params);
         let mut element_interfaces = Vec::new();
         for i in (0..lens_data.len()).step_by(4) {
             let mut data = lens_data[i..(i + 4)].to_vec();
@@ -444,7 +483,6 @@ impl RealisticCamera {
             element_interfaces,
         };
         let fb1 = base.focus_binary_search(focus_distance);
-        //let fb2 = calc_();
         info!("Binary search focus: {} -> ", fb1);
 
         let old_fd = base.element_interfaces.last().unwrap().thickness;
@@ -454,7 +492,7 @@ impl RealisticCamera {
 
         // Compute exit pupil bounds at sampled points on the film
         const N_SAMPLES: usize = 64;
-        let diagonal = film.as_ref().read().unwrap().diagonal;
+        let diagonal = base.base.film.as_ref().read().unwrap().diagonal();
         let mut exit_pupil_bounds = Vec::with_capacity(N_SAMPLES);
         for i in 0..N_SAMPLES {
             let r0 = (i + 0) as Float / N_SAMPLES as Float * diagonal / 2.0;
@@ -473,17 +511,9 @@ impl RealisticCamera {
     fn lens_rear_z(&self) -> Float {
         return self.base.lens_rear_z();
     }
-    /*
-        fn lens_front_z(&self) -> Float {
-            return self.element_interfaces.iter().map(|e| e.thickness).sum();
-        }
-        fn rear_element_radius(&self) -> Float {
-            return self.element_interfaces.last().unwrap().aperture_radius;
-        }
-    */
     fn sample_exit_pupil(&self, p_film: &Point2f, lens_sample: &Point2f) -> (Point3f, Float) {
         // Find exit pupil bound for sample distance from film center
-        let diagonal = self.base.base.film.as_ref().read().unwrap().diagonal;
+        let diagonal = self.base.base.film.as_ref().read().unwrap().diagonal();
         let exit_pupil_bounds = &self.exit_pupil_bounds;
         let r_film = Float::sqrt(p_film.x * p_film.x + p_film.y * p_film.y);
         let r_index = (r_film / (diagonal / 2.0) * exit_pupil_bounds.len() as Float) as usize;
@@ -514,20 +544,13 @@ impl RealisticCamera {
         return (p, sample_bounds_area);
     }
 
-    /*
-    void DrawLensSystem() const;
-    void DrawRayPathFromFilm(const Ray &r, bool arrow,
-                             bool toOpticalIntercept) const;
-    void DrawRayPathFromScene(const Ray &r, bool arrow,
-                              bool toOpticalIntercept) const;
-    */
-
     fn find_point_on_film(&self, sample: &CameraSample) -> Point2f {
         let film = self.base.base.film.as_ref().read().unwrap();
         // Find point on film, _pFilm_, corresponding to _sample.pFilm_
+        let full_resolution = film.full_resolution();
         let s = Vector2f::new(
-            sample.p_film.x / film.full_resolution.x as Float,
-            sample.p_film.y / film.full_resolution.y as Float,
+            sample.p_film.x / full_resolution.x as Float,
+            sample.p_film.y / full_resolution.y as Float,
         );
         let p_film2 = film.get_physical_extent().lerp(&s);
         let p_film = Vector2f::new(-p_film2.x, p_film2.y);
@@ -537,8 +560,82 @@ impl RealisticCamera {
 
 unsafe impl Sync for RealisticCamera {}
 
-impl Camera for RealisticCamera {
-    fn generate_ray(&self, sample: &CameraSample) -> Option<(Float, Ray)> {
+impl RealisticCamera {
+    fn film_point_to_raster(&self, p_film: &Point2f) -> Option<Point2f> {
+        let film = self.base.base.film.as_ref().read().unwrap();
+        let p_film2 = Point2f::new(-p_film.x, p_film.y);
+        let s = film.get_physical_extent().offset(&p_film2);
+        let full_resolution = film.full_resolution();
+        let p_raster = Point2f::new(
+            s.x * full_resolution.x as Float,
+            s.y * full_resolution.y as Float,
+        );
+        let sample_bounds = film.sample_bounds();
+        if p_raster.x < sample_bounds.min.x as Float
+            || p_raster.x >= sample_bounds.max.x as Float
+            || p_raster.y < sample_bounds.min.y as Float
+            || p_raster.y >= sample_bounds.max.y as Float
+        {
+            return None;
+        }
+        Some(p_raster)
+    }
+
+    fn evaluate_importance_geometry(&self, ray: &Ray) -> Option<(Point2f, Float, Float)> {
+        let c2w = self.base.base.camera_to_world.interpolate(ray.time);
+        let w2c = c2w.inverse();
+
+        let d_camera = w2c.transform_vector(&ray.d);
+        if d_camera.length_squared() == 0.0 {
+            return None;
+        }
+        let d_camera = d_camera.normalize();
+        if d_camera.z <= 0.0 {
+            return None;
+        }
+
+        let o_camera = w2c.transform_point(&ray.o);
+        let r_scene = Ray::new(
+            &(o_camera + 1e-3 * d_camera),
+            &(-d_camera),
+            Float::INFINITY,
+            ray.time,
+        );
+        let r_film = self.base.trace_lenses_from_scene(&r_scene)?;
+        if Float::abs(r_film.d.z) < 1e-6 {
+            return None;
+        }
+        let t = -r_film.o.z / r_film.d.z;
+        if t <= 0.0 {
+            return None;
+        }
+        let p_film3 = r_film.position(t);
+        let p_film = Point2f::new(p_film3.x, p_film3.y);
+        let p_raster = self.film_point_to_raster(&p_film)?;
+
+        let cos_theta = Float::abs(d_camera.z);
+        if cos_theta <= 0.0 {
+            return None;
+        }
+
+        let diagonal = self.base.base.film.as_ref().read().unwrap().diagonal();
+        let r_film = Float::sqrt(p_film.x * p_film.x + p_film.y * p_film.y);
+        let mut r_index =
+            (r_film / (diagonal / 2.0) * self.exit_pupil_bounds.len() as Float) as usize;
+        r_index = usize::min(self.exit_pupil_bounds.len() - 1, r_index);
+        let exit_pupil_area = self.exit_pupil_bounds[r_index].area();
+        if exit_pupil_area <= 0.0 {
+            return None;
+        }
+
+        Some((p_raster, cos_theta, exit_pupil_area))
+    }
+
+    pub fn generate_ray(
+        &self,
+        sample: &CameraSample,
+        _lambda: &SampledWavelengths,
+    ) -> Option<CameraRay> {
         let _p = ProfilePhase::new(Prof::GenerateCameraRay);
 
         RAYS.with(|rays| {
@@ -587,79 +684,144 @@ impl Camera for RealisticCamera {
                 / (self.lens_rear_z() * self.lens_rear_z())
         };
 
-        return Some((weight, ray));
+        return Some(CameraRay { ray, weight });
     }
 
-    fn generate_ray_differential(&self, sample: &CameraSample) -> Option<(Float, RayDifferential)> {
-        let ret = BaseCamera::generate_ray_differential(self, sample);
-        return ret;
+    pub fn generate_ray_differential(
+        &self,
+        sample: &CameraSample,
+        lambda: &SampledWavelengths,
+    ) -> Option<CameraRayDifferential> {
+        BaseCamera::generate_ray_differential(&Camera::Realistic(self.clone()), sample, lambda)
     }
 
-    fn get_film(&self) -> Arc<RwLock<Film>> {
+    pub fn we(&self, ray: &Ray) -> Option<(Spectrum, Point2f)> {
+        let (p_raster, cos_theta, exit_pupil_area) = self.evaluate_importance_geometry(ray)?;
+        let cos4_theta = (cos_theta * cos_theta) * (cos_theta * cos_theta);
+        if cos4_theta <= 0.0 {
+            return None;
+        }
+
+        let weight = if self.simple_weighting {
+            self.exit_pupil_bounds[0].area() / (exit_pupil_area * cos4_theta)
+        } else {
+            let shutter = self.base.base.shutter_close - self.base.base.shutter_open;
+            if shutter <= 0.0 {
+                return None;
+            }
+            (self.lens_rear_z() * self.lens_rear_z()) / (shutter * exit_pupil_area * cos4_theta)
+        };
+
+        if !weight.is_finite() || weight <= 0.0 {
+            return None;
+        }
+        Some((Spectrum::from(weight), p_raster))
+    }
+
+    pub fn pdf_we(&self, ray: &Ray) -> Option<(Float, Float)> {
+        let (_p_raster, cos_theta, exit_pupil_area) = self.evaluate_importance_geometry(ray)?;
+        let cos3_theta = cos_theta * cos_theta * cos_theta;
+        if cos3_theta <= 0.0 {
+            return None;
+        }
+        let pdf_pos = 1.0 / exit_pupil_area;
+        let pdf_dir = (self.lens_rear_z() * self.lens_rear_z()) / (exit_pupil_area * cos3_theta);
+        if !pdf_pos.is_finite() || !pdf_dir.is_finite() || pdf_pos <= 0.0 || pdf_dir <= 0.0 {
+            return None;
+        }
+        Some((pdf_pos, pdf_dir))
+    }
+
+    pub fn sample_wi(
+        &self,
+        inter: &Interaction,
+        u: &Point2f,
+        _lambda: &SampledWavelengths,
+    ) -> Option<CameraWiSample> {
+        let c2w = self.base.base.camera_to_world.interpolate(inter.get_time());
+        let rear_radius = self.base.rear_element_radius();
+        if rear_radius <= 0.0 {
+            return None;
+        }
+
+        let p_lens = rear_radius * concentric_sample_disk(u);
+        let p_lens_camera = Point3f::new(p_lens.x, p_lens.y, self.lens_rear_z());
+        let p_lens_world = c2w.transform_point(&p_lens_camera);
+
+        let wi = p_lens_world - inter.get_p();
+        let dist2 = wi.length_squared();
+        if dist2 == 0.0 {
+            return None;
+        }
+        let wi = wi / Float::sqrt(dist2);
+
+        let n = Normal3f::from(c2w.transform_vector(&Vector3f::new(0.0, 0.0, 1.0)));
+        let cos = n.abs_dot(&wi);
+        if cos <= 0.0 {
+            return None;
+        }
+
+        let medium = self.base.base.medium.clone();
+        let lens_intr = Interaction::Base(BaseInteraction {
+            p: p_lens_world,
+            time: inter.get_time(),
+            medium_interface: MediumInterface::from(&medium),
+            n,
+            ..Default::default()
+        });
+        let vis = VisibilityTester::from((inter.clone(), lens_intr.clone()));
+        let ray = lens_intr.spawn_ray(&-wi);
+        let (spec, p_raster) = self.we(&ray)?;
+
+        let lens_area = PI * rear_radius * rear_radius;
+        if lens_area <= 0.0 {
+            return None;
+        }
+        let pdf = dist2 / (cos * lens_area);
+        if !pdf.is_finite() || pdf <= 0.0 {
+            return None;
+        }
+
+        Some(CameraWiSample {
+            wi_spec: spec,
+            wi,
+            pdf,
+            p_raster,
+            visibility: vis,
+        })
+    }
+
+    pub fn get_film(&self) -> Arc<RwLock<Film>> {
         return self.base.base.get_film();
     }
 
-    fn get_medium(&self) -> Option<Arc<dyn Medium>> {
+    pub fn get_medium(&self) -> Option<Arc<Medium>> {
         return self.base.base.get_medium();
     }
 
-    fn get_shutter(&self) -> (Float, Float) {
+    pub fn get_shutter(&self) -> (Float, Float) {
         return self.base.base.get_shutter();
     }
-}
 
-pub fn create_realistic_camera(
-    params: &ParamSet,
-    cam2world: &AnimatedTransform,
-    film: &Arc<RwLock<Film>>,
-    medium: &Option<Arc<dyn Medium>>,
-) -> Result<Arc<dyn Camera>, PbrtError> {
-    let mut shutteropen = params.find_one_float("shutteropen", 0.0);
-    let mut shutterclose = params.find_one_float("shutterclose", 1.0);
-    if shutterclose < shutteropen {
-        warn!(
-            "Shutter close time [{}] < shutter open [{}].  Swapping them.",
-            shutterclose, shutteropen
-        );
-        std::mem::swap(&mut shutteropen, &mut shutterclose);
+    pub fn get_camera_to_world(&self) -> AnimatedTransform {
+        self.base.base.get_camera_to_world()
     }
 
-    // Realistic camera-specific parameters
-    let lens_file = params.find_one_filename("lensfile", "");
-    let aperture_diameter = params.find_one_float("aperturediameter", 1.0);
-    let focus_distance = params.find_one_float("focusdistance", 10.0);
-    let simple_weighting = params.find_one_bool("simpleweighting", true); //originally default-true
-
-    if lens_file == "" || !Path::new(&lens_file).exists() {
-        let msg = format!("No lens description file supplied!");
-        return Err(PbrtError::error(&msg));
-    }
-    // Load element data from lens description file
-
-    let lens_data = read_float_file(&lens_file).map_err(|_| {
-        let msg = format!("Error reading lens specification file \"{}\".", lens_file);
-        PbrtError::error(&msg)
-    })?;
-
-    if (lens_data.len() % 4) != 0 {
-        let msg = format!("Excess values in lens specification file \"{}\"; must be multiple-of-four values, read {}.", lens_file, lens_data.len());
-        return Err(PbrtError::error(&msg));
+    pub fn init_minimum_differentials(&mut self) {
+        let differentials =
+            BaseCamera::find_minimum_differentials(&Camera::Realistic(self.clone()));
+        self.base.base.set_minimum_differentials(differentials);
     }
 
-    if simple_weighting {
-        //warn!("The \"simpleweighting\" parameter has been deprecated. Consider using the \"weightingmethod\" parameter instead.");
-        warn!("\"simpleweighting\" option with RealisticCamera no longer necessarily matches regular camera images. Further, pixel values will vary a bit depending on the aperture size. See this discussion for details: https://github.com/mmp/pbrt-v3/issues/162#issuecomment-348625837");
+    pub fn approximate_dp_dxy(
+        &self,
+        p: Point3f,
+        n: Normal3f,
+        time: Float,
+        samples_per_pixel: u32,
+    ) -> Option<(Vector3f, Vector3f)> {
+        self.base
+            .base
+            .approximate_dp_dxy(p, n, time, samples_per_pixel)
     }
-
-    return Ok(Arc::new(RealisticCamera::new(
-        cam2world,
-        shutteropen,
-        shutterclose,
-        aperture_diameter,
-        focus_distance,
-        simple_weighting,
-        &lens_data,
-        film,
-        medium,
-    )));
 }

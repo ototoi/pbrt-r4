@@ -1,7 +1,7 @@
 // Imported from spectrum.cpp
 
-use pbrt_r3::core::prelude::*;
-use pbrt_r3::core::spectrum::utils::*;
+use pbrt_r4::prelude::*;
+use pbrt_r4::util::spectrum::utils::*;
 
 fn near_equal(a: Float, b: Float, e: Float) -> bool {
     (a - b).abs() < e

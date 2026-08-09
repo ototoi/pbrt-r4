@@ -1,53 +1,169 @@
-use crate::core::prelude::*;
+use crate::paramdict::*;
 
-use std::ops::*;
+use crate::shapes::*;
+use crate::textures::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
+
 use std::sync::Arc;
 
 pub struct MixTexture<T> {
-    tex1: Arc<dyn Texture<T>>,
-    tex2: Arc<dyn Texture<T>>,
-    amount: Arc<dyn Texture<Float>>,
+    tex1: Arc<FloatTexture>,
+    tex2: Arc<FloatTexture>,
+    amount: Arc<FloatTexture>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Copy> MixTexture<T> {
+impl MixTexture<Float> {
     pub fn new(
-        tex1: &Arc<dyn Texture<T>>,
-        tex2: &Arc<dyn Texture<T>>,
-        amount: &Arc<dyn Texture<Float>>,
+        tex1: &Arc<FloatTexture>,
+        tex2: &Arc<FloatTexture>,
+        amount: &Arc<FloatTexture>,
     ) -> Self {
-        return MixTexture::<T> {
+        return MixTexture::<Float> {
+            tex1: Arc::clone(tex1),
+            tex2: Arc::clone(tex2),
+            amount: Arc::clone(amount),
+            _phantom: std::marker::PhantomData,
+        };
+    }
+
+    pub fn evaluate(&self, ctx: &TextureEvalContext) -> Float {
+        let t1 = self.tex1.evaluate(ctx);
+        let t2 = self.tex2.evaluate(ctx);
+        let amt = self.amount.evaluate(ctx);
+        return t1 * (1.0 - amt) + t2 * amt;
+    }
+
+    pub fn create(
+        _render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+    ) -> Result<FloatTexture, PbrtError> {
+        let tex1 = parameters.get_float_texture("tex1", 0.0)?;
+        let tex2 = parameters.get_float_texture("tex2", 1.0)?;
+        let amount = parameters.get_float_texture("amount", 0.5)?;
+        Ok(FloatTexture::Mix(MixTexture::<Float>::new(
+            &tex1, &tex2, &amount,
+        )))
+    }
+}
+
+pub struct MixSpectrumTexture {
+    tex1: Arc<SpectrumTexture>,
+    tex2: Arc<SpectrumTexture>,
+    amount: Arc<FloatTexture>,
+}
+
+pub struct DirectionMixFloatTexture {
+    tex1: Arc<FloatTexture>,
+    tex2: Arc<FloatTexture>,
+    dir: Vector3f,
+}
+
+impl DirectionMixFloatTexture {
+    pub fn new(tex1: &Arc<FloatTexture>, tex2: &Arc<FloatTexture>, dir: &Vector3f) -> Self {
+        Self {
+            tex1: Arc::clone(tex1),
+            tex2: Arc::clone(tex2),
+            dir: dir.normalize(),
+        }
+    }
+
+    pub fn evaluate(&self, ctx: &TextureEvalContext) -> Float {
+        let amount = Vector3f::dot(&ctx.n, &self.dir).abs();
+        let t1 = self.tex1.evaluate(ctx);
+        let t2 = self.tex2.evaluate(ctx);
+        amount * t1 + (1.0 - amount) * t2
+    }
+
+    pub fn create(
+        render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+    ) -> Result<Self, PbrtError> {
+        let tex1 = parameters.get_float_texture("tex1", 0.0)?;
+        let tex2 = parameters.get_float_texture("tex2", 1.0)?;
+        let dir = render_from_texture
+            .transform_vector(&parameters.get_one_vector3f("dir", &Vector3f::new(0.0, 1.0, 0.0)));
+        Ok(Self::new(&tex1, &tex2, &dir))
+    }
+}
+
+pub struct DirectionMixSpectrumTexture {
+    tex1: Arc<SpectrumTexture>,
+    tex2: Arc<SpectrumTexture>,
+    dir: Vector3f,
+}
+
+impl DirectionMixSpectrumTexture {
+    pub fn new(tex1: &Arc<SpectrumTexture>, tex2: &Arc<SpectrumTexture>, dir: &Vector3f) -> Self {
+        DirectionMixSpectrumTexture {
+            tex1: Arc::clone(tex1),
+            tex2: Arc::clone(tex2),
+            dir: dir.normalize(),
+        }
+    }
+
+    pub fn evaluate(
+        &self,
+        ctx: &TextureEvalContext,
+        lambda: &SampledWavelengths,
+    ) -> SampledSpectrum {
+        let amount = Vector3f::dot(&ctx.n, &self.dir).abs();
+        let t1 = self.tex1.evaluate(ctx, lambda);
+        let t2 = self.tex2.evaluate(ctx, lambda);
+        amount * t1 + (1.0 - amount) * t2
+    }
+
+    pub fn create(
+        render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+        spectrum_type: SpectrumType,
+    ) -> Result<Self, PbrtError> {
+        let tex1 =
+            parameters.get_spectrum_texture_typed("tex1", &Spectrum::zero(), spectrum_type)?;
+        let tex2 =
+            parameters.get_spectrum_texture_typed("tex2", &Spectrum::one(), spectrum_type)?;
+        let dir = render_from_texture
+            .transform_vector(&parameters.get_one_vector3f("dir", &Vector3f::new(0.0, 1.0, 0.0)));
+        Ok(DirectionMixSpectrumTexture::new(&tex1, &tex2, &dir))
+    }
+}
+
+impl MixSpectrumTexture {
+    pub fn new(
+        tex1: &Arc<SpectrumTexture>,
+        tex2: &Arc<SpectrumTexture>,
+        amount: &Arc<FloatTexture>,
+    ) -> Self {
+        return MixSpectrumTexture {
             tex1: Arc::clone(tex1),
             tex2: Arc::clone(tex2),
             amount: Arc::clone(amount),
         };
     }
-}
 
-impl<T: Copy + Add<T, Output = T> + Mul<Float, Output = T>> Texture<T> for MixTexture<T> {
-    fn evaluate(&self, si: &SurfaceInteraction) -> T {
-        let t1 = self.tex1.as_ref().evaluate(si);
-        let t2 = self.tex2.as_ref().evaluate(si);
-        let amt = self.amount.as_ref().evaluate(si);
-        return t1 * (1.0 - amt) + t2 * amt;
+    pub fn evaluate(
+        &self,
+        ctx: &TextureEvalContext,
+        lambda: &SampledWavelengths,
+    ) -> SampledSpectrum {
+        let t1 = self.tex1.evaluate(ctx, lambda);
+        let t2 = self.tex2.evaluate(ctx, lambda);
+        let amt = self.amount.evaluate(ctx);
+        t1 * (1.0 - amt) + t2 * amt
     }
-}
 
-pub fn create_mix_float_texture(
-    _tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Float>>, PbrtError> {
-    let tex1 = tp.get_float_texture("tex1", 1.0);
-    let tex2 = tp.get_float_texture("tex2", 1.0);
-    let amount = tp.get_float_texture("amount", 0.5);
-    return Ok(Arc::new(MixTexture::<Float>::new(&tex1, &tex2, &amount)));
-}
-
-pub fn create_mix_spectrum_texture(
-    _tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Spectrum>>, PbrtError> {
-    let tex1 = tp.get_spectrum_texture("tex1", &Spectrum::one());
-    let tex2 = tp.get_spectrum_texture("tex2", &Spectrum::one());
-    let amount = tp.get_float_texture("amount", 0.5);
-    return Ok(Arc::new(MixTexture::<Spectrum>::new(&tex1, &tex2, &amount)));
+    pub fn create(
+        _render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+        spectrum_type: SpectrumType,
+    ) -> Result<Self, PbrtError> {
+        let tex1 =
+            parameters.get_spectrum_texture_typed("tex1", &Spectrum::one(), spectrum_type)?;
+        let tex2 =
+            parameters.get_spectrum_texture_typed("tex2", &Spectrum::zero(), spectrum_type)?;
+        let amount = parameters.get_float_texture("amount", 0.5)?;
+        Ok(MixSpectrumTexture::new(&tex1, &tex2, &amount))
+    }
 }

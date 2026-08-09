@@ -1,0 +1,2 @@
+Film "rgb" "float maxsampleluminance" 4
+Include "parser-upgrade-include-child.pbrt"

@@ -1,100 +1,209 @@
-# pbrt-r3
-[![Rust](https://github.com/ototoi/pbrt-r3/actions/workflows/rust.yml/badge.svg)](https://github.com/ototoi/pbrt-r3/actions/workflows/rust.yml)
-[![License](https://img.shields.io/github/license/ototoi/pbrt-r3)](LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/ototoi/pbrt-r3)](https://github.com/ototoi/pbrt-r3/releases/latest)
-[![Crates.io Version](https://img.shields.io/crates/v/pbrt-r3?color=%20%23ecc57b)
-](https://crates.io/crates/pbrt-r3)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ototoi/pbrt-r3)
+# pbrt-r4
+[![Rust](https://github.com/ototoi/pbrt-r4/actions/workflows/rust.yml/badge.svg)](https://github.com/ototoi/pbrt-r4/actions/workflows/rust.yml)
+[![License](https://img.shields.io/github/license/ototoi/pbrt-r4)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/ototoi/pbrt-r4)](https://github.com/ototoi/pbrt-r4/releases/latest)
+[![Crates.io Version](https://img.shields.io/crates/v/pbrt-r4?color=%20%23ecc57b)
+](https://crates.io/crates/pbrt-r4)
 
-## What is pbrt-r3
-pbrt-r3 is a rust implementation version of the [pbrt-v3](https://github.com/mmp/pbrt-v3).
+## What is pbrt-r4
+
+pbrt-r4 is a Rust implementation of [pbrt-v4](https://github.com/mmp/pbrt-v4),
+evolved from a pbrt-r3 (pbrt-v3 Rust port) foundation. It is a CPU renderer
+whose primary compatibility target is pbrt-v4 behavior and input files.
+
+The codebase now mirrors pbrt-v4's class structure on every major axis — `Spectrum` / `SampledSpectrum` are 4-wavelength packets, `BSDF`/`BxDF` carry per-path `SampledSpectrum` reflectance, the `Light` trait matches pbrt-v4's `SampleLi` / `PDF_Li` / `SampleLe` / `Phi` shapes, and integrators (Path / VolPath / SPPM / BDPT / MLT / LightPath / SimpleVolPath / RandomWalk / SimplePath / AO / Function) translate their pbrt-v4 counterparts line-by-line. pbrt-v4 scene files render through the same pipeline; legacy pbrt-v3 input should first be upgraded to pbrt-v4 format.
+
+A broad set of the official pbrt-v4 scenes is renderable, but pixel-perfect
+image equality, Monte Carlo noise, render time, and memory usage are not
+guaranteed yet.
 
 ## License
-pbrt-r3 is distributed under [the BSD license](LICENSE) based on [the original pbrt-v3](https://github.com/mmp/pbrt-v3/blob/master/LICENSE.txt).
+pbrt-r4 is distributed under [the Apache License 2.0](LICENSE), matching the license of the upstream [pbrt-v4](https://github.com/mmp/pbrt-v4/blob/master/LICENSE.txt).
 
 ## Build
-You can build this using cargo.
-```
+
+From the pbrt-r4 repository root:
+
+```sh
 cargo build --release
+cargo test
 ```
 
 ## How to use
-You can render using pbrt-r3 with the following command.
+
+Render a scene with the following command:
+
+```sh
+./target/release/pbrt-r4 \
+  --pixelsamples 64 \
+  --nthreads 16 \
+  --outfile /tmp/output.exr \
+  <example.pbrt>
 ```
-./target/release/pbrt-r3 -i <example.pbrt>
-```
+
+Useful options include `--pixelsamples`, `--nthreads`, `--outfile`, `--stats`,
+`--profile`, and `--display-server`. The `--quick` option is intended for fast
+visual checks and changes the rendering configuration; do not use it for a
+controlled comparison with pbrt-v4.
+
 ## Tev display
-pbrt-r3 supports the [tev](https://github.com/Tom94/tev) display implemented in pbrt-v4.
-After starting tev, you can display your rendering progress by adding the following option.
+pbrt-r4 supports the [tev](https://github.com/Tom94/tev) display implemented
+in pbrt-v4. After starting tev, display rendering progress with:
+
+```sh
+./target/release/pbrt-r4 \
+  --display-server localhost:14158 \
+  <example.pbrt>
 ```
-./target/release/pbrt-r3 -i <example.pbrt> --display-server localhost:14158
-```
+
 ## Stats and Profile
-If you want to use the stats and profile features, please do as follows.
+
+Build with the optional features and pass the corresponding command-line
+options:
+
 ### Build
-```
+
+```sh
 cargo build --release --features stats --features profile
 ```
+
 ### Use
-```
-./target/release/pbrt-r3 -i <example.pbrt> --stats --profile
+
+```sh
+./target/release/pbrt-r4 --stats --profile <example.pbrt>
 ```
 
 ## Build Options
-pbrt-r3 has several options as Rust features.
+pbrt-r4 has several options as Rust features.
 | Feature | Description |
 |---------|-------------|
 | `profile` | Enables the `--profile` option. |
 | `stats` | Enables the `--stats` option. |
 | `float-as-double` | Uses double precision (64-bit) for floating-point calculations. This increases precision but also increases execution time and memory usage. |
-| `sampled-spectrum` | Uses SampledSpectrum to represent the Spectrum type for colors. SampledSpectrum represents visible light with more samples (60 samples) instead of just three colors. |
 
 ## Example scenes
-pbrt-r3 can take pbrt-v3 scene files as input.
-See the official [pbrt-v3 scenes page](http://pbrt.org/scenes-v3.html) on the pbrt website for information about how to download them.
+pbrt-r4 takes pbrt-v3 and pbrt-v4 scene files as input. The compatibility
+comparison set used by this project comes from the official
+[pbrt-v4-scenes repository](https://github.com/mmp/pbrt-v4-scenes).
+
+Legacy pbrt-v3 input should be converted before rendering:
+
+```sh
+./target/release/pbrt-r4 \
+  --upgrade \
+  --outfile /tmp/scene-v4.pbrt \
+  path/to/scene-v3.pbrt
+
+./target/release/pbrt-r4 \
+  --pixelsamples 64 \
+  --outfile /tmp/scene.exr \
+  /tmp/scene-v4.pbrt
+```
+
+`--upgrade` writes the converted pbrt-v4 input and does not render an image.
 
 ![images](https://github.com/user-attachments/assets/ce1bebc6-8377-4da7-8b49-38e5073a397e)
-Rendered images are stored at [pbrt-r3-devkit](https://github.com/ototoi/pbrt-r3-devkit).
+This image is an example render from pbrt-r4.
 
+## Implementation status
 
-## Differences between pbrt-v3 and pbrt-r3
+The tables below describe the current implementation scope, not a claim of
+complete pixel-level parity for every feature combination. Known limitations
+include GPU/wavefront rendering, PTex, medium vertices in BDPT/MLT, complete
+volumetric BSSRDF parity, photometric film calibration, and the standalone
+pbrt-v4 command-line utilities.
 
-- **Implementation**: pbrt-v3 is implemented in C++, while pbrt-r3 is a re-implementation in Rust.
-  - **Memory Safety**: Rust's ownership model in pbrt-r3 helps prevent common memory safety issues such as null pointer dereferencing and buffer overflows.
-  - **Build System**: pbrt-r3 uses Cargo, Rust's package manager and build system, simplifying dependency management and build processes.
-  - **Syntax**: Differences arise due to the syntax differences between C++ and Rust.
-    - **Function Return Values**: When it is necessary to return multiple values in a function, C++ achieves this by passing pointers to arguments and return values. In Rust, this is directly achieved using tuples.
-    - **Function Overloading**: Function overloading exists in C++ but not in Rust. In Rust, this is achieved by using different names for each function.
-    - **Class Inheritance**: Class inheritance exists in C++, but not in Rust. In Rust, composition is used. In other words, a class member holds an instance of the parent class as `base`, and this is called as needed.
-- **External Libraries**: Some features use external libraries.
-  - **Parallel Processing**: In pbrt-v3, `OpenMP` was used for parallel processing. On the other hand, pbrt-r3 uses `rayon` crate for parallel processing. 
-  - **Parser**: In pbrt-v3, a custom parser was implemented. On the other hand, in Rust, the `nom` crate was used to implement the parser.
-  - **Progress Bar**: In pbrt-v3, a custom progress bar was implemented, while in pbrt-r3, the `indicatif` crate is used.
-  - **Command Line Options**: In pbrt-v3, command line options were implemented independently, while in pbrt-r3, the `clap` crate is used.
-  - **Logging**: In pbrt-v3, Google's `glog` was used, while in pbrt-r3, the `log` and `env_logger` crates are used.
-  - **Others**: In addition to the above, pbrt-r3 uses the following crates:
-    - Image loading and saving: `image`
-    - Hash functions: `rust-crypto`
-    - PLY file loading and saving: `ply-rs`
-    - JSON loading and saving: `serde`, `serde_json`
-- **Additional Features**: pbrt-r3 implements some additional features from pbrt-v3.
-  - **Tev Display**: You can display the image during rendering using the external image viewer Tev.
-  - **QBVH Accelerator**: QBVH is implemented as an accelerator, enabling fast traversal using SIMD instructions.
-  - **AOV Integrator**: When AOV is specified as an Integrator, it can render some attribute information of the scene (e.g., position, normal, etc.). This is useful for compositing and debugging rendering results.
-- **Unimplemented Features**: Some features are not implemented in pbrt-r3.
-  - **PTex texture**: PTex texturing is not implemented in pbrt-r3.
-  - **Tools**: Several commands are implemented under `src/tools` in pbrt-v3. However, they are not necessarily needed in pbrt-r3, so their priority is low.
-- **Bug Fixes**: pbrt-r3 has fixed several bugs from pbrt-v3.
-  - Do not make `pdf` negative: There are places where pdf becomes negative due to calculation errors during the pdf calculation process. If left as is, it can cause infinity or negative colors. For example, this was fixed by using `pdf = pdf.max(0.0)`.
-  - Direction of `shading.dpdu/dpdv`: There was a bug where the directions of `shading.dpdu` and `shading.dpdv` were reversed. (See also [#97](https://github.com/ototoi/pbrt-r3/issues/97)
+### Integrators (`Integrator "<name>" ...`)
+| Name | pbrt-v4 reference | Status in pbrt-r4 |
+|------|-------------------|-------------------|
+| `path`           | `PathIntegrator`           | Full surface MIS path tracer. |
+| `simplepath`     | `SimplePathIntegrator`     | Toggleable `samplelights` / `samplebsdf` arms (no MIS). |
+| `volpath`        | `VolPathIntegrator`        | Volumetric path tracer with `r_u`/`r_l` rescaled-density MIS; BSSRDF subsurface scattering deferred. |
+| `simplevolpath`  | `SimpleVolPathIntegrator`  | Delta-tracking volume path tracer, no surface scattering. |
+| `lightpath`      | `LightPathIntegrator`      | Light tracing with `Camera::SampleWi` splat. |
+| `sppm`           | `SPPMIntegrator`           | Stochastic Progressive Photon Mapping. |
+| `bdpt`           | `BDPTIntegrator`           | Bidirectional path tracing (surface-only; medium vertices deferred). |
+| `mlt`            | `MLTIntegrator`            | Primary-sample-space MLT on top of BDPT (single-threaded; medium vertices deferred). |
+| `randomwalk`     | `RandomWalkIntegrator`     | Minimal uniform-sphere random walk (no MIS / RR / direct lighting). |
+| `ambientocclusion` | `AmbientOcclusionIntegrator` | Single AO sample per path. |
+| `function`       | `FunctionIntegrator`       | r4 extension (formerly `aov`) — surface attribute outputs: position, normal, uv, depth, etc. |
 
-## Future Plans
-There are some remaining tasks:
-- Benchmark: Rendering speed tends to be slower than pbrt-v3 implemented in C++. Create and run benchmarks to identify bottlenecks.
-- Register on Crates.io: Register pbrt-r3 on Crates.io.
-- Copy Comments: To respect the original implementation of pbrt-v3, we want to transplant as many original comments as possible to pbrt-r3.
-- Organize License: Correctly describe the license terms.
-- Create Documentation: Create documentation.
+### BxDFs (`Material "<name>" ...`)
+| Material | pbrt-v4 reference | Notes |
+|---|---|---|
+| `diffuse` / `diffusetransmission` | `DiffuseBxDF`, `DiffuseTransmissionBxDF` | Per-path `SampledSpectrum` reflectance / transmittance. |
+| `dielectric` / `thindielectric` | `DielectricBxDF`, `ThinDielectricBxDF` | Smooth + rough dielectric, full Fresnel + microfacet. |
+| `conductor` | `ConductorBxDF` | Smooth + rough metal. |
+| `coateddiffuse` / `coatedconductor` | `LayeredBxDF<Dielectric, Diffuse, ...>` | Pbrt-v4 layered model with random-walk through coat. |
+| `measured` | `MeasuredBxDF` | RGL `.bsdf` tensor format reader (`PiecewiseLinear2D` NDF/VNDF/sigma/spectra). |
+| `hair` | `HairBxDF` | Marschner three-lobe hair scattering. |
+| `mix` | composite | Mix material via index/probability. |
+| `subsurface` / `kdsubsurface` | `SubsurfaceMaterial` | `NormalizedFresnelBxDF` surface + tabulated BSSRDF. |
+| `interface` | — | r4 helper material that exposes a stored `BxDF`. |
+
+### Lights
+`point`, `distant`, `spot`, `goniometric`, `projection`, `infinite` (uniform), `infinite` with `mapname` (image-based), and `diffuse` (area). Each is translated verbatim from `lights.h:189–625`. The light's `scale` parameter is a `Float` (pbrt-v4 shape); the `SpectrumToPhotometric` normalization is deferred until the film's photometric calibration lands.
+
+### Films / Samplers / Accelerators
+- **Films**: `rgb` (`RGBFilm`), `gbuffer` (`GBufferFilm`), `spectral` (`SpectralFilm` with Fichet et al. spectral-EXR layout).
+- **Samplers**: `independent`, `stratified`, `halton`, `02sequence`, `sobol`, `zsobol`, `paddedsobol`, `pmj02bn`, plus the internal `MLTSampler` driven by the `mlt` integrator.
+- **Accelerators**: `bvh` (default; r4-specific QBVH SIMD aggregator), `kdtree`, `exhaustive`.
+
+## Differences from pbrt-v4
+
+### Relationship to upstream pbrt
+pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rewritten so its public class structure now matches pbrt-v4. Code paths are translated from pbrt-v4 line-by-line wherever practical; remaining pbrt-r3 inheritances are explicitly called out in source comments.
+
+### Implementation choices
+- **Language**: Rust instead of C++. Ownership / lifetimes replace manual memory management. No `unsafe` outside SIMD intrinsics and a small set of FFI / raw-pointer helpers.
+- **Class inheritance**: pbrt-v4 inheritance becomes composition — a Rust struct holds the parent struct as a `base` field. pbrt-v4 `TaggedPointer<...>` polymorphism becomes Rust `enum`s with the same variant names.
+- **Parallel execution**: pbrt-v4's `ParallelFor` / hand-rolled thread pool becomes [`rayon`](https://crates.io/crates/rayon). The QBVH aggregator uses SSE / NEON intrinsics directly.
+- **Parser**: pbrt-v4's hand-written recursive-descent parser becomes the [`nom`](https://crates.io/crates/nom) crate.
+- **Progress / CLI / logging**: [`indicatif`](https://crates.io/crates/indicatif), [`clap`](https://crates.io/crates/clap), [`log`](https://crates.io/crates/log) + [`env_logger`](https://crates.io/crates/env_logger).
+- **Other crates**: `image` (EXR/PNG/etc.), `ply-rs` (PLY mesh I/O), `rust-crypto` (hashing), `serde` + `serde_json` (scene JSON), `flate2` (`.ply.gz` decompression).
+- **AtomicDouble → Mutex/tile aggregation**: pbrt-v4's `AtomicDouble` splat accumulators are replaced by a per-tile `SplatTile` that merges into the per-pixel splat buffer at the end of rendering. The same pattern is used for the photon-pass accumulators in SPPM.
+
+### Additional features
+- **Tev display**: real-time progressive display through the [tev](https://github.com/Tom94/tev) viewer.
+- **QBVH accelerator**: an r4-original quad-BVH aggregator using SSE intrinsics. v4-faithful in that it now passes the unclamped `t_max` to per-primitive intersect (fixes flat-AABB area-light hit loss).
+- **Function (AOV) integrator**: render scene attributes (position, normal, uv, depth, ...) for compositing or debugging.
+
+### Post-release scope
+
+The following areas are intentionally outside the initial release scope:
+
+- **GPU / wavefront rendering**: pbrt-v4's CUDA / OptiX backend is out of scope. pbrt-r4 is CPU-only.
+- **PTex textures**: not implemented.
+- **pbrt-v4 CLI utilities (`imgtool` etc.)**: pbrt-v4's stand-alone tools under `src/pbrt/cmd` are unported; priority is low.
+
+### r4-specific fixes
+- Negative `pdf` from numerical drift is clamped (`pdf.max(0.0)`).
+- `shading.dpdu` / `shading.dpdv` orientation fix (see [#97](https://github.com/ototoi/pbrt-r4/issues/97)).
+- QBVH SIMD aggregator: pass the original `t_max` (not the bbox-clamped one) to per-primitive intersect, fixing a 20% hit-loss for flat AABB area lights (see [#29](https://github.com/ototoi/pbrt-r4/pull/29)).
+
+## Development and compatibility
+
+Behavioral changes are developed against the local pbrt-v4 implementation.
+When a v4 path is not implemented, it must not be silently replaced by an
+unrelated fallback merely to keep a scene rendering. Compatibility gaps should
+be documented, covered by focused tests, and resolved by implementing the
+corresponding v4 behavior or by making the limitation explicit.
+
+Porting and compatibility decisions should be documented alongside the
+corresponding implementation and tests.
+
+## Future plans
+
+**Near term**
+- Parallelize `mlt` chains and `sppm` photon pass via `rayon`.
+- Continue to harden pbrt-v4-scenes rendering and investigate high memory usage on large `.ply` scenes.
+
+**Mid term**
+- Benchmarking against pbrt-v3 / pbrt-v4 to guide optimization (current pbrt-r4 is typically slower than the C++ reference; we want a public benchmark suite to track this).
+- Comprehensive `cargo doc` API surface and rustdoc examples.
+
+**Long term**
+- Port pbrt-v4 comment text to the corresponding pbrt-r4 functions to honour the original implementation.
 
 ## Acknowledgments
-We would like to thank the original authors of pbrt-v3 for their groundbreaking work and for making their code available. Additionally, we appreciate the contributions from the Rust community and the developers of the various crates used in this project.
+Thanks to Matt Pharr, Wenzel Jakob, and Greg Humphreys — the authors of pbrt-v3 and pbrt-v4 — for releasing their reference implementations. Thanks also to the Rust community and the maintainers of the crates listed above.

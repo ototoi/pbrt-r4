@@ -1,0 +1,414 @@
+Scale -1 1 1
+# Rotate 1 0 0 1 # slight lean left to even out
+Film "rgb"
+    "string filename" [ "crown.exr" ]
+    "integer yresolution" [ 128 ]
+    "integer xresolution" [ 128 ]
+    "float iso" 150
+    "string sensor" "canon_eos_5d_mkiv"
+
+LookAt 0 5.5 24
+    0 11 -10
+    0 1 0
+Camera "perspective"
+    "float lensradius" [ 0.1 ]
+    "float focaldistance" [ 17 ]
+    "float fov" [ 47 ]
+Sampler "halton"
+    "integer pixelsamples" [ 16 ]
+Integrator "volpath"
+    "integer maxdepth" [ 100 ]
+
+
+WorldBegin
+
+# Name "back_light"
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [10]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.0461 0.3077 -0.9504 -0.0461 0.3077 -0.9504 -0.0461 0.3077 
+                     -0.9504 -0.0461 0.3077 -0.9504 ]
+        "point3 P" [ 5.702774 -13.539273 -76.185936 -14.945709 -13.791711 -75.26613 
+                     -14.886804 13.04458 -66.57877 5.761684 13.297014 -67.49859 ]
+AttributeEnd
+# Name "right_light"
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [10]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.9146 -0.3208 0.2462 -0.9146 -0.3208 0.2462 -0.9146 -0.3208 
+                     0.2462 -0.9146 -0.3208 0.2462 ]
+        "point3 P" [ 41.6316 14.548275 -16.682684 45.396217 14.548271 -2.696177 40.693626 
+                     28.926506 -1.430422 36.92901 28.926506 -15.416933 ]
+AttributeEnd
+# Name "left_light"
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [10]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0.9117 -0.324 0.2527 0.9117 -0.324 0.2527 0.9117 -0.324 0.2527 
+                     0.9117 -0.324 0.2527 ]
+        "point3 P" [ -45.1155 14.650443 -2.989656 -41.24645 14.65044 -16.947636 -36.506706 
+                     29.012154 -15.633818 -40.37576 29.012156 -1.675834 ]
+AttributeEnd
+# Name "front_right_Plane.013"
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [10]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.6595 0.2621 -0.7045 -0.6595 0.2621 -0.7045 -0.6595 0.2621 
+                     -0.7045 -0.6595 0.2621 -0.7045 ]
+        "point3 P" [ 20.38967 -4.332172 17.202255 13.206003 -4.332175 23.926588 15.053431 
+                     5.620016 25.900215 22.237099 5.620017 19.17588 ]
+AttributeEnd
+# Name "front_left"
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [10]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0.7361 0.2294 -0.6368 0.7361 0.2294 -0.6368 0.7361 0.2294 -0.6368 
+                     0.7361 0.2294 -0.6368 ]
+        "point3 P" [ -18.349361 -3.757668 23.42476 -24.791203 -3.75767 15.977483 
+                     -26.581875 6.287214 17.5264 -20.140032 6.287215 24.973679 ]
+AttributeEnd
+# Name "front_light"
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [10]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.0256 -0.7391 -0.6731 -0.0256 -0.7391 -0.6731 -0.0256 -0.7391 
+                     -0.6731 -0.0256 -0.7391 -0.6731 ]
+        "point3 P" [ 9.260806 19.171276 24.593668 -9.12361 19.171274 25.294205 -9.666298 
+                     32.1588 11.052294 8.718122 32.1588 10.351759 ]
+AttributeEnd
+# Name "env_sphere"
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.2 0.2 0.2 ]
+    Shape "sphere"
+        "float radius" [ 100 ]
+AttributeEnd
+
+MakeNamedMedium "sapphire-medium" "string type" "homogeneous"
+   "rgb sigma_a" [.5 .2 .01] "rgb sigma_s" [0 0 0]
+MakeNamedMedium "ruby-medium" "string type" "homogeneous"
+   "rgb sigma_a" [.01 .2 .5] "rgb sigma_s" [0 0 0]
+
+###########################################################################
+# Converted from "imperial_crown.obj" by obj2pbrt
+# Scene bounds: (-89.848320, -28.851381, -98.681221) - (89.382942, 87.356941, 75.904129)
+# can't see where this is used?
+Texture "arc_rosetta_red-kd-img" "spectrum" "imagemap"
+    "string filename" [ "textures/mitra/mitra_border_color.png" ]
+Texture "arc_rosetta_red-kd" "spectrum" "scale"
+    "float scale" [ 0.620968 ]
+    "texture tex" [ "arc_rosetta_red-kd-img" ]
+MakeNamedMaterial "arc_rosetta_red"
+    "string type" [ "coateddiffuse" ]
+    "texture reflectance" [ "arc_rosetta_red-kd" ]
+    "float roughness" [ 0.010408 ]
+MakeNamedMaterial "arc_zirk_socket_base"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "b_lily_arc"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "b_lily_tray"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "big_ruby"
+    "string type" [ "dielectric" ]
+#    "spectrum eta" [ 200 3.1 900 2.9 ]
+    "float eta" [3]
+MakeNamedMaterial "clamp_gold"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+Texture "bl_clamp_a-mask" "float" "imagemap"
+    "string filename" [ "textures/b_lily/clamp_mask.png" ]
+MakeNamedMaterial "bl_clamp_a-red"
+    "string type" [ "coateddiffuse" ]
+    "rgb reflectance" [ 0.6 0.025 0.025 ]
+    "float roughness" [ 0.010408 ]
+MakeNamedMaterial "bl_clamp_a"
+    "string type" [ "mix" ]
+    "string materials" [ "bl_clamp_a-red" "clamp_gold" ]
+    "texture amount" [ "bl_clamp_a-mask" ]
+Texture "border_bott_inlay-mask" "float" "imagemap"
+    "string filename" [ "textures/mitra/mitra_border_color_mask.png" ]
+# crack inside top gem
+MakeNamedMaterial "border_bott_inlay"
+    "string type" [ "conductor" ]
+    "texture roughness" [ "border_bott_inlay-mask" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+# part of up top gold cross 
+MakeNamedMaterial "crack"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.8 0.8 0.8 ]
+MakeNamedMaterial "cross_enamel"
+    "string type" [ "coateddiffuse" ]
+    "rgb reflectance" [ 0.8 0.8 0.8 ]
+    "float roughness" [ 0.10408 ]
+MakeNamedMaterial "cross_gold"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+# velvet crown is resting on
+MakeNamedMaterial "cross_gold_cross_flower_mask.png"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "dark_velvet"
+    "string type" [ "coateddiffuse" ]
+    "rgb reflectance" [ 0.15 0.0015 0.0015 ]
+    "float roughness" [ 0.2 ]
+MakeNamedMaterial "deco"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "diamond"
+    "string type" [ "dielectric" ]
+    "spectrum eta" [ 200 3.5 900 3.3 ]
+MakeNamedMaterial "diamond_tray_normal_SPEC."
+    "string type" [ "dielectric" ]
+    "spectrum eta" [ 200 3.5 900 3.3 ]
+MakeNamedMaterial "gold.002"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base_border"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base_border_mitra_border.png"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base_bumped"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base_bumped_mitra_border.png.002"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base_mitra_border.png"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_base_mitra_border.png.002"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_lower_arc"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_tray"
+    "string type" [ "conductor" ]
+    "float roughness" [ 0.010408 ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_tray_clamp"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_tray_front"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "gold_upper_arc"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+Texture "mitra_inlay-kd-tex" "spectrum" "imagemap"
+    "string filename" [ "textures/mitra/mitra_border_color.png" ]
+Texture "mitra_inlay-kd" "spectrum" "scale"
+    "float scale" [ 1.5 ]
+    "texture tex" [ "mitra_inlay-kd-tex" ]
+Texture "mitra_inlay-bump" "float" "imagemap"
+    "string filename" [ "textures/mitra/mitra_border_bump.png" ]
+Texture "mitra_inlay-bump-sc" "float" "scale"
+    "float scale" [ 0.25 ]
+    "texture tex" [ "mitra_inlay-bump" ]
+# big gold areas mid-crown
+MakeNamedMaterial "mitra_inlay"
+    "string type" [ "coateddiffuse" ]
+    "texture displacement" [ "mitra_inlay-bump-sc" ]
+    "texture reflectance" [ "mitra_inlay-kd" ]
+    "float roughness" [ 0.010408 ]
+Texture "mitra_right_back-bump" "float" "imagemap"
+    "string filename" [ "textures/mitra/right_front_bump2.png" ]
+Texture "mitra_right_back-bump-sc" "float" "scale"
+    "float scale" [ 0.25 ]
+    "texture tex" [ "mitra_right_back-bump" ]
+Texture "mitra_right_back-roughness-tex" "float" "imagemap"
+    "string filename" [ "textures/mitra/right_front_spec.png" ]
+Texture "mitra_right_back-roughness" "float" "scale"
+    "float scale" [ 0.1 ]
+    "texture tex" [ "mitra_right_back-roughness-tex" ]
+MakeNamedMaterial "mitra_right_back"
+    "string type" [ "conductor" ]
+    "texture displacement" [ "mitra_right_back-bump-sc" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+    "texture roughness" [ "mitra_right_back-roughness" ]
+MakeNamedMaterial "mitra_right_front"
+    "string type" [ "conductor" ]
+    "texture displacement" [ "mitra_right_back-bump-sc" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "pearl"
+    "string type" [ "coateddiffuse" ]
+    "rgb reflectance" [ 0.65 0.6 0.6 ]
+    "float vroughness" [ 0.001 ]
+    "float uroughness" [ 0.001 ]
+MakeNamedMaterial "pearl_rosetta"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.45 0.45 0.4 ]
+MakeNamedMaterial "pearl_rosetta_tray_front_normal"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.45 0.45 0.4 ]
+MakeNamedMaterial "rosetta_deco"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+Texture "rosetta-deco-mask" "float" "imagemap"
+    "string filename" [ "textures/pearl_tray/deco_mask.png" ]
+MakeNamedMaterial "rosetta_gold"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "deco-mask-white"
+    "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.7 0.7 0.7 ]
+MakeNamedMaterial "rosetta_deco_deco_mask.png"
+    "string type" [ "mix" ]
+    "string materials" [ "deco-mask-white" "rosetta_gold" ]
+    "texture amount" [ "rosetta-deco-mask" ]
+MakeNamedMaterial "rosetta_fix"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "rosetta_fix_tray_front_normal"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "s_lily_gold_tray"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+# up top
+MakeNamedMaterial "s_lily_ruby_socket"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+Texture "sapphire-bump" "float" "imagemap"
+    "string filename" [ "textures/arc/saphire_bump.png" ]
+Texture "sapphire-bump-sc" "float" "scale"
+    "float scale" [ 0.25 ]
+    "texture tex" [ "sapphire-bump" ]
+MakeNamedMaterial "saphire"
+    "string type" [ "dielectric" ]
+#    "spectrum eta" [ 200 3.5 900 3n3 ]
+    "float eta" [3]
+    "texture displacement" [ "sapphire-bump-sc" ]
+MakeNamedMaterial "small_ruby"
+    "string type" [ "dielectric" ]
+    "spectrum eta" [ 200 3.5 900 3.3 ]
+MakeNamedMaterial "socket_clamp"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+# velvet inside crown
+MakeNamedMaterial "socket_clamp1"
+    "string type" [ "conductor" ]
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+MakeNamedMaterial "velvet"
+    "string type" [ "coateddiffuse" ]
+    "rgb reflectance" [ 0.15 0.0015 0.0015 ]
+    "float roughness" [ 0.2 ]
+# Name "mitra_right_mitra_right.001"
+MakeNamedMaterial "zirkon"
+    "string type" [ "dielectric" ]
+    "float eta" [ 2.5 ]
+AttributeBegin
+    NamedMaterial "mitra_right_back"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00007.ply" ]
+    NamedMaterial "mitra_right_front"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00008.ply" ]
+AttributeEnd
+# Name "crown"
+
+AttributeBegin
+    NamedMaterial "gold_base"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00009.ply" ]
+AttributeEnd
+AttributeBegin
+    NamedMaterial "pearl"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00013.ply" ]
+AttributeEnd
+AttributeBegin
+    NamedMaterial "gold_upper_arc"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00017.ply" ]
+AttributeEnd
+# Name "s_lily_pearls.011"
+
+AttributeBegin
+    NamedMaterial "pearl"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00018.ply" ]
+AttributeEnd
+# Name "s_lily_arc.010"
+
+AttributeBegin
+    NamedMaterial "gold_lower_arc"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00019.ply" ]
+AttributeEnd
+AttributeBegin
+    NamedMaterial "s_lily_ruby_socket"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00025.ply" ]
+AttributeEnd
+# Name "s_lily_ruby.029"
+
+AttributeBegin
+    NamedMaterial "small_ruby"
+    Shape "plymesh"
+        "string filename" [ "geometry/mesh_00026.ply" ]
+AttributeEnd

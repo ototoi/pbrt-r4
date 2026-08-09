@@ -1,207 +1,295 @@
-use crate::core::prelude::*;
+use crate::base::camera::CameraSample;
+use crate::options::*;
+use crate::paramdict::*;
+use crate::samplers::*;
 
-use std::sync::Arc;
-use std::sync::RwLock;
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::lowdiscrepancy::sobol::sobolmatrices::{SOBOL_MATRICES_32, SOBOL_MATRIX_SIZE};
+use crate::util::lowdiscrepancy::*;
+use crate::util::profile::*;
 
-#[derive(Debug, PartialEq, Default, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct SobolSampler {
-    pub base: BaseGlobalSampler,
-    //dimension: u32,
-    //dimension_1d: u32,
-    //dimension_2d: u32,
-    sample_bounds: Bounds2i,
-    resolution: u32,
-    log2_resolution: u32,
+    pub base: BaseSampler,
+    pub samples_per_pixel: u32,
+    pub scale: u32,
+    pub seed: u32,
+    pub randomize: RandomizeStrategy,
+    pub pixel: Point2i,
+    pub dimension: u32,
+    pub sobol_index: i64,
 }
 
 impl SobolSampler {
-    pub fn new(samples_per_pixel: u32, sample_bounds: &Bounds2i) -> Self {
-        let diagonal = sample_bounds.diagonal();
-        let resolution = round_up_pow2(u32::max(diagonal.x as u32, diagonal.y as u32));
-        let log2_resolution = log2int(resolution);
-        SobolSampler {
-            base: BaseGlobalSampler::new(round_up_pow2(samples_per_pixel)),
-            //dimension: 0,
-            //dimension_1d: 0,
-            //dimension_2d: 0,
-            sample_bounds: *sample_bounds,
-            resolution,
-            log2_resolution,
-        }
-    }
-}
-
-impl Sampler for SobolSampler {
-    fn start_pixel(&mut self, p: &Point2i) {
-        let _p = ProfilePhase::new(Prof::StartPixel);
-
-        self.base.base.start_pixel(p);
-        self.base.dimension = 0;
-        //self.dimension_1d = 0;
-        //self.dimension_2d = 0;
-        self.base.interval_sample_index = self.get_index_for_sample(0);
-        self.base.array_end_dim = BaseGlobalSampler::array_start_dim
-            + (self.base.base.sample_array1d.len() + 2 * self.base.base.sample_array2d.len())
-                as u32;
-        let samples1d_array_sizes = self.base.base.samples1d_array_sizes.len();
-        // Compute 1D array samples for _GlobalSampler_
-        {
-            let l = samples1d_array_sizes;
-            for i in 0..l {
-                let n_samples =
-                    self.base.base.samples1d_array_sizes[i] * self.base.base.samples_per_pixel;
-                for j in 0..n_samples {
-                    let index = self.get_index_for_sample(j as i64);
-                    self.base.base.sample_array1d[i][j as usize] =
-                        self.sample_dimension(index, self.base.array_end_dim + i as u32);
-                }
-            }
-        }
-        // Compute 2D array samples for _GlobalSampler_
-        {
-            let dim = BaseGlobalSampler::array_start_dim + samples1d_array_sizes as u32;
-            let l = self.base.base.samples2d_array_sizes.len();
-            for i in 0..l {
-                let n_samples =
-                    self.base.base.samples2d_array_sizes[i] * self.base.base.samples_per_pixel;
-                for j in 0..n_samples {
-                    let index = self.get_index_for_sample(j as i64);
-                    self.base.base.sample_array2d[i][j as usize].x =
-                        self.sample_dimension(index, dim);
-                    self.base.base.sample_array2d[i][j as usize].y =
-                        self.sample_dimension(index, dim + 1);
-                }
-            }
+    pub fn new(
+        samples_per_pixel: u32,
+        full_resolution: Point2i,
+        randomize: RandomizeStrategy,
+        seed: u32,
+    ) -> Self {
+        let scale = round_up_pow2(u32::max(full_resolution.x as u32, full_resolution.y as u32));
+        Self {
+            base: BaseSampler::new(samples_per_pixel),
+            samples_per_pixel,
+            scale,
+            seed,
+            randomize,
+            pixel: Point2i::zero(),
+            dimension: 2,
+            sobol_index: 0,
         }
     }
 
-    fn start_next_sample(&mut self) -> bool {
-        self.base.dimension = 0;
-        //self.dimension_1d = 0;
-        //self.dimension_2d = 0;
-        self.base.interval_sample_index =
-            self.get_index_for_sample((self.base.base.current_pixel_sample_index + 1) as i64);
-        return self.base.base.start_next_sample();
+    pub fn start_pixel(&mut self, p: &Point2i) {
+        self.base.start_pixel(p);
+        self.pixel = *p;
+        self.fill_sample_arrays();
+        self.start_pixel_sample(0, 0);
     }
 
-    fn set_sample_number(&mut self, sample_num: u32) -> bool {
-        self.base.dimension = 0;
-        //self.dimension_1d = 0;
-        //self.dimension_2d = 0;
-        self.base.interval_sample_index = self.get_index_for_sample(sample_num as i64);
-        return self.base.base.set_sample_number(sample_num);
-    }
-
-    fn get_1d(&mut self) -> Float {
-        if self.base.dimension >= BaseGlobalSampler::array_start_dim
-            && self.base.dimension < self.base.array_end_dim
-        {
-            self.base.dimension = self.base.array_end_dim;
+    pub fn get_1d(&mut self) -> Float {
+        let _p = ProfilePhase::new(Prof::GetSample);
+        if self.dimension >= n_sobol_dimensions() {
+            self.dimension = 2;
         }
-        let d = self.base.dimension;
-        let x = self.sample_dimension(self.base.interval_sample_index, d);
-        self.base.dimension += 1;
-
-        //if self.dimension_1d >= BaseGlobalSampler::array_start_dim
-        //    && self.dimension_1d < self.base.array_end_dim
-        //{
-        //    self.dimension_1d = self.base.array_end_dim;
-        //}
-        //let d = self.dimension_1d;
-        //let x = self.sample_dimension(self.base.interval_sample_index, d);
-        //self.dimension_1d += 1;
-        return x;
+        let dim = self.dimension;
+        self.dimension += 1;
+        self.sample_dimension(dim)
     }
 
-    fn get_2d(&mut self) -> Point2f {
-        if self.base.dimension + 1 >= BaseGlobalSampler::array_start_dim
-            && self.base.dimension < self.base.array_end_dim
-        {
-            self.base.dimension = self.base.array_end_dim;
+    pub fn get_2d(&mut self) -> Point2f {
+        let _p = ProfilePhase::new(Prof::GetSample);
+        if self.dimension + 1 >= n_sobol_dimensions() {
+            self.dimension = 2;
         }
-        let d = self.base.dimension;
-        //println!("d:{}/{}", d, self.base.array_end_dim);
-        let x = self.sample_dimension(self.base.interval_sample_index, d);
-        let y = self.sample_dimension(self.base.interval_sample_index, d + 1);
-        let p = Point2f::new(x, y);
-        self.base.dimension += 2;
-
-        //if self.dimension_2d + 1 >= BaseGlobalSampler::array_start_dim
-        //    && self.dimension_2d < self.base.array_end_dim
-        //{
-        //    self.dimension_2d = self.base.array_end_dim;
-        //}
-        //let d = self.dimension_2d;
-        //println!("d:{}/{}", d, self.base.array_end_dim);
-        //let x = self.sample_dimension(self.base.interval_sample_index, d);
-        //let y = self.sample_dimension(self.base.interval_sample_index, d + 1);
-        //let p = Point2f::new(x, y);
-        //self.dimension_2d += 2;
-        return p;
+        let u = Point2f::new(
+            self.sample_dimension(self.dimension),
+            self.sample_dimension(self.dimension + 1),
+        );
+        self.dimension += 2;
+        u
     }
 
-    fn request_1d_array(&mut self, n: u32) {
-        self.base.request_1d_array(n);
-    }
-    fn request_2d_array(&mut self, n: u32) {
-        self.base.request_2d_array(n);
-    }
-    fn get_1d_array(&mut self, n: u32) -> Option<Vec<Float>> {
-        return self.base.get_1d_array(n);
-    }
-    fn get_2d_array(&mut self, n: u32) -> Option<Vec<Vector2f>> {
-        return self.base.get_2d_array(n);
-    }
-
-    fn clone_with_seed(&self, _seed: u32) -> Arc<RwLock<dyn Sampler>> {
-        return Arc::new(RwLock::new(self.clone()));
-    }
-
-    fn get_samples_per_pixel(&self) -> u32 {
-        return self.base.base.samples_per_pixel;
-    }
-}
-
-unsafe impl Sync for SobolSampler {}
-
-impl GlobalSampler for SobolSampler {
-    fn get_index_for_sample(&self, sample_num: i64) -> i64 {
-        let p = self.base.base.current_pixel - self.sample_bounds.min;
-        return sobol_interval_to_index(self.log2_resolution, sample_num as u64, &p) as i64;
-    }
-    fn sample_dimension(&self, index: i64, dim: u32) -> Float {
-        let mut s = sobol_sample(index, dim, 0);
-        // Remap Sobol$'$ dimensions used for pixel samples
-        if dim == 0 || dim == 1 {
-            s = s * (self.resolution as Float) + self.sample_bounds.min[dim as usize] as Float;
-            s = Float::clamp(
-                s - self.base.base.current_pixel[dim as usize] as Float,
+    pub fn get_pixel_2d(&mut self) -> Point2f {
+        let mut u = Point2f::new(
+            sobol_sample(self.sobol_index, 0, 0),
+            sobol_sample(self.sobol_index, 1, 0),
+        );
+        for dim in 0..2 {
+            u[dim] = Float::clamp(
+                u[dim] * self.scale as Float - self.pixel[dim] as Float,
                 0.0,
                 ONE_MINUS_EPSILON,
             );
-            s = Float::fract(s);
         }
-        return s;
+        u
     }
 
-    fn get_base(&mut self) -> &mut BaseGlobalSampler {
-        return &mut self.base;
+    pub fn get_camera_sample(&mut self, p_raster: &Point2i) -> CameraSample {
+        CameraSample {
+            p_film: Point2f::new(p_raster.x as Float, p_raster.y as Float) + self.get_pixel_2d(),
+            time: self.get_1d(),
+            p_lens: self.get_2d(),
+            filter_weight: 1.0,
+        }
+    }
+
+    pub fn request_1d_array(&mut self, n: u32) {
+        self.base.request_1d_array(n);
+    }
+
+    pub fn request_2d_array(&mut self, n: u32) {
+        self.base.request_2d_array(n);
+    }
+
+    pub fn get_1d_array(&mut self, n: u32) -> Option<Vec<Float>> {
+        self.base.get_1d_array(n)
+    }
+
+    pub fn get_2d_array(&mut self, n: u32) -> Option<Vec<Vector2f>> {
+        self.base.get_2d_array(n)
+    }
+
+    pub fn start_next_sample(&mut self) -> bool {
+        let ok = self.base.start_next_sample();
+        if ok {
+            self.start_pixel_sample(self.base.current_pixel_sample_index, 0);
+        }
+        ok
+    }
+
+    pub fn set_sample_number(&mut self, sample_num: u32) -> bool {
+        let ok = self.base.set_sample_number(sample_num);
+        if ok {
+            self.start_pixel_sample(sample_num, 0);
+        }
+        ok
+    }
+
+    pub fn get_samples_per_pixel(&self) -> u32 {
+        self.samples_per_pixel
+    }
+
+    pub fn create(
+        params: &ParameterDictionary,
+        full_resolution: Point2i,
+    ) -> Result<SobolSampler, PbrtError> {
+        let mut nsamp = params.get_one_int("pixelsamples", 16) as u32;
+        let randomize = parse_randomize_strategy(
+            params.get_one_string("randomization", "fastowen"),
+            "SobolSampler",
+        )?;
+        let seed = params.get_one_int("seed", PbrtOptions::get().seed as i32) as u32;
+        {
+            let options = PbrtOptions::get();
+            if options.quick_render {
+                nsamp = 1;
+            }
+        }
+        Ok(SobolSampler::new(nsamp, full_resolution, randomize, seed))
+    }
+
+    pub fn start_pixel_sample(&mut self, sample_index: u32, dim: u32) {
+        self.pixel = self.base.current_pixel;
+        self.dimension = u32::max(2, dim);
+        self.sobol_index =
+            sobol_interval_to_index(log2int(self.scale), sample_index as u64, &self.pixel) as i64;
+    }
+
+    fn sample_dimension(&self, dimension: u32) -> Float {
+        sample_dimension_with_strategy(self.sobol_index, dimension, self.randomize, self.seed)
+    }
+
+    fn fill_sample_arrays(&mut self) {
+        let mut dim = 5u32;
+        for i in 0..self.base.samples1d_array_sizes.len() {
+            let samples = self.samples_per_pixel * self.base.samples1d_array_sizes[i];
+            for j in 0..samples {
+                let index =
+                    sobol_interval_to_index(log2int(self.scale), j as u64, &self.pixel) as i64;
+                self.base.sample_array1d[i][j as usize] =
+                    sample_dimension_with_strategy(index, dim, self.randomize, self.seed);
+            }
+            dim += 1;
+        }
+        for i in 0..self.base.samples2d_array_sizes.len() {
+            let samples = self.samples_per_pixel * self.base.samples2d_array_sizes[i];
+            for j in 0..samples {
+                let index =
+                    sobol_interval_to_index(log2int(self.scale), j as u64, &self.pixel) as i64;
+                self.base.sample_array2d[i][j as usize] = Point2f::new(
+                    sample_dimension_with_strategy(index, dim, self.randomize, self.seed),
+                    sample_dimension_with_strategy(index, dim + 1, self.randomize, self.seed),
+                );
+            }
+            dim += 2;
+        }
     }
 }
 
-pub fn create_sobol_sampler(
-    params: &ParamSet,
-    sample_bounds: &Bounds2i,
-) -> Result<Arc<RwLock<dyn Sampler>>, PbrtError> {
-    let mut nsamp = params.find_one_int("pixelsamples", 16) as u32;
-    {
-        let options = PbrtOptions::get();
-        if options.quick_render {
-            nsamp = 1;
+fn parse_randomize_strategy(
+    value: String,
+    sampler_name: &str,
+) -> Result<RandomizeStrategy, PbrtError> {
+    match value.as_str() {
+        "none" => Ok(RandomizeStrategy::None),
+        "permutedigits" => Ok(RandomizeStrategy::PermuteDigits),
+        "fastowen" => Ok(RandomizeStrategy::FastOwen),
+        "owen" => Ok(RandomizeStrategy::Owen),
+        _ => Err(PbrtError::error(&format!(
+            "{}: unknown randomization strategy {}",
+            sampler_name, value
+        ))),
+    }
+}
+
+fn n_sobol_dimensions() -> u32 {
+    (SOBOL_MATRICES_32.len() / SOBOL_MATRIX_SIZE) as u32
+}
+
+fn sample_dimension_with_strategy(
+    index: i64,
+    dimension: u32,
+    randomize: RandomizeStrategy,
+    seed: u32,
+) -> Float {
+    match randomize {
+        RandomizeStrategy::None => sobol_sample(index, dimension, 0),
+        RandomizeStrategy::PermuteDigits => {
+            let hash = mix_bits(((dimension as u64) << 32) | seed as u64) as u32;
+            sobol_sample(index, dimension, hash as u64)
+        }
+        RandomizeStrategy::FastOwen => randomized_sobol_sample(
+            index,
+            dimension,
+            fast_owen_scramble,
+            mix_bits(((dimension as u64) << 32) | seed as u64) as u32,
+        ),
+        RandomizeStrategy::Owen => randomized_sobol_sample(
+            index,
+            dimension,
+            owen_scramble,
+            mix_bits(((dimension as u64) << 32) | seed as u64) as u32,
+        ),
+    }
+}
+
+fn randomized_sobol_sample(
+    a: i64,
+    dimension: u32,
+    randomizer: fn(u32, u32) -> u32,
+    seed: u32,
+) -> Float {
+    let mut a = a;
+    let mut v: u32 = 0;
+    let mut i = usize::min(
+        dimension as usize * SOBOL_MATRIX_SIZE,
+        SOBOL_MATRICES_32.len() - 1,
+    );
+    while a != 0 {
+        if (a & 1) != 0 {
+            v ^= SOBOL_MATRICES_32[i] as u32;
+        }
+        a >>= 1;
+        i += 1;
+        i %= SOBOL_MATRICES_32.len();
+    }
+    let v = randomizer(v, seed);
+    Float::min(
+        (v as f64 * 2.3283064365386963e-10f64) as Float,
+        FLOAT_ONE_MINUS_EPSILON as Float,
+    )
+}
+
+fn fast_owen_scramble(mut v: u32, seed: u32) -> u32 {
+    v = reverse_bits32(v);
+    v ^= v.wrapping_mul(0x3d20adea);
+    v = v.wrapping_add(seed);
+    v = v.wrapping_mul((seed >> 16) | 1);
+    v ^= v.wrapping_mul(0x05526c56);
+    v ^= v.wrapping_mul(0x53a22864);
+    reverse_bits32(v)
+}
+
+fn owen_scramble(mut v: u32, seed: u32) -> u32 {
+    if (seed & 1) != 0 {
+        v ^= 1u32 << 31;
+    }
+    for b in 1..32 {
+        let mask = (!0u32) << (32 - b);
+        if (mix_bits(((v & mask) ^ seed) as u64) as u32 & (1u32 << b)) != 0 {
+            v ^= 1u32 << (31 - b);
         }
     }
-    return Ok(Arc::new(RwLock::new(SobolSampler::new(
-        nsamp,
-        sample_bounds,
-    ))));
+    v
+}
+
+fn mix_bits(mut v: u64) -> u64 {
+    v ^= v >> 31;
+    v = v.wrapping_mul(0x7fb5d329728ea185);
+    v ^= v >> 27;
+    v = v.wrapping_mul(0x81dadef4bc2dd44d);
+    v ^= v >> 33;
+    v
 }

@@ -1,8 +1,10 @@
 #[allow(unused)]
-pub const SAMPLED_LAMBDA_START: u32 = 400;
+pub const LAMBDA_MIN: u32 = 360;
 #[allow(unused)]
-pub const SAMPLED_LAMBDA_END: u32 = 700;
+pub const LAMBDA_MAX: u32 = 830;
+
 #[allow(unused)]
-pub const SPECTRAL_SAMPLES: usize = 60;
+pub const N_SPECTRUM_SAMPLES: usize = 4;
+
 #[allow(unused)]
 pub const RGB2SPECT_SAMPLES: usize = 32;

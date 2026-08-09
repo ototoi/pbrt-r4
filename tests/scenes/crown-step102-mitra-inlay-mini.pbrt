@@ -1,0 +1,59 @@
+Film "rgb"
+    "string filename" [ "/Users/toru/src/others/pbrt-r4-devkit/works/20260505/step102/placeholder.exr" ]
+    "integer yresolution" [ 8 ]
+    "integer xresolution" [ 8 ]
+
+LookAt 0 0 6
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float lensradius" [ 0 ]
+    "float focaldistance" [ 6 ]
+    "float fov" [ 34 ]
+Sampler "halton"
+    "integer pixelsamples" [ 1 ]
+Integrator "volpath"
+    "integer maxdepth" [ 32 ]
+
+WorldBegin
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 12 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0 0 -1 0 0 -1 0 0 -1 0 0 -1 ]
+        "point3 P" [ -4 4 3 4 4 3 4 1 3 -4 1 3 ]
+AttributeEnd
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.18 0.18 0.18 ]
+    Shape "sphere"
+        "float radius" [ 50 ]
+AttributeEnd
+
+Texture "mitra_inlay-kd-tex" "spectrum" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/mitra/mitra_border_color.png" ]
+Texture "mitra_inlay-kd" "spectrum" "scale"
+    "float scale" [ 1.5 ]
+    "texture tex" [ "mitra_inlay-kd-tex" ]
+Texture "mitra_inlay-bump" "float" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/mitra/mitra_border_bump.png" ]
+Texture "mitra_inlay-bump-sc" "float" "scale"
+    "float scale" [ 0.25 ]
+    "texture tex" [ "mitra_inlay-bump" ]
+MakeNamedMaterial "mitra_inlay"
+    "string type" [ "coateddiffuse" ]
+    "texture displacement" [ "mitra_inlay-bump-sc" ]
+    "texture reflectance" [ "mitra_inlay-kd" ]
+    "float roughness" [ 0.010408 ]
+
+AttributeBegin
+    NamedMaterial "mitra_inlay"
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "point2 uv" [ 0 0 1 0 1 1 0 1 ]
+        "point3 P" [ -1 -1 0 1 -1 0 1 1 0 -1 1 0 ]
+AttributeEnd

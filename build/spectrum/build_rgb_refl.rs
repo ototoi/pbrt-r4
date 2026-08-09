@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 pub fn build_core(path: &str) {
-    let mut m: Vec<(&str, [Float; SPECTRAL_SAMPLES])> = Vec::new();
+    let mut m: Vec<(&str, [Float; N_SPECTRUM_SAMPLES])> = Vec::new();
     m.push((
         "RGBREFL2SPECT_WHITE",
         sample_spectrum(&rgb_data::RGB2SPECT_LAMBDA, &rgb_data::RGBREFL2SPECT_WHITE),
@@ -91,10 +91,13 @@ pub fn build_core(path: &str) {
     ));
 
     let mut contents = String::from("");
-    contents += "use crate::core::base::Float;\n";
+    contents += "use crate::util::base::Float;\n";
     contents += "\n";
 
-    contents += &format!("const SPECTRAL_SAMPLES: usize = {};\n", SPECTRAL_SAMPLES);
+    contents += &format!(
+        "const N_SPECTRUM_SAMPLES: usize = {};\n",
+        N_SPECTRUM_SAMPLES
+    );
     contents += "\n";
     for (key, v) in m.iter() {
         let name = format!("ARRAY_{}", *key);
@@ -106,10 +109,15 @@ pub fn build_core(path: &str) {
 }
 
 pub fn build() {
-    println!("cargo:rerun-if-changed=build/spectrum/rgb_data.rs;build/spectrum/build_rgb_refl.rs");
+    println!(
+        "cargo:rerun-if-changed=build/spectrum/rgb_data.rs;build/spectrum/build_rgb_refl.rs;build/spectrum/utils.rs;build/spectrum/config.rs;build/spectrum/spectrum_config.rs"
+    );
     let depends = [
         "build/spectrum/rgb_data.rs",
         "build/spectrum/build_rgb_refl.rs",
+        "build/spectrum/utils.rs",
+        "build/spectrum/config.rs",
+        "build/spectrum/spectrum_config.rs",
     ];
     let target = "spectrum_data_rgb_refl.rs";
     let out_dir = env::var("OUT_DIR").unwrap();

@@ -33,5 +33,5 @@ pub fn cie_to_string(name: &str, samples: &[Float]) -> String {
 }
 
 pub fn spectrum_to_string(name: &str, samples: &[Float]) -> String {
-    return to_string(name, samples, "SPECTRAL_SAMPLES");
+    return to_string(name, samples, "N_SPECTRUM_SAMPLES");
 }

@@ -1,6 +1,6 @@
 // Imported from hg.cpp
 
-use pbrt_r3::core::prelude::*;
+use pbrt_r4::prelude::*;
 
 fn near_equal(a: Float, b: Float, e: Float) -> bool {
     (a - b).abs() < e
@@ -11,7 +11,7 @@ fn henyey_greenstein_sampling_match() {
     let mut rng = RNG::new();
     let mut g = -0.75;
     while g <= 0.75 {
-        let hg = HenyeyGreenstein::new(g);
+        let hg = HGPhaseFunction::new(g);
         for _ in 0..100 {
             let wo =
                 uniform_sample_sphere(&Vector2f::new(rng.uniform_float(), rng.uniform_float()));
@@ -26,7 +26,7 @@ fn henyey_greenstein_sampling_match() {
 #[test]
 fn henyey_greenstein_sampling_orientation_forward() {
     let mut rng = RNG::new();
-    let hg = HenyeyGreenstein::new(0.95);
+    let hg = HGPhaseFunction::new(0.95);
     let wo = Vector3f::new(-1.0, 0.0, 0.0);
 
     let mut n_forward = 0;
@@ -49,7 +49,7 @@ fn henyey_greenstein_normalized() {
     let mut rng = RNG::new();
     let mut g = -0.75;
     while g <= 0.75 {
-        let hg = HenyeyGreenstein::new(g);
+        let hg = HGPhaseFunction::new(g);
         let wo = uniform_sample_sphere(&Vector2f::new(rng.uniform_float(), rng.uniform_float()));
         let mut sum = 0.0;
         let n_samples = 100000;

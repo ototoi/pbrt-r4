@@ -1,4 +1,12 @@
-use crate::core::prelude::*;
+use crate::interaction::*;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::util::base::*;
+use crate::util::efloat::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 const MACHINE_EPSILON: Float = Float::EPSILON * 0.5;
 const GAMMA3: Float = (3.0 * MACHINE_EPSILON) / (1.0 - (3.0 * MACHINE_EPSILON));
@@ -35,10 +43,44 @@ impl Cylinder {
             phi_max,
         }
     }
+
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+    ) -> Result<Self, PbrtError> {
+        let radius = params.get_one_float("radius", 1.0);
+        let mut zmin = params.get_one_float("zmin", -1.0);
+        let mut zmax = params.get_one_float("zmax", 1.0);
+        let phimax = params.get_one_float("phimax", 360.0);
+
+        if zmin > zmax {
+            std::mem::swap(&mut zmin, &mut zmax);
+        }
+
+        if radius == 0.0 {
+            let msg = format!(
+                "Unable to create cylinder shape: radius={}, zmin={}, zmax={}, phimax={}",
+                radius, zmin, zmax, phimax
+            );
+            Err(PbrtError::error(&msg))
+        } else {
+            Ok(Self::new(
+                o2w,
+                w2o,
+                reverse_orientation,
+                radius,
+                zmin,
+                zmax,
+                phimax,
+            ))
+        }
+    }
 }
 
-impl Shape for Cylinder {
-    fn object_bound(&self) -> Bounds3f {
+impl Cylinder {
+    pub fn object_bound(&self) -> Bounds3f {
         let radius = self.radius;
         let z_min = self.z_min;
         let z_max = self.z_max;
@@ -47,13 +89,17 @@ impl Shape for Cylinder {
             &Point3f::new(radius, radius, z_max),
         );
     }
-    fn world_bound(&self) -> Bounds3f {
+    pub fn world_bound(&self) -> Bounds3f {
         return self
             .base
             .object_to_world
             .transform_bounds(&self.object_bound());
     }
-    fn intersect(&self, r: &Ray) -> Option<(Float, SurfaceInteraction)> {
+
+    pub fn normal_bounds(&self) -> DirectionCone {
+        DirectionCone::entire_sphere()
+    }
+    pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
         let (ray, o_err, d_err) = self.base.world_to_object.transform_ray(r);
 
         // Compute quadratic cylinder coefficients
@@ -66,19 +112,15 @@ impl Shape for Cylinder {
 
         let ox = EFloat::from((ray.o.x, o_err.x));
         let oy = EFloat::from((ray.o.y, o_err.y));
-        //let oz = EFloat::from((ray.o.z, o_err.z));
         let dx = EFloat::from((ray.d.x, d_err.x));
         let dy = EFloat::from((ray.d.y, d_err.y));
-        //let dz = EFloat::from((ray.d.z, d_err.z));
         let a = dx * dx + dy * dy;
         let b = (dx * ox + dy * oy) * 2.0;
         let c = ox * ox + oy * oy - EFloat::from(radius) * EFloat::from(radius);
 
         // Solve quadratic equation for _t_ values
-        let t_max = ray.t_max.get();
 
         let (t0, t1) = EFloat::quadratic(a, b, c)?;
-        // pbrt-r3:
         if t0.v.is_infinite() || t1.v.is_infinite() {
             return None;
         }
@@ -190,10 +232,10 @@ impl Shape for Cylinder {
             .base
             .object_to_world
             .transform_surface_interaction(&isect);
-        return Some((t_shape_hit.into(), isect));
+        return Some(ShapeIntersection::new(isect, t_shape_hit.into()));
     }
 
-    fn intersect_p(&self, r: &Ray) -> bool {
+    pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
         let (ray, o_err, d_err) = self.base.world_to_object.transform_ray(r);
 
         // Compute quadratic cylinder coefficients
@@ -206,19 +248,15 @@ impl Shape for Cylinder {
 
         let ox = EFloat::from((ray.o.x, o_err.x));
         let oy = EFloat::from((ray.o.y, o_err.y));
-        //let oz = EFloat::from((ray.o.z, o_err.z));
         let dx = EFloat::from((ray.d.x, d_err.x));
         let dy = EFloat::from((ray.d.y, d_err.y));
-        //let dz = EFloat::from((ray.d.z, d_err.z));
         let a = dx * dx + dy * dy;
         let b = (dx * ox + dy * oy) * 2.0;
         let c = ox * ox + oy * oy - EFloat::from(radius) * EFloat::from(radius);
 
         // Solve quadratic equation for _t_ values
-        let t_max = ray.t_max.get();
 
         if let Some((t0, t1)) = EFloat::quadratic(a, b, c) {
-            // pbrt-r3:
             if t0.v.is_infinite() || t1.v.is_infinite() {
                 return false;
             }
@@ -286,7 +324,7 @@ impl Shape for Cylinder {
         }
     }
 
-    fn area(&self) -> Float {
+    pub fn area(&self) -> Float {
         let radius = self.radius;
         let z_min = self.z_min;
         let z_max = self.z_max;
@@ -294,7 +332,7 @@ impl Shape for Cylinder {
         return (z_max - z_min) * radius * phi_max;
     }
 
-    fn sample(&self, u: &Point2f) -> Option<(Interaction, Float)> {
+    pub fn sample(&self, u: &Point2f) -> Option<(Interaction, Float)> {
         let radius = self.radius;
         let z_min = self.z_min;
         let z_max = self.z_max;
@@ -324,40 +362,71 @@ impl Shape for Cylinder {
         let pdf = 1.0 / self.area();
         return Some((it, pdf));
     }
+
+    pub fn pdf(&self, _inter: &Interaction) -> Float {
+        Float::recip(self.area())
+    }
+
+    pub fn sample_from(&self, inter: &Interaction, u: &Point2f) -> Option<(Interaction, Float)> {
+        let (intr, pdf) = self.sample(u)?;
+        assert!(intr.is_surface_interaction());
+        let wi = intr.get_p() - inter.get_p();
+        if wi.length_squared() <= 0.0 {
+            return None;
+        } else {
+            assert!(intr.get_n().length() > 0.0);
+            let wi = wi.normalize();
+            let pdf = pdf * Vector3f::distance_squared(&inter.get_p(), &intr.get_p())
+                / Vector3f::abs_dot(&intr.get_n(), &-wi);
+            if pdf <= 0.0 || pdf.is_infinite() {
+                return None;
+            }
+            return Some((intr, pdf));
+        }
+    }
+
+    pub fn pdf_from(&self, inter: &Interaction, wi: &Vector3f) -> Float {
+        let ray = inter.spawn_ray(wi);
+        if let Some(si) = self.intersect(&ray, Float::INFINITY) {
+            let isect_light = si.intr;
+            assert!(isect_light.n.length() > 0.0);
+
+            let pdf = Vector3f::distance_squared(&inter.get_p(), &isect_light.p)
+                / (Vector3f::abs_dot(&isect_light.n, &(-*wi)) * self.area());
+            if pdf.is_infinite() {
+                return 0.0;
+            }
+            return pdf;
+        } else {
+            return 0.0;
+        }
+    }
+
+    pub fn solid_angle(&self, p: &Point3f, n_samples: i32) -> Float {
+        use crate::util::lowdiscrepancy::*;
+        let mut it = BaseInteraction::default();
+        it.p = *p;
+        it.wo = Vector3f::new(0.0, 0.0, 1.0);
+        let inter = Interaction::from(it);
+        let mut solid_angle = 0.0;
+        for i in 0..n_samples {
+            let u = Point2f::new(radical_inverse(0, i as u64), radical_inverse(1, i as u64));
+            if let Some((p_shape, pdf)) = self.sample_from(&inter, &u) {
+                let r = Ray::new(p, &(p_shape.get_p() - *p), 0.999, 0.0);
+                if !self.intersect_p(&r, 0.999) {
+                    solid_angle += 1.0 / pdf
+                }
+            }
+        }
+        return solid_angle / n_samples as Float;
+    }
 }
 
 pub fn create_cylinder_shape(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
+    params: &ParameterDictionary,
 ) -> Result<Cylinder, PbrtError> {
-    let radius = params.find_one_float("radius", 1.0);
-    let mut zmin = params.find_one_float("zmin", -1.0);
-    let mut zmax = params.find_one_float("zmax", 1.0);
-    let phimax = params.find_one_float("phimax", 360.0);
-
-    if zmin > zmax {
-        std::mem::swap(&mut zmin, &mut zmax);
-    }
-
-    // pbrt-r3
-    if radius == 0.0 {
-        let msg = format!(
-            "Unable to create cylinder shape: radius={}, zmin={}, zmax={}, phimax={}",
-            radius, zmin, zmax, phimax
-        );
-        return Err(PbrtError::error(&msg));
-    // pbrt-r3
-    } else {
-        return Ok(Cylinder::new(
-            o2w,
-            w2o,
-            reverse_orientation,
-            radius,
-            zmin,
-            zmax,
-            phimax,
-        ));
-    }
+    Cylinder::create(o2w, w2o, reverse_orientation, params)
 }

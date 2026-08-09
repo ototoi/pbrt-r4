@@ -62,18 +62,18 @@ pub fn average_spectrum_samples(
     return sum / (lambda_end - lambda_start);
 }
 
-pub fn sample_spectrum(lambda: &[Float], vals: &[Float]) -> [Float; SPECTRAL_SAMPLES] {
-    let mut x: [Float; SPECTRAL_SAMPLES] = [0.0; SPECTRAL_SAMPLES];
-    for i in 0..SPECTRAL_SAMPLES {
+pub fn sample_spectrum(lambda: &[Float], vals: &[Float]) -> [Float; N_SPECTRUM_SAMPLES] {
+    let mut x: [Float; N_SPECTRUM_SAMPLES] = [0.0; N_SPECTRUM_SAMPLES];
+    for i in 0..N_SPECTRUM_SAMPLES {
         let wl0 = lerp(
-            (i as Float) / (SPECTRAL_SAMPLES as Float),
-            SAMPLED_LAMBDA_START as Float,
-            SAMPLED_LAMBDA_END as Float,
+            (i as Float) / (N_SPECTRUM_SAMPLES as Float),
+            LAMBDA_MIN as Float,
+            LAMBDA_MAX as Float,
         );
         let wl1 = lerp(
-            ((i + 1) as Float) / (SPECTRAL_SAMPLES as Float),
-            SAMPLED_LAMBDA_START as Float,
-            SAMPLED_LAMBDA_END as Float,
+            ((i + 1) as Float) / (N_SPECTRUM_SAMPLES as Float),
+            LAMBDA_MIN as Float,
+            LAMBDA_MAX as Float,
         );
         x[i] = average_spectrum_samples(lambda, vals, wl0, wl1);
     }

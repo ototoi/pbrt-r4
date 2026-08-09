@@ -1,7 +1,4 @@
-//backport display.cpp in the pbrt-v4
-
-//use crate::core::base::*;
-use crate::core::prelude::*;
+use crate::util::error::*;
 
 use log::*;
 use std::{
@@ -19,9 +16,6 @@ enum DisplayDirective {
 }
 
 pub struct IPCChannel {
-    //_num_failures: i32,
-    //_address: String,
-    //_port: String,
     addr: SocketAddr,
     stream: Option<TcpStream>,
 }
@@ -39,9 +33,6 @@ impl IPCChannel {
                 match s {
                     Ok(stream) => {
                         let channel = IPCChannel {
-                            //_num_failures: 0,
-                            //address,
-                            //port,
                             addr,
                             stream: Some(stream),
                         };
@@ -69,7 +60,6 @@ impl IPCChannel {
         }
         if let Some(stream) = self.stream.as_ref() {
             let mut writer = BufWriter::new(stream);
-            //println!("send:{:?}", message);
             match writer.write_all(message) {
                 Ok(_) => {
                     return Ok(());
@@ -277,14 +267,6 @@ impl DisplayItem {
         height: u32,
         image: &[f32],
     ) -> Result<Vec<Tile>, PbrtError> {
-        //let x0 = x;
-        //let y0 = y;
-        //let x1 = x0 + width;
-        //let y1 = y0 + height;
-
-        //println!("x0:{}, y0:{}, x1:{}, y1:{}", x0, y0, x1, y1);
-        //println!("width:{}, height:{}", width, height);
-
         assert!(width * height * self.channel_names.len() as u32 == image.len() as u32);
 
         let mut xranges = Vec::new();
@@ -318,9 +300,6 @@ impl DisplayItem {
 
         let mut tiles = Vec::with_capacity(xranges.len() * yranges.len());
         let channel_count = self.channel_names.len();
-        //println!("xranges:{:?}", xranges);
-        //println!("yranges:{:?}", yranges);
-        //println!("channel_count:{}", channel_count);
         for (yt0, yt1) in yranges.iter() {
             for (xt0, xt1) in xranges.iter() {
                 let nw = xt1 - xt0;

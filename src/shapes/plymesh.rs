@@ -1,378 +1,128 @@
 use super::alphamask::AlphaMaskShape;
+use super::bilinearmesh::create_bilinear_patch_mesh;
 use super::triangle::*;
-use crate::core::prelude::*;
+use crate::base::shape::Shape;
+use crate::interaction::SurfaceInteraction;
+use crate::options::PbrtOptions;
+use crate::paramdict::*;
 
+use crate::shapes::*;
+use crate::textures::*;
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::mesh::TriQuadMesh;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+
+use log::warn;
 use std::collections::HashMap;
-use std::io::BufRead;
 use std::sync::Arc;
 
-use ply_rs::parser;
-use ply_rs::ply;
+type FloatTextureMap = HashMap<String, Arc<FloatTexture>>;
 
-type FloatTextureMap = HashMap<String, Arc<dyn Texture<Float>>>;
-
-const VERTEX_P: u32 = 1;
-const VERTEX_N: u32 = 2;
-const VERTEX_UV: u32 = 8;
-
-#[derive(Debug)]
-struct Vertex {
-    x: f32,
-    y: f32,
-    z: f32,
-    nx: f32,
-    ny: f32,
-    nz: f32,
-    u: f32,
-    v: f32,
-    flags: u32,
-}
-
-#[derive(Debug)]
-struct Face {
-    vertex_index: Vec<i32>,
-    n: [f32; 3],
-}
-
-impl ply::PropertyAccess for Vertex {
-    fn new() -> Self {
-        Vertex {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-            nx: 0.0,
-            ny: 0.0,
-            nz: 0.0,
-            u: 0.0,
-            v: 0.0,
-            flags: 0,
-        }
-    }
-    fn set_property(&mut self, key: String, property: ply::Property) {
-        match property {
-            ply::Property::Float(v) => match key.as_str() {
-                "x" => {
-                    self.x = v;
-                    self.flags |= VERTEX_P;
-                }
-                "y" => {
-                    self.y = v;
-                    self.flags |= VERTEX_P;
-                }
-                "z" => {
-                    self.z = v;
-                    self.flags |= VERTEX_P;
-                }
-                "nx" => {
-                    self.nx = v;
-                    self.flags |= VERTEX_N;
-                }
-                "ny" => {
-                    self.ny = v;
-                    self.flags |= VERTEX_N;
-                }
-                "nz" => {
-                    self.nz = v;
-                    self.flags |= VERTEX_N;
-                }
-                "u" => {
-                    self.u = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "v" => {
-                    self.v = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "s" => {
-                    self.u = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "t" => {
-                    self.v = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "texture_u" => {
-                    self.u = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "texture_v" => {
-                    self.v = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "texture_s" => {
-                    self.u = v;
-                    self.flags |= VERTEX_UV;
-                }
-                "texture_t" => {
-                    self.v = v;
-                    self.flags |= VERTEX_UV;
-                }
-                k => panic!("Vertex: Unexpected key/value combination: key: {}", k),
-            },
-            _ => {
-                panic!(
-                    "Vertex: Unexpected key/value combination: key: {}, type: {:?}",
-                    &key, property
-                );
-            }
-        }
-    }
-}
-
-// same thing for Face
-impl ply::PropertyAccess for Face {
-    fn new() -> Self {
-        Face {
-            vertex_index: Vec::new(),
-            n: [0.0; 3],
-        }
-    }
-    fn set_property(&mut self, key: String, property: ply::Property) {
-        if key == "vertex_indices" || key == "vertex_index" {
-            match property {
-                ply::Property::ListInt(vec) => {
-                    for i in 0..vec.len() {
-                        self.vertex_index.push(vec[i]);
-                    }
-                }
-                ply::Property::ListUInt(vec) => {
-                    for i in 0..vec.len() {
-                        self.vertex_index.push(vec[i] as i32);
-                    }
-                }
-                _ => {
-                    panic!(
-                        "Face: Unexpected key/value combination: key: {}, type: {:?}",
-                        &key, property
-                    );
-                }
-            }
-        } else if key == "nx" || key == "ny" || key == "nz" {
-            match property {
-                ply::Property::Float(v) => match key.as_str() {
-                    "nx" => self.n[0] = v,
-                    "ny" => self.n[1] = v,
-                    "nz" => self.n[2] = v,
-                    _ => {}
-                },
-                _ => {
-                    panic!(
-                        "Face: Unexpected key/value combination: key: {}, type: {:?}",
-                        &key, property
-                    );
-                }
-            }
-        }
-    }
-}
-
-/*
-fn create_bound_mesh(
-    o2w: &Transform,
-    w2o: &Transform,
-    reverse_orientation: bool,
-    _: Vec<u32>,
-    p: Vec<Point3f>,
-    _s: Vec<Vector3f>,
-    _n: Vec<Vector3f>,
-    _uv: Vec<Point2f>,
-    params: &ParamSet,
-) -> Vec<Arc<dyn Shape>> {
-    //return create_triangle_mesh(o2w, w2o, reverse_orientation, vertex_indices, p, s, n, uv);
-    let min = p[0]; //o2w.transform_point(&p[0]);
-    let min = p.iter().fold(min, |acc, e| -> Vector3f {
-        return Vector3f::new(
-            Float::min(acc.x, e.x),
-            Float::min(acc.y, e.y),
-            Float::min(acc.z, e.z),
-        );
-    });
-    let max = p[0]; //2w.transform_point(&p[0]);
-    let max = p.iter().fold(max, |acc, e| -> Vector3f {
-        return Vector3f::new(
-            Float::max(acc.x, e.x),
-            Float::max(acc.y, e.y),
-            Float::max(acc.z, e.z),
-        );
-    });
-
-    let bp = vec![
-        Vector3f::new(min.x, min.y, min.z), //0
-        Vector3f::new(min.x, min.y, max.z), //1
-        Vector3f::new(min.x, max.y, min.z), //2
-        Vector3f::new(min.x, max.y, max.z), //3
-        Vector3f::new(max.x, min.y, min.z), //4
-        Vector3f::new(max.x, min.y, max.z), //5
-        Vector3f::new(max.x, max.y, min.z), //6
-        Vector3f::new(max.x, max.y, max.z), //7
-    ];
-
-    #[rustfmt::skip]
-    let bi = vec![
-        0, 1, 2,
-        1, 3, 2,
-        4, 5, 0,
-        5, 1, 0,
-        6, 7, 4,
-        7, 5, 4,
-        2, 3, 6,
-        3, 7, 6,
-        1, 5, 3,
-        5, 7, 3,
-        4, 0, 6,
-        0, 2, 6
-    ];
-
-    let bs = Vec::new();
-    let bn = Vec::new();
-    let buv = Vec::new();
-
-    return create_triangle_mesh(o2w, w2o, reverse_orientation, bi, bp, bs, bn, buv, params);
-}
-*/
-
-fn create_reader(filanme: &str) -> Result<Box<dyn BufRead>, PbrtError> {
-    let filanme = std::path::PathBuf::from(filanme);
-    let extent = filanme
-        .extension()
-        .ok_or(PbrtError::error("No extension found"))?;
-    let extent = extent.to_string_lossy().into_owned();
-    if extent == "gz" {
-        let f = std::fs::File::open(filanme)?;
-        let reader = std::io::BufReader::new(f);
-        let reader = flate2::read::GzDecoder::new(reader);
-        let reader = std::io::BufReader::new(reader);
-        return Ok(Box::new(reader));
-    } else {
-        let f = std::fs::File::open(filanme)?;
-        let reader = std::io::BufReader::new(f);
-        return Ok(Box::new(reader));
-    }
-}
+pub struct PlyMesh;
 
 pub fn create_ply_mesh(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
+    params: &ParameterDictionary,
     float_textures: &FloatTextureMap,
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
-    let filename = params.find_one_string("filename", "");
-    let mut reader = create_reader(&filename)?;
-    let vertex_parser = parser::Parser::<Vertex>::new();
-    let face_parser = parser::Parser::<Face>::new();
-    let header = vertex_parser.read_header(&mut reader).unwrap();
+) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    let filename = params.get_one_string("filename", "");
+    let mut tri_quad_mesh = TriQuadMesh::read_ply(&filename)?;
 
-    let mut p = Vec::new();
-    let mut vertex_indices: Vec<u32> = Vec::new();
-    //let mut face_list = Vec::new();
-    let mut n = Vec::new();
-    let s = Vec::new();
-    let mut uv = Vec::new();
-    for (_name, element) in header.elements.iter() {
-        //println!("{:?}", name);
-        // we could also just parse them in sequence, but the file format might change
-        match element.name.as_ref() {
-            "vertex" => {
-                let r = vertex_parser.read_payload_for_element(&mut reader, element, &header);
-                match r {
-                    Ok(vertex_list) => {
-                        if !vertex_list.is_empty() {
-                            let flags = vertex_list[0].flags;
-                            if (flags & VERTEX_P) != 0 {
-                                p.reserve(vertex_list.len());
-                                for v in vertex_list.iter() {
-                                    p.push(Vector3f::new(v.x as Float, v.y as Float, v.z as Float));
-                                }
-                            }
-                            if (flags & VERTEX_N) != 0 {
-                                n.reserve(vertex_list.len());
-                                for v in vertex_list.iter() {
-                                    n.push(Normal3f::new(
-                                        v.nx as Float,
-                                        v.ny as Float,
-                                        v.nz as Float,
-                                    ));
-                                }
-                            }
-                            if (flags & VERTEX_UV) != 0 {
-                                uv.reserve(vertex_list.len());
-                                for v in vertex_list.iter() {
-                                    uv.push(Vector2f::new(v.u as Float, v.v as Float));
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Err(PbrtError::from(e));
-                    }
-                }
-            }
-            "face" => {
-                let r = face_parser.read_payload_for_element(&mut reader, element, &header);
-                match r {
-                    Ok(face_list) => {
-                        vertex_indices.reserve(face_list.len() * 3);
-                        for face in face_list {
-                            let n_vert = face.vertex_index.len();
-                            match n_vert {
-                                3 => {
-                                    for idx in face.vertex_index {
-                                        vertex_indices.push(idx as u32);
-                                    }
-                                }
-                                4 => {
-                                    let i0 = face.vertex_index[0] as u32;
-                                    let i1 = face.vertex_index[1] as u32;
-                                    let i2 = face.vertex_index[2] as u32;
-                                    let i3 = face.vertex_index[3] as u32;
-                                    vertex_indices.push(i0);
-                                    vertex_indices.push(i1);
-                                    vertex_indices.push(i2);
-                                    vertex_indices.push(i3);
-                                    vertex_indices.push(i0);
-                                    vertex_indices.push(i2);
-                                }
-                                _ => {
-                                    let msg = format!("plymesh: Ignoring face with {} vertices (only triangles and quads are supported!)", n_vert);
-                                    return Err(PbrtError::error(&msg));
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Err(PbrtError::from(e));
-                    }
-                }
-            }
-            _ => {}
-        }
+    let edge_length =
+        params.get_one_float("edgelength", 1.0) * PbrtOptions::get().displacement_edge_scale;
+
+    if let Some(displacement_name) = params
+        .get_textures_ref("displacement")
+        .and_then(|textures| textures.first().cloned())
+    {
+        let displacement = float_textures.get(&displacement_name).ok_or_else(|| {
+            PbrtError::error(&format!("{}: no such texture defined.", displacement_name))
+        })?;
+
+        tri_quad_mesh = tri_quad_mesh.displace(
+            |p0, p1| {
+                let p0 = o2w.transform_point(&p0);
+                let p1 = o2w.transform_point(&p1);
+                Vector3f::distance(&p0, &p1)
+            },
+            edge_length,
+            |p, n, uv| {
+                let mut si = SurfaceInteraction::default();
+                si.p = p;
+                si.n = n;
+                si.uv = uv;
+                let ctx = TextureEvalContext::from(&si);
+                let d = displacement.evaluate(&ctx);
+                p + d * n
+            },
+        )?;
     }
 
-    let mut mesh = create_triangle_mesh(
-        o2w,
-        w2o,
-        reverse_orientation,
-        vertex_indices,
-        p,
-        s,
-        n,
-        uv,
-        params,
-    );
-    //let mesh =
-    //    create_bound_mesh(o2w, w2o, reverse_orientation, vertex_indices, p, s, n, uv);
-    let alpha_mask_info = get_alpha_texture(params, float_textures);
-    let shadow_alpha_mask_info = get_shadow_alpha_texture(params, float_textures);
+    let mut mesh: Vec<Arc<Shape>> = Vec::new();
+    if !tri_quad_mesh.tri_indices.is_empty() {
+        let tris = create_triangle_mesh(
+            o2w,
+            w2o,
+            reverse_orientation,
+            tri_quad_mesh.tri_indices.clone(),
+            tri_quad_mesh.p.clone(),
+            Vec::new(),
+            tri_quad_mesh.n.clone(),
+            tri_quad_mesh.uv.clone(),
+            params,
+        )?;
+        mesh.extend(tris.into_iter().map(|tri| Arc::new(Shape::Triangle(tri))));
+    }
+    if !tri_quad_mesh.quad_indices.is_empty() {
+        let patches = create_bilinear_patch_mesh(
+            o2w,
+            w2o,
+            reverse_orientation,
+            tri_quad_mesh.quad_indices,
+            tri_quad_mesh.p,
+            tri_quad_mesh.n,
+            tri_quad_mesh.uv,
+            tri_quad_mesh.face_indices,
+        )?;
+        mesh.extend(
+            patches
+                .into_iter()
+                .map(|patch| Arc::new(Shape::BilinearPatch(patch))),
+        );
+    }
+    if mesh.is_empty() {
+        warn!(
+            "plymesh: no non-degenerate triangles or quads were created for \"{}\"; skipping shape",
+            filename
+        );
+        return Ok(mesh);
+    }
+    let alpha_mask_info = get_alpha_texture(params, float_textures)?;
+    let shadow_alpha_mask_info = get_shadow_alpha_texture(params, float_textures)?;
     if alpha_mask_info.is_some() || shadow_alpha_mask_info.is_some() {
         for i in 0..mesh.len() {
-            mesh[i] = Arc::new(AlphaMaskShape::new(
+            mesh[i] = Arc::new(Shape::AlphaMask(Box::new(AlphaMaskShape::new(
                 &mesh[i],
                 &alpha_mask_info,
                 &shadow_alpha_mask_info,
-            ));
+            ))));
         }
     }
 
-    return Ok(mesh);
+    Ok(mesh)
+}
+
+impl PlyMesh {
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+        float_textures: &FloatTextureMap,
+    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+        create_ply_mesh(o2w, w2o, reverse_orientation, params, float_textures)
+    }
 }

@@ -8,7 +8,7 @@ use std::path::Path;
 pub fn build_core(path: &str) {
     let mut contents = String::from("");
     //contents += "use super::super::spectrum;\n";
-    contents += "use crate::core::base::Float;\n";
+    contents += "use crate::util::base::Float;\n";
     contents += "\n";
 
     contents += &format!(

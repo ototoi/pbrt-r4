@@ -1,6 +1,6 @@
 // Imported from find_interval.cpp
 
-use pbrt_r3::core::base::*;
+use pbrt_r4::util::base::*;
 
 #[test]
 fn find_interval_basics() {

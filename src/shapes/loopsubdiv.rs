@@ -1,4 +1,10 @@
-use crate::core::prelude::*;
+use crate::base::shape::Shape;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::util::base::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -7,6 +13,19 @@ use std::sync::Arc;
 use std::sync::Weak;
 
 use super::create_triangle_mesh;
+
+pub struct LoopSubdiv;
+
+impl LoopSubdiv {
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+        create_loop_subdiv(o2w, w2o, reverse_orientation, params)
+    }
+}
 
 const TRI: [usize; 4] = [0, 1, 2, 0];
 const NEXT: [usize; 4] = [1, 2, 0, 1];
@@ -276,7 +295,6 @@ impl SDEdge {
         let v1 = v1.upgrade().unwrap();
         let v1 = v1.as_ptr();
 
-        //println!("{:?}_{:?}", v0, v1);
         assert!(v0 < v1);
 
         return format!("{:?}_{:?}", v0, v1);
@@ -328,8 +346,8 @@ fn loop_subdiv(
     n_levels: i32,
     vertex_indices: Vec<u32>,
     p: Vec<Point3f>,
-    params: &ParamSet,
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
+    params: &ParameterDictionary,
+) -> Result<Vec<Arc<Shape>>, PbrtError> {
     let mut vertices = Vec::new();
     let mut faces = Vec::new();
 
@@ -364,19 +382,16 @@ fn loop_subdiv(
     // Set neighbor pointers in _faces_
     let mut edges = HashMap::new();
     for i in 0..n_faces {
-        //let f = faces[i].borrow();
         for en in 0..3 {
             let v0 = TRI[en + 0];
             let v1 = TRI[en + 1];
 
-            //let ff = faces[i].borrow();
             let e = Arc::new(RefCell::new(SDEdge::new(
                 &faces[i].borrow().v[v0],
                 &faces[i].borrow().v[v1],
             )));
             let key = e.borrow().get_key();
             if !edges.contains_key(&key) {
-                //if let std::collections::hash_map::Entry::Vacant(e) = edges.entry(key) {
                 // Handle new edge
                 {
                     let mut e = e.as_ref().borrow_mut();
@@ -706,7 +721,7 @@ fn loop_subdiv(
     }
     let _uv = Vec::new();
     let _s = Vec::new();
-    return Ok(create_triangle_mesh(
+    let mesh = create_triangle_mesh(
         o2w,
         w2o,
         reverse_orientation,
@@ -716,16 +731,21 @@ fn loop_subdiv(
         ns,
         _uv,
         params,
-    ));
+    )?;
+    let mesh: Vec<Arc<Shape>> = mesh
+        .into_iter()
+        .map(|tri| Arc::new(Shape::Triangle(tri)))
+        .collect();
+    return Ok(mesh);
 }
 
 pub fn create_loop_subdiv(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
-) -> Result<Vec<Arc<dyn Shape>>, PbrtError> {
-    let n_levels = params.find_one_int("levels", params.find_one_int("nlevels", 3));
+    params: &ParameterDictionary,
+) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    let n_levels = params.get_one_int("levels", params.get_one_int("nlevels", 3));
 
     let mut vertex_indices = Vec::new();
     let mut p: Vec<Vector3f> = Vec::new();
@@ -753,8 +773,7 @@ pub fn create_loop_subdiv(
         ));
     }
 
-    // don't actually use this for now...
-    let _scheme = params.find_one_string("scheme", "loop");
+    let _scheme = params.get_one_string("scheme", "loop");
     return loop_subdiv(
         o2w,
         w2o,

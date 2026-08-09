@@ -1,46 +1,101 @@
-use crate::core::base::*;
-use crate::core::camera::*;
-use crate::core::error::*;
-use crate::core::film::*;
-use crate::core::geometry::*;
-use crate::core::medium::*;
-use crate::core::param_set::*;
-use crate::core::profile::*;
-use crate::core::sampling::*;
-use crate::core::transform::*;
+use crate::base::camera::{Camera, CameraRay, CameraRayDifferential, CameraSample, CameraWiSample};
+use crate::cameras::*;
+use crate::film::*;
+use crate::interaction::*;
+use crate::lights::*;
+use crate::media::*;
+use crate::paramdict::*;
+use crate::util::base::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+use crate::util::profile::*;
+use crate::util::sampling::*;
+use crate::util::spectrum::*;
+use crate::util::transform::*;
 
 use log::*;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+#[derive(Clone)]
 pub struct OrthographicCamera {
     base: ProjectiveCamera,
     dx_camera: Vector3f,
     dy_camera: Vector3f,
+    a: Float,
 }
 
 impl OrthographicCamera {
+    pub fn create(
+        params: &ParameterDictionary,
+        cam2world: &AnimatedTransform,
+        film: &Arc<RwLock<Film>>,
+        medium: &Option<Arc<Medium>>,
+    ) -> Result<Self, PbrtError> {
+        let mut shutteropen = params.get_one_float("shutteropen", 0.0);
+        let mut shutterclose = params.get_one_float("shutterclose", 1.0);
+        if shutterclose < shutteropen {
+            warn!(
+                "Shutter close time [{}] < shutter open [{}].  Swapping them.",
+                shutterclose, shutteropen
+            );
+            std::mem::swap(&mut shutteropen, &mut shutterclose);
+        }
+        let lensradius = params.get_one_float("lensradius", 0.0);
+        let focaldistance = params.get_one_float("focaldistance", 1e6);
+
+        let frame = {
+            let film = film.read().unwrap();
+            let full_resolution = film.full_resolution();
+            full_resolution.x as Float / full_resolution.y as Float
+        };
+        let frame = params.get_one_float("frameaspectratio", frame);
+        let mut screen = if frame > 1.0 {
+            Bounds2f {
+                min: Point2f { x: -frame, y: -1.0 },
+                max: Point2f { x: frame, y: 1.0 },
+            }
+        } else {
+            Bounds2f {
+                min: Point2f {
+                    x: -1.0,
+                    y: -1.0 / frame,
+                },
+                max: Point2f {
+                    x: 1.0,
+                    y: 1.0 / frame,
+                },
+            }
+        };
+        if let Some(sw) = params.get_floats_ref("screenwindow") {
+            if sw.len() == 4 {
+                screen.min.x = sw[0];
+                screen.max.x = sw[1];
+                screen.min.y = sw[2];
+                screen.max.y = sw[3];
+            } else {
+                error!("Screen window should have four values. Using default.");
+            }
+        }
+
+        let base_params =
+            CameraBaseParameters::new(cam2world, shutteropen, shutterclose, film, medium);
+        Ok(Self::new(base_params, &screen, lensradius, focaldistance))
+    }
+
     pub fn new(
-        camera_to_world: &AnimatedTransform,
+        base_params: CameraBaseParameters,
         screen_window: &Bounds2f,
-        shutter_open: Float,
-        shutter_close: Float,
         lens_radius: Float,
         focal_distance: Float,
-        film: &Arc<RwLock<Film>>,
-        medium: &Option<Arc<dyn Medium>>,
     ) -> Self {
         let camera_to_screen = Transform::orthographic(0.0, 1.0);
         let base = ProjectiveCamera::new(
-            camera_to_world,
+            base_params,
             &camera_to_screen,
             screen_window,
-            shutter_open,
-            shutter_close,
             lens_radius,
             focal_distance,
-            film,
-            medium,
         );
         let dx_camera = base
             .raster_to_camera
@@ -48,16 +103,53 @@ impl OrthographicCamera {
         let dy_camera = base
             .raster_to_camera
             .transform_vector(&Vector3f::new(0.0, 1.0, 0.0));
+        let full_resolution = base.base.film.read().unwrap().full_resolution();
+        let min = base
+            .raster_to_camera
+            .transform_point(&Point3f::new(0.0, 0.0, 0.0));
+        let max = base.raster_to_camera.transform_point(&Point3f::new(
+            full_resolution.x as Float,
+            full_resolution.y as Float,
+            0.0,
+        ));
+        let a = Float::abs((max.x - min.x) * (max.y - min.y));
         OrthographicCamera {
             base,
             dx_camera,
             dy_camera,
+            a,
         }
+    }
+
+    pub fn get_camera_to_world(&self) -> AnimatedTransform {
+        self.base.get_camera_to_world()
+    }
+
+    pub fn init_minimum_differentials(&mut self) {
+        let differentials =
+            BaseCamera::find_minimum_differentials(&Camera::Orthographic(self.clone()));
+        self.base.base.set_minimum_differentials(differentials);
+    }
+
+    pub fn approximate_dp_dxy(
+        &self,
+        p: Point3f,
+        n: Normal3f,
+        time: Float,
+        samples_per_pixel: u32,
+    ) -> Option<(Vector3f, Vector3f)> {
+        self.base
+            .base
+            .approximate_dp_dxy(p, n, time, samples_per_pixel)
     }
 }
 
-impl Camera for OrthographicCamera {
-    fn generate_ray(&self, sample: &CameraSample) -> Option<(Float, Ray)> {
+impl OrthographicCamera {
+    pub fn generate_ray(
+        &self,
+        sample: &CameraSample,
+        _lambda: &SampledWavelengths,
+    ) -> Option<CameraRay> {
         let _p = ProfilePhase::new(Prof::GenerateCameraRay);
 
         // Compute raster and camera sample positions
@@ -89,10 +181,14 @@ impl Camera for OrthographicCamera {
         );
         ray.medium = self.base.base.get_medium();
         let (ray, _, _) = self.base.base.camera_to_world.transform_ray(&ray);
-        return Some((1.0, ray));
+        return Some(CameraRay { ray, weight: 1.0 });
     }
 
-    fn generate_ray_differential(&self, sample: &CameraSample) -> Option<(Float, RayDifferential)> {
+    pub fn generate_ray_differential(
+        &self,
+        sample: &CameraSample,
+        _lambda: &SampledWavelengths,
+    ) -> Option<CameraRayDifferential> {
         let p_film = Point3f::new(sample.p_film.x, sample.p_film.y, 0.0);
         let p_camera = self.base.raster_to_camera.transform_point(&p_film);
 
@@ -157,97 +253,147 @@ impl Camera for OrthographicCamera {
             .transform_ray_differential(&ray);
         ray.has_differentials = true;
 
-        return Some((1.0, ray));
+        return Some(CameraRayDifferential { ray, weight: 1.0 });
     }
 
-    /*
-    fn we(&self, _ray: &Ray) -> (Spectrum, Point2f) {
-        return (Spectrum::zero(), Point2f::new(0.0, 0.0));
+    pub fn we(&self, ray: &Ray) -> Option<(Spectrum, Point2f)> {
+        if self.base.lens_radius > 0.0 {
+            return None;
+        }
+
+        let c2w = self.base.base.camera_to_world.interpolate(ray.time);
+        let w2c = c2w.inverse();
+        let z = c2w.transform_vector(&Vector3f::new(0.0, 0.0, 1.0));
+        if ray.d.dot(&z) <= 1.0 - 1e-5 {
+            return None;
+        }
+
+        let p_camera = w2c.transform_point(&ray.o);
+        let camera_to_raster = self.base.raster_to_camera.inverse();
+        let p_raster = camera_to_raster.transform_point(&p_camera);
+        let p_raster = Point2f::new(p_raster.x, p_raster.y);
+
+        {
+            let film = self.get_film();
+            let film = film.read().unwrap();
+            let sample_bounds = film.sample_bounds();
+            if p_raster.x < sample_bounds.min.x as Float
+                || p_raster.x >= sample_bounds.max.x as Float
+                || p_raster.y < sample_bounds.min.y as Float
+                || p_raster.y >= sample_bounds.max.y as Float
+            {
+                return None;
+            }
+        }
+
+        Some((Spectrum::from(1.0 / self.a), p_raster))
     }
-    fn pdf_we(&self, _ray: &Ray) -> (Float, Float) {
-        (1.0, 1.0)
+
+    pub fn pdf_we(&self, ray: &Ray) -> Option<(Float, Float)> {
+        if self.base.lens_radius > 0.0 {
+            return None;
+        }
+
+        let c2w = self.base.base.camera_to_world.interpolate(ray.time);
+        let w2c = c2w.inverse();
+        let z = c2w.transform_vector(&Vector3f::new(0.0, 0.0, 1.0));
+        if ray.d.dot(&z) <= 1.0 - 1e-5 {
+            return None;
+        }
+
+        let p_camera = w2c.transform_point(&ray.o);
+        let camera_to_raster = self.base.raster_to_camera.inverse();
+        let p_raster = camera_to_raster.transform_point(&p_camera);
+
+        {
+            let film = self.get_film();
+            let film = film.read().unwrap();
+            let sample_bounds = film.sample_bounds();
+            if p_raster.x < sample_bounds.min.x as Float
+                || p_raster.x >= sample_bounds.max.x as Float
+                || p_raster.y < sample_bounds.min.y as Float
+                || p_raster.y >= sample_bounds.max.y as Float
+            {
+                return None;
+            }
+        }
+
+        Some((1.0 / self.a, 1.0))
     }
-    fn sample_wi(
+
+    pub fn sample_wi(
         &self,
-        _inter: &Interaction,
+        inter: &Interaction,
         _u: &Point2f,
-    ) -> Option<(Spectrum, Vector3f, Float, Point2f, VisibilityTester)> {
-        None
-    }
-    */
+        _lambda: &SampledWavelengths,
+    ) -> Option<CameraWiSample> {
+        if self.base.lens_radius > 0.0 {
+            return None;
+        }
 
-    fn get_film(&self) -> Arc<RwLock<Film>> {
+        let time = inter.get_time();
+        let c2w = self.base.base.camera_to_world.interpolate(time);
+        let w2c = c2w.inverse();
+        let z_world = c2w.transform_vector(&Vector3f::new(0.0, 0.0, 1.0));
+
+        let p_ref_camera = w2c.transform_point(&inter.get_p());
+        let p_camera = Point3f::new(p_ref_camera.x, p_ref_camera.y, 0.0);
+        let p_world = c2w.transform_point(&p_camera);
+
+        let wi = p_world - inter.get_p();
+        let dist2 = wi.length_squared();
+        if dist2 == 0.0 {
+            return None;
+        }
+        let wi = wi / Float::sqrt(dist2);
+        if wi.dot(&-z_world) <= 1.0 - 1e-5 {
+            return None;
+        }
+
+        let camera_to_raster = self.base.raster_to_camera.inverse();
+        let p_raster = camera_to_raster.transform_point(&p_camera);
+        let p_raster = Point2f::new(p_raster.x, p_raster.y);
+        {
+            let film = self.get_film();
+            let film = film.read().unwrap();
+            let sample_bounds = film.sample_bounds();
+            if p_raster.x < sample_bounds.min.x as Float
+                || p_raster.x >= sample_bounds.max.x as Float
+                || p_raster.y < sample_bounds.min.y as Float
+                || p_raster.y >= sample_bounds.max.y as Float
+            {
+                return None;
+            }
+        }
+
+        let medium = self.base.base.medium.clone();
+        let lens_intr = Interaction::Base(BaseInteraction {
+            p: p_world,
+            time,
+            medium_interface: MediumInterface::from(&medium),
+            n: Normal3f::from(z_world),
+            ..Default::default()
+        });
+        let vis = VisibilityTester::from((inter.clone(), lens_intr));
+        let spec = Spectrum::from(1.0 / self.a);
+        Some(CameraWiSample {
+            wi_spec: spec,
+            wi,
+            pdf: 1.0,
+            p_raster,
+            visibility: vis,
+        })
+    }
+
+    pub fn get_film(&self) -> Arc<RwLock<Film>> {
         self.base.get_film()
     }
 
-    fn get_medium(&self) -> Option<Arc<dyn Medium>> {
+    pub fn get_medium(&self) -> Option<Arc<Medium>> {
         self.base.get_medium()
     }
 
-    fn get_shutter(&self) -> (Float, Float) {
+    pub fn get_shutter(&self) -> (Float, Float) {
         self.base.get_shutter()
     }
-}
-
-pub fn create_orthographic_camera(
-    params: &ParamSet,
-    cam2world: &AnimatedTransform,
-    film: &Arc<RwLock<Film>>,
-    medium: &Option<Arc<dyn Medium>>,
-) -> Result<Arc<dyn Camera>, PbrtError> {
-    let mut shutteropen = params.find_one_float("shutteropen", 0.0);
-    let mut shutterclose = params.find_one_float("shutterclose", 1.0);
-    if shutterclose < shutteropen {
-        warn!(
-            "Shutter close time [{}] < shutter open [{}].  Swapping them.",
-            shutterclose, shutteropen
-        );
-        std::mem::swap(&mut shutteropen, &mut shutterclose);
-    }
-    let lensradius = params.find_one_float("lensradius", 0.0);
-    let focaldistance = params.find_one_float("focaldistance", 1e6);
-
-    let frame = {
-        let film = film.read().unwrap();
-        film.full_resolution.x as Float / film.full_resolution.y as Float
-    };
-    let frame = params.find_one_float("frameaspectratio", frame);
-    let mut screen = if frame > 1.0 {
-        Bounds2f {
-            min: Point2f { x: -frame, y: -1.0 },
-            max: Point2f { x: frame, y: 1.0 },
-        }
-    } else {
-        Bounds2f {
-            min: Point2f {
-                x: -1.0,
-                y: -1.0 / frame,
-            },
-            max: Point2f {
-                x: 1.0,
-                y: 1.0 / frame,
-            },
-        }
-    };
-    if let Some(sw) = params.get_floats_ref("screenwindow") {
-        if sw.len() == 4 {
-            screen.min.x = sw[0];
-            screen.max.x = sw[1];
-            screen.min.y = sw[2];
-            screen.max.y = sw[3];
-        } else {
-            error!("Screen window should have four values. Using default.");
-        }
-    }
-
-    return Ok(Arc::new(OrthographicCamera::new(
-        cam2world,
-        &screen,
-        shutteropen,
-        shutterclose,
-        lensradius,
-        focaldistance,
-        film,
-        &medium,
-    )));
 }

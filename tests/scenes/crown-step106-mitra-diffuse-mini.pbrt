@@ -1,0 +1,53 @@
+Film "rgb"
+    "string filename" [ "/Users/toru/src/others/pbrt-r4-devkit/works/20260505/step106/placeholder.exr" ]
+    "integer yresolution" [ 8 ]
+    "integer xresolution" [ 8 ]
+
+LookAt 0 0 6
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float lensradius" [ 0 ]
+    "float focaldistance" [ 6 ]
+    "float fov" [ 34 ]
+Sampler "halton"
+    "integer pixelsamples" [ 16 ]
+Integrator "volpath"
+    "integer maxdepth" [ 32 ]
+
+WorldBegin
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 12 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0 0 -1 0 0 -1 0 0 -1 0 0 -1 ]
+        "point3 P" [ -4 4 3 4 4 3 4 1 3 -4 1 3 ]
+AttributeEnd
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.18 0.18 0.18 ]
+    Shape "sphere"
+        "float radius" [ 50 ]
+AttributeEnd
+
+Texture "mitra_inlay-kd-tex" "spectrum" "imagemap"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/textures/mitra/mitra_border_color.png" ]
+Texture "mitra_inlay-kd" "spectrum" "scale"
+    "float scale" [ 1.5 ]
+    "texture tex" [ "mitra_inlay-kd-tex" ]
+
+MakeNamedMaterial "mitra_diffuse"
+    "string type" [ "diffuse" ]
+    "texture reflectance" [ "mitra_inlay-kd" ]
+
+AttributeBegin
+    NamedMaterial "mitra_diffuse"
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "point2 uv" [ 0 0 1 0 1 1 0 1 ]
+        "point3 P" [ -1 -1 0 1 -1 0 1 1 0 -1 1 0 ]
+AttributeEnd

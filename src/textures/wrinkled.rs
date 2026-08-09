@@ -1,8 +1,12 @@
-use crate::core::prelude::*;
+use crate::paramdict::*;
 
-use std::sync::Arc;
+use crate::shapes::*;
+use crate::textures::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
 
-struct WrinkledTexture {
+pub struct WrinkledTexture {
     mapping: TextureMapping3D,
     octaves: u32,
     omega: Float,
@@ -17,40 +21,22 @@ impl WrinkledTexture {
         }
     }
 
-    fn evaluate_f(&self, si: &SurfaceInteraction) -> Float {
-        let (p, dpdx, dpdy) = self.mapping.map(si);
+    pub fn evaluate(&self, ctx: &TextureEvalContext) -> Float {
+        let (p, dpdx, dpdy) = self.mapping.map(ctx);
         return turbulence(&p, &dpdx, &dpdy, self.omega, self.octaves);
     }
-}
 
-impl Texture<Float> for WrinkledTexture {
-    fn evaluate(&self, si: &SurfaceInteraction) -> Float {
-        return self.evaluate_f(si);
+    pub fn evaluate_spectrum(&self, ctx: &TextureEvalContext) -> Spectrum {
+        return Spectrum::from(self.evaluate(ctx));
     }
-}
 
-impl Texture<Spectrum> for WrinkledTexture {
-    fn evaluate(&self, si: &SurfaceInteraction) -> Spectrum {
-        return Spectrum::from(self.evaluate_f(si));
+    pub fn create(
+        render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+    ) -> Result<Self, PbrtError> {
+        let map = TextureMapping3D::create(parameters.parameter_dictionary(), render_from_texture);
+        let octaves = parameters.get_one_int("octaves", 8) as u32;
+        let roughness = parameters.get_one_float("roughness", 0.5);
+        Ok(WrinkledTexture::new(map, octaves, roughness))
     }
-}
-
-pub fn create_wrinkled_float_texture(
-    tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Float>>, PbrtError> {
-    let map = TextureMapping3D::Identity(IdentityMapping3D::new(tex2world));
-    let octaves = tp.find_int("octaves", 8) as u32;
-    let roughness = tp.find_float("roughness", 0.5);
-    return Ok(Arc::new(WrinkledTexture::new(map, octaves, roughness)));
-}
-
-pub fn create_wrinkled_spectrum_texture(
-    tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Spectrum>>, PbrtError> {
-    let map = TextureMapping3D::Identity(IdentityMapping3D::new(tex2world));
-    let octaves = tp.find_int("octaves", 8) as u32;
-    let roughness = tp.find_float("roughness", 0.5);
-    return Ok(Arc::new(WrinkledTexture::new(map, octaves, roughness)));
 }

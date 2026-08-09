@@ -1,20 +1,27 @@
-use crate::core::prelude::*;
+use crate::paramdict::*;
+use crate::textures::TextureEvalContext;
 
-use std::sync::Arc;
+use crate::shapes::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
 
 pub struct NormalTexture {}
 
-impl Texture<Spectrum> for NormalTexture {
-    fn evaluate(&self, si: &SurfaceInteraction) -> Spectrum {
-        let n = si.shading.n;
-        let n = n * 2.0 - Normal3f::new(1.0, 1.0, 1.0);
-        return Spectrum::from([n[0], n[1], n[2]]);
+impl NormalTexture {
+    pub fn evaluate(&self, ctx: &TextureEvalContext) -> Spectrum {
+        return Spectrum::from_rgb_albedo(&[
+            (ctx.n.x + 1.0) * 0.5,
+            (ctx.n.y + 1.0) * 0.5,
+            (ctx.n.z + 1.0) * 0.5,
+        ]);
     }
-}
 
-pub fn create_normal_texture(
-    _tex2world: &Transform,
-    _tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Spectrum>>, PbrtError> {
-    return Ok(Arc::new(NormalTexture {}));
+    pub fn create(
+        _render_from_texture: &Transform,
+        _parameters: &TextureParameterDictionary,
+        _spectrum_type: SpectrumType,
+    ) -> Result<Self, PbrtError> {
+        Ok(NormalTexture {})
+    }
 }

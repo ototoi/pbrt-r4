@@ -1,6 +1,10 @@
-use crate::core::prelude::*;
+use crate::paramdict::*;
 
-use std::sync::Arc;
+use crate::shapes::*;
+use crate::textures::*;
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
+use crate::util::spectrum::*;
 
 pub struct UVTexture {
     mapping: TextureMapping2D,
@@ -10,24 +14,23 @@ impl UVTexture {
     pub fn new(mapping: TextureMapping2D) -> Self {
         UVTexture { mapping }
     }
-}
 
-impl Texture<Spectrum> for UVTexture {
-    fn evaluate(&self, si: &SurfaceInteraction) -> Spectrum {
-        let (st, _dstdx, _dstdy) = self.mapping.map(si);
+    pub fn evaluate(&self, ctx: &TextureEvalContext) -> Spectrum {
+        let (st, _dstdx, _dstdy) = self.mapping.map(ctx);
         let rgb = [
             st[0] - Float::floor(st[0]),
             st[1] - Float::floor(st[1]),
             0.0,
         ];
-        return Spectrum::from_rgb(&rgb, SpectrumType::Reflectance);
+        return Spectrum::from_rgb_albedo(&rgb);
     }
-}
 
-pub fn create_uv_spectrum_texture(
-    tex2world: &Transform,
-    tp: &TextureParams,
-) -> Result<Arc<dyn Texture<Spectrum>>, PbrtError> {
-    let map = create_texture_mapping2d(tex2world, tp)?;
-    return Ok(Arc::new(UVTexture::new(map)));
+    pub fn create(
+        render_from_texture: &Transform,
+        parameters: &TextureParameterDictionary,
+        _spectrum_type: SpectrumType,
+    ) -> Result<Self, PbrtError> {
+        let map = TextureMapping2D::create(render_from_texture, parameters.parameter_dictionary())?;
+        Ok(UVTexture::new(map))
+    }
 }

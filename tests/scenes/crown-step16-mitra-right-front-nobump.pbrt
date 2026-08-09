@@ -1,0 +1,92 @@
+Scale -1 1 1
+Film "rgb"
+    "string filename" [ "crown-step16-mitra-right-front-nobump.exr" ]
+    "integer yresolution" [ 128 ]
+    "integer xresolution" [ 128 ]
+
+LookAt 0 5.5 24
+    0 11 -10
+    0 1 0
+Camera "perspective"
+    "float lensradius" [ 0 ]
+    "float focaldistance" [ 17 ]
+    "float fov" [ 47 ]
+Sampler "halton"
+    "integer pixelsamples" [ 128 ]
+Integrator "volpath"
+    "integer maxdepth" [ 100 ]
+
+WorldBegin
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 10 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.0461 0.3077 -0.9504 -0.0461 0.3077 -0.9504 -0.0461 0.3077 -0.9504 -0.0461 0.3077 -0.9504 ]
+        "point3 P" [ 5.702774 -13.539273 -76.185936 -14.945709 -13.791711 -75.26613 -14.886804 13.04458 -66.57877 5.761684 13.297014 -67.49859 ]
+AttributeEnd
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 10 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.9146 -0.3208 0.2462 -0.9146 -0.3208 0.2462 -0.9146 -0.3208 0.2462 -0.9146 -0.3208 0.2462 ]
+        "point3 P" [ 41.6316 14.548275 -16.682684 45.396217 14.548271 -2.696177 40.693626 28.926506 -1.430422 36.92901 28.926506 -15.416933 ]
+AttributeEnd
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 10 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0.9117 -0.324 0.2527 0.9117 -0.324 0.2527 0.9117 -0.324 0.2527 0.9117 -0.324 0.2527 ]
+        "point3 P" [ -45.1155 14.650443 -2.989656 -41.24645 14.65044 -16.947636 -36.506706 29.012154 -15.633818 -40.37576 29.012156 -1.675834 ]
+AttributeEnd
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 10 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.6595 0.2621 -0.7045 -0.6595 0.2621 -0.7045 -0.6595 0.2621 -0.7045 -0.6595 0.2621 -0.7045 ]
+        "point3 P" [ 20.38967 -4.332172 17.202255 13.206003 -4.332175 23.926588 15.053431 5.620016 25.900215 22.237099 5.620017 19.17588 ]
+AttributeEnd
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 10 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ 0.7361 0.2294 -0.6368 0.7361 0.2294 -0.6368 0.7361 0.2294 -0.6368 0.7361 0.2294 -0.6368 ]
+        "point3 P" [ -18.349361 -3.757668 23.42476 -24.791203 -3.75767 15.977483 -26.581875 6.287214 17.5264 -20.140032 6.287215 24.973679 ]
+AttributeEnd
+
+AttributeBegin
+    AreaLightSource "diffuse"
+        "float scale" [ 10 ]
+        "blackbody L" [ 5500 ]
+    Shape "trianglemesh"
+        "integer indices" [ 0 1 2 0 2 3 ]
+        "normal N" [ -0.0256 -0.7391 -0.6731 -0.0256 -0.7391 -0.6731 -0.0256 -0.7391 -0.6731 -0.0256 -0.7391 -0.6731 ]
+        "point3 P" [ 9.260806 19.171276 24.593668 -9.12361 19.171274 25.294205 -9.666298 32.1588 11.052294 8.718122 32.1588 10.351759 ]
+AttributeEnd
+
+Material "conductor"
+    "spectrum eta" [ "metal-Au-eta" ]
+    "spectrum k" [ "metal-Au-k" ]
+Shape "plymesh"
+    "string filename" [ "../../../pbrt-v4-scenes/crown/geometry/mesh_00008.ply" ]
+
+AttributeBegin
+    Material "diffuse"
+        "rgb reflectance" [ 0.2 0.2 0.2 ]
+    Shape "sphere"
+        "float radius" [ 100 ]
+AttributeEnd

@@ -1,5 +1,8 @@
 use super::display::*;
-use crate::core::prelude::*;
+use crate::displays::*;
+
+use crate::util::error::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 #[derive(Default)]
 pub struct TevDisplay {
@@ -13,7 +16,6 @@ impl TevDisplay {
         //TevDisplay {
         //    display_item: None,
         //    chan: None,
-        //}
     }
 
     pub fn connect(&mut self, hostname: &str) -> Result<(), PbrtError> {
@@ -36,7 +38,6 @@ impl Display for TevDisplay {
             let display_item = Box::new(DisplayItem::new(title, resolution, channel_names));
             display_item.create_image(chan.as_mut())?;
             self.display_item = Some(display_item);
-            //println!("TevDisplay::start");
             return Ok(());
         } else {
             return Err(PbrtError::error("No channel"));

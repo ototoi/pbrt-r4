@@ -1,9 +1,19 @@
-use crate::core::prelude::*;
+use crate::interaction::*;
+use crate::paramdict::*;
+
+use crate::shapes::*;
+use crate::util::base::*;
+use crate::util::efloat::*;
+use crate::util::error::*;
+use crate::util::geometry::*;
+// Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 #[inline]
 fn radians(x: Float) -> Float {
     return x * (PI / 180.0);
 }
+
+const GAMMA3: Float = (3.0 * MACHINE_EPSILON) / (1.0 - (3.0 * MACHINE_EPSILON));
 
 pub struct Paraboloid {
     pub base: BaseShape,
@@ -32,10 +42,44 @@ impl Paraboloid {
             phi_max,
         }
     }
+
+    pub fn create(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+    ) -> Result<Self, PbrtError> {
+        let radius = params.get_one_float("radius", 1.0);
+        let mut zmin = params.get_one_float("zmin", 0.0);
+        let mut zmax = params.get_one_float("zmax", 1.0);
+        let phimax = params.get_one_float("phimax", 360.0);
+
+        if zmin > zmax {
+            std::mem::swap(&mut zmin, &mut zmax);
+        }
+
+        if radius == 0.0 {
+            let msg = format!(
+                "Unable to create paraboloid shape: radius={}, phimax={}",
+                radius, phimax
+            );
+            Err(PbrtError::error(&msg))
+        } else {
+            Ok(Self::new(
+                o2w,
+                w2o,
+                reverse_orientation,
+                radius,
+                zmin,
+                zmax,
+                phimax,
+            ))
+        }
+    }
 }
 
-impl Shape for Paraboloid {
-    fn object_bound(&self) -> Bounds3f {
+impl Paraboloid {
+    pub fn object_bound(&self) -> Bounds3f {
         let radius = self.radius;
         let z_min = self.z_min;
         let z_max = self.z_max;
@@ -45,13 +89,17 @@ impl Shape for Paraboloid {
         );
     }
 
-    fn world_bound(&self) -> Bounds3f {
+    pub fn world_bound(&self) -> Bounds3f {
         return self
             .base
             .object_to_world
             .transform_bounds(&self.object_bound());
     }
-    fn intersect(&self, r: &Ray) -> Option<(Float, SurfaceInteraction)> {
+
+    pub fn normal_bounds(&self) -> DirectionCone {
+        DirectionCone::entire_sphere()
+    }
+    pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
         let (ray, o_err, d_err) = self.base.world_to_object.transform_ray(r);
 
         // Compute quadratic paraboloid coefficients
@@ -74,10 +122,8 @@ impl Shape for Paraboloid {
         let c = k * (ox * ox + oy * oy) - oz;
 
         // Solve quadratic equation for _t_ values
-        let t_max = ray.t_max.get();
 
         let (t0, t1) = EFloat::quadratic(a, b, c)?;
-        // pbrt-r3:
         if t0.v.is_infinite() || t1.v.is_infinite() {
             return None;
         }
@@ -192,10 +238,10 @@ impl Shape for Paraboloid {
             .base
             .object_to_world
             .transform_surface_interaction(&isect);
-        return Some((t_shape_hit.into(), isect));
+        return Some(ShapeIntersection::new(isect, t_shape_hit.into()));
     }
 
-    fn intersect_p(&self, r: &Ray) -> bool {
+    pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
         let (ray, o_err, d_err) = self.base.world_to_object.transform_ray(r);
 
         // Compute quadratic paraboloid coefficients
@@ -218,10 +264,8 @@ impl Shape for Paraboloid {
         let c = k * (ox * ox + oy * oy) - oz;
 
         // Solve quadratic equation for _t_ values
-        let t_max = ray.t_max.get();
 
         if let Some((t0, t1)) = EFloat::quadratic(a, b, c) {
-            // pbrt-r3:
             if t0.v.is_infinite() || t1.v.is_infinite() {
                 return false;
             }
@@ -275,7 +319,7 @@ impl Shape for Paraboloid {
         }
     }
 
-    fn area(&self) -> Float {
+    pub fn area(&self) -> Float {
         let radius = self.radius;
         let z_min = self.z_min;
         let z_max = self.z_max;
@@ -287,9 +331,118 @@ impl Shape for Paraboloid {
             * (Float::powf(k * z_max + 1.0, 1.5) - Float::powf(k * z_min + 1.0, 1.5));
     }
 
-    fn sample(&self, _u: &Point2f) -> Option<(Interaction, Float)> {
-        //log
-        return None;
+    pub fn sample(&self, u: &Point2f) -> Option<(Interaction, Float)> {
+        let radius = self.radius;
+        let z_min = self.z_min;
+        let z_max = self.z_max;
+        let phi_max = self.phi_max;
+        if radius <= 0.0 || z_max <= 0.0 {
+            return None;
+        }
+
+        let u_phi = Float::clamp(u.x, 0.0, 1.0 - 1e-6);
+        let u_area = Float::clamp(u.y, 1e-6, 1.0 - 1e-6);
+
+        let radius2 = radius * radius;
+        let k = 4.0 * z_max / radius2;
+        if !k.is_finite() || k <= 0.0 {
+            return None;
+        }
+
+        // Invert area CDF A(z) to sample uniformly over surface area.
+        let c0 = Float::powf(k * z_min + 1.0, 1.5);
+        let c1 = Float::powf(k * z_max + 1.0, 1.5);
+        if !c0.is_finite() || !c1.is_finite() || c1 <= c0 {
+            return None;
+        }
+        let c = lerp(u_area, c0, c1);
+        let mut z = (Float::powf(c, 2.0 / 3.0) - 1.0) / k;
+        z = Float::clamp(z, z_min, z_max);
+
+        let phi = u_phi * phi_max;
+        let r = radius * Float::sqrt(Float::max(0.0, z / z_max));
+        let p_obj = Point3f::new(r * Float::cos(phi), r * Float::sin(phi), z);
+        let dpdu = Vector3f::new(-phi_max * p_obj.y, phi_max * p_obj.x, 0.0);
+        let z_safe = Float::max(p_obj.z, 1e-6);
+        let dpdv = (z_max - z_min)
+            * Vector3f::new(p_obj.x / (2.0 * z_safe), p_obj.y / (2.0 * z_safe), 1.0);
+        let n_obj = self.base.calc_normal(&dpdu, &dpdv);
+        let n = self
+            .base
+            .object_to_world
+            .transform_normal(&n_obj)
+            .normalize();
+
+        let p_obj_error = GAMMA3 * Vector3f::new(p_obj.x, p_obj.y, p_obj.z).abs();
+        let (p, p_error) = self
+            .base
+            .object_to_world
+            .transform_point_with_abs_error(&p_obj, &p_obj_error);
+        let pdf = Float::recip(self.area());
+        if !pdf.is_finite() || pdf <= 0.0 {
+            return None;
+        }
+
+        let it = Interaction::from_surface_sample(&p, &p_error, &n);
+        Some((it, pdf))
+    }
+
+    pub fn pdf(&self, _inter: &Interaction) -> Float {
+        Float::recip(self.area())
+    }
+
+    pub fn sample_from(&self, inter: &Interaction, u: &Point2f) -> Option<(Interaction, Float)> {
+        let (intr, pdf) = self.sample(u)?;
+        assert!(intr.is_surface_interaction());
+        let wi = intr.get_p() - inter.get_p();
+        if wi.length_squared() <= 0.0 {
+            return None;
+        } else {
+            assert!(intr.get_n().length() > 0.0);
+            let wi = wi.normalize();
+            let pdf = pdf * Vector3f::distance_squared(&inter.get_p(), &intr.get_p())
+                / Vector3f::abs_dot(&intr.get_n(), &-wi);
+            if pdf <= 0.0 || pdf.is_infinite() {
+                return None;
+            }
+            return Some((intr, pdf));
+        }
+    }
+
+    pub fn pdf_from(&self, inter: &Interaction, wi: &Vector3f) -> Float {
+        let ray = inter.spawn_ray(wi);
+        if let Some(si) = self.intersect(&ray, Float::INFINITY) {
+            let isect_light = si.intr;
+            assert!(isect_light.n.length() > 0.0);
+
+            let pdf = Vector3f::distance_squared(&inter.get_p(), &isect_light.p)
+                / (Vector3f::abs_dot(&isect_light.n, &(-*wi)) * self.area());
+            if pdf.is_infinite() {
+                return 0.0;
+            }
+            return pdf;
+        } else {
+            return 0.0;
+        }
+    }
+
+    pub fn solid_angle(&self, p: &Point3f, n_samples: i32) -> Float {
+        use crate::util::lowdiscrepancy::*;
+        let mut it = BaseInteraction::default();
+        it.p = *p;
+        it.wo = Vector3f::new(0.0, 0.0, 1.0);
+        let inter = Interaction::from(it);
+        let mut solid_angle = 0.0;
+        for i in 0..n_samples {
+            let u = Point2f::new(radical_inverse(0, i as u64), radical_inverse(1, i as u64));
+            if let Some((p_shape, pdf)) = self.sample_from(&inter, &u) {
+                let r = Ray::new(p, &(p_shape.get_p() - *p), 0.999, 0.0);
+                if !self.intersect_p(&r, 0.999) {
+                    solid_angle += 1.0 / pdf
+                }
+            }
+        }
+        return solid_angle / n_samples as Float;
     }
 }
 
@@ -297,34 +450,7 @@ pub fn create_paraboloid_shape(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
-    params: &ParamSet,
+    params: &ParameterDictionary,
 ) -> Result<Paraboloid, PbrtError> {
-    let radius = params.find_one_float("radius", 1.0);
-    let mut zmin = params.find_one_float("zmin", 0.0);
-    let mut zmax = params.find_one_float("zmax", 1.0);
-    let phimax = params.find_one_float("phimax", 360.0);
-
-    if zmin > zmax {
-        std::mem::swap(&mut zmin, &mut zmax);
-    }
-
-    // pbrt-r3
-    if radius == 0.0 {
-        let msg = format!(
-            "Unable to create paraboloid shape: radius={}, phimax={}",
-            radius, phimax
-        );
-        return Err(PbrtError::error(&msg));
-    // pbrt-r3
-    } else {
-        return Ok(Paraboloid::new(
-            o2w,
-            w2o,
-            reverse_orientation,
-            radius,
-            zmin,
-            zmax,
-            phimax,
-        ));
-    }
+    Paraboloid::create(o2w, w2o, reverse_orientation, params)
 }
