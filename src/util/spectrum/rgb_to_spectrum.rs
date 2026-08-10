@@ -4,6 +4,7 @@ use crate::util::base::Float;
 
 use super::config::{LAMBDA_MAX, LAMBDA_MIN};
 use super::densely_sampled::DenselySampledSpectrum;
+use super::named_arrays::{ACES_Illum_D60, CIE_Illum_D6500};
 use super::sampled::{SampledSpectrum, SampledWavelengths};
 use super::source::SpectrumType;
 
@@ -69,15 +70,9 @@ impl RGBToSpectrumTableData {
             floats.push(f32::from_le_bytes(chunk.try_into().unwrap()));
         }
 
-        // The bin layout (sRGB and ACES2065-1 share it):
-        //   [z scale (64)] [illum lambda (107)] [illum values (107)]
-        //   [coeffs (3 * 64 * 64 * 64 * 3)]
-        // For sRGB the illuminant samples are CIE D65; for ACES2065-1
-        // they are ACES D60 (the dataset extracted from pbrt-v4's
-        // `rgbspectrum_aces.cpp` matches D65 layout 1:1 in size).
-        let expected_len = SRGB_TO_SPECTRUM_SCALE_COUNT
-            + CIE_ILLUM_D6500_SAMPLE_COUNT * 2
-            + SRGB_TO_SPECTRUM_COEFF_COUNT;
+        // The bin layout matches pbrt-v4's generated table:
+        //   [z scale (64)] [coeffs (3 * 64 * 64 * 64 * 3)]
+        let expected_len = SRGB_TO_SPECTRUM_SCALE_COUNT + SRGB_TO_SPECTRUM_COEFF_COUNT;
         assert_eq!(floats.len(), expected_len);
 
         Self {
@@ -89,20 +84,8 @@ impl RGBToSpectrumTableData {
         &self.floats[..SRGB_TO_SPECTRUM_SCALE_COUNT]
     }
 
-    fn d65_lambda(&self) -> &[f32] {
-        let start = SRGB_TO_SPECTRUM_SCALE_COUNT;
-        let end = start + CIE_ILLUM_D6500_SAMPLE_COUNT;
-        &self.floats[start..end]
-    }
-
-    fn d65_values(&self) -> &[f32] {
-        let start = SRGB_TO_SPECTRUM_SCALE_COUNT + CIE_ILLUM_D6500_SAMPLE_COUNT;
-        let end = start + CIE_ILLUM_D6500_SAMPLE_COUNT;
-        &self.floats[start..end]
-    }
-
     fn coeffs(&self) -> &[f32] {
-        let start = SRGB_TO_SPECTRUM_SCALE_COUNT + CIE_ILLUM_D6500_SAMPLE_COUNT * 2;
+        let start = SRGB_TO_SPECTRUM_SCALE_COUNT;
         &self.floats[start..]
     }
 
@@ -114,6 +97,33 @@ impl RGBToSpectrumTableData {
             + component;
         self.coeffs()[index] as Float
     }
+}
+
+fn sample_named_illuminant(data: &[Float; 214], lambda: Float) -> Float {
+    let count = data.len() / 2;
+    if lambda <= data[0] {
+        return data[1];
+    }
+    if lambda >= data[2 * (count - 1)] {
+        return data[2 * (count - 1) + 1];
+    }
+
+    let mut low = 0usize;
+    let mut high = count - 1;
+    while high - low > 1 {
+        let mid = (low + high) / 2;
+        if data[2 * mid] <= lambda {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    let lambda0 = data[2 * low];
+    let lambda1 = data[2 * high];
+    let value0 = data[2 * low + 1];
+    let value1 = data[2 * high + 1];
+    let t = (lambda - lambda0) / (lambda1 - lambda0);
+    (1.0 - t) * value0 + t * value1
 }
 
 fn srgb_table_data() -> &'static RGBToSpectrumTableData {
@@ -153,36 +163,6 @@ fn sigmoid(x: Float) -> Float {
         return if x.is_sign_positive() { 1.0 } else { 0.0 };
     }
     0.5 + x / (2.0 * (1.0 + x * x).sqrt())
-}
-
-fn interpolate_piecewise_linear(lambda: &[f32], values: &[f32], l: Float) -> Float {
-    if lambda.is_empty() {
-        return 0.0;
-    }
-    if l <= lambda[0] as Float {
-        return values[0] as Float;
-    }
-    if l >= lambda[lambda.len() - 1] as Float {
-        return values[values.len() - 1] as Float;
-    }
-
-    let mut low = 0usize;
-    let mut high = lambda.len() - 1;
-    while high - low > 1 {
-        let mid = (low + high) / 2;
-        if lambda[mid] as Float <= l {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-
-    let lambda0 = lambda[low] as Float;
-    let lambda1 = lambda[high] as Float;
-    let value0 = values[low] as Float;
-    let value1 = values[high] as Float;
-    let t = (l - lambda0) / (lambda1 - lambda0);
-    (1.0 - t) * value0 + t * value1
 }
 
 fn find_z_interval(z_nodes: &[f32], z: Float) -> usize {
@@ -272,12 +252,11 @@ fn d65_normalization_factor() -> Float {
     static FACTOR: OnceLock<Float> = OnceLock::new();
     *FACTOR.get_or_init(|| {
         use super::cie::{CIE_LAMBDA, CIE_SAMPLES, CIE_Y, CIE_Y_INTEGRAL};
-        let table = srgb_table_data();
         // Riemann-like integration of `D65_raw(λ) · Y(λ)` over the CIE λ range.
         let mut integral = 0.0;
         for i in 0..CIE_SAMPLES {
             let lam = CIE_LAMBDA[i];
-            let d65 = interpolate_piecewise_linear(table.d65_lambda(), table.d65_values(), lam);
+            let d65 = sample_named_illuminant(&CIE_Illum_D6500, lam);
             integral += d65 * CIE_Y[i];
         }
         let step = CIE_LAMBDA[1] - CIE_LAMBDA[0]; // assumed uniform 1nm
@@ -287,16 +266,19 @@ fn d65_normalization_factor() -> Float {
 }
 
 pub fn d65_sample(lambda: Float) -> Float {
-    let table = srgb_table_data();
-    let raw = interpolate_piecewise_linear(table.d65_lambda(), table.d65_values(), lambda);
+    let raw = sample_named_illuminant(&CIE_Illum_D6500, lambda);
     raw * d65_normalization_factor()
 }
 
 pub fn d65_max_value() -> Float {
     static MAX_VALUE: OnceLock<Float> = OnceLock::new();
     *MAX_VALUE.get_or_init(|| {
-        let table = srgb_table_data();
-        let raw = table.d65_values().iter().copied().fold(0.0f32, f32::max) as Float;
+        let raw = CIE_Illum_D6500
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .copied()
+            .fold(0.0, Float::max);
         raw * d65_normalization_factor()
     })
 }
@@ -590,8 +572,7 @@ pub fn lookup_color_space(
 /// `d65_sample` so `RGBIlluminantSpectrum`-style scaling stays
 /// consistent across colour spaces.
 pub fn aces_d60_sample(lambda: Float) -> Float {
-    let table = aces_table_data();
-    let raw = interpolate_piecewise_linear(table.d65_lambda(), table.d65_values(), lambda);
+    let raw = sample_named_illuminant(&ACES_Illum_D60, lambda);
     raw * aces_d60_normalization_factor()
 }
 
@@ -599,11 +580,10 @@ fn aces_d60_normalization_factor() -> Float {
     static FACTOR: OnceLock<Float> = OnceLock::new();
     *FACTOR.get_or_init(|| {
         use super::cie::{CIE_LAMBDA, CIE_SAMPLES, CIE_Y, CIE_Y_INTEGRAL};
-        let table = aces_table_data();
         let mut integral = 0.0;
         for i in 0..CIE_SAMPLES {
             let lam = CIE_LAMBDA[i];
-            let d = interpolate_piecewise_linear(table.d65_lambda(), table.d65_values(), lam);
+            let d = sample_named_illuminant(&ACES_Illum_D60, lam);
             integral += d * CIE_Y[i];
         }
         let step = CIE_LAMBDA[1] - CIE_LAMBDA[0]; // assumed uniform 1nm
