@@ -1,4 +1,5 @@
 # pbrt-r4
+[![Rust](https://github.com/ototoi/pbrt-r4/actions/workflows/rust.yml/badge.svg)](https://github.com/ototoi/pbrt-r4/actions/workflows/rust.yml)
 [![License](https://img.shields.io/github/license/ototoi/pbrt-r4)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/ototoi/pbrt-r4)](https://github.com/ototoi/pbrt-r4/releases/latest)
 [![Crates.io Version](https://img.shields.io/crates/v/pbrt-r4?color=%20%23ecc57b)
