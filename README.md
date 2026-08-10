@@ -4,7 +4,7 @@
 [![Crates.io Version](https://img.shields.io/crates/v/pbrt-r4?color=%20%23ecc57b)
 ](https://crates.io/crates/pbrt-r4)
 
-![sportscar-area-lights rendered with pbrt-r4](https://private-user-images.githubusercontent.com/343247/633413624-14b19b8f-46eb-4d53-9280-69291c24e306.jpg?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3ODYyODc3NzgsIm5iZiI6MTc4NjI4NzQ3OCwicGF0aCI6Ii8zNDMyNDcvNjMzNDEzNjI0LTE0YjE5YjhmLTQ2ZWItNGQ1My05MjgwLTY5MjkxYzI0ZTMwNi5qcGc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjYwODA5JTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MDgwOVQxNDU3NThaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT1iMjM0OGJiZDRhMzk2M2Y4OGVjNzYwOTM2MzhjYjBiZDA4M2I2YzQ0MzFkNjkzN2M2Yjc2YjEzMWZjMWU1NDdkJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZyZXNwb25zZS1jb250ZW50LXR5cGU9aW1hZ2UlMkZqcGVnIn0.DDOZsV4p5AG3QxAqWIwg50472n0C8f_XTIcjwA7wf78)
+![sportscar-area-lights rendered with pbrt-r4](https://github.com/user-attachments/assets/14b19b8f-46eb-4d53-9280-69291c24e306)
 
 ## What is pbrt-r4
 
