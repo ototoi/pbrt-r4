@@ -1,5 +1,5 @@
 use pbrt_r4::util::tensor::{TensorFile, TensorType};
-use std::path::Path;
+use std::path::PathBuf;
 
 #[test]
 fn type_sizes_match_v4_table() {
@@ -12,13 +12,12 @@ fn type_sizes_match_v4_table() {
 
 #[test]
 fn opens_real_bsdf_file_when_available() {
-    let path =
-        "/mnt/hdd1/src/other/pbrt-r4-devkit/pbrt-v4-scenes/sportscar/bsdfs/paper_white_spec.bsdf";
-    if !Path::new(path).exists() {
-        eprintln!("(skipping: {} not present in this checkout)", path);
-        return;
-    }
-    let tf = TensorFile::open(path).expect("paper_white_spec.bsdf should parse");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("bsdfs")
+        .join("paper_white_spec.bsdf");
+    let tf = TensorFile::open(path.to_str().expect("fixture path should be UTF-8"))
+        .expect("paper_white_spec.bsdf should parse");
     for required in &[
         "theta_i",
         "phi_i",
