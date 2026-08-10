@@ -49,6 +49,9 @@ libm = "=0.2.11"
 #lto = "fat"
 #codegen-units = 1
 
+[profile.dev.build-override]
+opt-level = 3
+
 [lints.clippy]
 needless_return = "allow"
 arc_with_non_send_sync = "allow"
