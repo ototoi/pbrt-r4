@@ -8,18 +8,18 @@ from `pbrt-v4/src/pbrt/util/spectrum.cpp` and emit a Rust source file
 
 The Rust side feeds these into `PiecewiseLinearSpectrum::from_interleaved`.
 
-Run from anywhere; both source and destination paths are hard-coded
-relative to the devkit layout (matching tools/extract_pmj02_tables.py).
+Run from anywhere in the devkit checkout. The source and destination default
+to paths derived from this script's location and can be overridden with
+`--source` and `--output`.
 """
+import argparse
 import re
 from pathlib import Path
 
-V4_SPECTRUM_CPP = Path(
-    "/mnt/hdd1/src/other/pbrt-r4-devkit/pbrt-v4/src/pbrt/util/spectrum.cpp"
-)
-OUT_RS = Path(
-    "/mnt/hdd1/src/other/pbrt-r4-devkit/pbrt-r4/src/util/spectrum/named_arrays.rs"
-)
+DEVKIT_ROOT = Path(__file__).resolve().parents[2]
+R4_ROOT = DEVKIT_ROOT / "pbrt-r4"
+DEFAULT_V4_SPECTRUM_CPP = DEVKIT_ROOT / "pbrt-v4/src/pbrt/util/spectrum.cpp"
+DEFAULT_OUT_RS = R4_ROOT / "src/util/spectrum/named_arrays.rs"
 
 # Arrays we do NOT want to port: CIE base curves are handled by the
 # regular `CIE_*` constants in r4's spectrum module, and the bare lambda
@@ -135,7 +135,27 @@ def to_rust_array(name: str, values: list[float]) -> str:
 
 
 def main() -> int:
-    text = V4_SPECTRUM_CPP.read_text()
+    parser = argparse.ArgumentParser(
+        description="Extract named spectra from a pbrt-v4 spectrum.cpp file."
+    )
+    parser.add_argument(
+        "--source",
+        type=Path,
+        default=DEFAULT_V4_SPECTRUM_CPP,
+        help=f"pbrt-v4 spectrum.cpp (default: {DEFAULT_V4_SPECTRUM_CPP})",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUT_RS,
+        help=f"generated Rust file (default: {DEFAULT_OUT_RS})",
+    )
+    args = parser.parse_args()
+
+    if not args.source.is_file():
+        parser.error(f"source file does not exist: {args.source}")
+
+    text = args.source.read_text()
     text = re.sub(r"//[^\n]*", "", text)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 
@@ -201,9 +221,10 @@ def main() -> int:
     lines.append("}")
     lines.append("")
 
-    OUT_RS.write_text("\n".join(lines))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text("\n".join(lines))
 
-    print(f"wrote {OUT_RS}")
+    print(f"wrote {args.output}")
     print(f"  {len(array_items)} arrays, {len(public_to_array)} lookup entries")
     if missing:
         print(f"  skipped (no matching variable in cpp): {missing}")
