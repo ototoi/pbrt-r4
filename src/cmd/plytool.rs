@@ -140,10 +140,7 @@ fn info_text(path: &Path) -> Result<String, PlyToolError> {
         }
     }
 
-    output.push_str(&format!(
-        "\tBounding box: [ {} {} {} ] - [ {} {} {} ]\n",
-        bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z
-    ));
+    output.push_str(&format!("\tBounding box: {}\n", format_bounds(&bounds)));
     Ok(output)
 }
 
@@ -166,13 +163,13 @@ fn cat(paths: &[OsString]) -> Result<(), PlyToolError> {
         println!("Quad: {} {} {} {}", quad[0], quad[1], quad[2], quad[3]);
     }
     for (index, point) in mesh.p.iter().enumerate() {
-        println!("Vertex position {index}: {:?}", point);
+        println!("Vertex position {index}: {}", format_point3(point));
     }
     for (index, normal) in mesh.n.iter().enumerate() {
-        println!("Vertex normal {index}: {:?}", normal);
+        println!("Vertex normal {index}: {}", format_point3(normal));
     }
     for (index, uv) in mesh.uv.iter().enumerate() {
-        println!("Vertex uv {index}: {:?}", uv);
+        println!("Vertex uv {index}: {}", format_point2(uv));
     }
     Ok(())
 }
@@ -464,6 +461,23 @@ fn remove_extension(path: &str) -> String {
         .with_extension("")
         .to_string_lossy()
         .into_owned()
+}
+
+// Matches pbrt-v4's Vector2/Vector3 and Bounds3 ToString() formatting.
+fn format_point2(point: &Point2f) -> String {
+    format!("[ {:.6}, {:.6} ]", point.x, point.y)
+}
+
+fn format_point3(point: &Point3f) -> String {
+    format!("[ {:.6}, {:.6}, {:.6} ]", point.x, point.y, point.z)
+}
+
+fn format_bounds(bounds: &Bounds3f) -> String {
+    format!(
+        "[ {} - {} ]",
+        format_point3(&bounds.min),
+        format_point3(&bounds.max)
+    )
 }
 
 fn error(value: impl Display) -> PlyToolError {

@@ -20,7 +20,9 @@ fn reports_mesh_counts_and_bounds() {
     assert!(output.contains("Vertex uvs: 0"));
     assert!(output.contains("Face indices: 0"));
     assert!(output.contains("Notice: vertex 3 is not used."));
-    assert!(output.contains("Bounding box: [ 0 0 0 ] - [ 9 9 9 ]"));
+    assert!(output.contains(
+        "Bounding box: [ [ 0.000000, 0.000000, 0.000000 ] - [ 9.000000, 9.000000, 9.000000 ] ]"
+    ));
 }
 
 #[test]
@@ -33,7 +35,9 @@ fn reports_bounds_for_negative_coordinates() {
     .unwrap();
 
     let output = run_info(file.path());
-    assert!(output.contains("Bounding box: [ -3 -6 -5 ] - [ -1 -2 -3 ]"));
+    assert!(output.contains(
+        "Bounding box: [ [ -3.000000, -6.000000, -5.000000 ] - [ -1.000000, -2.000000, -3.000000 ] ]"
+    ));
 }
 
 fn run_info(path: &std::path::Path) -> String {
@@ -76,7 +80,7 @@ fn cat_prints_mesh_elements() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Triangle: 0 1 2"));
-    assert!(stdout.contains("Vertex position 0:"));
+    assert!(stdout.contains("Vertex position 0: [ 0.000000, 0.000000, 0.000000 ]"));
 }
 
 #[test]
