@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 
 use pbrt_r4::util::base::{Float, Normal3f, Point2f, Point3f, Vector3f};
@@ -8,12 +9,6 @@ use pbrt_r4::util::geometry::Bounds3f;
 use pbrt_r4::util::image::{Image, ImageWrapMode};
 use pbrt_r4::util::imageio::read_raw_image_gamma_correct;
 use pbrt_r4::util::mesh::TriQuadMesh;
-
-use ply_rs::ply::{
-    DefaultElement, ElementDef, Encoding, Header, Ply, Property, PropertyAccess, PropertyDef,
-};
-use ply_rs::ply::{PropertyType, ScalarType};
-use ply_rs::writer::Writer;
 
 #[derive(Debug)]
 struct PlyToolError {
@@ -332,79 +327,66 @@ fn write_triangle_ply(
     normals: &[Normal3f],
     uvs: &[Point2f],
 ) -> Result<(), PlyToolError> {
-    let mut header = Header::new();
-    header.encoding = Encoding::BinaryLittleEndian;
-    let mut vertex = ElementDef::new("vertex".to_string());
-    vertex.count = points.len();
-    for name in ["x", "y", "z"] {
-        vertex.properties.insert(
-            name.to_string(),
-            PropertyDef::new(name.to_string(), PropertyType::Scalar(ScalarType::Float)),
-        );
+    if indices.len() % 3 != 0 {
+        return Err(error_message(
+            "triangle index count must be a multiple of three",
+        ));
+    }
+    if (!normals.is_empty() && normals.len() != points.len())
+        || (!uvs.is_empty() && uvs.len() != points.len())
+    {
+        return Err(error_message(
+            "vertex attribute count does not match position count",
+        ));
+    }
+
+    let mut file = File::create(filename).map_err(error)?;
+    writeln!(file, "ply").map_err(error)?;
+    writeln!(file, "format binary_little_endian 1.0").map_err(error)?;
+    writeln!(file, "element vertex {}", points.len()).map_err(error)?;
+    for property in ["x", "y", "z"] {
+        writeln!(file, "property float {property}").map_err(error)?;
     }
     if !normals.is_empty() {
-        for name in ["nx", "ny", "nz"] {
-            vertex.properties.insert(
-                name.to_string(),
-                PropertyDef::new(name.to_string(), PropertyType::Scalar(ScalarType::Float)),
-            );
+        for property in ["nx", "ny", "nz"] {
+            writeln!(file, "property float {property}").map_err(error)?;
         }
     }
     if !uvs.is_empty() {
-        for name in ["u", "v"] {
-            vertex.properties.insert(
-                name.to_string(),
-                PropertyDef::new(name.to_string(), PropertyType::Scalar(ScalarType::Float)),
-            );
+        for property in ["u", "v"] {
+            writeln!(file, "property float {property}").map_err(error)?;
         }
     }
-    header.elements.insert("vertex".to_string(), vertex);
-    let mut face = ElementDef::new("face".to_string());
-    face.count = indices.len() / 3;
-    face.properties.insert(
-        "vertex_indices".to_string(),
-        PropertyDef::new(
-            "vertex_indices".to_string(),
-            PropertyType::List(ScalarType::UChar, ScalarType::Int),
-        ),
-    );
-    header.elements.insert("face".to_string(), face);
+    writeln!(file, "element face {}", indices.len() / 3).map_err(error)?;
+    writeln!(file, "property list uchar int vertex_indices").map_err(error)?;
+    writeln!(file, "end_header").map_err(error)?;
 
-    let mut ply = Ply::<DefaultElement>::new();
-    ply.header = header;
-    let mut vertices = Vec::with_capacity(points.len());
     for index in 0..points.len() {
-        let mut vertex = DefaultElement::new();
-        vertex.set_property("x".to_string(), Property::Float(points[index].x as f32));
-        vertex.set_property("y".to_string(), Property::Float(points[index].y as f32));
-        vertex.set_property("z".to_string(), Property::Float(points[index].z as f32));
+        for value in [points[index].x, points[index].y, points[index].z] {
+            file.write_all(&(value as f32).to_le_bytes())
+                .map_err(error)?;
+        }
         if !normals.is_empty() {
-            vertex.set_property("nx".to_string(), Property::Float(normals[index].x as f32));
-            vertex.set_property("ny".to_string(), Property::Float(normals[index].y as f32));
-            vertex.set_property("nz".to_string(), Property::Float(normals[index].z as f32));
+            for value in [normals[index].x, normals[index].y, normals[index].z] {
+                file.write_all(&(value as f32).to_le_bytes())
+                    .map_err(error)?;
+            }
         }
         if !uvs.is_empty() {
-            vertex.set_property("u".to_string(), Property::Float(uvs[index].x as f32));
-            vertex.set_property("v".to_string(), Property::Float(uvs[index].y as f32));
+            for value in [uvs[index].x, uvs[index].y] {
+                file.write_all(&(value as f32).to_le_bytes())
+                    .map_err(error)?;
+            }
         }
-        vertices.push(vertex);
     }
-    ply.payload.insert("vertex".to_string(), vertices);
-    let mut faces = Vec::with_capacity(indices.len() / 3);
     for triangle in indices.chunks_exact(3) {
-        let mut face = DefaultElement::new();
-        face.set_property(
-            "vertex_indices".to_string(),
-            Property::ListInt(triangle.iter().map(|&index| index as i32).collect()),
-        );
-        faces.push(face);
+        file.write_all(&[3]).map_err(error)?;
+        for &index in triangle {
+            file.write_all(&(index as i32).to_le_bytes())
+                .map_err(error)?;
+        }
     }
-    ply.payload.insert("face".to_string(), faces);
-    let mut file = File::create(filename).map_err(error)?;
-    Writer::new()
-        .write_ply(&mut file, &mut ply)
-        .map(|_| ())
-        .map_err(error)
+    file.flush().map_err(error)
 }
 
 fn read_mesh(path: &str) -> Result<TriQuadMesh, PlyToolError> {
