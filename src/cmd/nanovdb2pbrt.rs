@@ -62,14 +62,14 @@ where
         } else if let Some(value) = argument.strip_prefix("-grid=") {
             grid = parse_nonempty(value, "--grid")?;
         } else if argument == "--grid" || argument == "-grid" {
-            grid = next_option_value(&mut arguments, "--grid")?;
+            grid = next_option_value(&mut arguments, "--grid", false)?;
         } else if let Some(value) = argument.strip_prefix("--downsample=") {
             downsample = parse_i32(value, "--downsample")?;
         } else if let Some(value) = argument.strip_prefix("-downsample=") {
             downsample = parse_i32(value, "--downsample")?;
         } else if argument == "--downsample" || argument == "-downsample" {
             downsample = parse_i32(
-                &next_option_value(&mut arguments, "--downsample")?,
+                &next_option_value(&mut arguments, "--downsample", true)?,
                 "--downsample",
             )?;
         } else if argument.starts_with('-') {
@@ -94,13 +94,14 @@ where
 fn next_option_value<I>(
     arguments: &mut std::iter::Peekable<I>,
     name: &str,
+    allow_leading_dash: bool,
 ) -> Result<String, CliError>
 where
     I: Iterator<Item = String>,
 {
     arguments
         .next()
-        .filter(|value| !value.starts_with('-'))
+        .filter(|value| allow_leading_dash || !value.starts_with('-'))
         .ok_or_else(|| CliError::usage(format!("missing value for {name}")))
 }
 
