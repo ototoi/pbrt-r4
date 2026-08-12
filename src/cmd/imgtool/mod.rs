@@ -1,3 +1,4 @@
+use pbrt_r4::ext::flip;
 use pbrt_r4::ext::skymodel::HosekSkyModel;
 use pbrt_r4::util::base::{Float, Point2f, Point2i};
 use pbrt_r4::util::error::PbrtError;
@@ -775,6 +776,14 @@ fn output_exr_region_format(
     Ok(())
 }
 
+fn clamp_flip_input(value: Float) -> Float {
+    if value.is_infinite() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    }
+}
+
 fn average(args: &[OsString]) -> Result<(), ImgToolError> {
     let mut base = None;
     let mut output = None;
@@ -941,7 +950,7 @@ fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
         ));
     }
     let selected: Vec<usize> = channels
-        .unwrap_or_else(|| image.channel_names.join(","))
+        .unwrap_or_else(|| "R,G,B".to_string())
         .split(',')
         .map(|name| {
             image
@@ -996,18 +1005,14 @@ fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
                 let image_pixel = (y * image.raw.resolution.x + x) as usize;
                 let reference_pixel = (y * reference.raw.resolution.x + x) as usize;
                 for (&channel, &reference_channel) in selected.iter().zip(&reference_selected) {
-                    image_data.push(image.raw.channel(image_pixel, channel).clamp(0.0, 1.0));
-                    reference_data.push(
-                        reference
-                            .raw
-                            .channel(reference_pixel, reference_channel)
-                            .clamp(0.0, 1.0),
-                    );
+                    image_data.push(clamp_flip_input(image.raw.channel(image_pixel, channel)));
+                    reference_data.push(clamp_flip_input(
+                        reference.raw.channel(reference_pixel, reference_channel),
+                    ));
                 }
             }
         }
-        let flip_errors =
-            pbrt_r4::ext::flip::error(&image_data, &reference_data, resolution.x, resolution.y);
+        let flip_errors = flip::error(&image_data, &reference_data, resolution.x, resolution.y);
         let average = flip_errors.iter().sum::<Float>() / flip_errors.len() as Float;
         println!("{}: FLIP: {:.6}", input, average);
         if let Some(output) = output {

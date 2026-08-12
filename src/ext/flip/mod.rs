@@ -46,7 +46,8 @@ const REF_Z: Float = 1.088900370798128;
 type Color = [Float; 3];
 
 pub fn error(test: &[Float], reference: &[Float], width: i32, height: i32) -> Vec<Float> {
-    let ppd = 0.7 * (3840.0 / 0.7) * (std::f32::consts::PI / 180.0);
+    let pi = std::f32::consts::PI as Float;
+    let ppd: Float = 0.7 * (3840.0 / 0.7) * (pi / 180.0);
     let test = test
         .chunks_exact(3)
         .map(|v| rgb_to_ycxcz([v[0], v[1], v[2]]))
@@ -160,7 +161,7 @@ fn gaussian(x: Float, y: Float, sigma: Float) -> Float {
 }
 
 fn gauss_sum(distance2: Float, a1: Float, b1: Float, a2: Float, b2: Float) -> Float {
-    let pi = std::f32::consts::PI;
+    let pi = std::f32::consts::PI as Float;
     a1 * (pi / b1).sqrt() * (-pi * pi * distance2 / b1).exp()
         + a2 * (pi / b2).sqrt() * (-pi * pi * distance2 / b2).exp()
 }
@@ -172,8 +173,8 @@ fn spatial_filter(ppd: Float) -> Vec<Color> {
     let a2 = [0.0, 0.0, 13.5];
     let b2 = [1.0e-5, 1.0e-5, 0.025];
     let max_scale = b1.iter().chain(b2.iter()).copied().fold(0.0, Float::max);
-    let radius =
-        (3.0 * (max_scale / (2.0 * std::f32::consts::PI.powi(2))).sqrt() * ppd).ceil() as i32;
+    let pi = std::f32::consts::PI as Float;
+    let radius = (3.0 * (max_scale / (2.0 * pi.powi(2))).sqrt() * ppd).ceil() as i32;
     let width = 2 * radius + 1;
     let mut filter = Vec::with_capacity((width * width) as usize);
     let mut sum = [0.0; 3];
@@ -311,7 +312,7 @@ fn feature_difference(
     let test_edges = convolve(&test_gray, width, height, &edge_filter);
     let ref_points = convolve(&ref_gray, width, height, &point_filter);
     let test_points = convolve(&test_gray, width, height, &point_filter);
-    let scale = 1.0 / 2.0_f32.sqrt();
+    let scale = (2.0 as Float).sqrt().recip();
     ref_edges
         .iter()
         .zip(test_edges)

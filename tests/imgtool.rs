@@ -1,4 +1,7 @@
 use image::{ImageBuffer, Luma, Rgb};
+use pbrt_r4::util::base::Point2i;
+use pbrt_r4::util::geometry::Bounds2i;
+use pbrt_r4::util::image::{Image, PixelFormat};
 use std::process::Command;
 use tempfile::tempdir;
 
@@ -230,6 +233,8 @@ fn average_and_diff_use_per_channel_values() {
     let diff = imgtool()
         .args([
             "diff",
+            "--channels",
+            "Y",
             "--reference",
             directory.path().join("avg-0.png").to_str().unwrap(),
             directory.path().join("avg-1.png").to_str().unwrap(),
@@ -285,6 +290,74 @@ fn diff_supports_v4_flip_metric_and_error_output() {
     let stdout = String::from_utf8_lossy(&info.stdout);
     assert!(stdout.contains("resolution (2, 1)"));
     assert!(stdout.contains("Error:"));
+
+    let rgba_input_path = directory.path().join("rgba-input.png");
+    let rgba_reference_path = directory.path().join("rgba-reference.png");
+    ImageBuffer::<image::Rgba<u8>, _>::from_raw(1, 1, vec![255, 0, 0, 17])
+        .unwrap()
+        .save(&rgba_input_path)
+        .unwrap();
+    ImageBuffer::<image::Rgba<u8>, _>::from_raw(1, 1, vec![255, 0, 0, 231])
+        .unwrap()
+        .save(&rgba_reference_path)
+        .unwrap();
+    let rgba_output = imgtool()
+        .args([
+            "diff",
+            "--metric",
+            "FLIP",
+            "--difftol",
+            "100",
+            "--reference",
+            rgba_reference_path.to_str().unwrap(),
+            rgba_input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(rgba_output.status.success());
+
+    let without_tolerance = imgtool()
+        .args([
+            "diff",
+            "--metric",
+            "FLIP",
+            "--reference",
+            reference_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!without_tolerance.status.success());
+
+    let infinity_input_path = directory.path().join("infinity-input.exr");
+    let infinity_reference_path = directory.path().join("infinity-reference.exr");
+    write_float_rgb_exr(&infinity_input_path, [f32::INFINITY, 0.0, 0.0]);
+    write_float_rgb_exr(&infinity_reference_path, [0.0, 0.0, 0.0]);
+    let infinity_output = imgtool()
+        .args([
+            "diff",
+            "--metric",
+            "FLIP",
+            "--reference",
+            infinity_reference_path.to_str().unwrap(),
+            infinity_input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(infinity_output.status.success());
+}
+
+fn write_float_rgb_exr(path: &std::path::Path, values: [f32; 3]) {
+    let image = Image::from_channels_with_format(
+        Point2i::new(1, 1),
+        vec!["R".to_string(), "G".to_string(), "B".to_string()],
+        values.to_vec(),
+        PixelFormat::Float,
+    );
+    let bounds = Bounds2i::from(((0, 0), (1, 1)));
+    image
+        .write_exr(path.to_str().unwrap(), &bounds, &Point2i::new(1, 1))
+        .unwrap();
 }
 
 #[test]
