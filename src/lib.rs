@@ -24,6 +24,7 @@ pub mod scene; // Scene representation
 pub mod bxdfs;
 pub mod cameras;
 pub mod displays;
+pub mod ext;
 pub mod filters;
 pub mod lights;
 pub mod materials;
