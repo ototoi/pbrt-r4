@@ -244,3 +244,37 @@ fn scalenormalmap_scales_xy_and_reconstructs_z() {
     let stdout = String::from_utf8_lossy(&listed.stdout);
     assert!(stdout.contains("0.503922,0.503922,0.999969"));
 }
+
+#[test]
+fn splitn_writes_composite_and_crop_images() {
+    let directory = tempdir().unwrap();
+    for (name, pixels) in [
+        ("left.png", vec![255, 0, 0, 0, 255, 0]),
+        ("right.png", vec![0, 0, 255, 255, 255, 0]),
+    ] {
+        let image = ImageBuffer::<Rgb<u8>, _>::from_raw(2, 1, pixels).unwrap();
+        image.save(directory.path().join(name)).unwrap();
+    }
+    let output_path = directory.path().join("split.exr");
+    let output = imgtool()
+        .args([
+            "splitn",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            "--crop",
+            "0,0",
+            "--cropsize",
+            "1",
+            directory.path().join("left.png").to_str().unwrap(),
+            directory.path().join("right.png").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_path.exists());
+    assert!(directory.path().join("crops-split.exr").exists());
+}
