@@ -71,6 +71,7 @@ scalenormalmap: Scale the x and y components of a normal map.\n\n\
 falsecolor: Convert scalar values to a false-color image.\n\n\
 bloom: Add a Gaussian bloom around pixels above a threshold.\n\n\
 whitebalance: Apply Bradford white balance to an RGB image.\n\n\
+makeequiarea: Convert a lat-long image to an equal-area environment map.\n\n\
 makesky: Generate an equi-area environment map using Hosek-Wilkie.\n\n\
 help: Print command help.\n\n\
 \"imgtool help <command>\" provides detailed information about <command>.\n"
@@ -117,6 +118,10 @@ options:\n\\
     --temperature <K>    D-series source temperature.\n\\
     --primaries <x> <y>  Source white chromaticity.\n\\
     --outfile <name>     Output EXR filename.\n"),
+        "makeequiarea" => Ok("usage: imgtool makeequiarea [options] <filename>\n\n\\
+options:\n\\
+    --resolution <n>     Square output resolution. Default: input width.\n\\
+    --outfile <name>     Output image filename.\n"),
         "makesky" => Ok("usage: imgtool makesky [options]\n\n\
 options:\n\
     --outfile <name>      Output EXR filename.\n\
@@ -1032,6 +1037,7 @@ where
         "falsecolor" => pixel_ops::falsecolor(&arguments),
         "bloom" => pixel_ops::bloom(&arguments),
         "whitebalance" => color_ops::whitebalance(&arguments),
+        "makeequiarea" => color_ops::makeequiarea(&arguments),
         "makesky" => makesky(&arguments),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool: command \"{command}\" not known."

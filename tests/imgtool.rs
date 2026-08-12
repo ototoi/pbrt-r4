@@ -403,3 +403,37 @@ fn whitebalance_accepts_explicit_source_primaries() {
     );
     assert!(output_path.exists());
 }
+
+#[test]
+fn makeequiarea_writes_square_environment_map() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("latlong.png");
+    let output_path = directory.path().join("equi.exr");
+    let pixels = vec![128_u8; 4 * 2 * 3];
+    ImageBuffer::<Rgb<u8>, _>::from_raw(4, 2, pixels)
+        .unwrap()
+        .save(&input_path)
+        .unwrap();
+
+    let output = imgtool()
+        .args([
+            "makeequiarea",
+            "--resolution",
+            "4",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let info = imgtool()
+        .args(["info", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&info.stdout).contains("resolution (4, 4)"));
+}

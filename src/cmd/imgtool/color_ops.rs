@@ -1,5 +1,11 @@
 use super::{load_image, output_exr_region, ImgToolError};
-use pbrt_r4::util::base::Float;
+use pbrt_r4::filters::GaussianFilter;
+use pbrt_r4::util::base::{Float, Point2f};
+use pbrt_r4::util::geometry::{
+    equal_area_square_to_sphere, spherical_phi, spherical_theta, Vector2,
+};
+use pbrt_r4::util::image::{Image, ImageWrapMode, PixelFormat};
+use pbrt_r4::util::rng::RNG;
 use pbrt_r4::util::spectrum::d_illuminant::d_illuminant;
 use pbrt_r4::util::spectrum::named::lookup_named_spectrum;
 use pbrt_r4::util::spectrum::rgb_to_spectrum::RGBColorSpace;
@@ -243,4 +249,133 @@ fn invert_3x3(m: [[Float; 3]; 3]) -> [[Float; 3]; 3] {
             (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv,
         ],
     ]
+}
+
+pub fn makeequiarea(args: &[OsString]) -> Result<(), ImgToolError> {
+    let mut input = None;
+    let mut output = None;
+    let mut resolution = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].to_str() {
+            Some("--outfile") | Some("-outfile") => {
+                index += 1;
+                output = Some(option_value(
+                    args,
+                    index,
+                    "makeequiarea: --outfile missing",
+                )?);
+            }
+            Some("--resolution") | Some("-resolution") => {
+                index += 1;
+                resolution =
+                    Some(parse_value(args, index, "makeequiarea: invalid --resolution")? as i32);
+            }
+            Some(value) if value.starts_with('-') => {
+                return Err(ImgToolError::with_help(format!(
+                    "makeequiarea: unknown option {value}"
+                )))
+            }
+            Some(value) if input.is_none() => input = Some(value.to_string()),
+            _ => return Err(ImgToolError::new("makeequiarea: multiple input filenames")),
+        }
+        index += 1;
+    }
+    let input = input.ok_or_else(|| ImgToolError::with_help("makeequiarea: input missing"))?;
+    let output =
+        output.ok_or_else(|| ImgToolError::with_help("makeequiarea: --outfile missing"))?;
+    let image = load_image(Path::new(&input))?;
+    if image.raw.resolution.x != 2 * image.raw.resolution.y {
+        eprintln!(
+            "{}: resolution ({}, {}) doesn't have a 2:1 aspect ratio.",
+            input, image.raw.resolution.x, image.raw.resolution.y
+        );
+    }
+    let resolution = resolution.unwrap_or(image.raw.resolution.x);
+    if resolution < 1 {
+        return Err(ImgToolError::new(
+            "makeequiarea: resolution must be positive",
+        ));
+    }
+    let mut source_data = Vec::with_capacity(
+        (image.raw.resolution.x * image.raw.resolution.y * image.raw.channels as i32) as usize,
+    );
+    for pixel in 0..(image.raw.resolution.x * image.raw.resolution.y) as usize {
+        for channel in 0..image.raw.channels {
+            source_data.push(image.raw.channel(pixel, channel));
+        }
+    }
+    let source = Image::from_channels_with_format(
+        image.raw.resolution,
+        image.channel_names.clone(),
+        source_data,
+        PixelFormat::Float,
+    );
+    let filter = GaussianFilter::new(&Vector2::new(1.5, 1.5), 2.0);
+    let mut output_data =
+        vec![0.0; (resolution * resolution * image.raw.channels as i32 * 1) as usize];
+    for v in 0..resolution {
+        let mut rng = RNG::new_sequence(v as u64);
+        for u in 0..resolution {
+            let mut sum = vec![0.0 as Float; image.raw.channels];
+            let mut weight_sum = 0.0 as Float;
+            for dv in 0..6 {
+                for du in 0..6 {
+                    let sample = Point2f::new(
+                        (du as Float + rng.uniform_float()) / 6.0,
+                        (dv as Float + rng.uniform_float()) / 6.0,
+                    );
+                    let filter_sample = filter.sample(&sample);
+                    let square = wrap_equal_area_square(Point2f::new(
+                        (u as Float + 0.5 + filter_sample.p.x) / resolution as Float,
+                        (v as Float + 0.5 + filter_sample.p.y) / resolution as Float,
+                    ));
+                    let direction = equal_area_square_to_sphere(&square);
+                    let uv = Point2f::new(
+                        spherical_phi(&direction) / (2.0 * std::f32::consts::PI as Float),
+                        spherical_theta(&direction) / (std::f32::consts::PI as Float),
+                    );
+                    for channel in 0..image.raw.channels {
+                        sum[channel] += filter_sample.weight
+                            * source.bilerp_channel_with_wrap(
+                                &uv,
+                                channel,
+                                ImageWrapMode::Repeat,
+                                ImageWrapMode::Clamp,
+                            );
+                    }
+                    weight_sum += filter_sample.weight;
+                }
+            }
+            let pixel = (v * resolution + u) as usize * image.raw.channels;
+            for channel in 0..image.raw.channels {
+                output_data[pixel + channel] = (sum[channel] / weight_sum).max(0.0);
+            }
+        }
+    }
+    output_exr_region(
+        &output,
+        &image.metadata,
+        Vector2::new(resolution, resolution),
+        &image.channel_names,
+        output_data,
+    )
+}
+
+fn wrap_equal_area_square(mut uv: Point2f) -> Point2f {
+    if uv.x < 0.0 {
+        uv.x = -uv.x;
+        uv.y = 1.0 - uv.y;
+    } else if uv.x > 1.0 {
+        uv.x = 2.0 - uv.x;
+        uv.y = 1.0 - uv.y;
+    }
+    if uv.y < 0.0 {
+        uv.x = 1.0 - uv.x;
+        uv.y = -uv.y;
+    } else if uv.y > 1.0 {
+        uv.x = 1.0 - uv.x;
+        uv.y = 2.0 - uv.y;
+    }
+    uv
 }
