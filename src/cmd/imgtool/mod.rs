@@ -16,6 +16,7 @@ use std::path::Path;
 
 mod assembly;
 mod comparison;
+mod falsecolor_table;
 mod pixel_ops;
 
 #[derive(Debug)]
@@ -66,6 +67,7 @@ error: Compute the average error of a set of images.\n\n\
 assemble: Assemble EXR image tiles into a full image.\n\n\
 splitn: Compose multiple images with diagonal separators.\n\n\
 scalenormalmap: Scale the x and y components of a normal map.\n\n\
+falsecolor: Convert scalar values to a false-color image.\n\n\
 makesky: Generate an equi-area environment map using Hosek-Wilkie.\n\n\
 help: Print command help.\n\n\
 \"imgtool help <command>\" provides detailed information about <command>.\n"
@@ -93,6 +95,12 @@ options:\n\\
 options:\n\\
     --scale <value>     Scale factor for x and y. Default: 1.\n\\
     --outfile <name>    Output image filename.\n"),
+        "falsecolor" => Ok("usage: imgtool falsecolor [options] [filename]\n\n\\
+options:\n\\
+    --maxvalue <value>   Maximum value for normalization.\n\\
+    --plusminus          Show positive values in green and negative in red.\n\\
+    --ramp               Generate the v4 10x300 color ramp.\n\\
+    --outfile <name>     Output image filename.\n"),
         "makesky" => Ok("usage: imgtool makesky [options]\n\n\
 options:\n\
     --outfile <name>      Output EXR filename.\n\
@@ -552,11 +560,29 @@ fn output_exr_region(
     channel_names: &[String],
     data: Vec<Float>,
 ) -> Result<(), ImgToolError> {
+    output_exr_region_format(
+        path,
+        metadata,
+        resolution,
+        channel_names,
+        data,
+        PixelFormat::Float,
+    )
+}
+
+fn output_exr_region_format(
+    path: &str,
+    metadata: &ImageMetadata,
+    resolution: Vector2<i32>,
+    channel_names: &[String],
+    data: Vec<Float>,
+    format: PixelFormat,
+) -> Result<(), ImgToolError> {
     let mut output = Image::from_channels_with_format(
         Point2i::new(resolution.x, resolution.y),
         channel_names.to_vec(),
         data,
-        PixelFormat::Float,
+        format,
     );
     *output.metadata_mut() = metadata.clone();
     let bounds = Bounds2i::from(((0, 0), (resolution.x, resolution.y)));
@@ -987,6 +1013,7 @@ where
         "assemble" => assembly::assemble(&arguments),
         "splitn" => assembly::splitn(&arguments),
         "scalenormalmap" => pixel_ops::scalenormalmap(&arguments),
+        "falsecolor" => pixel_ops::falsecolor(&arguments),
         "makesky" => makesky(&arguments),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool: command \"{command}\" not known."

@@ -278,3 +278,63 @@ fn splitn_writes_composite_and_crop_images() {
     assert!(output_path.exists());
     assert!(directory.path().join("crops-split.exr").exists());
 }
+
+#[test]
+fn falsecolor_maps_input_to_rgb_exr() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("values.png");
+    let output_path = directory.path().join("falsecolor.exr");
+    ImageBuffer::<Luma<u8>, _>::from_raw(2, 1, vec![0, 255])
+        .unwrap()
+        .save(&input_path)
+        .unwrap();
+
+    let output = imgtool()
+        .args([
+            "falsecolor",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let info = imgtool()
+        .args(["info", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&info.stdout);
+    assert!(stdout.contains("resolution (2, 1)"));
+    assert!(stdout.contains("R:"));
+    assert!(stdout.contains("G:"));
+    assert!(stdout.contains("B:"));
+}
+
+#[test]
+fn falsecolor_ramp_matches_v4_resolution() {
+    let directory = tempdir().unwrap();
+    let output_path = directory.path().join("ramp.exr");
+    let output = imgtool()
+        .args([
+            "falsecolor",
+            "--ramp",
+            "--outfile",
+            output_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let info = imgtool()
+        .args(["info", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&info.stdout).contains("resolution (10, 300)"));
+}
