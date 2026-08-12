@@ -213,6 +213,41 @@ fn white_balance_matrix(
     )
 }
 
+pub fn convert_rgb_values(
+    data: &mut [Float],
+    resolution: Vector2<i32>,
+    channel_names: &[String],
+    source: &RGBColorSpace,
+    destination: &RGBColorSpace,
+) -> Result<(), ImgToolError> {
+    let channels = ["R", "G", "B"]
+        .map(|name| {
+            channel_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .ok_or_else(|| ImgToolError::new("convert: image needs R, G, and B channels"))
+        })
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let matrix = multiply_matrix(
+        &invert_3x3(rgb_to_xyz_matrix(destination)),
+        &rgb_to_xyz_matrix(source),
+    );
+    let channels_per_pixel = channel_names.len();
+    for pixel in 0..(resolution.x * resolution.y) as usize {
+        let rgb = [
+            data[pixel * channels_per_pixel + channels[0]],
+            data[pixel * channels_per_pixel + channels[1]],
+            data[pixel * channels_per_pixel + channels[2]],
+        ];
+        let converted = mul_matrix_vector(&matrix, &rgb);
+        for component in 0..3 {
+            data[pixel * channels_per_pixel + channels[component]] = converted[component];
+        }
+    }
+    Ok(())
+}
+
 fn multiply_matrix(a: &[[Float; 3]; 3], b: &[[Float; 3]; 3]) -> [[Float; 3]; 3] {
     let mut result = [[0.0; 3]; 3];
     for row in 0..3 {

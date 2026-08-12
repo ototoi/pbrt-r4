@@ -113,6 +113,61 @@ fn convert_applies_crop_scale_and_flip() {
 }
 
 #[test]
+fn convert_supports_v4_pixel_operation_options() {
+    let directory = tempdir().unwrap();
+    let input = directory.path().join("input.png");
+    let output_path = directory.path().join("output.exr");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(
+        2,
+        2,
+        vec![255, 32, 16, 64, 128, 255, 8, 64, 32, 32, 16, 8],
+    )
+    .unwrap()
+    .save(&input)
+    .unwrap();
+
+    let output = imgtool()
+        .args([
+            "convert",
+            "--colorspace",
+            "srgb",
+            "--clamp",
+            "0.75",
+            "--bw",
+            "--despike",
+            "0.1",
+            "--scale",
+            "1.1",
+            "--gamma",
+            "1.2",
+            "--maxluminance",
+            "1",
+            "--tonemap",
+            "--preservecolors",
+            "--acesfilmic",
+            "--repeatpix",
+            "2",
+            "--flipy",
+            "--fp16",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            input.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let info = imgtool()
+        .args(["info", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&info.stdout).contains("resolution (4, 4)"));
+}
+
+#[test]
 fn makesky_writes_aces_exr() {
     let directory = tempdir().unwrap();
     let output_path = directory.path().join("sky.exr");

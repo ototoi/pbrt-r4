@@ -8,7 +8,7 @@ use pbrt_r4::util::imageio::{
 };
 use pbrt_r4::util::imageio::{write_image_bytes, RawImage, RawImageData};
 use pbrt_r4::util::math::safe_acos;
-use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
+use pbrt_r4::util::spectrum::rgb_to_spectrum::{lookup_color_space_by_name, ACES2065_1, SRGB};
 use pbrt_r4::util::spectrum::{PiecewiseLinearSpectrum, RGBSpectrum};
 use std::ffi::OsString;
 use std::fs;
@@ -133,17 +133,23 @@ options:\n\
     --albedo <value>      Ground albedo, 0 through 1. Default: 0.5.\n\
     --turbidity <value>   Atmospheric turbidity, 1.7 through 10. Default: 3.\n\
     --elevation <value>   Solar elevation in degrees, 0 through 90. Default: 10.\n\
-    --resolution <value>  Width and height. Default: 2048.\n"),
-        "convert" => Ok("usage: imgtool convert [options] <filename>\n\n\
-options:\n\
-    --outfile <name>          Output image filename.\n\
-    --channels <names>        Comma-separated channels to keep.\n\
-    --crop <x0,x1,y0,y1>      Crop image to the given bounds.\n\
-    --flipy                    Flip the image vertically.\n\
-    --scale <value>           Scale pixel values.\n\
-    --gamma <value>           Apply a signed power curve.\n\
-    --fp16                    Write Float channels as Half in EXR.\n"),
-        "help" => Ok("usage: imgtool help [command...]\n"),
+options:\n\\
+    --outfile <name>          Output image filename.\n\\
+    --channels <names>        Comma-separated channels to keep.\n\\
+    --crop <x0,x1,y0,y1>      Crop image to the given bounds.\n\\
+    --flipy                    Flip the image vertically.\n\\
+    --scale <value>            Scale pixel values.\n\\
+    --gamma <value>            Apply a power curve.\n\\
+    --clamp <value>            Limit the maximum channel proportionally.\n\\
+    --colorspace <name>        Convert RGB to a named color space.\n\\
+    --bw                       Replace each pixel with its channel average.\n\\
+    --despike <value>          Replace bright pixels with a neighborhood median.\n\\
+    --maxluminance <value>     Tone-map luminance scale.\n\\
+    --tonemap                  Apply Reinhard tone mapping.\n\\
+    --preservecolors           Preserve channel ratios above one.\n\\
+    --acesfilmic               Apply the ACES filmic curve.\n\\
+    --repeatpix <n>            Repeat each pixel n times.\n\\
+    --fp16                     Write Float channels as Half in EXR.\n"),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool help: command \"{command}\" not known."
         ))),
@@ -415,17 +421,24 @@ fn write_converted_image(
     )?;
     Ok(())
 }
-
 fn convert(args: &[OsString]) -> Result<(), ImgToolError> {
     let mut input = None;
     let mut output = None;
     let mut channels = None;
     let mut crop = None;
+    let mut scale = 1.0 as Float;
+    let mut gamma = 1.0 as Float;
+    let mut clamp = Float::INFINITY;
+    let mut max_luminance = 1.0 as Float;
+    let mut despike = Float::INFINITY;
+    let mut repeat = 1_i32;
     let mut flip_y = false;
-    let mut scale = 1.0;
-    let mut gamma = 1.0;
+    let mut bw = false;
+    let mut tonemap = false;
+    let mut preserve_colors = false;
+    let mut aces_filmic = false;
     let mut fp16 = false;
-
+    let mut colorspace = None;
     let mut index = 0;
     while index < args.len() {
         let argument = args[index].to_string_lossy();
@@ -436,27 +449,46 @@ fn convert(args: &[OsString]) -> Result<(), ImgToolError> {
                 .ok_or_else(|| ImgToolError::with_help("convert: option value missing"))
         };
         match argument.as_ref() {
-            "--outfile" | "-outfile" => output = Some(value(&mut index)?.to_string()),
+            "--acesfilmic" | "-acesfilmic" => aces_filmic = true,
+            "--bw" | "-bw" => bw = true,
             "--channels" | "-channels" => channels = Some(value(&mut index)?.to_string()),
-            "--crop" | "-crop" => crop = Some(parse_crop(value(&mut index)?)?),
-            "--scale" | "-scale" => {
-                scale = value(&mut index)?
+            "--clamp" | "-clamp" => {
+                clamp = value(&mut index)?
                     .parse()
-                    .map_err(|_| ImgToolError::new("convert: invalid --scale value"))?
+                    .map_err(|_| ImgToolError::new("convert: invalid --clamp value"))?;
             }
+            "--colorspace" | "-colorspace" => colorspace = Some(value(&mut index)?.to_string()),
+            "--crop" | "-crop" => crop = Some(parse_crop(value(&mut index)?)?),
+            "--despike" | "-despike" => {
+                despike = value(&mut index)?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("convert: invalid --despike value"))?;
+            }
+            "--flipy" | "-flipy" => flip_y = true,
+            "--fp16" | "-fp16" => fp16 = true,
             "--gamma" | "-gamma" => {
                 gamma = value(&mut index)?
                     .parse()
-                    .map_err(|_| ImgToolError::new("convert: invalid --gamma value"))?
+                    .map_err(|_| ImgToolError::new("convert: invalid --gamma value"))?;
             }
-            "--flipy" | "-flipy" => flip_y = !flip_y,
-            "--fp16" | "-fp16" => fp16 = true,
-            "--bw" | "-bw" | "--clamp" | "-clamp" | "--colorspace" | "-colorspace"
-            | "--tonemap" | "-tonemap" => {
-                return Err(ImgToolError::new(format!(
-                    "convert: option {argument} is not implemented"
-                )))
+            "--maxluminance" | "-maxluminance" => {
+                max_luminance = value(&mut index)?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("convert: invalid --maxluminance value"))?;
             }
+            "--outfile" | "-outfile" => output = Some(value(&mut index)?.to_string()),
+            "--preservecolors" | "-preservecolors" => preserve_colors = true,
+            "--repeatpix" | "-repeatpix" => {
+                repeat = value(&mut index)?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("convert: invalid --repeatpix value"))?;
+            }
+            "--scale" | "-scale" => {
+                scale = value(&mut index)?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("convert: invalid --scale value"))?;
+            }
+            "--tonemap" | "-tonemap" => tonemap = true,
             value if value.starts_with('-') => {
                 return Err(ImgToolError::with_help(format!(
                     "convert: unknown option \"{value}\""
@@ -471,32 +503,43 @@ fn convert(args: &[OsString]) -> Result<(), ImgToolError> {
         }
         index += 1;
     }
-
     let input = input.ok_or_else(|| ImgToolError::with_help("convert: input filename missing"))?;
     let output = output.ok_or_else(|| ImgToolError::with_help("convert: --outfile missing"))?;
-    if scale == 0.0 || gamma <= 0.0 {
+    if max_luminance <= 0.0 || repeat <= 0 || scale == 0.0 || gamma <= 0.0 {
         return Err(ImgToolError::new(
-            "convert: --scale must be non-zero and --gamma must be positive",
+            "convert: maxluminance and repeatpix must be positive, scale non-zero, gamma positive",
         ));
     }
     let image = load_image(Path::new(&input))?;
-    let selected: Vec<usize> = match channels {
-        Some(names) => names
-            .split(',')
-            .map(|name| {
-                image
-                    .channel_names
-                    .iter()
-                    .position(|candidate| candidate == name)
-                    .ok_or_else(|| ImgToolError::new(format!("convert: channel {name} missing")))
-            })
-            .collect::<Result<_, _>>()?,
-        None => (0..image.raw.channels).collect(),
-    };
-    let (x0, x1, y0, y1) = crop.map_or(
-        (0, image.raw.resolution.x, 0, image.raw.resolution.y),
-        |[x0, x1, y0, y1]| (x0, x1, y0, y1),
-    );
+    let selected: Vec<usize> = channels
+        .map(|names| {
+            names
+                .split(',')
+                .map(|name| {
+                    image
+                        .channel_names
+                        .iter()
+                        .position(|candidate| candidate == name)
+                        .ok_or_else(|| {
+                            ImgToolError::new(format!("convert: channel {name} missing"))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_else(|| (0..image.raw.channels).collect());
+    let names: Vec<String> = selected
+        .iter()
+        .map(|&channel| image.channel_names[channel].clone())
+        .collect();
+    let [mut x0, mut x1, mut y0, mut y1] =
+        crop.unwrap_or([0, image.raw.resolution.x, 0, image.raw.resolution.y]);
+    if x1 < 0 {
+        x1 = x0 - x1;
+    }
+    if y1 < 0 {
+        y1 = y0 - y1;
+    }
     if x0 < 0
         || y0 < 0
         || x0 >= x1
@@ -506,22 +549,133 @@ fn convert(args: &[OsString]) -> Result<(), ImgToolError> {
     {
         return Err(ImgToolError::new("convert: crop is outside image bounds"));
     }
-    let resolution = Vector2::new(x1 - x0, y1 - y0);
-    let names: Vec<String> = selected
-        .iter()
-        .map(|&channel| image.channel_names[channel].clone())
-        .collect();
+    let mut resolution = Vector2::new(x1 - x0, y1 - y0);
     let mut data = Vec::with_capacity((resolution.x * resolution.y) as usize * selected.len());
     for y in 0..resolution.y {
-        let source_y = if flip_y { y1 - 1 - y } else { y0 + y };
+        let source_y = y0 + y;
         for x in 0..resolution.x {
             let pixel = (source_y * image.raw.resolution.x + x0 + x) as usize;
             for &channel in &selected {
-                let mut value = image.raw.channel(pixel, channel) * scale;
-                if gamma != 1.0 {
-                    value = value.signum() * value.abs().powf(gamma);
+                data.push(image.raw.channel(pixel, channel));
+            }
+        }
+    }
+    if clamp < Float::INFINITY {
+        for pixel in data.chunks_exact_mut(selected.len()) {
+            let maximum = pixel.iter().copied().fold(0.0, Float::max);
+            if maximum > clamp {
+                let factor = clamp / maximum;
+                for value in pixel {
+                    *value *= factor;
                 }
-                data.push(value);
+            }
+        }
+    }
+    let mut metadata = image.metadata.clone();
+    if let Some(destination_name) = colorspace {
+        let destination = lookup_color_space_by_name(&destination_name)
+            .ok_or_else(|| ImgToolError::new("convert: color space unknown"))?;
+        let source = metadata.color_space.unwrap_or(&SRGB);
+        color_ops::convert_rgb_values(&mut data, resolution, &names, source, destination)?;
+        metadata.color_space = Some(destination);
+    }
+    if bw {
+        for pixel in data.chunks_exact_mut(selected.len()) {
+            let average = pixel.iter().sum::<Float>() / pixel.len() as Float;
+            pixel.fill(average);
+        }
+    }
+    if despike < Float::INFINITY {
+        let original = data.clone();
+        for y in 0..resolution.y {
+            for x in 0..resolution.x {
+                let pixel = (y * resolution.x + x) as usize;
+                let base = &original[pixel * selected.len()..(pixel + 1) * selected.len()];
+                if base.iter().sum::<Float>() / (selected.len() as Float) < despike {
+                    continue;
+                }
+                let mut neighbors: Vec<Vec<Float>> = Vec::new();
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let nx = x + dx;
+                        let ny = y + dy;
+                        if nx >= 0 && nx < resolution.x && ny >= 0 && ny < resolution.y {
+                            let n = (ny * resolution.x + nx) as usize;
+                            neighbors.push(
+                                original[n * selected.len()..(n + 1) * selected.len()].to_vec(),
+                            );
+                        }
+                    }
+                }
+                neighbors.sort_by(|a, b| {
+                    (a.iter().sum::<Float>() / a.len() as Float)
+                        .total_cmp(&(b.iter().sum::<Float>() / b.len() as Float))
+                });
+                let median = &neighbors[neighbors.len() / 2];
+                data[pixel * selected.len()..(pixel + 1) * selected.len()].copy_from_slice(median);
+            }
+        }
+    }
+    if scale != 1.0 {
+        data.iter_mut().for_each(|value| *value *= scale);
+    }
+    if gamma != 1.0 {
+        data.iter_mut()
+            .for_each(|value| *value = value.max(0.0).powf(gamma));
+    }
+    if tonemap {
+        for pixel in data.chunks_exact_mut(selected.len()) {
+            let luminance = pixel.iter().sum::<Float>() / pixel.len() as Float;
+            let factor = (1.0 + luminance / (max_luminance * max_luminance)) / (1.0 + luminance);
+            pixel.iter_mut().for_each(|value| *value *= factor);
+        }
+    }
+    if preserve_colors {
+        for pixel in data.chunks_exact_mut(selected.len()) {
+            let maximum = pixel.iter().copied().fold(0.0, Float::max);
+            if maximum > 1.0 {
+                pixel.iter_mut().for_each(|value| *value /= maximum);
+            }
+        }
+    }
+    if aces_filmic {
+        for value in &mut data {
+            let x = *value;
+            *value = if x <= 0.0 {
+                0.0
+            } else {
+                ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
+            };
+        }
+    }
+    if repeat > 1 {
+        let old_resolution = resolution;
+        let mut repeated = vec![
+            0.0;
+            (old_resolution.x * repeat * old_resolution.y * repeat) as usize
+                * selected.len()
+        ];
+        for y in 0..old_resolution.y * repeat {
+            for x in 0..old_resolution.x * repeat {
+                let source =
+                    ((y / repeat * old_resolution.x + x / repeat) as usize) * selected.len();
+                let destination = ((y * old_resolution.x * repeat + x) as usize) * selected.len();
+                repeated[destination..destination + selected.len()]
+                    .copy_from_slice(&data[source..source + selected.len()]);
+            }
+        }
+        resolution = Vector2::new(old_resolution.x * repeat, old_resolution.y * repeat);
+        data = repeated;
+    }
+    if flip_y {
+        let row_size = resolution.x as usize * selected.len();
+        for y in 0..resolution.y / 2 {
+            let opposite = resolution.y - 1 - y;
+            for offset in 0..row_size {
+                data.swap(
+                    (y as usize) * row_size + offset,
+                    (opposite as usize) * row_size + offset,
+                );
             }
         }
     }
@@ -529,7 +683,7 @@ fn convert(args: &[OsString]) -> Result<(), ImgToolError> {
         PixelFormat::Half
     } else if Path::new(&output)
         .extension()
-        .is_some_and(|extension| extension == "exr")
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exr"))
     {
         PixelFormat::Float
     } else {
