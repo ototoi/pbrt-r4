@@ -327,6 +327,10 @@ fn write_triangle_ply(
     normals: &[Normal3f],
     uvs: &[Point2f],
 ) -> Result<(), PlyToolError> {
+    // Work around ply-rs 0.1.3 writing the element count instead of the
+    // actual list length for binary list properties. pbrt-v4 emits binary
+    // little-endian PLY files, so keep that format and write the payload
+    // directly until the dependency can provide a compatible fix.
     if indices.len() % 3 != 0 {
         return Err(error_message(
             "triangle index count must be a multiple of three",
