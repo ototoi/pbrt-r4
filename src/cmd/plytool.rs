@@ -400,7 +400,7 @@ fn write_triangle_ply(
         faces.push(face);
     }
     ply.payload.insert("face".to_string(), faces);
-    let file = File::create(filename).map_err(error)?;
+    let mut file = File::create(filename).map_err(error)?;
     Writer::new()
         .write_ply(&mut file, &mut ply)
         .map(|_| ())
