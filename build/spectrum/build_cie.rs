@@ -35,7 +35,8 @@ pub fn build_core(path: &str) {
 }
 
 pub fn build() {
-    println!("cargo:rerun-if-changed=build/spectrum/cie_data.rs;build/spectrum/build_cie.rs");
+    println!("cargo:rerun-if-changed=build/spectrum/cie_data.rs");
+    println!("cargo:rerun-if-changed=build/spectrum/build_cie.rs");
     let depends = ["build/spectrum/cie_data.rs", "build/spectrum/build_cie.rs"];
     let target = "spectrum_data_cie.rs";
     let out_dir = env::var("OUT_DIR").unwrap();

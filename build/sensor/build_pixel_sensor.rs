@@ -139,9 +139,18 @@ pub fn build_core(path: &str) {
 }
 
 pub fn build() {
-    println!(
-        "cargo:rerun-if-changed=build/sensor/sensor_data.rs;build/sensor/swatch_data.rs;build/sensor/cie_s_data.rs;build/sensor/illuminant.rs;build/sensor/math.rs;build/sensor/build_pixel_sensor.rs;build/spectrum/cie_data.rs;build/spectrum/spectrum_config.rs"
-    );
+    for path in [
+        "build/sensor/sensor_data.rs",
+        "build/sensor/swatch_data.rs",
+        "build/sensor/cie_s_data.rs",
+        "build/sensor/illuminant.rs",
+        "build/sensor/math.rs",
+        "build/sensor/build_pixel_sensor.rs",
+        "build/spectrum/cie_data.rs",
+        "build/spectrum/spectrum_config.rs",
+    ] {
+        println!("cargo:rerun-if-changed={path}");
+    }
     let target = "pixel_sensor_data.rs";
     let out_dir = env::var("OUT_DIR").unwrap();
     let path = Path::new(&out_dir).join(target);

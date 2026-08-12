@@ -43,9 +43,15 @@ pub fn build_core(path: &str) {
 }
 
 pub fn build() {
-    println!(
-        "cargo:rerun-if-changed=build/spectrum/cie_data.rs;build/spectrum/build_xyz.rs;build/spectrum/utils.rs;build/spectrum/config.rs;build/spectrum/spectrum_config.rs"
-    );
+    for path in [
+        "build/spectrum/cie_data.rs",
+        "build/spectrum/build_xyz.rs",
+        "build/spectrum/utils.rs",
+        "build/spectrum/config.rs",
+        "build/spectrum/spectrum_config.rs",
+    ] {
+        println!("cargo:rerun-if-changed={path}");
+    }
     let depends = [
         "build/spectrum/cie_data.rs",
         "build/spectrum/build_xyz.rs",
