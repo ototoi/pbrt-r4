@@ -69,6 +69,15 @@ pub fn read_raw_image_exr(path: &Path) -> Result<RawImage, PbrtError> {
 
 /// Read an EXR while preserving the channel names from its layer.
 pub fn read_raw_image_exr_with_channels(path: &Path) -> Result<(RawImage, Vec<String>), PbrtError> {
+    let (raw, names, _metadata) = read_raw_image_exr_with_channels_and_metadata(path)?;
+    Ok((raw, names))
+}
+
+/// Read an EXR while preserving channels and the metadata needed by image
+/// comparison and conversion tools.
+pub fn read_raw_image_exr_with_channels_and_metadata(
+    path: &Path,
+) -> Result<(RawImage, Vec<String>, ImageMetadata), PbrtError> {
     let (width, height, channels, _metadata) = read_exr_channels(path)?;
     let total = width * height;
     let channel_names = channels.names.clone();
@@ -141,6 +150,7 @@ pub fn read_raw_image_exr_with_channels(path: &Path) -> Result<(RawImage, Vec<St
             channels: ch_count,
         },
         channel_names,
+        _metadata,
     ))
 }
 
