@@ -15,6 +15,7 @@ use std::fs;
 use std::path::Path;
 
 mod assembly;
+mod color_ops;
 mod comparison;
 mod falsecolor_table;
 mod pixel_ops;
@@ -69,6 +70,7 @@ splitn: Compose multiple images with diagonal separators.\n\n\
 scalenormalmap: Scale the x and y components of a normal map.\n\n\
 falsecolor: Convert scalar values to a false-color image.\n\n\
 bloom: Add a Gaussian bloom around pixels above a threshold.\n\n\
+whitebalance: Apply Bradford white balance to an RGB image.\n\n\
 makesky: Generate an equi-area environment map using Hosek-Wilkie.\n\n\
 help: Print command help.\n\n\
 \"imgtool help <command>\" provides detailed information about <command>.\n"
@@ -109,6 +111,12 @@ options:\n\\
     --iterations <n>     Number of blur iterations. Default: 5.\n\\
     --scale <value>      Bloom scale. Default: 0.3.\n\\
     --outfile <name>     Output image filename.\n"),
+        "whitebalance" => Ok("usage: imgtool whitebalance [options] <filename>\n\n\\
+options:\n\\
+    --illuminant <name>  Named source illuminant.\n\\
+    --temperature <K>    D-series source temperature.\n\\
+    --primaries <x> <y>  Source white chromaticity.\n\\
+    --outfile <name>     Output EXR filename.\n"),
         "makesky" => Ok("usage: imgtool makesky [options]\n\n\
 options:\n\
     --outfile <name>      Output EXR filename.\n\
@@ -1023,6 +1031,7 @@ where
         "scalenormalmap" => pixel_ops::scalenormalmap(&arguments),
         "falsecolor" => pixel_ops::falsecolor(&arguments),
         "bloom" => pixel_ops::bloom(&arguments),
+        "whitebalance" => color_ops::whitebalance(&arguments),
         "makesky" => makesky(&arguments),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool: command \"{command}\" not known."

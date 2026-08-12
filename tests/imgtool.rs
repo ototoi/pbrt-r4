@@ -373,3 +373,33 @@ fn bloom_thresholds_and_writes_output() {
     );
     assert!(output_path.exists());
 }
+
+#[test]
+fn whitebalance_accepts_explicit_source_primaries() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("input.png");
+    let output_path = directory.path().join("balanced.exr");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(1, 1, vec![128, 64, 32])
+        .unwrap()
+        .save(&input_path)
+        .unwrap();
+
+    let output = imgtool()
+        .args([
+            "whitebalance",
+            "--primaries",
+            "0.3127",
+            "0.3290",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_path.exists());
+}
