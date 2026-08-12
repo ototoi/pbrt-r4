@@ -14,6 +14,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
+mod comparison;
+mod pixel_ops;
+
 #[derive(Debug)]
 struct ImgToolError {
     message: String,
@@ -58,6 +61,8 @@ info: Print image resolution, channels, and statistics.\n\n\
 convert: Convert an image and apply basic pixel operations.\n\n\
 average: Average images matching a filename prefix.\n\n\
 diff: Compute per-channel image differences.\n\n\
+error: Compute the average error of a set of images.\n\n\
+scalenormalmap: Scale the x and y components of a normal map.\n\n\
 makesky: Generate an equi-area environment map using Hosek-Wilkie.\n\n\
 help: Print command help.\n\n\
 \"imgtool help <command>\" provides detailed information about <command>.\n"
@@ -73,6 +78,16 @@ options:\n\
         "info" => Ok("usage: imgtool info <filename...>\n"),
         "average" => Ok("usage: imgtool average --outfile <name> <filename base>\n"),
         "diff" => Ok("usage: imgtool diff --reference <name> [--metric MSE|MAE|MRSE] <filename>\n"),
+        "error" => Ok("usage: imgtool error [options] <filename base>\n\n\\
+options:\n\\
+    --reference <name>  Reference image filename.\n\\
+    --crop <x0,x1,y0,y1>  Crop images before comparison.\n\\
+    --metric <name>     Error metric: MAE, MSE, or MRSE.\n\\
+    --errorfile <name>  Output average error image.\n"),
+        "scalenormalmap" => Ok("usage: imgtool scalenormalmap [options] <filename>\n\n\\
+options:\n\\
+    --scale <value>     Scale factor for x and y. Default: 1.\n\\
+    --outfile <name>    Output image filename.\n"),
         "makesky" => Ok("usage: imgtool makesky [options]\n\n\
 options:\n\
     --outfile <name>      Output EXR filename.\n\
@@ -963,6 +978,8 @@ where
         "convert" => convert(&arguments),
         "average" => average(&arguments),
         "diff" => diff(&arguments),
+        "error" => comparison::error(&arguments),
+        "scalenormalmap" => pixel_ops::scalenormalmap(&arguments),
         "makesky" => makesky(&arguments),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool: command \"{command}\" not known."

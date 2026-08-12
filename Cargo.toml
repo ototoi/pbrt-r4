@@ -73,7 +73,7 @@ path = "src/cmd/plytool.rs"
 
 [[bin]]
 name = "imgtool"
-path = "src/cmd/imgtool.rs"
+path = "src/cmd/imgtool/mod.rs"
 
 # `[profile.release]` left at cargo defaults (opt-level=3, no LTO).
 # We tried `lto = "fat"` + `codegen-units = 1`: small win (~5%) on the

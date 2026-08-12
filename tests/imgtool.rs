@@ -184,3 +184,63 @@ fn average_and_diff_use_per_channel_values() {
     assert!(!diff.status.success());
     assert!(String::from_utf8_lossy(&diff.stdout).contains("Y: 1.000000"));
 }
+
+#[test]
+fn error_averages_matching_images_and_writes_error_image() {
+    let directory = tempdir().unwrap();
+    for (name, value) in [("render-0.png", 0_u8), ("render-1.png", 255_u8)] {
+        let image = ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![value]).unwrap();
+        image.save(directory.path().join(name)).unwrap();
+    }
+    let error_path = directory.path().join("error.exr");
+    let output = imgtool()
+        .args([
+            "error",
+            "--reference",
+            directory.path().join("render-0.png").to_str().unwrap(),
+            "--errorfile",
+            error_path.to_str().unwrap(),
+            directory.path().join("render-").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("MSE estimate"));
+    assert!(error_path.exists());
+}
+
+#[test]
+fn scalenormalmap_scales_xy_and_reconstructs_z() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("normal.png");
+    let output_path = directory.path().join("scaled.exr");
+    let image = ImageBuffer::<Rgb<u8>, _>::from_raw(1, 1, vec![128, 128, 255]).unwrap();
+    image.save(&input_path).unwrap();
+
+    let output = imgtool()
+        .args([
+            "scalenormalmap",
+            "--scale",
+            "2",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listed = imgtool()
+        .args(["cat", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(stdout.contains("0.503922,0.503922,0.999969"));
+}
