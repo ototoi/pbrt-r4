@@ -563,8 +563,7 @@ fn whitebalance_accepts_explicit_source_primaries() {
         .args([
             "whitebalance",
             "--primaries",
-            "0.3127",
-            "0.3290",
+            "0.3127,0.3290",
             "--outfile",
             output_path.to_str().unwrap(),
             input_path.to_str().unwrap(),

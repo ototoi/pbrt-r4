@@ -124,7 +124,7 @@ options:\n\\
 options:\n\\
     --illuminant <name>  Named source illuminant.\n\\
     --temperature <K>    D-series source temperature.\n\\
-    --primaries <x> <y>  Source white chromaticity.\n\\
+    --primaries <x,y>    Source white chromaticity.\n\\
     --outfile <name>     Output EXR filename.\n"),
         "makeequiarea" => Ok("usage: imgtool makeequiarea [options] <filename>\n\n\\
 options:\n\\

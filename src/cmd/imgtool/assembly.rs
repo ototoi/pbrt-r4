@@ -55,6 +55,7 @@ pub fn assemble(args: &[OsString]) -> Result<(), ImgToolError> {
     let mut full_resolution = None;
     let mut channel_names = None;
     let mut metadata = None;
+    let mut color_space_name = None;
     let mut data = Vec::new();
     let mut seen = Vec::new();
     let mut seen_multiple = 0;
@@ -69,16 +70,17 @@ pub fn assemble(args: &[OsString]) -> Result<(), ImgToolError> {
             ));
         }
         let image = load_image(Path::new(&filename))?;
-        let full = image.metadata.full_resolution.ok_or_else(|| {
-            ImgToolError::new(format!("assemble: {filename} has no full resolution"))
-        })?;
-        let bounds = image.metadata.pixel_bounds.ok_or_else(|| {
-            ImgToolError::new(format!("assemble: {filename} has no pixel bounds"))
-        })?;
+        let Some(full) = image.metadata.full_resolution else {
+            eprintln!("assemble: {filename} has no full resolution; skipping");
+            continue;
+        };
+        let Some(bounds) = image.metadata.pixel_bounds else {
+            eprintln!("assemble: {filename} has no pixel bounds; skipping");
+            continue;
+        };
         if bounds.diagonal() != image.raw.resolution {
-            return Err(ImgToolError::new(format!(
-                "assemble: {filename} pixel bounds do not match image resolution"
-            )));
+            eprintln!("assemble: {filename} pixel bounds do not match image resolution; skipping");
+            continue;
         }
 
         if full_resolution.is_none() {
@@ -87,20 +89,33 @@ pub fn assemble(args: &[OsString]) -> Result<(), ImgToolError> {
             data = vec![0.0; (full.x * full.y) as usize * image.raw.channels];
             seen = vec![false; (full.x * full.y) as usize];
             metadata = Some(image.metadata.clone());
+            color_space_name = image
+                .metadata
+                .color_space
+                .map(|color_space| color_space.name);
         } else if full_resolution != Some(full) {
-            return Err(ImgToolError::new("assemble: full resolutions do not match"));
-        } else {
-            let first = load_image(Path::new(&filename))?;
-            if channel_names.as_ref() != Some(&first.channel_names) {
-                return Err(ImgToolError::new("assemble: channel layouts do not match"));
-            }
+            eprintln!("assemble: {filename} has an incompatible full resolution; skipping");
+            continue;
+        } else if channel_names
+            .as_ref()
+            .is_some_and(|names| names.len() != image.raw.channels)
+        {
+            eprintln!("assemble: {filename} has an incompatible channel count; skipping");
+            continue;
+        } else if image
+            .metadata
+            .color_space
+            .map(|color_space| color_space.name)
+            != color_space_name
+        {
+            eprintln!("assemble: {filename} has an incompatible color space; skipping");
+            continue;
         }
 
         let full = full_resolution.unwrap();
         if bounds.min.x < 0 || bounds.min.y < 0 || bounds.max.x > full.x || bounds.max.y > full.y {
-            return Err(ImgToolError::new(format!(
-                "assemble: {filename} bounds are outside full resolution"
-            )));
+            eprintln!("assemble: {filename} bounds are outside full resolution; skipping");
+            continue;
         }
         for y in 0..image.raw.resolution.y {
             for x in 0..image.raw.resolution.x {
@@ -118,7 +133,11 @@ pub fn assemble(args: &[OsString]) -> Result<(), ImgToolError> {
         }
     }
 
-    let full = full_resolution.unwrap();
+    let Some(full) = full_resolution else {
+        return Err(ImgToolError::new(
+            "assemble: no valid input tiles were found",
+        ));
+    };
     let missing = seen.iter().filter(|value| !**value).count();
     if seen_multiple > 0 {
         eprintln!("assemble: {seen_multiple} pixels present in multiple inputs");

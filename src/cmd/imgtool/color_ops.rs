@@ -58,10 +58,8 @@ pub fn whitebalance(args: &[OsString]) -> Result<(), ImgToolError> {
                 )?);
             }
             Some("--primaries") | Some("-primaries") => {
-                let x = parse_value(args, index + 1, "whitebalance: invalid --primaries")?;
-                let y = parse_value(args, index + 2, "whitebalance: invalid --primaries")?;
-                primaries = Some([x, y]);
-                index += 2;
+                index += 1;
+                primaries = Some(parse_xy(args, index, "whitebalance: invalid --primaries")?);
             }
             Some(value) if value.starts_with('-') => {
                 return Err(ImgToolError::with_help(format!(
@@ -147,6 +145,25 @@ fn parse_value(args: &[OsString], index: usize, message: &str) -> Result<Float, 
     option_value(args, index, message)?
         .parse()
         .map_err(|_| ImgToolError::new(message))
+}
+
+fn parse_xy(args: &[OsString], index: usize, message: &str) -> Result<[Float; 2], ImgToolError> {
+    let value = option_value(args, index, message)?;
+    let mut components = value.split(',');
+    let x = components
+        .next()
+        .ok_or_else(|| ImgToolError::new(message))?
+        .parse()
+        .map_err(|_| ImgToolError::new(message))?;
+    let y = components
+        .next()
+        .ok_or_else(|| ImgToolError::new(message))?
+        .parse()
+        .map_err(|_| ImgToolError::new(message))?;
+    if components.next().is_some() {
+        return Err(ImgToolError::new(message));
+    }
+    Ok([x, y])
 }
 
 fn chromaticity(spectrum: &Spectrum) -> Result<[Float; 2], ImgToolError> {

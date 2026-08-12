@@ -103,7 +103,7 @@ pub fn falsecolor(args: &[OsString]) -> Result<(), ImgToolError> {
 
     while index < args.len() {
         match args[index].to_str() {
-            Some("--maxvalue") | Some("-maxvalue") => {
+            Some("--maxvalue") | Some("-maxvalue") | Some("--maxValue") | Some("-maxValue") => {
                 index += 1;
                 max_value = Some(
                     args.get(index)
