@@ -23,6 +23,15 @@ pub fn build() {
         ("dci_p3", Gamut::DciP3),
         ("rec2020", Gamut::Rec2020),
     ];
+    let expected_bytes =
+        (RESOLUTION + 3 * RESOLUTION * RESOLUTION * RESOLUTION * 3) * std::mem::size_of::<f32>();
+    if specifications.iter().all(|(name, _)| {
+        fs::metadata(Path::new(&out_dir).join(format!("rgb_to_spectrum_{name}.bin")))
+            .map(|metadata| metadata.len() as usize == expected_bytes)
+            .unwrap_or(false)
+    }) {
+        return;
+    }
 
     let generated = std::thread::scope(|scope| {
         specifications
@@ -48,8 +57,6 @@ pub fn build() {
         let dst = Path::new(&out_dir).join(format!("rgb_to_spectrum_{}.bin", name));
         let tmp = dst.with_extension("bin.tmp");
         rgb2spec_opt::write_table(&tmp, &table);
-        let expected_bytes = (RESOLUTION + 3 * RESOLUTION * RESOLUTION * RESOLUTION * 3)
-            * std::mem::size_of::<f32>();
         let actual_bytes = fs::metadata(&tmp)
             .unwrap_or_else(|error| panic!("rgb2spec_opt: inspect {:?}: {}", tmp, error))
             .len() as usize;
