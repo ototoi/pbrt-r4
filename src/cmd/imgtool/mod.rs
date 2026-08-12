@@ -68,6 +68,7 @@ assemble: Assemble EXR image tiles into a full image.\n\n\
 splitn: Compose multiple images with diagonal separators.\n\n\
 scalenormalmap: Scale the x and y components of a normal map.\n\n\
 falsecolor: Convert scalar values to a false-color image.\n\n\
+bloom: Add a Gaussian bloom around pixels above a threshold.\n\n\
 makesky: Generate an equi-area environment map using Hosek-Wilkie.\n\n\
 help: Print command help.\n\n\
 \"imgtool help <command>\" provides detailed information about <command>.\n"
@@ -100,6 +101,13 @@ options:\n\\
     --maxvalue <value>   Maximum value for normalization.\n\\
     --plusminus          Show positive values in green and negative in red.\n\\
     --ramp               Generate the v4 10x300 color ramp.\n\\
+    --outfile <name>     Output image filename.\n"),
+        "bloom" => Ok("usage: imgtool bloom [options] <filename>\n\n\\
+options:\n\\
+    --level <value>      Threshold. Default: Infinity.\n\\
+    --width <value>      Gaussian width. Default: 15.\n\\
+    --iterations <n>     Number of blur iterations. Default: 5.\n\\
+    --scale <value>      Bloom scale. Default: 0.3.\n\\
     --outfile <name>     Output image filename.\n"),
         "makesky" => Ok("usage: imgtool makesky [options]\n\n\
 options:\n\
@@ -1014,6 +1022,7 @@ where
         "splitn" => assembly::splitn(&arguments),
         "scalenormalmap" => pixel_ops::scalenormalmap(&arguments),
         "falsecolor" => pixel_ops::falsecolor(&arguments),
+        "bloom" => pixel_ops::bloom(&arguments),
         "makesky" => makesky(&arguments),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool: command \"{command}\" not known."

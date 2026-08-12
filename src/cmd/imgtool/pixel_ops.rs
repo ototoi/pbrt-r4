@@ -1,6 +1,6 @@
 use super::{
-    falsecolor_table::FALSE_COLOR_VALUES, load_image, output_exr_region, output_exr_region_format,
-    ImgToolError,
+    falsecolor_table::FALSE_COLOR_VALUES, load_image, output_exr, output_exr_region,
+    output_exr_region_format, ImgToolError,
 };
 use pbrt_r4::util::base::{inverse_gamma_correct, Float};
 use pbrt_r4::util::geometry::{Bounds2i, Vector2};
@@ -214,4 +214,179 @@ pub fn falsecolor(args: &[OsString]) -> Result<(), ImgToolError> {
         let bounds = Bounds2i::from(((0, 0), (resolution.x, resolution.y)));
         write_image(&output, &output_data, &bounds, &resolution).map_err(ImgToolError::from)
     }
+}
+
+pub fn bloom(args: &[OsString]) -> Result<(), ImgToolError> {
+    let mut input = None;
+    let mut output = None;
+    let mut level = Float::INFINITY;
+    let mut width = 15_i32;
+    let mut iterations = 5_i32;
+    let mut scale = 0.3;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].to_str() {
+            Some("--level") | Some("-level") => {
+                index += 1;
+                level = args
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| ImgToolError::with_help("bloom: --level missing"))?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("bloom: invalid --level"))?;
+            }
+            Some("--width") | Some("-width") => {
+                index += 1;
+                width = args
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| ImgToolError::with_help("bloom: --width missing"))?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("bloom: invalid --width"))?;
+            }
+            Some("--iterations") | Some("-iterations") => {
+                index += 1;
+                iterations = args
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| ImgToolError::with_help("bloom: --iterations missing"))?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("bloom: invalid --iterations"))?;
+            }
+            Some("--scale") | Some("-scale") => {
+                index += 1;
+                scale = args
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| ImgToolError::with_help("bloom: --scale missing"))?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("bloom: invalid --scale"))?;
+            }
+            Some("--outfile") | Some("-outfile") => {
+                index += 1;
+                output = Some(
+                    args.get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| ImgToolError::with_help("bloom: --outfile missing"))?
+                        .to_string(),
+                );
+            }
+            Some(value) if value.starts_with('-') => {
+                return Err(ImgToolError::with_help(format!(
+                    "bloom: unknown option {value}"
+                )))
+            }
+            Some(value) if input.is_none() => input = Some(value.to_string()),
+            _ => return Err(ImgToolError::new("bloom: multiple input filenames")),
+        }
+        index += 1;
+    }
+
+    let input = input.ok_or_else(|| ImgToolError::with_help("bloom: input missing"))?;
+    let output = output.ok_or_else(|| ImgToolError::with_help("bloom: --outfile missing"))?;
+    if width <= 0 || iterations <= 0 {
+        return Err(ImgToolError::new(
+            "bloom: width and iterations must be positive",
+        ));
+    }
+    if width % 2 == 0 {
+        width += 1;
+        eprintln!("Bloom width must be odd. Rounding up to {width}.");
+    }
+    let image = load_image(Path::new(&input))?;
+    let resolution = image.raw.resolution;
+    let channels = image.raw.channels;
+    let pixels = (resolution.x * resolution.y) as usize;
+    let mut original = Vec::with_capacity(pixels * channels);
+    for pixel in 0..pixels {
+        for channel in 0..channels {
+            original.push(image.raw.channel(pixel, channel));
+        }
+    }
+
+    let mut survivors = 0;
+    let mut blurred = vec![0.0; original.len()];
+    for pixel in 0..pixels {
+        let over_threshold =
+            (0..channels).any(|channel| original[pixel * channels + channel] > level);
+        if over_threshold {
+            survivors += 1;
+            blurred[pixel * channels..(pixel + 1) * channels]
+                .copy_from_slice(&original[pixel * channels..(pixel + 1) * channels]);
+        }
+    }
+    if survivors == 0 {
+        return Err(ImgToolError::new("bloom: no pixels were above threshold"));
+    }
+
+    let radius = width / 2;
+    let sigma = radius as Float / 2.0;
+    let mut blurred_sum = vec![0.0; original.len()];
+    for _ in 0..iterations {
+        let filtered = gaussian_blur(
+            &blurred,
+            resolution.x,
+            resolution.y,
+            channels,
+            radius,
+            sigma,
+        );
+        for (sum, value) in blurred_sum.iter_mut().zip(&filtered) {
+            *sum += *value;
+        }
+        blurred = filtered;
+    }
+    for (value, sum) in original.iter_mut().zip(blurred_sum) {
+        *value += scale / iterations as Float * sum;
+    }
+
+    output_exr(&output, &image, original)
+}
+
+fn gaussian_blur(
+    input: &[Float],
+    width: i32,
+    height: i32,
+    channels: usize,
+    radius: i32,
+    sigma: Float,
+) -> Vec<Float> {
+    let kernel: Vec<Float> = (-radius..=radius)
+        .map(|offset| (-(offset as Float).powi(2) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let normalization = kernel.iter().sum::<Float>();
+    let kernel: Vec<Float> = kernel
+        .into_iter()
+        .map(|weight| weight / normalization)
+        .collect();
+    let mut horizontal = vec![0.0; input.len()];
+    for y in 0..height {
+        for x in 0..width {
+            for channel in 0..channels {
+                let mut value = 0.0;
+                for (index, offset) in (-radius..=radius).enumerate() {
+                    let sample_x = (x + offset).clamp(0, width - 1);
+                    let pixel = (y * width + sample_x) as usize;
+                    value += kernel[index] * input[pixel * channels + channel];
+                }
+                horizontal[(y * width + x) as usize * channels + channel] = value;
+            }
+        }
+    }
+    let mut output = vec![0.0; input.len()];
+    for y in 0..height {
+        for x in 0..width {
+            for channel in 0..channels {
+                let mut value = 0.0;
+                for (index, offset) in (-radius..=radius).enumerate() {
+                    let sample_y = (y + offset).clamp(0, height - 1);
+                    let pixel = (sample_y * width + x) as usize;
+                    value += kernel[index] * horizontal[pixel * channels + channel];
+                }
+                output[(y * width + x) as usize * channels + channel] = value;
+            }
+        }
+    }
+    output
 }

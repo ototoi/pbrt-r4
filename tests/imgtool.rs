@@ -338,3 +338,38 @@ fn falsecolor_ramp_matches_v4_resolution() {
         .unwrap();
     assert!(String::from_utf8_lossy(&info.stdout).contains("resolution (10, 300)"));
 }
+
+#[test]
+fn bloom_thresholds_and_writes_output() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("input.png");
+    let output_path = directory.path().join("bloom.exr");
+    ImageBuffer::<Luma<u8>, _>::from_raw(3, 1, vec![0, 255, 0])
+        .unwrap()
+        .save(&input_path)
+        .unwrap();
+
+    let output = imgtool()
+        .args([
+            "bloom",
+            "--level",
+            "0.5",
+            "--width",
+            "3",
+            "--iterations",
+            "1",
+            "--scale",
+            "1",
+            "--outfile",
+            output_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_path.exists());
+}
