@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::BufWriter;
 use std::path::Path;
 
 use pbrt_r4::util::base::{Float, Normal3f, Point2f, Point3f, Vector3f};
@@ -403,7 +402,7 @@ fn write_triangle_ply(
     ply.payload.insert("face".to_string(), faces);
     let file = File::create(filename).map_err(error)?;
     Writer::new()
-        .write_ply(&mut BufWriter::new(file), &mut ply)
+        .write_ply(&mut file, &mut ply)
         .map(|_| ())
         .map_err(error)
 }
