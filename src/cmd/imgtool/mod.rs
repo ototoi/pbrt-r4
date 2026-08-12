@@ -17,6 +17,7 @@ use std::path::Path;
 mod assembly;
 mod color_ops;
 mod comparison;
+mod emitters;
 mod falsecolor_table;
 mod pixel_ops;
 
@@ -72,6 +73,7 @@ falsecolor: Convert scalar values to a false-color image.\n\n\
 bloom: Add a Gaussian bloom around pixels above a threshold.\n\n\
 whitebalance: Apply Bradford white balance to an RGB image.\n\n\
 makeequiarea: Convert a lat-long image to an equal-area environment map.\n\n\
+makeemitters: Generate pbrt area emitters from an image.\n\n\
 makesky: Generate an equi-area environment map using Hosek-Wilkie.\n\n\
 help: Print command help.\n\n\
 \"imgtool help <command>\" provides detailed information about <command>.\n"
@@ -122,6 +124,9 @@ options:\n\\
 options:\n\\
     --resolution <n>     Square output resolution. Default: input width.\n\\
     --outfile <name>     Output image filename.\n"),
+        "makeemitters" => Ok("usage: imgtool makeemitters [options] <filename>\n\n\\
+options:\n\\
+    --downsample <n>     Average n×n pixels. Default: 1.\n"),
         "makesky" => Ok("usage: imgtool makesky [options]\n\n\
 options:\n\
     --outfile <name>      Output EXR filename.\n\
@@ -1038,6 +1043,7 @@ where
         "bloom" => pixel_ops::bloom(&arguments),
         "whitebalance" => color_ops::whitebalance(&arguments),
         "makeequiarea" => color_ops::makeequiarea(&arguments),
+        "makeemitters" => emitters::makeemitters(&arguments),
         "makesky" => makesky(&arguments),
         _ => Err(ImgToolError::with_help(format!(
             "imgtool: command \"{command}\" not known."

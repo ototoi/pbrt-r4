@@ -437,3 +437,33 @@ fn makeequiarea_writes_square_environment_map() {
         .unwrap();
     assert!(String::from_utf8_lossy(&info.stdout).contains("resolution (4, 4)"));
 }
+
+#[test]
+fn makeemitters_writes_pbrt_area_light_text() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("emitters.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 1, vec![255, 0, 0, 0, 255, 0])
+        .unwrap()
+        .save(&input_path)
+        .unwrap();
+
+    let output = imgtool()
+        .args([
+            "makeemitters",
+            "--downsample",
+            "2",
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("AttributeBegin\n"));
+    assert!(stdout.contains("AreaLightSource \"diffuse\" \"rgb L\""));
+    assert!(stdout.contains("Shape \"bilinear\""));
+    assert!(stdout.ends_with("AttributeEnd\n"));
+}
