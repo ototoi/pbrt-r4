@@ -88,7 +88,12 @@ options:\n\
     --sort      Sort pixels by their channel average.\n"),
         "info" => Ok("usage: imgtool info <filename...>\n"),
         "average" => Ok("usage: imgtool average --outfile <name> <filename base>\n"),
-        "diff" => Ok("usage: imgtool diff --reference <name> [--metric MSE|MAE|MRSE] <filename>\n"),
+        "diff" => Ok("usage: imgtool diff --reference <name> [--metric MSE|MAE|MRSE|FLIP] [options] <filename>\n\n\\
+options:\n\\
+    --channels <names>    Comma-separated channels to compare. FLIP requires three channels.\n\\
+    --crop <x0,x1,y0,y1>  Crop image to the given bounds.\n\\
+    --difftol <percent>    Allowed average difference in percent.\n\\
+    --outfile <name>       Output error image.\n"),
         "error" => Ok("usage: imgtool error [options] <filename base>\n\n\\
 options:\n\\
     --reference <name>  Reference image filename.\n\\
@@ -915,13 +920,10 @@ fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
     let input = input.ok_or_else(|| ImgToolError::with_help("diff: input filename missing"))?;
     let reference =
         reference.ok_or_else(|| ImgToolError::with_help("diff: --reference missing"))?;
-    if !matches!(metric.as_str(), "MSE" | "MAE" | "MRSE") {
-        if metric == "FLIP" {
-            return Err(ImgToolError::new(
-                "diff: FLIP metric is not implemented in this build",
-            ));
-        }
-        return Err(ImgToolError::new("diff: metric must be MSE, MAE, or MRSE"));
+    if !matches!(metric.as_str(), "MSE" | "MAE" | "MRSE" | "FLIP") {
+        return Err(ImgToolError::new(
+            "diff: metric must be MSE, MAE, MRSE, or FLIP",
+        ));
     }
     let image = load_image(Path::new(&input))?;
     let reference = load_image(Path::new(&reference))?;
@@ -980,6 +982,52 @@ fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
         return Err(ImgToolError::new("diff: --difftol must not be negative"));
     }
     let resolution = Vector2::new(x1 - x0, y1 - y0);
+
+    if metric == "FLIP" {
+        if selected.len() != 3 {
+            return Err(ImgToolError::new(
+                "diff: FLIP currently supports exactly three channels",
+            ));
+        }
+        let mut image_data = Vec::with_capacity((resolution.x * resolution.y * 3) as usize);
+        let mut reference_data = Vec::with_capacity((resolution.x * resolution.y * 3) as usize);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let image_pixel = (y * image.raw.resolution.x + x) as usize;
+                let reference_pixel = (y * reference.raw.resolution.x + x) as usize;
+                for (&channel, &reference_channel) in selected.iter().zip(&reference_selected) {
+                    image_data.push(image.raw.channel(image_pixel, channel).clamp(0.0, 1.0));
+                    reference_data.push(
+                        reference
+                            .raw
+                            .channel(reference_pixel, reference_channel)
+                            .clamp(0.0, 1.0),
+                    );
+                }
+            }
+        }
+        let flip_errors =
+            pbrt_r4::ext::flip::error(&image_data, &reference_data, resolution.x, resolution.y);
+        let average = flip_errors.iter().sum::<Float>() / flip_errors.len() as Float;
+        println!("{}: FLIP: {:.6}", input, average);
+        if let Some(output) = output {
+            output_exr_region(
+                &output,
+                &image.metadata,
+                resolution,
+                &["Error".to_string()],
+                flip_errors,
+            )?;
+        }
+        if average * 100.0 > diff_tolerance {
+            return Err(ImgToolError::new(format!(
+                "diff: images differ (FLIP = {:.6}, tolerance = {:.6}%)",
+                average, diff_tolerance
+            )));
+        }
+        return Ok(());
+    }
+
     let mut errors = vec![0.0; selected.len()];
     let mut output_data =
         Vec::with_capacity((resolution.x * resolution.y) as usize * selected.len());

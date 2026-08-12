@@ -241,6 +241,53 @@ fn average_and_diff_use_per_channel_values() {
 }
 
 #[test]
+fn diff_supports_v4_flip_metric_and_error_output() {
+    let directory = tempdir().unwrap();
+    let input_path = directory.path().join("input.png");
+    let reference_path = directory.path().join("reference.png");
+    let error_path = directory.path().join("flip-error.exr");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 1, vec![255, 0, 0, 0, 255, 0])
+        .unwrap()
+        .save(&input_path)
+        .unwrap();
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 1, vec![255, 0, 0, 0, 0, 255])
+        .unwrap()
+        .save(&reference_path)
+        .unwrap();
+
+    let output = imgtool()
+        .args([
+            "diff",
+            "--metric",
+            "FLIP",
+            "--difftol",
+            "100",
+            "--outfile",
+            error_path.to_str().unwrap(),
+            "--reference",
+            reference_path.to_str().unwrap(),
+            input_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("FLIP:"));
+    assert!(error_path.exists());
+
+    let info = imgtool()
+        .args(["info", error_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&info.stdout);
+    assert!(stdout.contains("resolution (2, 1)"));
+    assert!(stdout.contains("Error:"));
+}
+
+#[test]
 fn error_averages_matching_images_and_writes_error_image() {
     let directory = tempdir().unwrap();
     for (name, value) in [("render-0.png", 0_u8), ("render-1.png", 255_u8)] {
