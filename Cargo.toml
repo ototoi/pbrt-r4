@@ -67,6 +67,10 @@ bool_assert_comparison = "allow"
 name = "pbrt-r4"
 path = "src/cmd/pbrt.rs"
 
+[[bin]]
+name = "plytool"
+path = "src/cmd/plytool.rs"
+
 # `[profile.release]` left at cargo defaults (opt-level=3, no LTO).
 # We tried `lto = "fat"` + `codegen-units = 1`: small win (~5%) on the
 # BSSRDF-heavy head.pbrt path but slightly regressed (5-10%) simple
