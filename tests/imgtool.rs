@@ -51,7 +51,7 @@ fn cat_list_prints_single_channel_rows() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "0.000000 1.000000\n"
+        "{0.000000, 1.000000}\n"
     );
 }
 
@@ -69,6 +69,7 @@ fn info_prints_resolution_and_channel_statistics() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resolution (2, 1)"));
+    assert!(stdout.contains("color space: sRGB"));
     assert!(stdout.contains("pixel format: U256"));
     assert!(stdout.contains("R:"));
     assert!(stdout.contains("min     0.000000 max     1.000000"));
@@ -180,6 +181,6 @@ fn average_and_diff_use_per_channel_values() {
         ])
         .output()
         .unwrap();
-    assert!(diff.status.success());
+    assert!(!diff.status.success());
     assert!(String::from_utf8_lossy(&diff.stdout).contains("Y: 1.000000"));
 }

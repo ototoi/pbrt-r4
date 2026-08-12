@@ -1,13 +1,15 @@
 use pbrt_r4::ext::skymodel::HosekSkyModel;
-use pbrt_r4::util::base::Float;
+use pbrt_r4::util::base::{Float, Point2f, Point2i};
 use pbrt_r4::util::error::PbrtError;
 use pbrt_r4::util::geometry::{equal_area_square_to_sphere, spherical_theta, Bounds2i, Vector2};
-use pbrt_r4::util::image::{Image, PixelFormat};
-use pbrt_r4::util::imageio::{read_raw_image_exr_with_channels, read_raw_image_gamma_correct};
+use pbrt_r4::util::image::{Image, ImageMetadata, PixelFormat};
+use pbrt_r4::util::imageio::{
+    read_raw_image_exr_with_channels_and_metadata, read_raw_image_gamma_correct,
+};
 use pbrt_r4::util::imageio::{write_image_bytes, RawImage, RawImageData};
 use pbrt_r4::util::math::safe_acos;
-use pbrt_r4::util::spectrum::rgb_to_spectrum::ACES2065_1;
-use pbrt_r4::util::spectrum::PiecewiseLinearSpectrum;
+use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
+use pbrt_r4::util::spectrum::{PiecewiseLinearSpectrum, RGBSpectrum};
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -97,6 +99,7 @@ options:\n\
 struct LoadedImage {
     raw: RawImage,
     channel_names: Vec<String>,
+    metadata: ImageMetadata,
 }
 
 fn load_image(path: &Path) -> Result<LoadedImage, ImgToolError> {
@@ -104,12 +107,28 @@ fn load_image(path: &Path) -> Result<LoadedImage, ImgToolError> {
         .to_str()
         .ok_or_else(|| ImgToolError::new("image path is not valid UTF-8"))?;
     if path.extension().is_some_and(|extension| extension == "exr") {
-        let (raw, channel_names) = read_raw_image_exr_with_channels(path)?;
-        Ok(LoadedImage { raw, channel_names })
+        let (raw, channel_names, mut metadata) =
+            read_raw_image_exr_with_channels_and_metadata(path)?;
+        if metadata.color_space.is_none() {
+            metadata.color_space = Some(&SRGB);
+        }
+        Ok(LoadedImage {
+            raw,
+            channel_names,
+            metadata,
+        })
     } else {
         let raw = read_raw_image_gamma_correct(path_string, false)?;
         let channel_names = raw.channel_names();
-        Ok(LoadedImage { raw, channel_names })
+        let metadata = ImageMetadata {
+            color_space: Some(&SRGB),
+            ..Default::default()
+        };
+        Ok(LoadedImage {
+            raw,
+            channel_names,
+            metadata,
+        })
     }
 }
 
@@ -184,11 +203,14 @@ fn cat(args: &[OsString]) -> Result<(), ImgToolError> {
             .map(|channel| format_value(channel_value(&image.raw, pixel, channel)))
             .collect();
         if list {
-            print!("{}", values.join(" "));
+            if x == 0 {
+                print!("{{");
+            }
+            print!("{}", values.join(", "));
             if x + 1 == image.raw.resolution.x {
-                println!();
+                println!("}}");
             } else {
-                print!(" ");
+                print!(", ");
             }
         } else {
             if !csv {
@@ -220,6 +242,29 @@ fn info(args: &[OsString]) -> Result<(), ImgToolError> {
             "\tresolution ({}, {})",
             image.raw.resolution.x, image.raw.resolution.y
         );
+        println!(
+            "\tcolor space: {}",
+            image
+                .metadata
+                .color_space
+                .map(|color_space| color_space.name)
+                .unwrap_or("unknown")
+        );
+        if let Some(bounds) = image.metadata.pixel_bounds {
+            println!(
+                "\tpixel bounds: ({}, {})-({}, {})",
+                bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y
+            );
+        }
+        if let Some(full_resolution) = image.metadata.full_resolution {
+            println!(
+                "\tfull resolution: ({}, {})",
+                full_resolution.x, full_resolution.y
+            );
+        }
+        if let Some(samples_per_pixel) = image.metadata.samples_per_pixel {
+            println!("\tsamples per pixel: {samples_per_pixel}");
+        }
         println!("\tpixel format: {}", pixel_format(&image.raw.data));
         println!("\tChannels:");
         for channel in 0..image.raw.channels {
@@ -281,17 +326,13 @@ fn write_converted_image(
         .ok_or_else(|| ImgToolError::new("convert: output path is not valid UTF-8"))?;
     if path.extension().is_some_and(|extension| extension == "exr") {
         let image = Image::from_channels_with_format(
-            pbrt_r4::util::base::Point2i::new(resolution.x, resolution.y),
+            Point2i::new(resolution.x, resolution.y),
             names.to_vec(),
             data.to_vec(),
             format,
         );
         let bounds = Bounds2i::from(((0, 0), (resolution.x, resolution.y)));
-        image.write_exr(
-            filename,
-            &bounds,
-            &pbrt_r4::util::base::Point2i::new(resolution.x, resolution.y),
-        )?;
+        image.write_exr(filename, &bounds, &Point2i::new(resolution.x, resolution.y))?;
         return Ok(());
     }
 
@@ -316,7 +357,7 @@ fn write_converted_image(
         filename,
         &rgb,
         &Bounds2i::from(((0, 0), (resolution.x, resolution.y))),
-        &pbrt_r4::util::base::Point2i::new(resolution.x, resolution.y),
+        &Point2i::new(resolution.x, resolution.y),
     )?;
     Ok(())
 }
@@ -458,17 +499,49 @@ fn assert_compatible(first: &LoadedImage, second: &LoadedImage) -> Result<(), Im
             "imgtool: image resolution or channel layout does not match",
         ));
     }
+    if first
+        .metadata
+        .color_space
+        .map(|color_space| color_space.name)
+        != second
+            .metadata
+            .color_space
+            .map(|color_space| color_space.name)
+    {
+        return Err(ImgToolError::new(
+            "imgtool: image color spaces do not match",
+        ));
+    }
     Ok(())
 }
 
 fn output_exr(path: &str, image: &LoadedImage, data: Vec<Float>) -> Result<(), ImgToolError> {
-    write_converted_image(
-        Path::new(path),
+    output_exr_region(
+        path,
+        &image.metadata,
         image.raw.resolution,
         &image.channel_names,
-        &data,
-        PixelFormat::Float,
+        data,
     )
+}
+
+fn output_exr_region(
+    path: &str,
+    metadata: &ImageMetadata,
+    resolution: Vector2<i32>,
+    channel_names: &[String],
+    data: Vec<Float>,
+) -> Result<(), ImgToolError> {
+    let mut output = Image::from_channels_with_format(
+        Point2i::new(resolution.x, resolution.y),
+        channel_names.to_vec(),
+        data,
+        PixelFormat::Float,
+    );
+    *output.metadata_mut() = metadata.clone();
+    let bounds = Bounds2i::from(((0, 0), (resolution.x, resolution.y)));
+    output.write_exr(path, &bounds, &Point2i::new(resolution.x, resolution.y))?;
+    Ok(())
 }
 
 fn average(args: &[OsString]) -> Result<(), ImgToolError> {
@@ -543,6 +616,9 @@ fn average(args: &[OsString]) -> Result<(), ImgToolError> {
 fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
     let mut input = None;
     let mut reference = None;
+    let mut channels = None;
+    let mut crop = None;
+    let mut diff_tolerance = 0.0;
     let mut metric = "MSE".to_string();
     let mut output = None;
     let mut index = 0;
@@ -564,6 +640,32 @@ fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
                     .and_then(|value| value.to_str())
                     .ok_or_else(|| ImgToolError::with_help("diff: --metric missing"))?
                     .to_string();
+            }
+            Some("--channels") | Some("-channels") => {
+                index += 1;
+                channels = Some(
+                    args.get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| ImgToolError::with_help("diff: --channels missing"))?
+                        .to_string(),
+                );
+            }
+            Some("--crop") | Some("-crop") => {
+                index += 1;
+                crop = Some(parse_crop(
+                    args.get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| ImgToolError::with_help("diff: --crop missing"))?,
+                )?);
+            }
+            Some("--difftol") | Some("-difftol") => {
+                index += 1;
+                diff_tolerance = args
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| ImgToolError::with_help("diff: --difftol missing"))?
+                    .parse()
+                    .map_err(|_| ImgToolError::new("diff: invalid --difftol value"))?;
             }
             Some("--outfile") | Some("-outfile") => {
                 index += 1;
@@ -588,36 +690,117 @@ fn diff(args: &[OsString]) -> Result<(), ImgToolError> {
     let reference =
         reference.ok_or_else(|| ImgToolError::with_help("diff: --reference missing"))?;
     if !matches!(metric.as_str(), "MSE" | "MAE" | "MRSE") {
+        if metric == "FLIP" {
+            return Err(ImgToolError::new(
+                "diff: FLIP metric is not implemented in this build",
+            ));
+        }
         return Err(ImgToolError::new("diff: metric must be MSE, MAE, or MRSE"));
     }
     let image = load_image(Path::new(&input))?;
     let reference = load_image(Path::new(&reference))?;
-    assert_compatible(&image, &reference)?;
-    let mut errors = vec![0.0; image.raw.channels];
-    let mut output_data = vec![0.0; image_data(&image).len()];
-    for pixel in 0..(image.raw.resolution.x * image.raw.resolution.y) as usize {
-        for channel in 0..image.raw.channels {
-            let a = image.raw.channel(pixel, channel);
-            let b = reference.raw.channel(pixel, channel);
-            let delta = a - b;
-            let error = match metric.as_str() {
-                "MAE" => delta.abs(),
-                "MRSE" => delta * delta / (b + 0.01).powi(2),
-                _ => delta * delta,
-            };
-            errors[channel] += error;
-            output_data[pixel * image.raw.channels + channel] = error;
+    if image
+        .metadata
+        .color_space
+        .map(|color_space| color_space.name)
+        != reference
+            .metadata
+            .color_space
+            .map(|color_space| color_space.name)
+    {
+        return Err(ImgToolError::new(
+            "imgtool: image color spaces do not match",
+        ));
+    }
+    let selected: Vec<usize> = channels
+        .unwrap_or_else(|| image.channel_names.join(","))
+        .split(',')
+        .map(|name| {
+            image
+                .channel_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .ok_or_else(|| ImgToolError::new(format!("diff: channel {name} missing")))
+        })
+        .collect::<Result<_, _>>()?;
+    let reference_selected: Vec<usize> = selected
+        .iter()
+        .map(|&channel| {
+            reference
+                .channel_names
+                .iter()
+                .position(|name| name == &image.channel_names[channel])
+                .ok_or_else(|| {
+                    ImgToolError::new(format!(
+                        "diff: reference channel {} missing",
+                        image.channel_names[channel]
+                    ))
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    let [x0, x1, y0, y1] = crop.unwrap_or([0, image.raw.resolution.x, 0, image.raw.resolution.y]);
+    if x0 < 0
+        || y0 < 0
+        || x0 >= x1
+        || y0 >= y1
+        || x1 > image.raw.resolution.x
+        || y1 > image.raw.resolution.y
+        || x1 > reference.raw.resolution.x
+        || y1 > reference.raw.resolution.y
+    {
+        return Err(ImgToolError::new("diff: crop is outside image bounds"));
+    }
+    if diff_tolerance < 0.0 {
+        return Err(ImgToolError::new("diff: --difftol must not be negative"));
+    }
+    let resolution = Vector2::new(x1 - x0, y1 - y0);
+    let mut errors = vec![0.0; selected.len()];
+    let mut output_data =
+        Vec::with_capacity((resolution.x * resolution.y) as usize * selected.len());
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let image_pixel = (y * image.raw.resolution.x + x) as usize;
+            let reference_pixel = (y * reference.raw.resolution.x + x) as usize;
+            for (index, (&channel, &reference_channel)) in
+                selected.iter().zip(&reference_selected).enumerate()
+            {
+                let a = image.raw.channel(image_pixel, channel);
+                let b = reference.raw.channel(reference_pixel, reference_channel);
+                let delta = a - b;
+                let error = match metric.as_str() {
+                    "MAE" => delta.abs(),
+                    "MRSE" => delta * delta / (b + 0.01).powi(2),
+                    _ => delta * delta,
+                };
+                if error.is_finite() {
+                    errors[index] += error;
+                }
+                output_data.push(error);
+            }
         }
     }
-    let pixels = (image.raw.resolution.x * image.raw.resolution.y) as Float;
+    let pixels = (resolution.x * resolution.y) as Float;
+    let means: Vec<Float> = errors.iter().map(|error| error / pixels).collect();
     println!("{}:", input);
-    for (channel, error) in errors.iter().enumerate() {
-        println!("{}: {:.6}", image.channel_names[channel], error / pixels);
+    for (channel, error) in selected.iter().zip(&means) {
+        println!("{}: {:.6}", image.channel_names[*channel], error);
     }
     if let Some(output) = output {
-        output_exr(&output, &image, output_data)?;
+        let names = selected
+            .iter()
+            .map(|&channel| image.channel_names[channel].clone())
+            .collect::<Vec<_>>();
+        output_exr_region(&output, &image.metadata, resolution, &names, output_data)?;
     }
-    Ok(())
+    let average = means.iter().sum::<Float>() / means.len() as Float;
+    if average * 100.0 > diff_tolerance {
+        Err(ImgToolError::new(format!(
+            "diff: images differ ({} = {:.6}, tolerance = {:.6}%)",
+            metric, average, diff_tolerance
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 fn makesky(args: &[OsString]) -> Result<(), ImgToolError> {
@@ -700,13 +883,13 @@ fn makesky(args: &[OsString]) -> Result<(), ImgToolError> {
     let mut texels = Vec::with_capacity((resolution * resolution) as usize);
     for y in 0..resolution {
         for x in 0..resolution {
-            let uv = pbrt_r4::util::base::Point2f::new(
+            let uv = Point2f::new(
                 (x as Float + 0.5) / resolution as Float,
                 (y as Float + 0.5) / resolution as Float,
             );
             let direction = equal_area_square_to_sphere(&uv);
             if direction.z <= 0.0 {
-                texels.push(pbrt_r4::util::spectrum::RGBSpectrum::zero());
+                texels.push(RGBSpectrum::zero());
                 continue;
             }
             let theta = spherical_theta(&direction) as f64;
@@ -723,16 +906,11 @@ fn makesky(args: &[OsString]) -> Result<(), ImgToolError> {
             );
             let xyz = spectrum.evaluate().to_xyz();
             let rgb = ACES2065_1.xyz_to_rgb(xyz);
-            texels.push(pbrt_r4::util::spectrum::RGBSpectrum::new(
-                rgb[0], rgb[1], rgb[2],
-            ));
+            texels.push(RGBSpectrum::new(rgb[0], rgb[1], rgb[2]));
         }
     }
-    let mut image = Image::with_color_space(
-        pbrt_r4::util::base::Point2i::new(resolution, resolution),
-        texels,
-        &ACES2065_1,
-    )?;
+    let mut image =
+        Image::with_color_space(Point2i::new(resolution, resolution), texels, &ACES2065_1)?;
     image
         .metadata_mut()
         .strings
@@ -746,11 +924,7 @@ fn makesky(args: &[OsString]) -> Result<(), ImgToolError> {
         .strings
         .insert("makesky.turbidity".to_string(), turbidity.to_string());
     let bounds = Bounds2i::from(((0, 0), (resolution, resolution)));
-    image.write_exr(
-        &outfile,
-        &bounds,
-        &pbrt_r4::util::base::Point2i::new(resolution, resolution),
-    )?;
+    image.write_exr(&outfile, &bounds, &Point2i::new(resolution, resolution))?;
     Ok(())
 }
 
