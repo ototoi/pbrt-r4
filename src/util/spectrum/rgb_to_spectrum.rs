@@ -437,6 +437,53 @@ pub struct RGBColorSpace {
 }
 
 impl RGBColorSpace {
+    /// Convert CIE XYZ values to this color space, matching v4's
+    /// `RGBColorSpace::ToRGB`. The matrix is derived from this space's
+    /// primaries and white point rather than using the fixed sRGB matrix.
+    pub fn xyz_to_rgb(&self, xyz: [Float; 3]) -> [Float; 3] {
+        let primary_xyz = |primary: [Float; 2]| {
+            [
+                primary[0] / primary[1],
+                1.0,
+                (1.0 - primary[0] - primary[1]) / primary[1],
+            ]
+        };
+        let r = primary_xyz(self.r);
+        let g = primary_xyz(self.g);
+        let b = primary_xyz(self.b);
+        let white = primary_xyz(self.w);
+        let matrix = [[r[0], g[0], b[0]], [r[1], g[1], b[1]], [r[2], g[2], b[2]]];
+        let inverse = invert_3x3(matrix);
+        let scale = [
+            inverse[0][0] * white[0] + inverse[0][1] * white[1] + inverse[0][2] * white[2],
+            inverse[1][0] * white[0] + inverse[1][1] * white[1] + inverse[1][2] * white[2],
+            inverse[2][0] * white[0] + inverse[2][1] * white[1] + inverse[2][2] * white[2],
+        ];
+        let xyz_from_rgb = [
+            [
+                matrix[0][0] * scale[0],
+                matrix[0][1] * scale[1],
+                matrix[0][2] * scale[2],
+            ],
+            [
+                matrix[1][0] * scale[0],
+                matrix[1][1] * scale[1],
+                matrix[1][2] * scale[2],
+            ],
+            [
+                matrix[2][0] * scale[0],
+                matrix[2][1] * scale[1],
+                matrix[2][2] * scale[2],
+            ],
+        ];
+        let inverse = invert_3x3(xyz_from_rgb);
+        [
+            inverse[0][0] * xyz[0] + inverse[0][1] * xyz[1] + inverse[0][2] * xyz[2],
+            inverse[1][0] * xyz[0] + inverse[1][1] * xyz[1] + inverse[1][2] * xyz[2],
+            inverse[2][0] * xyz[0] + inverse[2][1] * xyz[1] + inverse[2][2] * xyz[2],
+        ]
+    }
+
     pub fn albedo_to_polynomial(&self, rgb: [Float; 3]) -> RGBSigmoidPolynomial {
         lookup_sigmoid(clamp_albedo_rgb(rgb), (self.table)())
     }
@@ -478,6 +525,30 @@ impl RGBColorSpace {
         }
         SampledSpectrum::from(values)
     }
+}
+
+fn invert_3x3(matrix: [[Float; 3]; 3]) -> [[Float; 3]; 3] {
+    let determinant = matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
+    assert!(determinant != 0.0, "RGB color space matrix is singular");
+    [
+        [
+            (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1]) / determinant,
+            (matrix[0][2] * matrix[2][1] - matrix[0][1] * matrix[2][2]) / determinant,
+            (matrix[0][1] * matrix[1][2] - matrix[0][2] * matrix[1][1]) / determinant,
+        ],
+        [
+            (matrix[1][2] * matrix[2][0] - matrix[1][0] * matrix[2][2]) / determinant,
+            (matrix[0][0] * matrix[2][2] - matrix[0][2] * matrix[2][0]) / determinant,
+            (matrix[0][2] * matrix[1][0] - matrix[0][0] * matrix[1][2]) / determinant,
+        ],
+        [
+            (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]) / determinant,
+            (matrix[0][1] * matrix[2][0] - matrix[0][0] * matrix[2][1]) / determinant,
+            (matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]) / determinant,
+        ],
+    ]
 }
 
 pub static SRGB: RGBColorSpace = RGBColorSpace {
