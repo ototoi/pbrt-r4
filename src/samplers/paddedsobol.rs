@@ -260,6 +260,11 @@ fn owen_scramble(mut v: u32, seed: u32) -> u32 {
     v
 }
 
+/// Owen-scrambled Sobol sample used by pbrt-v4's pspec command.
+pub fn owen_sobol_sample(a: i64, dimension: u32, seed: u32) -> Float {
+    randomized_sobol_sample(a, dimension, owen_scramble, seed)
+}
+
 fn hash_pixel_dimension_seed(pixel: &Point2i, dimension: u32, seed: u32) -> u64 {
     let mut buf = [0u8; 16];
     buf[0..4].copy_from_slice(&pixel.x.to_ne_bytes());
