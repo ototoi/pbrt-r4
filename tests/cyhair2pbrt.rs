@@ -66,7 +66,61 @@ fn converts_segments_and_applies_zup_to_yup() {
         "0.000000 0.000000 0.000000 0.333333 1.000000 0.666667 0.666667 2.000000 1.333333 1.000000 3.000000 2.000000"
     ));
     assert!(stdout.contains("width0\" [ 1.000000 ] \"float width1\" [ 1.000000 ]"));
+    assert!(stdout.contains(
+        "Scene bounds: (-1.000000, -1.000000, -1.000000) - (3.000000, 7.000000, 5.000000)"
+    ));
     assert!(output.stderr.starts_with(b"Converted 2 strands."));
+}
+
+#[test]
+fn applies_thickness_argument_and_header_default() {
+    let file = write_hair(&[(
+        &[3],
+        &[
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ],
+    )]);
+
+    let overridden = run(file.path(), &["1", "2.5"]);
+    assert!(overridden.status.success());
+    assert!(String::from_utf8(overridden.stdout)
+        .unwrap()
+        .contains("width0\" [ 2.500000 ] \"float width1\" [ 2.500000 ]"));
+
+    let from_header = run(file.path(), &["1", "-1"]);
+    assert!(from_header.status.success());
+    assert!(String::from_utf8(from_header.stdout)
+        .unwrap()
+        .contains("width0\" [ 0.000000 ] \"float width1\" [ 0.000000 ]"));
+}
+
+#[test]
+fn writes_to_an_output_file() {
+    let input = write_hair(&[(
+        &[3],
+        &[
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ],
+    )]);
+    let output_file = NamedTempFile::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_cyhair2pbrt"))
+        .arg(input.path())
+        .arg(output_file.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(std::fs::read(output_file.path()).unwrap())
+            .unwrap()
+            .contains("Shape \"curve\"")
+    );
+    assert!(output.stdout.is_empty());
 }
 
 #[test]
@@ -126,6 +180,14 @@ fn rejects_invalid_arguments_and_truncated_input() {
         .unwrap();
     assert!(!no_args.status.success());
     assert!(String::from_utf8_lossy(&no_args.stderr).contains("usage: cyhair2pbrt"));
+    for flag in ["--help", "-h"] {
+        let help = Command::new(env!("CARGO_BIN_EXE_cyhair2pbrt"))
+            .arg(flag)
+            .output()
+            .unwrap();
+        assert!(!help.status.success());
+        assert!(String::from_utf8_lossy(&help.stderr).contains("usage: cyhair2pbrt"));
+    }
 
     let file = write_hair(&[(
         &[3],
@@ -145,6 +207,20 @@ fn rejects_invalid_arguments_and_truncated_input() {
     let invalid_file = run(truncated.path(), &[]);
     assert!(!invalid_file.status.success());
     assert!(String::from_utf8_lossy(&invalid_file.stderr).contains("128-byte header"));
+
+    let invalid_segments = write_hair(&[(&[1], &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])]);
+    let invalid_conversion = run(invalid_segments.path(), &[]);
+    assert!(!invalid_conversion.status.success());
+    assert!(String::from_utf8_lossy(&invalid_conversion.stderr).contains("no strand"));
+
+    let mut unknown_flags = NamedTempFile::new().unwrap();
+    let mut header = [0u8; 128];
+    header[..4].copy_from_slice(b"HAIR");
+    header[12..16].copy_from_slice(&(FLAG_POINTS | (1 << 31)).to_le_bytes());
+    unknown_flags.write_all(&header).unwrap();
+    let unknown = run(unknown_flags.path(), &[]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unsupported CyHair flags"));
 }
 
 #[test]

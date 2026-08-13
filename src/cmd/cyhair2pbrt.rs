@@ -4,8 +4,25 @@
 // pbrt-v4/src/pbrt/cmd/cyhair2pbrt.cpp.
 //
 // Copyright (c) 2016 Light Transport Entertainment, Inc.
-// The original loader is available under the MIT License:
-// https://opensource.org/licenses/MIT
+//
+// The original loader is available under the MIT License.
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -18,6 +35,8 @@ const FLAG_POINTS: u32 = 1 << 1;
 const FLAG_THICKNESS: u32 = 1 << 2;
 const FLAG_TRANSPARENCY: u32 = 1 << 3;
 const FLAG_COLOR: u32 = 1 << 4;
+const KNOWN_FLAGS: u32 =
+    FLAG_SEGMENTS | FLAG_POINTS | FLAG_THICKNESS | FLAG_TRANSPARENCY | FLAG_COLOR;
 
 const TO_C2B: [[f32; 4]; 4] = [
     [0.0, 1.0, 0.0, 0.0],
@@ -145,6 +164,8 @@ struct CyHair {
     num_strands: usize,
     default_segments: usize,
     default_thickness: f32,
+    _default_transparency: f32,
+    _default_color: [f32; 3],
     segments: Vec<u16>,
     points: Vec<Point3>,
     strand_offsets: Vec<usize>,
@@ -178,9 +199,14 @@ impl CyHair {
         let default_segments = usize::try_from(read_u32(16)?)
             .map_err(|_| error("HAIR default segment count does not fit in usize"))?;
         let default_thickness = read_f32(20)?;
+        let default_transparency = read_f32(24)?;
+        let default_color = [read_f32(28)?, read_f32(32)?, read_f32(36)?];
 
         if flags & FLAG_POINTS == 0 {
             return Err(error("No point data in CyHair."));
+        }
+        if flags & !KNOWN_FLAGS != 0 {
+            return Err(error(format!("unsupported CyHair flags: 0x{flags:08x}")));
         }
         if flags & FLAG_SEGMENTS == 0 && default_segments < 1 {
             return Err(error("No valid segment information in CyHair."));
@@ -272,6 +298,8 @@ impl CyHair {
             num_strands,
             default_segments,
             default_thickness,
+            _default_transparency: default_transparency,
+            _default_color: default_color,
             segments,
             points,
             strand_offsets,
@@ -286,6 +314,7 @@ impl CyHair {
         };
         let mut vertices = Vec::new();
         let mut radii = Vec::new();
+        let mut eligible_strands = 0usize;
         for strand in 0..count {
             let num_segments = self
                 .segments
@@ -296,6 +325,7 @@ impl CyHair {
             if num_segments < 2 {
                 continue;
             }
+            eligible_strands += 1;
             let start = self.strand_offsets[strand];
             let end = start
                 .checked_add(num_segments)
@@ -320,6 +350,11 @@ impl CyHair {
                     4,
                 ));
             }
+        }
+        if count > 0 && eligible_strands == 0 {
+            return Err(error(
+                "CyHair contains no strand with enough points for conversion",
+            ));
         }
         Ok((vertices, radii))
     }
