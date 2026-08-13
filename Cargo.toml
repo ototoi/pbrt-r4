@@ -79,6 +79,10 @@ path = "src/cmd/imgtool/mod.rs"
 name = "cyhair2pbrt"
 path = "src/cmd/cyhair2pbrt.rs"
 
+[[bin]]
+name = "nanovdb2pbrt"
+path = "src/cmd/nanovdb2pbrt.rs"
+
 # `[profile.release]` left at cargo defaults (opt-level=3, no LTO).
 # We tried `lto = "fat"` + `codegen-units = 1`: small win (~5%) on the
 # BSSRDF-heavy head.pbrt path but slightly regressed (5-10%) simple
