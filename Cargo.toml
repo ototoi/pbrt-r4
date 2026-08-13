@@ -76,6 +76,10 @@ name = "imgtool"
 path = "src/cmd/imgtool/mod.rs"
 
 [[bin]]
+name = "cyhair2pbrt"
+path = "src/cmd/cyhair2pbrt.rs"
+
+[[bin]]
 name = "nanovdb2pbrt"
 path = "src/cmd/nanovdb2pbrt.rs"
 
