@@ -31,17 +31,21 @@ pub fn recursive_build(
     let start = 0;
     let end = primitive_info.len();
     let n_primitives = end;
+
+    // Compute bounds of all primitives in BVH node
     let mut bounds = primitive_info[start].bounds.clone();
     for i in (start + 1)..end {
         bounds = Bounds3f::union(&bounds, &primitive_info[i].bounds);
     }
     if bounds.surface_area() == 0.0 || n_primitives == 1 {
+        // Create leaf _BVHBuildNode_
         let offset = ordered_indices.len();
         for i in start..end {
             ordered_indices.push(primitive_info[i].primitive_number);
         }
         return Box::new(BVHBuildNode::init_leaf(offset, n_primitives, &bounds));
     } else {
+        // Compute bound of primitive centroids and choose split dimension _dim_
         let center = primitive_info[start].centroid;
         let mut c_bounds = Bounds3f::new(&center, &center);
         for i in (start + 1)..end {
@@ -49,15 +53,30 @@ pub fn recursive_build(
             c_bounds = c_bounds.union_p(&p);
         }
         let dim = c_bounds.maximum_extent();
+        // Partition primitives into two sets and build children
         if c_bounds.min[dim] == c_bounds.max[dim] {
+            // Create leaf _BVHBuildNode_
             let offset = ordered_indices.len();
             for i in start..end {
                 ordered_indices.push(primitive_info[i].primitive_number);
             }
             return Box::new(BVHBuildNode::init_leaf(offset, n_primitives, &bounds));
         }
+        if n_primitives <= 2 {
+            // Partition primitives into equally sized subsets
+            return split_equal_counts(
+                dim,
+                primitive_info,
+                ordered_indices,
+                max_prims_in_node,
+                split_method,
+            );
+        }
+
+        // Partition primitives based on _splitMethod_
         match split_method {
             SplitMethod::Middle => {
+                // Partition primitives through node's midpoint
                 let p_mid = (c_bounds.min[dim] + c_bounds.max[dim]) / 2.0;
                 return split_middle(
                     dim,
@@ -69,6 +88,7 @@ pub fn recursive_build(
                 );
             }
             SplitMethod::EqualCounts => {
+                // Partition primitives into equally sized subsets
                 return split_equal_counts(
                     dim,
                     primitive_info,
@@ -78,6 +98,7 @@ pub fn recursive_build(
                 );
             }
             SplitMethod::SAH => {
+                // Partition primitives using approximate SAH
                 return split_sah(
                     dim,
                     primitive_info,
