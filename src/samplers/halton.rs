@@ -308,7 +308,8 @@ fn multiplicative_inverse(a: i64, n: i64) -> u64 {
     math_mod(x, n)
 }
 
-fn owen_scrambled_radical_inverse(base_index: u32, a: u64, hash: u32) -> Float {
+/// Owen-scrambled radical inverse used by pbrt-v4's pspec command.
+pub fn owen_scrambled_radical_inverse(base_index: u32, a: u64, hash: u32) -> Float {
     let base = PRIMES[base_index as usize] as u64;
     let mut a = a;
     let inv_base = 1.0 / base as Float;
