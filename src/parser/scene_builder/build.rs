@@ -981,7 +981,7 @@ impl SceneBuilder {
                 _ => unreachable!(),
             };
             let final_prim = if piece_prims.len() > 1 {
-                match self.create_shape_accelerator(&piece_prims, use_dedicated_mesh_accelerator) {
+                match self.create_shape_accelerator(&piece_prims) {
                     Ok(accel) => accel,
                     Err(e) => {
                         return Err(e);
@@ -1007,7 +1007,7 @@ impl SceneBuilder {
 
         // Static shapes normally follow pbrt-v4 and emit leaf primitives
         // directly. Large or displaced PLY meshes are the exception: their
-        // triangle sets get a dedicated HLBVH before entering the scene BVH.
+        // triangle sets get a dedicated accelerator before entering the scene BVH.
         let mut piece_prims = Vec::with_capacity(shapes.len());
         for s in shapes {
             let area_light = if let Some(al_idx) = shape.area_light_index {
@@ -1035,7 +1035,7 @@ impl SceneBuilder {
             piece_prims.push(prim);
         }
         if use_dedicated_mesh_accelerator && piece_prims.len() > 1 {
-            out_prims.push(self.create_shape_accelerator(&piece_prims, true)?);
+            out_prims.push(self.create_shape_accelerator(&piece_prims)?);
         } else {
             out_prims.extend(piece_prims);
         }
@@ -1045,17 +1045,8 @@ impl SceneBuilder {
     fn create_shape_accelerator(
         &self,
         prims: &[Arc<Primitive>],
-        displaced_mesh: bool,
     ) -> Result<Arc<Primitive>, PbrtError> {
-        let mut params = self.accelerator_params.clone();
-        let name = if displaced_mesh {
-            params.replace_one_string("string splitmethod", "hlbvh");
-            params.replace_one_int("integer maxnodeprims", 16);
-            "bvh"
-        } else {
-            &self.accelerator_name
-        };
-        create_accelerator(name, prims, &params)
+        create_accelerator(&self.accelerator_name, prims, &self.accelerator_params)
             .map(Arc::new)
             .map_err(|e| PbrtError::error(&format!("create_accelerator failed: {}", e.msg)))
     }
