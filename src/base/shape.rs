@@ -86,6 +86,17 @@ fn wrap_alpha_masks(
         .collect())
 }
 
+fn into_owned_shapes(shapes: Vec<Arc<Shape>>) -> Result<Vec<Shape>, PbrtError> {
+    shapes
+        .into_iter()
+        .map(|shape| {
+            Arc::try_unwrap(shape).map_err(|_| {
+                PbrtError::error("shape was unexpectedly shared while creating a scene shape")
+            })
+        })
+        .collect()
+}
+
 /// Shape enum that unifies all shape types
 ///
 /// Benefits:
@@ -137,7 +148,7 @@ impl Shape {
     /// * `float_textures` - Map of available float textures for displacement mapping
     ///
     /// # Returns
-    /// * `Result<Vec<Arc<Shape>>, PbrtError>` - Vector of created shapes (may be multiple for meshes)
+    /// * `Result<Vec<Shape>, PbrtError>` - Vector of created shapes (may be multiple for meshes)
     pub fn create(
         name: &str,
         render_from_object: &Transform,
@@ -145,7 +156,7 @@ impl Shape {
         reverse_orientation: bool,
         params: &ParameterDictionary,
         float_textures: &HashMap<String, Arc<FloatTexture>>,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         match name {
             "sphere" => {
                 let s = Sphere::create(
@@ -155,7 +166,8 @@ impl Shape {
                     params,
                 )?;
                 let s = Arc::new(Shape::Sphere(Box::new(s)));
-                return wrap_alpha_masks(vec![s], params, float_textures);
+                return wrap_alpha_masks(vec![s], params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "cylinder" => {
                 let s = Cylinder::create(
@@ -165,7 +177,8 @@ impl Shape {
                     params,
                 )?;
                 let s = Arc::new(Shape::Cylinder(Box::new(s)));
-                return wrap_alpha_masks(vec![s], params, float_textures);
+                return wrap_alpha_masks(vec![s], params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "disk" => {
                 let s = Disk::create(
@@ -175,7 +188,8 @@ impl Shape {
                     params,
                 )?;
                 let s = Arc::new(Shape::Disk(Box::new(s)));
-                return wrap_alpha_masks(vec![s], params, float_textures);
+                return wrap_alpha_masks(vec![s], params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "cone" => {
                 let s = Cone::create(
@@ -185,7 +199,8 @@ impl Shape {
                     params,
                 )?;
                 let s = Arc::new(Shape::Cone(Box::new(s)));
-                return wrap_alpha_masks(vec![s], params, float_textures);
+                return wrap_alpha_masks(vec![s], params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "paraboloid" => {
                 let s = Paraboloid::create(
@@ -195,7 +210,8 @@ impl Shape {
                     params,
                 )?;
                 let s = Arc::new(Shape::Paraboloid(Box::new(s)));
-                return wrap_alpha_masks(vec![s], params, float_textures);
+                return wrap_alpha_masks(vec![s], params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "hyperboloid" => {
                 let s = Hyperboloid::create(
@@ -205,7 +221,8 @@ impl Shape {
                     params,
                 )?;
                 let s = Arc::new(Shape::Hyperboloid(Box::new(s)));
-                return wrap_alpha_masks(vec![s], params, float_textures);
+                return wrap_alpha_masks(vec![s], params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "curve" => {
                 let curves = Curve::create(
@@ -218,7 +235,8 @@ impl Shape {
                     .into_iter()
                     .map(|c| Arc::new(Shape::Curve(c)))
                     .collect();
-                return wrap_alpha_masks(shapes, params, float_textures);
+                return wrap_alpha_masks(shapes, params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "trianglemesh" => {
                 return TriangleMesh::create(
@@ -227,7 +245,8 @@ impl Shape {
                     reverse_orientation,
                     params,
                     float_textures,
-                );
+                )
+                .and_then(into_owned_shapes);
             }
             "bilinearmesh" => {
                 return BilinearPatchMesh::create(
@@ -236,7 +255,8 @@ impl Shape {
                     reverse_orientation,
                     params,
                     float_textures,
-                );
+                )
+                .and_then(into_owned_shapes);
             }
             "plymesh" => {
                 return PlyMesh::create(
@@ -245,7 +265,8 @@ impl Shape {
                     reverse_orientation,
                     params,
                     float_textures,
-                );
+                )
+                .and_then(into_owned_shapes);
             }
             "heightfield" => {
                 let shapes = HeightField::create(
@@ -254,7 +275,8 @@ impl Shape {
                     reverse_orientation,
                     params,
                 )?;
-                return wrap_alpha_masks(shapes, params, float_textures);
+                return wrap_alpha_masks(shapes, params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "loopsubdiv" => {
                 let shapes = LoopSubdiv::create(
@@ -263,7 +285,8 @@ impl Shape {
                     reverse_orientation,
                     params,
                 )?;
-                return wrap_alpha_masks(shapes, params, float_textures);
+                return wrap_alpha_masks(shapes, params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             "nurbs" => {
                 let shapes = NURBS::create(
@@ -272,7 +295,8 @@ impl Shape {
                     reverse_orientation,
                     params,
                 )?;
-                return wrap_alpha_masks(shapes, params, float_textures);
+                return wrap_alpha_masks(shapes, params, float_textures)
+                    .and_then(into_owned_shapes);
             }
             _ => {
                 return Err(PbrtError::error(&format!("{} shape cannot create", name)));

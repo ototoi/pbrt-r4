@@ -3,7 +3,6 @@ use crate::base::bxdf::*;
 use crate::base::camera::Camera;
 use crate::base::material::Material;
 use crate::base::sampler::Sampler;
-use crate::base::shape::Shape;
 use crate::base::Light;
 use crate::bsdf::BSDF;
 use crate::bxdfs::DiffuseBxDF;
@@ -16,7 +15,7 @@ use crate::util::geometry::*;
 use crate::util::spectrum::*;
 
 use std::fmt;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct SurfaceInteractionShading {
@@ -40,7 +39,6 @@ pub struct SurfaceInteraction {
     pub dpdv: Vector3f,
     pub dndu: Normal3f,
     pub dndv: Normal3f,
-    pub shape: Option<Weak<Shape>>,
     pub material: Option<Arc<Material>>,
     pub area_light: Option<Arc<Light>>,
     pub shading: SurfaceInteractionShading,
@@ -71,7 +69,6 @@ impl fmt::Debug for SurfaceInteraction {
             .field("dpdv", &self.dpdv)
             .field("dndu", &self.dndu)
             .field("dndv", &self.dndv)
-            .field("has_shape", &self.shape.is_some())
             .field("has_material", &self.material.is_some())
             .field("has_area_light", &self.area_light.is_some())
             .field("shading", &self.shading)
@@ -121,7 +118,6 @@ impl SurfaceInteraction {
             dndu: *dndu,
             dndv: *dndv,
             time,
-            shape: None,
             material: None,
             area_light: None,
             shading,
@@ -184,17 +180,6 @@ impl SurfaceInteraction {
             dndvs,
             orientation_is_authoritative,
         );
-    }
-
-    pub fn set_shape(&mut self, shape: &Arc<Shape>) {
-        self.shape = Some(Arc::downgrade(shape));
-    }
-
-    pub fn get_shape(&self) -> Option<Arc<Shape>> {
-        if let Some(wp) = self.shape.as_ref() {
-            return wp.upgrade();
-        }
-        return None;
     }
 
     pub fn set_intersection_properties(
