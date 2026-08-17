@@ -107,7 +107,8 @@ impl ImageTexture<Float, Float> {
     }
 
     pub fn evaluate(&self, ctx: &TextureEvalContext) -> Float {
-        let (st, dstdx, dstdy) = self.mapping.map(ctx);
+        let (mut st, dstdx, dstdy) = self.mapping.map(ctx);
+        st[1] = 1.0 - st[1];
         let v = self.scale * self.mipmap.lookup_delta(&st, &dstdx, &dstdy);
         // pbrt-v4 textures.h FloatImageTexture::Evaluate: `invert ? max(0, 1-v) : v`.
         if self.invert {
@@ -183,10 +184,7 @@ impl ImageTexture<Float, Float> {
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
         let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
-        let (mut data, channels) = normalize_raw_image_for_float(&raw)?;
-        if texinfo.flip_y {
-            flip_y(&mut data, &raw.resolution, channels);
-        }
+        let (data, channels) = normalize_raw_image_for_float(&raw)?;
         let mipmap = MIPMap::<Float>::new_with_raw_channels(
             &raw.resolution,
             &data,
@@ -288,7 +286,8 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
         ctx: &TextureEvalContext,
         lambda: &SampledWavelengths,
     ) -> SampledSpectrum {
-        let (st, dstdx, dstdy) = self.mapping.map(ctx);
+        let (mut st, dstdx, dstdy) = self.mapping.map(ctx);
+        st[1] = 1.0 - st[1];
         let mut rgb = self.mipmap.lookup_delta(&st, &dstdx, &dstdy).to_rgb();
         for c in rgb.iter_mut() {
             *c *= self.scale;
@@ -384,10 +383,7 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
         };
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
-        let (mut data, resolution) = read_image_with_encoding(&texinfo.filename, encoding)?;
-        if texinfo.flip_y {
-            flip_y(&mut data, &resolution, 1);
-        }
+        let (data, resolution) = read_image_with_encoding(&texinfo.filename, encoding)?;
         let mipmap = MIPMap::<RGBSpectrum>::new_with_storage(
             &resolution,
             &data,
@@ -555,7 +551,6 @@ pub fn create_texinfo(
         twrap_mode,
         scale,
         encoding,
-        flip_y: true,
     }))
 }
 
@@ -598,22 +593,6 @@ fn normalize_raw_image_for_float(raw: &RawImage) -> Result<(Vec<Float>, usize), 
         }
     };
     Ok(normalized)
-}
-
-fn flip_y<T: Copy>(data: &mut [T], resolution: &Vector2i, channels: usize) {
-    // Flip image in y; texture coordinate space has (0,0) at the lower
-    // left corner.
-    let w = resolution.x;
-    let h = resolution.y;
-    for y in 0..(h / 2) {
-        for x in 0..w {
-            let o1 = channels * (y * w + x) as usize;
-            let o2 = channels * ((h - 1 - y) * w + x) as usize;
-            for channel in 0..channels {
-                data.swap(o1 + channel, o2 + channel);
-            }
-        }
-    }
 }
 
 pub type FloatImageTexture = ImageTexture<Float, Float>;
