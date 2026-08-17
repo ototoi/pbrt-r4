@@ -1,113 +1,362 @@
 use std::env;
-use std::error::Error;
-use std::fs::*;
-use std::io::BufReader;
-use std::io::Read;
+use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::mipmap::*;
-use crate::base::texture::*;
-use crate::util::base::*;
-use crate::util::error::*;
-use crate::util::imageio::*;
-use crate::util::spectrum::*;
+use super::mipmap::{F32MIPMapImage, MIPMap, MIPMapLevelStorage};
+use crate::base::texture::TexInfo;
+use crate::util::base::Float;
+use crate::util::error::PbrtError;
+use crate::util::imageio::ColorEncoding;
+use crate::util::spectrum::RGBSpectrum;
 
 use crypto::digest::Digest;
 use crypto::md5::Md5;
 use serde::{Deserialize, Serialize};
 
+pub const MIPMAP_CACHE_FORMAT_VERSION: u32 = 1;
+const MAX_CACHE_LEVELS: usize = 64;
+const MAX_CACHE_DIMENSION: usize = 1 << 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum CacheView {
+    Float,
+    Spectrum,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum CacheStorageKind {
+    F32,
+    F16,
+    U8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CacheLevelInfo {
+    width: usize,
+    height: usize,
+    channels: usize,
+    byte_length: usize,
+    checksum: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct TexCacheInfo {
-    pub texinfo: TexInfo,
-    pub image_file_hash: String,
-    pub mip_levels: u32,
+struct CacheMetadata {
+    format_version: u32,
+    texinfo: TexInfo,
+    image_file_hash: String,
+    view: CacheView,
+    storage_kind: CacheStorageKind,
+    encoding: ColorEncoding,
+    channels: usize,
+    channel_layout: String,
+    levels: Vec<CacheLevelInfo>,
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut md5 = Md5::new();
+    md5.input(bytes);
+    md5.result_str()
 }
 
 fn hash(s: &str) -> String {
-    let mut md5 = Md5::new();
-    md5.input(s.as_bytes());
-    return md5.result_str();
+    hash_bytes(s.as_bytes())
 }
 
 pub fn get_mipmap_file_hash(path: &str) -> Result<String, PbrtError> {
     let mut file = File::open(path)?;
-    let mut buf = Vec::new();
-    let _ = file.read_to_end(&mut buf)?;
-    let mut md5 = Md5::new();
-    md5.input(&buf);
-    return Ok(md5.result_str());
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(hash_bytes(&bytes))
 }
 
 pub fn get_mipmap_cache_dir(texinfo: &TexInfo) -> String {
-    //temp_dir/pbrt/textures/filename/hash(fullpath)/hash(jsonify(texinfo))/
     let temp_dir = env::temp_dir();
-    let fullpath = texinfo.filename.clone();
+    let fullpath = fs::canonicalize(&texinfo.filename)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| texinfo.filename.clone());
     let filename = Path::new(&fullpath)
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "mipmap".to_string());
-    let path = temp_dir
+    temp_dir
         .join("pbrt")
         .join("textures")
-        .join(&filename)
+        .join(filename)
         .join(hash(&fullpath))
-        .join(hash(&texinfo.to_string()));
-    return path.to_string_lossy().into_owned();
+        .join(format!(
+            "v{}-{}",
+            MIPMAP_CACHE_FORMAT_VERSION,
+            hash(&texinfo.to_string())
+        ))
+        .to_string_lossy()
+        .into_owned()
 }
 
-fn load_cacheinfo_from_json(path: &str) -> Result<TexCacheInfo, Box<dyn Error>> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-    let cache_info = serde_json::from_reader(reader)?;
-    return Ok(cache_info);
+pub fn remove_mipmap_cache(dir: &str) -> Result<bool, PbrtError> {
+    let path = Path::new(dir);
+    if !path.exists() {
+        return Ok(false);
+    }
+    fs::remove_dir_all(path)?;
+    Ok(true)
 }
 
-fn save_cacheinfo_to_json(path: &str, cache_info: &TexCacheInfo) -> Result<(), Box<dyn Error>> {
-    let file = File::create(path)?;
-    serde_json::to_writer_pretty(file, cache_info)?;
-    return Ok(());
+fn layout(channels: usize) -> Result<&'static str, PbrtError> {
+    match channels {
+        1 => Ok("Y"),
+        3 => Ok("RGB"),
+        4 => Ok("RGBA"),
+        _ => Err(PbrtError::error("Invalid MIPMap cache channel count.")),
+    }
 }
 
-fn convert_float_image(img: Vec<f32>, resolution: &Point2i) -> Vec<f32> {
-    let channels = img.len() / (resolution.x * resolution.y) as usize;
-    if channels == 1 {
-        return img;
-    } else {
-        let mut v = vec![0.0; (resolution.x * resolution.y) as usize];
-        for i in 0..v.len() {
-            v[i] = img[channels * i];
+fn storage_kind(image: &F32MIPMapImage) -> Result<CacheStorageKind, PbrtError> {
+    Ok(match image.data {
+        MIPMapLevelStorage::F32(_) => CacheStorageKind::F32,
+        MIPMapLevelStorage::F16(_) => CacheStorageKind::F16,
+        MIPMapLevelStorage::U8 { .. } => CacheStorageKind::U8,
+    })
+}
+
+fn storage_bytes(image: &F32MIPMapImage) -> Result<Vec<u8>, PbrtError> {
+    let mut bytes = Vec::new();
+    match &image.data {
+        MIPMapLevelStorage::F32(data) => {
+            for value in data {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
         }
-        return v;
+        MIPMapLevelStorage::F16(data) => {
+            for value in data {
+                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+        }
+        MIPMapLevelStorage::U8 { data, .. } => bytes.extend_from_slice(data),
     }
+    if image.channels == 0 || image.resolution.0 == 0 || image.resolution.1 == 0 {
+        return Err(PbrtError::error("Invalid MIPMap cache level dimensions."));
+    }
+    Ok(bytes)
 }
 
-fn convert_spectrum_image(img: Vec<f32>, _resolution: &Point2i) -> Vec<f32> {
-    return img;
+fn metadata_for<T>(
+    texinfo: &TexInfo,
+    file_hash: &str,
+    view: CacheView,
+    mipmap: &MIPMap<T>,
+) -> Result<(CacheMetadata, Vec<Vec<u8>>), PbrtError> {
+    let first = mipmap
+        .storage
+        .pyramid
+        .first()
+        .ok_or_else(|| PbrtError::error("Cannot cache an empty MIPMap."))?;
+    let kind = storage_kind(first)?;
+    let channels = first.channels;
+    let channel_layout = layout(channels)?.to_string();
+    let mut levels = Vec::with_capacity(mipmap.storage.pyramid.len());
+    let mut bytes_by_level = Vec::with_capacity(mipmap.storage.pyramid.len());
+    for image in &mipmap.storage.pyramid {
+        if image.channels != channels || storage_kind(image)? != kind {
+            return Err(PbrtError::error(
+                "MIPMap cache levels have inconsistent layout.",
+            ));
+        }
+        let bytes = storage_bytes(image)?;
+        levels.push(CacheLevelInfo {
+            width: image.resolution.0,
+            height: image.resolution.1,
+            channels: image.channels,
+            byte_length: bytes.len(),
+            checksum: hash_bytes(&bytes),
+        });
+        bytes_by_level.push(bytes);
+    }
+    Ok((
+        CacheMetadata {
+            format_version: MIPMAP_CACHE_FORMAT_VERSION,
+            texinfo: texinfo.clone(),
+            image_file_hash: file_hash.to_string(),
+            view,
+            storage_kind: kind,
+            encoding: texinfo.encoding,
+            channels,
+            channel_layout,
+            levels,
+        },
+        bytes_by_level,
+    ))
 }
 
-pub fn load_float_mipmap_cache(dir: &str, file_hash: &str) -> Result<MIPMap<Float>, PbrtError> {
-    let dir = Path::new(&dir);
-    let json_path = dir.join("cache_info.json");
-    let cache_info = load_cacheinfo_from_json(&json_path.to_string_lossy())?;
-    if cache_info.image_file_hash != file_hash {
-        return Err(PbrtError::error("File hash of image is not same."));
+fn write_cache<T>(
+    dir: &str,
+    texinfo: &TexInfo,
+    file_hash: &str,
+    view: CacheView,
+    mipmap: &MIPMap<T>,
+) -> Result<(), PbrtError> {
+    let (metadata, bytes_by_level) = metadata_for(texinfo, file_hash, view, mipmap)?;
+    let target = Path::new(dir);
+    if target.exists() {
+        if target.join("COMPLETE").exists() {
+            return Ok(());
+        }
+        fs::remove_dir_all(target)?;
     }
-    let mut pyramid = Vec::with_capacity(cache_info.mip_levels as usize);
-    for i in 0..cache_info.mip_levels {
-        let mip_image_path = dir.join(format!("{}.exr", i));
-        let (image, resolution) = read_cache_image(&mip_image_path.to_string_lossy())?;
-        let image = convert_float_image(image, &resolution);
-        let mip_image = F32MIPMapImage::new(image, (resolution.x as usize, resolution.y as usize));
-        pyramid.push(mip_image);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
     }
-    let mipmap = MIPMap::<Float>::make_from_pyramid(
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| PbrtError::error("Invalid system clock for cache write."))?
+        .as_nanos();
+    let temporary = target.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
+    fs::create_dir_all(&temporary)?;
+    let result = (|| {
+        for (index, bytes) in bytes_by_level.iter().enumerate() {
+            let mut file = File::create(temporary.join(format!("level-{index:03}.bin")))?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+        }
+        let metadata_path = temporary.join("metadata.json");
+        let mut file = File::create(metadata_path)?;
+        serde_json::to_writer_pretty(&mut file, &metadata)
+            .map_err(|e| PbrtError::error(&format!("Cannot write MIPMap cache metadata: {e}")))?;
+        file.sync_all()?;
+        File::create(temporary.join("COMPLETE"))?.sync_all()?;
+        fs::rename(&temporary, target)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&temporary);
+    }
+    result
+}
+
+fn read_level(
+    info: &CacheLevelInfo,
+    path: &Path,
+    kind: CacheStorageKind,
+    encoding: ColorEncoding,
+) -> Result<F32MIPMapImage, PbrtError> {
+    if info.width == 0
+        || info.height == 0
+        || info.width > MAX_CACHE_DIMENSION
+        || info.height > MAX_CACHE_DIMENSION
+        || !matches!(info.channels, 1 | 3 | 4)
+    {
+        return Err(PbrtError::error("Invalid MIPMap cache level metadata."));
+    }
+    let elements = info
+        .width
+        .checked_mul(info.height)
+        .and_then(|v| v.checked_mul(info.channels))
+        .ok_or_else(|| PbrtError::error("MIPMap cache level is too large."))?;
+    let element_size = match kind {
+        CacheStorageKind::F32 => 4,
+        CacheStorageKind::F16 => 2,
+        CacheStorageKind::U8 => 1,
+    };
+    if info.byte_length
+        != elements
+            .checked_mul(element_size)
+            .ok_or_else(|| PbrtError::error("MIPMap cache level is too large."))?
+    {
+        return Err(PbrtError::error(
+            "MIPMap cache byte length is inconsistent.",
+        ));
+    }
+    let mut bytes = Vec::new();
+    File::open(path)?.read_to_end(&mut bytes)?;
+    if bytes.len() != info.byte_length || hash_bytes(&bytes) != info.checksum {
+        return Err(PbrtError::error("MIPMap cache level checksum mismatch."));
+    }
+    let data = match kind {
+        CacheStorageKind::F32 => MIPMapLevelStorage::F32(
+            bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect(),
+        ),
+        CacheStorageKind::F16 => MIPMapLevelStorage::F16(
+            bytes
+                .chunks_exact(2)
+                .map(|b| half::f16::from_bits(u16::from_le_bytes(b.try_into().unwrap())))
+                .collect(),
+        ),
+        CacheStorageKind::U8 => MIPMapLevelStorage::U8 {
+            data: bytes,
+            encoding,
+        },
+    };
+    Ok(F32MIPMapImage {
+        resolution: (info.width, info.height),
+        channels: info.channels,
+        data,
+    })
+}
+
+fn load_cache<T>(
+    dir: &str,
+    file_hash: &str,
+    expected: &TexInfo,
+    view: CacheView,
+) -> Result<MIPMap<T>, PbrtError>
+where
+    T: Default
+        + std::fmt::Debug
+        + Copy
+        + std::ops::Add<T, Output = T>
+        + std::ops::Mul<Float, Output = T>,
+    F32MIPMapImage: super::mipmap::MIPMapImage<T> + for<'a> From<(&'a [T], (usize, usize))>,
+{
+    let dir = Path::new(dir);
+    let metadata_path = dir.join("metadata.json");
+    if !dir.join("COMPLETE").exists() {
+        return Err(PbrtError::error("MIPMap cache is incomplete."));
+    }
+    let metadata: CacheMetadata = serde_json::from_reader(File::open(metadata_path)?)
+        .map_err(|e| PbrtError::error(&format!("Invalid MIPMap cache metadata: {e}")))?;
+    if metadata.format_version != MIPMAP_CACHE_FORMAT_VERSION
+        || metadata.image_file_hash != file_hash
+        || metadata.texinfo != *expected
+        || metadata.encoding != expected.encoding
+        || metadata.view != view
+        || metadata.levels.is_empty()
+        || metadata.levels.len() > MAX_CACHE_LEVELS
+        || metadata.channels != metadata.levels[0].channels
+        || metadata.channel_layout != layout(metadata.channels)?
+    {
+        return Err(PbrtError::error("MIPMap cache metadata mismatch."));
+    }
+    let mut pyramid = Vec::with_capacity(metadata.levels.len());
+    for (index, info) in metadata.levels.iter().enumerate() {
+        if info.channels != metadata.channels {
+            return Err(PbrtError::error("MIPMap cache channel layout mismatch."));
+        }
+        pyramid.push(read_level(
+            info,
+            &dir.join(format!("level-{index:03}.bin")),
+            metadata.storage_kind,
+            metadata.encoding,
+        )?);
+    }
+    Ok(MIPMap::make_from_pyramid(
         pyramid,
-        cache_info.texinfo.filter,
-        cache_info.texinfo.max_aniso,
-        cache_info.texinfo.swrap_mode,
-        cache_info.texinfo.twrap_mode,
-    );
-    return Ok(mipmap);
+        expected.filter,
+        expected.max_aniso,
+        expected.swrap_mode,
+        expected.twrap_mode,
+    ))
+}
+
+pub fn load_float_mipmap_cache(
+    dir: &str,
+    file_hash: &str,
+    expected: &TexInfo,
+) -> Result<MIPMap<Float>, PbrtError> {
+    load_cache(dir, file_hash, expected, CacheView::Float)
 }
 
 pub fn save_float_mipmap_cache(
@@ -116,55 +365,15 @@ pub fn save_float_mipmap_cache(
     file_hash: &str,
     mipmap: &MIPMap<Float>,
 ) -> Result<(), PbrtError> {
-    if !Path::new(dir).exists() {
-        create_dir_all(dir)?;
-    }
-    let dir = Path::new(&dir);
-    let json_path = dir.join("cache_info.json");
-    let cache_info = TexCacheInfo {
-        texinfo: texinfo.clone(),
-        image_file_hash: String::from(file_hash),
-        mip_levels: mipmap.levels() as u32,
-    };
-    save_cacheinfo_to_json(&json_path.to_string_lossy(), &cache_info)?;
-    for i in 0..cache_info.mip_levels {
-        let mip_image_path = dir.join(format!("{}.exr", i));
-        let image = &mipmap.storage.pyramid[i as usize];
-        write_cache_image(
-            &mip_image_path.to_string_lossy(),
-            &image.data.to_f32_vec(),
-            &Point2i::new(image.resolution.0 as i32, image.resolution.1 as i32),
-        )?;
-    }
-    return Ok(());
+    write_cache(dir, texinfo, file_hash, CacheView::Float, mipmap)
 }
 
 pub fn load_spectrum_mipmap_cache(
     dir: &str,
     file_hash: &str,
+    expected: &TexInfo,
 ) -> Result<MIPMap<RGBSpectrum>, PbrtError> {
-    let dir = Path::new(&dir);
-    let json_path = dir.join("cache_info.json");
-    let cache_info = load_cacheinfo_from_json(&json_path.to_string_lossy())?;
-    if cache_info.image_file_hash != file_hash {
-        return Err(PbrtError::error("File hash of image is not same."));
-    }
-    let mut pyramid = Vec::with_capacity(cache_info.mip_levels as usize);
-    for i in 0..cache_info.mip_levels {
-        let mip_image_path = dir.join(format!("{}.exr", i));
-        let (image, resolution) = read_cache_image(&mip_image_path.to_string_lossy())?;
-        let image = convert_spectrum_image(image, &resolution);
-        let mip_image = F32MIPMapImage::new(image, (resolution.x as usize, resolution.y as usize));
-        pyramid.push(mip_image);
-    }
-    let mipmap = MIPMap::<RGBSpectrum>::make_from_pyramid(
-        pyramid,
-        cache_info.texinfo.filter,
-        cache_info.texinfo.max_aniso,
-        cache_info.texinfo.swrap_mode,
-        cache_info.texinfo.twrap_mode,
-    );
-    return Ok(mipmap);
+    load_cache(dir, file_hash, expected, CacheView::Spectrum)
 }
 
 pub fn save_spectrum_mipmap_cache(
@@ -173,25 +382,5 @@ pub fn save_spectrum_mipmap_cache(
     file_hash: &str,
     mipmap: &MIPMap<RGBSpectrum>,
 ) -> Result<(), PbrtError> {
-    if !Path::new(dir).exists() {
-        create_dir_all(dir)?;
-    }
-    let dir = Path::new(&dir);
-    let json_path = dir.join("cache_info.json");
-    let cache_info = TexCacheInfo {
-        texinfo: texinfo.clone(),
-        image_file_hash: String::from(file_hash),
-        mip_levels: mipmap.levels() as u32,
-    };
-    save_cacheinfo_to_json(&json_path.to_string_lossy(), &cache_info)?;
-    for i in 0..cache_info.mip_levels {
-        let mip_image_path = dir.join(format!("{}.exr", i));
-        let image = &mipmap.storage.pyramid[i as usize];
-        write_cache_image(
-            &mip_image_path.to_string_lossy(),
-            &image.data.to_f32_vec(),
-            &Point2i::new(image.resolution.0 as i32, image.resolution.1 as i32),
-        )?;
-    }
-    return Ok(());
+    write_cache(dir, texinfo, file_hash, CacheView::Spectrum, mipmap)
 }
