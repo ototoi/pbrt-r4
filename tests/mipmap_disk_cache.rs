@@ -152,6 +152,52 @@ fn spectrum_mipmap_cache_round_trips_the_rgb_view() {
 }
 
 #[test]
+fn float_and_spectrum_views_do_not_share_a_cache_directory() {
+    let float_mipmap = MIPMap::<Float>::new(
+        &Point2i::new(1, 1),
+        &[0.5],
+        ImageFilter::Point,
+        8.0,
+        ImageWrap::Clamp,
+        ImageWrap::Clamp,
+    );
+    let spectrum_mipmap = MIPMap::<RGBSpectrum>::new_with_raw_channels(
+        &Point2i::new(1, 1),
+        &[0.1, 0.2, 0.3],
+        3,
+        ImageFilter::Point,
+        8.0,
+        ImageWrap::Clamp,
+        ImageWrap::Clamp,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let float_dir = dir.path().join("float");
+    let spectrum_dir = dir.path().join("spectrum");
+    let info = texinfo();
+    save_float_mipmap_cache(
+        float_dir.to_str().unwrap(),
+        &info,
+        "shared-hash",
+        &float_mipmap,
+    )
+    .unwrap();
+    save_spectrum_mipmap_cache(
+        spectrum_dir.to_str().unwrap(),
+        &info,
+        "shared-hash",
+        &spectrum_mipmap,
+    )
+    .unwrap();
+
+    assert!(load_float_mipmap_cache(float_dir.to_str().unwrap(), "shared-hash", &info).is_ok());
+    assert!(
+        load_spectrum_mipmap_cache(spectrum_dir.to_str().unwrap(), "shared-hash", &info).is_ok()
+    );
+    assert!(load_float_mipmap_cache(spectrum_dir.to_str().unwrap(), "shared-hash", &info).is_err());
+    assert!(load_spectrum_mipmap_cache(float_dir.to_str().unwrap(), "shared-hash", &info).is_err());
+}
+
+#[test]
 fn mipmap_cache_rejects_checksum_mismatch_and_incomplete_cache() {
     let mipmap = MIPMap::<Float>::new(
         &Point2i::new(1, 1),
