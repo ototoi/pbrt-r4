@@ -19,25 +19,6 @@ use std::sync::Arc;
 thread_local!(static TESTS: StatPercent = StatPercent::new("Intersections/Ray-triangle intersection tests"));
 thread_local!(static TRI_MESH_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/Triangle meshes"));
 
-fn memory_probe_triangle(stage: &str, count: usize) {
-    if std::env::var_os("PBRT_MEMORY_PROFILE").is_none() {
-        return;
-    }
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-    let rss_kb = status
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("VmRSS:")
-                .and_then(|rest| rest.split_whitespace().next())
-                .and_then(|value| value.parse::<u64>().ok())
-        })
-        .unwrap_or(0);
-    eprintln!(
-        "[MEM-INVESTIGATION] triangle-stage={} rss_kb={} count={}",
-        stage, rss_kb, count
-    );
-}
-
 pub struct TriangleMesh {
     pub object_to_world: Transform,
     pub world_to_object: Transform,
@@ -957,7 +938,6 @@ pub fn create_triangle_mesh(
         n,
         uv,
     ));
-    memory_probe_triangle("mesh-created", n_triangles);
     let mut tris: Vec<Triangle> = Vec::with_capacity(n_triangles);
     for i in 0..n_triangles {
         let tri = Triangle::new(&mesh, i as u32);
@@ -965,7 +945,6 @@ pub fn create_triangle_mesh(
             tris.push(tri);
         }
     }
-    memory_probe_triangle("triangles-created", tris.len());
     return Ok(tris);
 }
 
