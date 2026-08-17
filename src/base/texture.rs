@@ -5,6 +5,7 @@ use crate::paramdict::*;
 use crate::textures::*;
 use crate::util::base::*;
 use crate::util::error::*;
+use crate::util::imageio::ColorEncoding;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
 
@@ -36,7 +37,7 @@ pub struct TexInfo {
     pub swrap_mode: ImageWrap,
     pub twrap_mode: ImageWrap,
     pub scale: Float,
-    pub gamma: bool,
+    pub encoding: ColorEncoding,
     pub flip_y: bool,
 }
 

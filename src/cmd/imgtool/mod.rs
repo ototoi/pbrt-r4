@@ -5,7 +5,7 @@ use pbrt_r4::util::error::PbrtError;
 use pbrt_r4::util::geometry::{equal_area_square_to_sphere, spherical_theta, Bounds2i, Vector2};
 use pbrt_r4::util::image::{Image, ImageMetadata, PixelFormat};
 use pbrt_r4::util::imageio::{
-    read_raw_image_exr_with_channels_and_metadata, read_raw_image_gamma_correct,
+    read_raw_image_exr_with_channels_and_metadata, read_raw_image_with_encoding, ColorEncoding,
 };
 use pbrt_r4::util::imageio::{write_image_bytes, RawImage, RawImageData};
 use pbrt_r4::util::math::safe_acos;
@@ -184,7 +184,7 @@ fn load_image(path: &Path) -> Result<LoadedImage, ImgToolError> {
             metadata,
         })
     } else {
-        let raw = read_raw_image_gamma_correct(path_string, false)?;
+        let raw = read_raw_image_with_encoding(path_string, ColorEncoding::Linear)?;
         let channel_names = raw.channel_names();
         let metadata = ImageMetadata {
             color_space: Some(&SRGB),

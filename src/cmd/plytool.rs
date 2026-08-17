@@ -7,7 +7,7 @@ use std::path::Path;
 use pbrt_r4::util::base::{Float, Normal3f, Point2f, Point3f, Vector3f};
 use pbrt_r4::util::geometry::Bounds3f;
 use pbrt_r4::util::image::{Image, ImageWrapMode};
-use pbrt_r4::util::imageio::read_raw_image_gamma_correct;
+use pbrt_r4::util::imageio::{read_raw_image_with_encoding, ColorEncoding};
 use pbrt_r4::util::mesh::TriQuadMesh;
 
 #[derive(Debug)]
@@ -197,7 +197,7 @@ fn displace(args: &[OsString]) -> Result<(), PlyToolError> {
     let image_path = required_path(image_path, "image displacement map")?;
     let output = required_path(output, "output PLY filename")?;
     let mesh = read_mesh(&source)?;
-    let raw = read_raw_image_gamma_correct(&image_path, false).map_err(error)?;
+    let raw = read_raw_image_with_encoding(&image_path, ColorEncoding::Linear).map_err(error)?;
     let image = Image::from_channels(raw.resolution, raw.channel_names(), raw.data_f32());
     let displaced = mesh
         .displace(

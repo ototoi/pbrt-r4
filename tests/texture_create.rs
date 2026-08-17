@@ -1,5 +1,6 @@
 use pbrt_r4::base::typed_spectrum_texture_name;
 use pbrt_r4::prelude::*;
+use pbrt_r4::util::imageio::ColorEncoding;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -277,7 +278,7 @@ fn imagemap_png_defaults_to_v4_filter_and_gamma() {
     assert_eq!(texinfo.filter, ImageFilter::Bilinear);
     assert_eq!(texinfo.swrap_mode, ImageWrap::Repeat);
     assert_eq!(texinfo.twrap_mode, ImageWrap::Repeat);
-    assert!(texinfo.gamma);
+    assert_eq!(texinfo.encoding, ColorEncoding::SRgb);
 }
 
 #[test]
@@ -321,7 +322,7 @@ fn imagemap_supports_v4_filter_and_encoding_parameters() {
         .expect("texinfo creation should succeed")
         .expect("filename should produce texinfo");
     assert_eq!(texinfo.filter, ImageFilter::EWA);
-    assert!(!texinfo.gamma);
+    assert_eq!(texinfo.encoding, ColorEncoding::Linear);
 }
 
 #[test]
@@ -336,7 +337,39 @@ fn imagemap_exr_defaults_to_linear_encoding_like_v4() {
     let texinfo = create_texinfo(&tp)
         .expect("texinfo creation should succeed")
         .expect("filename should produce texinfo");
-    assert!(!texinfo.gamma);
+    assert_eq!(texinfo.encoding, ColorEncoding::Linear);
+}
+
+#[test]
+fn imagemap_non_png_defaults_to_linear_encoding_like_v4() {
+    let _geom_params = ParameterDictionary::new();
+    let mut mat_params = ParameterDictionary::new();
+    mat_params.add_string("filename", "textures/example_bump.pfm");
+    let f_tex: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
+    let tp = TextureParameterDictionary::new(&mat_params, &f_tex, &s_tex);
+
+    let texinfo = create_texinfo(&tp)
+        .expect("texinfo creation should succeed")
+        .expect("filename should produce texinfo");
+    assert_eq!(texinfo.encoding, ColorEncoding::Linear);
+}
+
+#[test]
+fn imagemap_encoding_takes_precedence_over_legacy_gamma() {
+    let _geom_params = ParameterDictionary::new();
+    let mut mat_params = ParameterDictionary::new();
+    mat_params.add_string("filename", "textures/example_bump.png");
+    mat_params.add_string("encoding", "linear");
+    mat_params.add_bool("gamma", true);
+    let f_tex: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
+    let tp = TextureParameterDictionary::new(&mat_params, &f_tex, &s_tex);
+
+    let texinfo = create_texinfo(&tp)
+        .expect("texinfo creation should succeed")
+        .expect("filename should produce texinfo");
+    assert_eq!(texinfo.encoding, ColorEncoding::Linear);
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use super::color_encoding::ColorEncoding;
 use super::read_image_pfm::*;
 use crate::util::base::*;
 use crate::util::error::*;
@@ -17,7 +18,10 @@ pub struct RawImage {
 pub enum RawImageData {
     F32(Vec<Float>),
     F16(Vec<half::f16>),
-    U8 { data: Vec<u8>, gamma: bool },
+    U8 {
+        data: Vec<u8>,
+        encoding: ColorEncoding,
+    },
 }
 
 impl RawImage {
@@ -44,13 +48,9 @@ impl RawImage {
         match &self.data {
             RawImageData::F32(data) => data[index],
             RawImageData::F16(data) => data[index].to_f32() as Float,
-            RawImageData::U8 { data, gamma } => {
+            RawImageData::U8 { data, encoding } => {
                 let v = data[index] as Float / 255.0;
-                if *gamma {
-                    inverse_gamma_correct(v)
-                } else {
-                    v
-                }
+                encoding.to_linear(v)
             }
         }
     }
@@ -67,7 +67,10 @@ impl RawImage {
     }
 }
 
-fn convert_from_luma8(img: &image::GrayImage, gamma: bool) -> (Vec<RGBSpectrum>, Point2i) {
+fn convert_from_luma8(
+    img: &image::GrayImage,
+    encoding: ColorEncoding,
+) -> (Vec<RGBSpectrum>, Point2i) {
     let (width, height) = img.dimensions();
     let mut spcs = vec![RGBSpectrum::zero(); (width * height) as usize];
     for y in 0..height {
@@ -76,9 +79,7 @@ fn convert_from_luma8(img: &image::GrayImage, gamma: bool) -> (Vec<RGBSpectrum>,
             let pixel = img[(x, y)];
             let mut r = pixel[0] as Float / 255.0;
 
-            if gamma {
-                r = inverse_gamma_correct(r);
-            }
+            r = encoding.to_linear(r);
 
             spcs[index] = RGBSpectrum::rgb_from_rgb(&[r, r, r]);
         }
@@ -86,19 +87,22 @@ fn convert_from_luma8(img: &image::GrayImage, gamma: bool) -> (Vec<RGBSpectrum>,
     return (spcs, Point2i::from((width as i32, height as i32)));
 }
 
-fn convert_raw_from_luma8(img: &image::GrayImage, gamma: bool) -> RawImage {
+fn convert_raw_from_luma8(img: &image::GrayImage, encoding: ColorEncoding) -> RawImage {
     let (width, height) = img.dimensions();
     RawImage {
         data: RawImageData::U8 {
             data: img.as_raw().clone(),
-            gamma,
+            encoding,
         },
         resolution: Point2i::from((width as i32, height as i32)),
         channels: 1,
     }
 }
 
-fn convert_from_lumaa8(img: &image::GrayAlphaImage, gamma: bool) -> (Vec<RGBSpectrum>, Point2i) {
+fn convert_from_lumaa8(
+    img: &image::GrayAlphaImage,
+    encoding: ColorEncoding,
+) -> (Vec<RGBSpectrum>, Point2i) {
     let (width, height) = img.dimensions();
     let mut spcs = vec![RGBSpectrum::zero(); (width * height) as usize];
     for y in 0..height {
@@ -108,9 +112,7 @@ fn convert_from_lumaa8(img: &image::GrayAlphaImage, gamma: bool) -> (Vec<RGBSpec
             let mut r = pixel[0] as Float / 255.0;
             let _a = pixel[1] as Float / 255.0; // Ignore alpha channel
 
-            if gamma {
-                r = inverse_gamma_correct(r);
-            }
+            r = encoding.to_linear(r);
 
             spcs[index] = RGBSpectrum::rgb_from_rgb(&[r, r, r]);
         }
@@ -118,19 +120,22 @@ fn convert_from_lumaa8(img: &image::GrayAlphaImage, gamma: bool) -> (Vec<RGBSpec
     return (spcs, Point2i::from((width as i32, height as i32)));
 }
 
-fn convert_raw_from_lumaa8(img: &image::GrayAlphaImage, gamma: bool) -> RawImage {
+fn convert_raw_from_lumaa8(img: &image::GrayAlphaImage, encoding: ColorEncoding) -> RawImage {
     let (width, height) = img.dimensions();
     RawImage {
         data: RawImageData::U8 {
             data: img.as_raw().clone(),
-            gamma,
+            encoding,
         },
         resolution: Point2i::from((width as i32, height as i32)),
         channels: 2,
     }
 }
 
-fn convert_from_rgb8(img: &image::RgbImage, gamma: bool) -> (Vec<RGBSpectrum>, Point2i) {
+fn convert_from_rgb8(
+    img: &image::RgbImage,
+    encoding: ColorEncoding,
+) -> (Vec<RGBSpectrum>, Point2i) {
     let (width, height) = img.dimensions();
     let mut spcs = vec![RGBSpectrum::zero(); (width * height) as usize];
     for y in 0..height {
@@ -141,11 +146,9 @@ fn convert_from_rgb8(img: &image::RgbImage, gamma: bool) -> (Vec<RGBSpectrum>, P
             let mut g = pixel[1] as Float / 255.0;
             let mut b = pixel[2] as Float / 255.0;
 
-            if gamma {
-                r = inverse_gamma_correct(r);
-                g = inverse_gamma_correct(g);
-                b = inverse_gamma_correct(b);
-            }
+            r = encoding.to_linear(r);
+            g = encoding.to_linear(g);
+            b = encoding.to_linear(b);
 
             spcs[index] = RGBSpectrum::rgb_from_rgb(&[r, g, b]);
         }
@@ -153,19 +156,22 @@ fn convert_from_rgb8(img: &image::RgbImage, gamma: bool) -> (Vec<RGBSpectrum>, P
     return (spcs, Point2i::from((width as i32, height as i32)));
 }
 
-fn convert_raw_from_rgb8(img: &image::RgbImage, gamma: bool) -> RawImage {
+fn convert_raw_from_rgb8(img: &image::RgbImage, encoding: ColorEncoding) -> RawImage {
     let (width, height) = img.dimensions();
     RawImage {
         data: RawImageData::U8 {
             data: img.as_raw().clone(),
-            gamma,
+            encoding,
         },
         resolution: Point2i::from((width as i32, height as i32)),
         channels: 3,
     }
 }
 
-fn convert_from_rgba8(img: &image::RgbaImage, gamma: bool) -> (Vec<RGBSpectrum>, Point2i) {
+fn convert_from_rgba8(
+    img: &image::RgbaImage,
+    encoding: ColorEncoding,
+) -> (Vec<RGBSpectrum>, Point2i) {
     let (width, height) = img.dimensions();
     let mut spcs = vec![RGBSpectrum::zero(); (width * height) as usize];
     for y in 0..height {
@@ -176,11 +182,9 @@ fn convert_from_rgba8(img: &image::RgbaImage, gamma: bool) -> (Vec<RGBSpectrum>,
             let mut g = pixel[1] as Float / 255.0;
             let mut b = pixel[2] as Float / 255.0;
 
-            if gamma {
-                r = inverse_gamma_correct(r);
-                g = inverse_gamma_correct(g);
-                b = inverse_gamma_correct(b);
-            }
+            r = encoding.to_linear(r);
+            g = encoding.to_linear(g);
+            b = encoding.to_linear(b);
 
             spcs[index] = RGBSpectrum::rgb_from_rgb(&[r, g, b]);
         }
@@ -188,12 +192,12 @@ fn convert_from_rgba8(img: &image::RgbaImage, gamma: bool) -> (Vec<RGBSpectrum>,
     return (spcs, Point2i::from((width as i32, height as i32)));
 }
 
-fn convert_raw_from_rgba8(img: &image::RgbaImage, gamma: bool) -> RawImage {
+fn convert_raw_from_rgba8(img: &image::RgbaImage, encoding: ColorEncoding) -> RawImage {
     let (width, height) = img.dimensions();
     RawImage {
         data: RawImageData::U8 {
             data: img.as_raw().clone(),
-            gamma,
+            encoding,
         },
         resolution: Point2i::from((width as i32, height as i32)),
         channels: 4,
@@ -309,7 +313,7 @@ fn convert_raw_from_rgba32f(img: &image::Rgba32FImage) -> RawImage {
 // use crate::image::*;
 pub fn read_image_common(
     path: &Path,
-    gamma: bool,
+    encoding: ColorEncoding,
 ) -> Result<(Vec<RGBSpectrum>, Point2i), PbrtError> {
     // The `image` crate only accepts 3-channel RGB for EXR and rejects
     // Y / RGBA / multi-layer files. Dispatch to the dedicated reader.
@@ -320,16 +324,16 @@ pub fn read_image_common(
     match r {
         Ok(dimg) => match dimg {
             DynamicImage::ImageLuma8(img) => {
-                return Ok(convert_from_luma8(&img, gamma));
+                return Ok(convert_from_luma8(&img, encoding));
             }
             DynamicImage::ImageLumaA8(img) => {
-                return Ok(convert_from_lumaa8(&img, gamma));
+                return Ok(convert_from_lumaa8(&img, encoding));
             }
             DynamicImage::ImageRgb8(img) => {
-                return Ok(convert_from_rgb8(&img, gamma));
+                return Ok(convert_from_rgb8(&img, encoding));
             }
             DynamicImage::ImageRgba8(img) => {
-                return Ok(convert_from_rgba8(&img, gamma));
+                return Ok(convert_from_rgba8(&img, encoding));
             }
             DynamicImage::ImageRgb16(img) => {
                 return Ok(convert_from_rgb16(&img));
@@ -355,9 +359,9 @@ fn has_extension(path: &Path, ext: &str) -> bool {
     return path.extension().unwrap_or_default() == ext;
 }
 
-pub fn read_image_gamma_correct(
+pub fn read_image_with_encoding(
     name: &str,
-    gamma: bool,
+    encoding: ColorEncoding,
 ) -> Result<(Vec<RGBSpectrum>, Point2i), PbrtError> {
     let path = Path::new(name);
     if !path.exists() {
@@ -366,11 +370,14 @@ pub fn read_image_gamma_correct(
     if has_extension(path, "pfm") {
         return read_image_pfm(name);
     } else {
-        return read_image_common(path, gamma);
+        return read_image_common(path, encoding);
     }
 }
 
-pub fn read_raw_image_gamma_correct(name: &str, gamma: bool) -> Result<RawImage, PbrtError> {
+pub fn read_raw_image_with_encoding(
+    name: &str,
+    encoding: ColorEncoding,
+) -> Result<RawImage, PbrtError> {
     let path = Path::new(name);
     if !path.exists() {
         return Err(PbrtError::from(format!("File not found: {}", name)));
@@ -396,10 +403,10 @@ pub fn read_raw_image_gamma_correct(name: &str, gamma: bool) -> Result<RawImage,
 
     let image = image::open(path)?;
     let raw = match image {
-        DynamicImage::ImageLuma8(img) => convert_raw_from_luma8(&img, gamma),
-        DynamicImage::ImageLumaA8(img) => convert_raw_from_lumaa8(&img, gamma),
-        DynamicImage::ImageRgb8(img) => convert_raw_from_rgb8(&img, gamma),
-        DynamicImage::ImageRgba8(img) => convert_raw_from_rgba8(&img, gamma),
+        DynamicImage::ImageLuma8(img) => convert_raw_from_luma8(&img, encoding),
+        DynamicImage::ImageLumaA8(img) => convert_raw_from_lumaa8(&img, encoding),
+        DynamicImage::ImageRgb8(img) => convert_raw_from_rgb8(&img, encoding),
+        DynamicImage::ImageRgba8(img) => convert_raw_from_rgba8(&img, encoding),
         DynamicImage::ImageRgb16(img) => convert_raw_from_rgb16(&img),
         DynamicImage::ImageRgb32F(img) => convert_raw_from_rgb32f(&img),
         DynamicImage::ImageRgba32F(img) => convert_raw_from_rgba32f(&img),
@@ -414,7 +421,7 @@ pub fn read_raw_image_gamma_correct(name: &str, gamma: bool) -> Result<RawImage,
 }
 
 pub fn read_image(name: &str) -> Result<(Vec<RGBSpectrum>, Point2i), PbrtError> {
-    return read_image_gamma_correct(name, false);
+    read_image_with_encoding(name, ColorEncoding::Linear)
 }
 
 fn convert_f32_from_rgba32f(img: &image::Rgb32FImage) -> (Vec<f32>, Point2i) {
