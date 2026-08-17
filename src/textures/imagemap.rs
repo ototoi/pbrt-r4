@@ -29,10 +29,7 @@ fn get_typed_mipmap_cache_dir(texinfo: &TexInfo, value_type: MipmapCacheValueTyp
 }
 
 fn texture_cache_enabled() -> bool {
-    // The on-disk format predates channel-preserving MIPMaps.  Keep it
-    // disabled until the cache key and payload are redesigned together.
-    let _ = PbrtOptions::get().texture_cache;
-    false
+    PbrtOptions::get().texture_cache
 }
 
 #[derive(Default)]
@@ -170,18 +167,32 @@ impl ImageTexture<Float, Float> {
             let cache_path =
                 get_typed_mipmap_cache_dir(&mipmap_texinfo, MipmapCacheValueType::Float);
             let file_hash = get_mipmap_file_hash(&mipmap_texinfo.filename)?;
-            if let Ok(mipmap) = load_float_mipmap_cache(&cache_path, &file_hash) {
-                let mipmap = Arc::new(mipmap);
-                if let Some(cache) = mipmap_cache {
-                    cache
-                        .lock()
-                        .unwrap()
-                        .float
-                        .insert(mipmap_key, Arc::clone(&mipmap));
+            let cache_exists = Path::new(&cache_path).exists();
+            match load_float_mipmap_cache(&cache_path, &file_hash, &mipmap_texinfo) {
+                Ok(mipmap) => {
+                    let mipmap = Arc::new(mipmap);
+                    if let Some(cache) = mipmap_cache {
+                        cache
+                            .lock()
+                            .unwrap()
+                            .float
+                            .insert(mipmap_key, Arc::clone(&mipmap));
+                    }
+                    return Ok(FloatTexture::ImageMap(FloatImageTexture::new_shared(
+                        mapping, mipmap, scale, invert,
+                    )));
                 }
-                return Ok(FloatTexture::ImageMap(FloatImageTexture::new_shared(
-                    mapping, mipmap, scale, invert,
-                )));
+                Err(err) if cache_exists => match remove_mipmap_cache(&cache_path) {
+                    Ok(_) => log::warn!(
+                        "Invalid float MIPMap cache removed ({}): {}",
+                        cache_path, err
+                    ),
+                    Err(remove_err) => log::warn!(
+                        "Invalid float MIPMap cache could not be removed ({}): {}; removal failed: {}",
+                        cache_path, err, remove_err
+                    ),
+                },
+                Err(_) => {}
             }
             Some((cache_path, file_hash))
         } else {
@@ -212,7 +223,15 @@ impl ImageTexture<Float, Float> {
             )
         };
         if let Some((cache_path, file_hash)) = cache_entry {
-            let _ = save_float_mipmap_cache(&cache_path, &mipmap_texinfo, &file_hash, &mipmap);
+            if let Err(err) =
+                save_float_mipmap_cache(&cache_path, &mipmap_texinfo, &file_hash, &mipmap)
+            {
+                log::warn!(
+                    "Could not write float MIPMap cache ({}): {}",
+                    cache_path,
+                    err
+                );
+            }
         }
         let mipmap = Arc::new(mipmap);
         if let Some(cache) = mipmap_cache {
@@ -383,16 +402,30 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
             let cache_path =
                 get_typed_mipmap_cache_dir(&mipmap_texinfo, MipmapCacheValueType::Spectrum);
             let file_hash = get_mipmap_file_hash(&mipmap_texinfo.filename)?;
-            if let Ok(mipmap) = load_spectrum_mipmap_cache(&cache_path, &file_hash) {
-                let mipmap = Arc::new(mipmap);
-                if let Some(cache) = mipmap_cache {
-                    cache
-                        .lock()
-                        .unwrap()
-                        .spectrum
-                        .insert(mipmap_key, Arc::clone(&mipmap));
+            let cache_exists = Path::new(&cache_path).exists();
+            match load_spectrum_mipmap_cache(&cache_path, &file_hash, &mipmap_texinfo) {
+                Ok(mipmap) => {
+                    let mipmap = Arc::new(mipmap);
+                    if let Some(cache) = mipmap_cache {
+                        cache
+                            .lock()
+                            .unwrap()
+                            .spectrum
+                            .insert(mipmap_key, Arc::clone(&mipmap));
+                    }
+                    return Ok((mipmap, scale, invert));
                 }
-                return Ok((mipmap, scale, invert));
+                Err(err) if cache_exists => match remove_mipmap_cache(&cache_path) {
+                    Ok(_) => log::warn!(
+                        "Invalid spectrum MIPMap cache removed ({}): {}",
+                        cache_path, err
+                    ),
+                    Err(remove_err) => log::warn!(
+                        "Invalid spectrum MIPMap cache could not be removed ({}): {}; removal failed: {}",
+                        cache_path, err, remove_err
+                    ),
+                },
+                Err(_) => {}
             }
             Some((cache_path, file_hash))
         } else {
@@ -413,7 +446,15 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
             MIPMapStorageKind::from_raw_image(&raw),
         );
         if let Some((cache_path, file_hash)) = cache_entry {
-            let _ = save_spectrum_mipmap_cache(&cache_path, &mipmap_texinfo, &file_hash, &mipmap);
+            if let Err(err) =
+                save_spectrum_mipmap_cache(&cache_path, &mipmap_texinfo, &file_hash, &mipmap)
+            {
+                log::warn!(
+                    "Could not write spectrum MIPMap cache ({}): {}",
+                    cache_path,
+                    err
+                );
+            }
         }
         let mipmap = Arc::new(mipmap);
         if let Some(cache) = mipmap_cache {
