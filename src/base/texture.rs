@@ -38,7 +38,6 @@ pub struct TexInfo {
     pub twrap_mode: ImageWrap,
     pub scale: Float,
     pub encoding: ColorEncoding,
-    pub flip_y: bool,
 }
 
 impl Display for TexInfo {
