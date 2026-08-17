@@ -19,25 +19,6 @@ use std::sync::Arc;
 
 type FloatTextureMap = HashMap<String, Arc<FloatTexture>>;
 
-fn memory_probe_ply_stage(stage: &str, filename: &str) {
-    if std::env::var_os("PBRT_MEMORY_PROFILE").is_none() {
-        return;
-    }
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-    let rss_kb = status
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("VmRSS:")
-                .and_then(|rest| rest.split_whitespace().next())
-                .and_then(|value| value.parse::<u64>().ok())
-        })
-        .unwrap_or(0);
-    eprintln!(
-        "[MEM-INVESTIGATION] ply-stage={} rss_kb={} file={}",
-        stage, rss_kb, filename
-    );
-}
-
 pub struct PlyMesh;
 
 pub fn create_ply_mesh(
@@ -49,7 +30,6 @@ pub fn create_ply_mesh(
 ) -> Result<Vec<Shape>, PbrtError> {
     let filename = params.get_one_string("filename", "");
     let mut tri_quad_mesh = TriQuadMesh::read_ply(&filename)?;
-    memory_probe_ply_stage("read", &filename);
 
     let edge_length =
         params.get_one_float("edgelength", 1.0) * PbrtOptions::get().displacement_edge_scale;
@@ -83,7 +63,6 @@ pub fn create_ply_mesh(
 
     let mut mesh: Vec<Shape> = Vec::new();
     if !tri_quad_mesh.tri_indices.is_empty() {
-        memory_probe_ply_stage("before-triangle-clone", &filename);
         let tris = create_triangle_mesh(
             o2w,
             w2o,
@@ -95,7 +74,6 @@ pub fn create_ply_mesh(
             tri_quad_mesh.uv.clone(),
             params,
         )?;
-        memory_probe_ply_stage("after-triangle-create", &filename);
         mesh.extend(tris.into_iter().map(Shape::Triangle));
     }
     if !tri_quad_mesh.quad_indices.is_empty() {
