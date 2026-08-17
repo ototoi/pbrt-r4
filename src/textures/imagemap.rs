@@ -184,16 +184,27 @@ impl ImageTexture<Float, Float> {
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
         let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
-        let (data, channels) = normalize_raw_image_for_float(&raw)?;
-        let mipmap = MIPMap::<Float>::new_with_raw_channels(
-            &raw.resolution,
-            &data,
-            channels,
-            texinfo.filter,
-            texinfo.max_aniso,
-            texinfo.swrap_mode,
-            texinfo.twrap_mode,
-        );
+        let mipmap = if matches!(raw.channels, 1 | 3) {
+            MIPMap::<Float>::new_from_raw_image(
+                &raw,
+                texinfo.filter,
+                texinfo.max_aniso,
+                texinfo.swrap_mode,
+                texinfo.twrap_mode,
+            )
+        } else {
+            let (data, channels) = normalize_raw_image_for_float(&raw)?;
+            MIPMap::<Float>::new_with_raw_channels_and_storage(
+                &raw.resolution,
+                &data,
+                channels,
+                texinfo.filter,
+                texinfo.max_aniso,
+                texinfo.swrap_mode,
+                texinfo.twrap_mode,
+                MIPMapStorageKind::from_raw_image(&raw),
+            )
+        };
         if let Some((cache_path, file_hash)) = cache_entry {
             let _ = save_float_mipmap_cache(&cache_path, &mipmap_texinfo, &file_hash, &mipmap);
         }
@@ -383,7 +394,8 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
         };
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
-        let (data, resolution) = read_image_with_encoding(&texinfo.filename, encoding)?;
+        let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
+        let (data, resolution) = normalize_raw_image_for_spectrum(&raw)?;
         let mipmap = MIPMap::<RGBSpectrum>::new_with_storage(
             &resolution,
             &data,
@@ -391,7 +403,7 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
             texinfo.max_aniso,
             texinfo.swrap_mode,
             texinfo.twrap_mode,
-            spectrum_mipmap_storage(&texinfo, &resolution),
+            MIPMapStorageKind::from_raw_image(&raw),
         );
         if let Some((cache_path, file_hash)) = cache_entry {
             let _ = save_spectrum_mipmap_cache(&cache_path, &mipmap_texinfo, &file_hash, &mipmap);
@@ -417,37 +429,6 @@ fn has_extension(path: &str, ext: &str) -> bool {
         }
     }
     return false;
-}
-
-fn spectrum_mipmap_storage(texinfo: &TexInfo, resolution: &Point2i) -> MIPMapStorageKind {
-    if has_extension(&texinfo.filename, "exr")
-        || has_extension(&texinfo.filename, "pfm")
-        || is_16bit_image_file(&texinfo.filename, resolution)
-    {
-        MIPMapStorageKind::F16
-    } else {
-        MIPMapStorageKind::U8 {
-            encoding: texinfo.encoding,
-        }
-    }
-}
-
-fn is_16bit_image_file(filename: &str, resolution: &Point2i) -> bool {
-    if !has_extension(filename, "png") {
-        return false;
-    }
-    use std::io::Read;
-
-    let Ok(mut file) = std::fs::File::open(filename) else {
-        return false;
-    };
-    let mut header = [0u8; 25];
-    if file.read_exact(&mut header).is_err() || &header[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return false;
-    }
-    let width = u32::from_be_bytes([header[16], header[17], header[18], header[19]]) as i32;
-    let height = u32::from_be_bytes([header[20], header[21], header[22], header[23]]) as i32;
-    width == resolution.x && height == resolution.y && header[24] == 16
 }
 
 fn get_wrap_mode(mode: &str) -> Result<ImageWrap, PbrtError> {
@@ -593,6 +574,37 @@ fn normalize_raw_image_for_float(raw: &RawImage) -> Result<(Vec<Float>, usize), 
         }
     };
     Ok(normalized)
+}
+
+fn normalize_raw_image_for_spectrum(
+    raw: &RawImage,
+) -> Result<(Vec<RGBSpectrum>, Point2i), PbrtError> {
+    let pixels = (raw.resolution.x * raw.resolution.y) as usize;
+    let mut data = Vec::with_capacity(pixels);
+    for pixel in 0..pixels {
+        match raw.channels {
+            1 => {
+                let value = raw.channel(pixel, 0);
+                data.push(RGBSpectrum::new(value, value, value));
+            }
+            2 => {
+                let value = raw.channel(pixel, 0);
+                data.push(RGBSpectrum::new(value, value, value));
+            }
+            3 | 4 => data.push(RGBSpectrum::new(
+                raw.channel(pixel, 0),
+                raw.channel(pixel, 1),
+                raw.channel(pixel, 2),
+            )),
+            _ => {
+                return Err(PbrtError::error(&format!(
+                    "Unsupported image channel count for Spectrum imagemap: {}",
+                    raw.channels
+                )));
+            }
+        }
+    }
+    Ok((data, raw.resolution))
 }
 
 pub type FloatImageTexture = ImageTexture<Float, Float>;
