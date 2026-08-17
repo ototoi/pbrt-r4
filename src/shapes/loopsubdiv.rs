@@ -22,7 +22,7 @@ impl LoopSubdiv {
         w2o: &Transform,
         reverse_orientation: bool,
         params: &ParameterDictionary,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         create_loop_subdiv(o2w, w2o, reverse_orientation, params)
     }
 }
@@ -347,7 +347,7 @@ fn loop_subdiv(
     vertex_indices: Vec<u32>,
     p: Vec<Point3f>,
     params: &ParameterDictionary,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let mut vertices = Vec::new();
     let mut faces = Vec::new();
 
@@ -732,10 +732,7 @@ fn loop_subdiv(
         _uv,
         params,
     )?;
-    let mesh: Vec<Arc<Shape>> = mesh
-        .into_iter()
-        .map(|tri| Arc::new(Shape::Triangle(tri)))
-        .collect();
+    let mesh: Vec<Shape> = mesh.into_iter().map(Shape::Triangle).collect();
     return Ok(mesh);
 }
 
@@ -744,7 +741,7 @@ pub fn create_loop_subdiv(
     w2o: &Transform,
     reverse_orientation: bool,
     params: &ParameterDictionary,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let n_levels = params.get_one_int("levels", params.get_one_int("nlevels", 3));
 
     let mut vertex_indices = Vec::new();

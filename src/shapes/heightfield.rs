@@ -7,8 +7,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
-use std::sync::Arc;
-
 pub struct HeightField;
 
 impl HeightField {
@@ -17,7 +15,7 @@ impl HeightField {
         w2o: &Transform,
         reverse_orientation: bool,
         params: &ParameterDictionary,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         create_heightfield(o2w, w2o, reverse_orientation, params)
     }
 }
@@ -27,7 +25,7 @@ pub fn create_heightfield(
     w2o: &Transform,
     reverse_orientation: bool,
     params: &ParameterDictionary,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let nx = params.get_one_int("nu", -1);
     let ny = params.get_one_int("nv", -1);
     if nx == -1 || ny == -1 {
@@ -91,10 +89,7 @@ pub fn create_heightfield(
             uvs,
             &nparams,
         )?;
-        let mesh: Vec<Arc<Shape>> = mesh
-            .into_iter()
-            .map(|tri| Arc::new(Shape::Triangle(tri)))
-            .collect();
+        let mesh: Vec<Shape> = mesh.into_iter().map(Shape::Triangle).collect();
         return Ok(mesh);
     } else {
         return Err(PbrtError::error(

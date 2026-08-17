@@ -19,6 +19,25 @@ use std::sync::Arc;
 thread_local!(static TESTS: StatPercent = StatPercent::new("Intersections/Ray-triangle intersection tests"));
 thread_local!(static TRI_MESH_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/Triangle meshes"));
 
+fn memory_probe_triangle(stage: &str, count: usize) {
+    if std::env::var_os("PBRT_MEMORY_PROFILE").is_none() {
+        return;
+    }
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let rss_kb = status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmRSS:")
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .unwrap_or(0);
+    eprintln!(
+        "[MEM-INVESTIGATION] triangle-stage={} rss_kb={} count={}",
+        stage, rss_kb, count
+    );
+}
+
 pub struct TriangleMesh {
     pub object_to_world: Transform,
     pub world_to_object: Transform,
@@ -115,7 +134,7 @@ impl TriangleMesh {
         reverse_orientation: bool,
         params: &ParameterDictionary,
         float_textures: &HashMap<String, Arc<FloatTexture>>,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         create_triangle_mesh_shape(o2w, w2o, reverse_orientation, params, float_textures)
     }
 }
@@ -938,6 +957,7 @@ pub fn create_triangle_mesh(
         n,
         uv,
     ));
+    memory_probe_triangle("mesh-created", n_triangles);
     let mut tris: Vec<Triangle> = Vec::with_capacity(n_triangles);
     for i in 0..n_triangles {
         let tri = Triangle::new(&mesh, i as u32);
@@ -945,6 +965,7 @@ pub fn create_triangle_mesh(
             tris.push(tri);
         }
     }
+    memory_probe_triangle("triangles-created", tris.len());
     return Ok(tris);
 }
 
@@ -956,7 +977,7 @@ pub fn create_triangle_mesh_shape(
     reverse_orientation: bool,
     params: &ParameterDictionary,
     float_textures: &FloatTextureMap,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let mut vertex_indices = Vec::new();
     let mut p: Vec<Point3f> = Vec::new();
     let mut s: Vec<Vector3f> = Vec::new();
@@ -1023,21 +1044,22 @@ pub fn create_triangle_mesh_shape(
             uv,
             params,
         )?;
-        let mut mesh: Vec<Arc<Shape>> = mesh
-            .into_iter()
-            .map(|tri| Arc::new(Shape::Triangle(tri)))
-            .collect();
+        let mesh: Vec<Shape> = mesh.into_iter().map(Shape::Triangle).collect();
 
         let alpha_mask_info = get_alpha_texture(params, float_textures)?;
         let shadow_alpha_mask_info = get_shadow_alpha_texture(params, float_textures)?;
         if alpha_mask_info.is_some() || shadow_alpha_mask_info.is_some() {
-            for i in 0..mesh.len() {
-                mesh[i] = Arc::new(Shape::AlphaMask(Box::new(AlphaMaskShape::new(
-                    &mesh[i],
-                    &alpha_mask_info,
-                    &shadow_alpha_mask_info,
-                ))));
-            }
+            return Ok(mesh
+                .into_iter()
+                .map(|shape| {
+                    let shape = Arc::new(shape);
+                    Shape::AlphaMask(Box::new(AlphaMaskShape::new(
+                        &shape,
+                        &alpha_mask_info,
+                        &shadow_alpha_mask_info,
+                    )))
+                })
+                .collect());
         }
         return Ok(mesh);
     } else {
