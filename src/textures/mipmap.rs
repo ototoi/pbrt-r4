@@ -19,17 +19,20 @@ thread_local!(static N_EWA_LOOKUPS: StatCounter = StatCounter::new("Texture/EWA 
 thread_local!(static N_TRILERP_LOOKUPS: StatCounter = StatCounter::new("Texture/Trilinear lookups"));
 thread_local!(static MIP_MAP_MEMORY: StatMemoryCounter = StatMemoryCounter::new("Memory/Texture MIP maps"));
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MIPMapStorageKind {
     F32,
     F16,
-    U8 { gamma: bool },
+    U8 { encoding: ColorEncoding },
 }
 
 pub enum MIPMapLevelStorage {
     F32(Vec<f32>),
     F16(Vec<half::f16>),
-    U8 { data: Vec<u8>, gamma: bool },
+    U8 {
+        data: Vec<u8>,
+        encoding: ColorEncoding,
+    },
 }
 
 impl MIPMapLevelStorage {
@@ -39,19 +42,15 @@ impl MIPMapLevelStorage {
             MIPMapStorageKind::F16 => {
                 MIPMapLevelStorage::F16(data.into_iter().map(half::f16::from_f32).collect())
             }
-            MIPMapStorageKind::U8 { gamma } => MIPMapLevelStorage::U8 {
+            MIPMapStorageKind::U8 { encoding } => MIPMapLevelStorage::U8 {
                 data: data
                     .into_iter()
                     .map(|v| {
-                        let v = if gamma {
-                            gamma_correct(v as Float)
-                        } else {
-                            v as Float
-                        };
+                        let v = encoding.from_linear(v as Float);
                         (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
                     })
                     .collect(),
-                gamma,
+                encoding,
             },
         }
     }
@@ -60,13 +59,9 @@ impl MIPMapLevelStorage {
         match self {
             MIPMapLevelStorage::F32(data) => data[i],
             MIPMapLevelStorage::F16(data) => data[i].to_f32(),
-            MIPMapLevelStorage::U8 { data, gamma } => {
+            MIPMapLevelStorage::U8 { data, encoding } => {
                 let v = data[i] as Float / 255.0;
-                if *gamma {
-                    inverse_gamma_correct(v) as f32
-                } else {
-                    v as f32
-                }
+                encoding.to_linear(v) as f32
             }
         }
     }
@@ -75,15 +70,11 @@ impl MIPMapLevelStorage {
         match self {
             MIPMapLevelStorage::F32(data) => data.clone(),
             MIPMapLevelStorage::F16(data) => data.iter().map(|v| v.to_f32()).collect(),
-            MIPMapLevelStorage::U8 { data, gamma } => data
+            MIPMapLevelStorage::U8 { data, encoding } => data
                 .iter()
                 .map(|v| {
                     let v = *v as Float / 255.0;
-                    if *gamma {
-                        inverse_gamma_correct(v) as f32
-                    } else {
-                        v as f32
-                    }
+                    encoding.to_linear(v) as f32
                 })
                 .collect(),
         }

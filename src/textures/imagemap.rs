@@ -134,7 +134,7 @@ impl ImageTexture<Float, Float> {
         let texinfo = create_texinfo(parameters)?
             .ok_or_else(|| PbrtError::error("Image texture requires a non-empty filename."))?;
         let scale = texinfo.scale;
-        let gamma = texinfo.gamma;
+        let encoding = texinfo.encoding;
         let invert = parameters.get_one_bool("invert", false);
         let mipmap_texinfo = mipmap_texinfo(&texinfo);
         let mipmap_key = mipmap_key(&texinfo);
@@ -182,7 +182,7 @@ impl ImageTexture<Float, Float> {
         };
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
-        let raw = read_raw_image_gamma_correct(&texinfo.filename, gamma)?;
+        let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
         let (mut data, channels) = normalize_raw_image_for_float(&raw)?;
         if texinfo.flip_y {
             flip_y(&mut data, &raw.resolution, channels);
@@ -305,16 +305,6 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
         Spectrum::rgb_to_sampled(rgb, self.spectrum_type, lambda)
     }
 
-    fn igc(from: &RGBSpectrum) -> RGBSpectrum {
-        let rgb = from.to_rgb();
-        let rgb: Vec<Float> = rgb.iter().map(|x| inverse_gamma_correct(*x)).collect();
-        return RGBSpectrum::from(rgb);
-    }
-
-    pub fn convert_in(from: &RGBSpectrum, scale: Float, gamma: bool) -> RGBSpectrum {
-        return (if gamma { Self::igc(from) } else { *from }) * scale;
-    }
-
     pub fn convert_out(from: &RGBSpectrum, spectrum_type: SpectrumType) -> Spectrum {
         return Spectrum::from_rgb(&from.to_rgb(), spectrum_type);
     }
@@ -352,7 +342,7 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
         let texinfo = create_texinfo(parameters)?
             .ok_or_else(|| PbrtError::error("Image texture requires a non-empty filename."))?;
         let scale = texinfo.scale;
-        let gamma = texinfo.gamma;
+        let encoding = texinfo.encoding;
         let invert = parameters.get_one_bool("invert", false);
         let mipmap_texinfo = mipmap_texinfo(&texinfo);
         let mipmap_key = mipmap_key(&texinfo);
@@ -394,14 +384,7 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
         };
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
-        let (mut data, resolution) = read_image_gamma_correct(&texinfo.filename, false)?;
-        // Apply scale / gamma in place — the old `.iter().map().collect()`
-        // path held the source Vec live alongside its freshly-allocated
-        // collected copy, doubling the largest transient allocation on
-        // sky.exr-class textures.
-        for spec in data.iter_mut() {
-            *spec = SpectrumImageTexture::convert_in(spec, 1.0, gamma);
-        }
+        let (mut data, resolution) = read_image_with_encoding(&texinfo.filename, encoding)?;
         if texinfo.flip_y {
             flip_y(&mut data, &resolution, 1);
         }
@@ -448,7 +431,7 @@ fn spectrum_mipmap_storage(texinfo: &TexInfo, resolution: &Point2i) -> MIPMapSto
         MIPMapStorageKind::F16
     } else {
         MIPMapStorageKind::U8 {
-            gamma: texinfo.gamma,
+            encoding: texinfo.encoding,
         }
     }
 }
@@ -530,13 +513,36 @@ pub fn create_texinfo(
     }
 
     let scale = parameters.get_one_float("scale", 1.0);
-    let gamma = {
-        let default_gamma = !has_extension(&filename, "exr");
-        let encoding = parameters.get_one_string("encoding", "");
-        if !encoding.is_empty() {
-            !matches!(encoding.as_str(), "linear")
+    let encoding = {
+        let default_encoding = if has_extension(&filename, "png") {
+            "sRGB"
         } else {
-            parameters.get_one_bool("gamma", default_gamma)
+            "linear"
+        };
+        let encoding_name = parameters.get_one_string("encoding", "");
+        if !encoding_name.is_empty() {
+            ColorEncoding::parse(&encoding_name)?
+        } else if parameters.parameter_dictionary().has_parameter("gamma") {
+            if !parameters
+                .parameter_dictionary()
+                .get_floats("gamma")
+                .is_empty()
+            {
+                ColorEncoding::parse(&format!(
+                    "gamma {}",
+                    parameters
+                        .parameter_dictionary()
+                        .get_one_float("gamma", 0.0)
+                ))?
+            } else {
+                ColorEncoding::from_legacy_gamma(
+                    parameters
+                        .parameter_dictionary()
+                        .get_one_bool("gamma", false),
+                )
+            }
+        } else {
+            ColorEncoding::parse(default_encoding)?
         }
     };
 
@@ -548,7 +554,7 @@ pub fn create_texinfo(
         swrap_mode,
         twrap_mode,
         scale,
-        gamma,
+        encoding,
         flip_y: true,
     }))
 }

@@ -3,7 +3,7 @@ use crate::paramdict::TextureParameterDictionary;
 use crate::textures::{FloatTexture, TextureEvalContext};
 use crate::util::base::*;
 use crate::util::error::PbrtError;
-use crate::util::imageio::{read_raw_image_gamma_correct, RawImage};
+use crate::util::imageio::{read_raw_image_with_encoding, ColorEncoding, RawImage};
 use crate::util::sampling::gram_schmidt;
 use crate::util::vecmath::Frame;
 
@@ -15,7 +15,7 @@ pub struct NormalMap {
 
 impl NormalMap {
     pub fn read(filename: &str) -> Result<Self, PbrtError> {
-        let raw = read_raw_image_gamma_correct(filename, false)?;
+        let raw = read_raw_image_with_encoding(filename, ColorEncoding::Linear)?;
         if raw.channels < 3 {
             return Err(PbrtError::error(&format!(
                 "{}: normal map image must contain R, G, and B channels",
