@@ -26,6 +26,18 @@ pub enum MIPMapStorageKind {
     U8 { encoding: ColorEncoding },
 }
 
+impl MIPMapStorageKind {
+    pub fn from_raw_image(raw: &RawImage) -> Self {
+        match &raw.data {
+            RawImageData::F32(_) => Self::F32,
+            RawImageData::F16(_) => Self::F16,
+            RawImageData::U8 { encoding, .. } => Self::U8 {
+                encoding: *encoding,
+            },
+        }
+    }
+}
+
 pub enum MIPMapLevelStorage {
     F32(Vec<f32>),
     F16(Vec<half::f16>),
@@ -815,6 +827,48 @@ where
         swrap_mode: ImageWrap,
         twrap_mode: ImageWrap,
     ) -> Self {
+        Self::new_with_raw_channels_and_storage(
+            resolution,
+            data,
+            channels,
+            filter,
+            max_anisotropy,
+            swrap_mode,
+            twrap_mode,
+            MIPMapStorageKind::F32,
+        )
+    }
+
+    pub fn new_from_raw_image(
+        raw: &RawImage,
+        filter: ImageFilter,
+        max_anisotropy: Float,
+        swrap_mode: ImageWrap,
+        twrap_mode: ImageWrap,
+    ) -> Self {
+        let data = raw.data_f32();
+        Self::new_with_raw_channels_and_storage(
+            &raw.resolution,
+            &data,
+            raw.channels,
+            filter,
+            max_anisotropy,
+            swrap_mode,
+            twrap_mode,
+            MIPMapStorageKind::from_raw_image(raw),
+        )
+    }
+
+    pub fn new_with_raw_channels_and_storage(
+        resolution: &Point2i,
+        data: &[f32],
+        channels: usize,
+        filter: ImageFilter,
+        max_anisotropy: Float,
+        swrap_mode: ImageWrap,
+        twrap_mode: ImageWrap,
+        storage: MIPMapStorageKind,
+    ) -> Self {
         assert!((1..=4).contains(&channels));
         let _p = ProfilePhase::new(Prof::MIPMapCreation);
         let resolution = (resolution.x as usize, resolution.y as usize);
@@ -824,7 +878,7 @@ where
             resolution,
             swrap_mode,
             twrap_mode,
-            MIPMapStorageKind::F32,
+            storage,
         );
         Self::make_from_pyramid(pyramid, filter, max_anisotropy, swrap_mode, twrap_mode)
     }
