@@ -956,9 +956,9 @@ impl SceneBuilder {
         if animated {
             // Animated shapes: no area light (warned at parse time).
             let mut piece_prims: Vec<Arc<Primitive>> = Vec::with_capacity(shapes.len());
-            for s in &shapes {
+            for s in shapes {
                 let prim = Arc::new(Primitive::new_geometric(
-                    s.clone(),
+                    s,
                     &material,
                     &None,
                     &medium_interface,
@@ -1010,29 +1010,42 @@ impl SceneBuilder {
         // triangle sets get a dedicated accelerator before entering the scene BVH.
         let mut piece_prims = Vec::with_capacity(shapes.len());
         for s in shapes {
-            let area_light = if let Some(al_idx) = shape.area_light_index {
+            if let Some(al_idx) = shape.area_light_index {
                 let al = &self.area_lights[al_idx];
                 let al_params = make_absolute_path(&al.base.params, &self.seen_work_dirs);
                 let al_mi = build_medium_interface(&al.medium_interface, named_media);
-                match Light::create_area(&al.base.name, &object_to_world, &al_mi, &al_params, &s) {
+                let shared_shape = Arc::new(s);
+                let area_light = match Light::create_area(
+                    &al.base.name,
+                    &object_to_world,
+                    &al_mi,
+                    &al_params,
+                    &shared_shape,
+                ) {
                     Ok(l) => {
                         out_area_lights.push(Arc::clone(&l));
-                        Some(l)
+                        l
                     }
                     Err(e) => {
                         return Err(e);
                     }
-                }
+                };
+                let prim = Arc::new(Primitive::new_geometric_shared(
+                    shared_shape,
+                    &material,
+                    &Some(area_light),
+                    &medium_interface,
+                ));
+                piece_prims.push(prim);
             } else {
-                None
-            };
-            let prim = Arc::new(Primitive::new_geometric(
-                s,
-                &material,
-                &area_light,
-                &medium_interface,
-            ));
-            piece_prims.push(prim);
+                let prim = Arc::new(Primitive::new_geometric(
+                    s,
+                    &material,
+                    &None,
+                    &medium_interface,
+                ));
+                piece_prims.push(prim);
+            }
         }
         if use_dedicated_mesh_accelerator && piece_prims.len() > 1 {
             out_prims.push(self.create_shape_accelerator(&piece_prims)?);

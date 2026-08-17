@@ -17,9 +17,8 @@ use crate::cpu::aggregates::Accel;
 
 /// Primitive is an enum that can hold different types of primitives
 /// This follows pbrt-v4's TaggedPointer approach
-#[derive(Clone)]
 pub enum Primitive {
-    Simple(SimplePrimitive),
+    Simple(Box<SimplePrimitive>),
     Geometric(Box<GeometricPrimitive>),
     Transformed(TransformedPrimitive),
     Animated(AnimatedPrimitive),
@@ -28,7 +27,7 @@ pub enum Primitive {
 
 impl Primitive {
     pub fn new_geometric(
-        shape: Arc<Shape>,
+        shape: Shape,
         material: &Option<Arc<Material>>,
         area_light: &Option<Arc<Light>>,
         mi: &MediumInterface,
@@ -37,9 +36,24 @@ impl Primitive {
         // fields on every primitive when neither is active.
         if area_light.is_none() && !mi.is_medium_transition() {
             if let Some(material) = material {
-                return Primitive::Simple(SimplePrimitive::new(shape, Arc::clone(material)));
+                return Primitive::Simple(Box::new(SimplePrimitive::new(
+                    shape,
+                    Arc::clone(material),
+                )));
             }
         }
+        let shape = Arc::new(shape);
+        Primitive::Geometric(Box::new(GeometricPrimitive::new(
+            shape, material, area_light, mi,
+        )))
+    }
+
+    pub fn new_geometric_shared(
+        shape: Arc<Shape>,
+        material: &Option<Arc<Material>>,
+        area_light: &Option<Arc<Light>>,
+        mi: &MediumInterface,
+    ) -> Self {
         Primitive::Geometric(Box::new(GeometricPrimitive::new(
             shape, material, area_light, mi,
         )))

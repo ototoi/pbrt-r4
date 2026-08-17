@@ -64,6 +64,7 @@ fn constant_zero_alpha_area_light_is_delta_position() {
     )
     .expect("sphere shape")
     .remove(0);
+    let shape = Arc::new(shape);
 
     let light = Light::create_area(
         "diffuse",

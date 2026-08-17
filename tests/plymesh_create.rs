@@ -133,5 +133,5 @@ end_header
     .expect("ply quad should parse into a bilinear patch");
 
     assert_eq!(shapes.len(), 1);
-    assert!(matches!(shapes[0].as_ref(), Shape::BilinearPatch(_)));
+    assert!(matches!(shapes[0], Shape::BilinearPatch(_)));
 }

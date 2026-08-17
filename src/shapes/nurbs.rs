@@ -6,8 +6,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
-use std::sync::Arc;
-
 use super::create_triangle_mesh;
 
 pub struct NURBS;
@@ -18,7 +16,7 @@ impl NURBS {
         w2o: &Transform,
         reverse_orientation: bool,
         params: &ParameterDictionary,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         create_nurbs(o2w, w2o, reverse_orientation, params)
     }
 }
@@ -198,7 +196,7 @@ fn create_tesselated_mesh(
     vrange: (Float, Float),
     dicev: usize,
     pw: &[Homogeneous3],
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let u0 = urange.0;
     let u1 = urange.1;
     let v0 = vrange.0;
@@ -265,10 +263,7 @@ fn create_tesselated_mesh(
         uvs,
         &params,
     )?;
-    let mesh: Vec<Arc<Shape>> = mesh
-        .into_iter()
-        .map(|tri| Arc::new(Shape::Triangle(tri)))
-        .collect();
+    let mesh: Vec<Shape> = mesh.into_iter().map(Shape::Triangle).collect();
     return Ok(mesh);
 }
 
@@ -289,7 +284,7 @@ pub fn create_nurbs(
     w2o: &Transform,
     reverse_orientation: bool,
     params: &ParameterDictionary,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let nu = params.get_one_int("nu", -1);
     if nu == -1 {
         return Err(PbrtError::error(

@@ -42,7 +42,6 @@ impl GeometricPrimitive {
 
         let s = self.shape.as_ref();
         if let Some(mut si) = s.intersect(r, t_max) {
-            si.intr.set_shape(&self.shape);
             si.intr.set_intersection_properties(
                 &self.material,
                 &self.area_light,

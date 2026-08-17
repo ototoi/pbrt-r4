@@ -27,7 +27,7 @@ pub fn create_ply_mesh(
     reverse_orientation: bool,
     params: &ParameterDictionary,
     float_textures: &FloatTextureMap,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let filename = params.get_one_string("filename", "");
     let mut tri_quad_mesh = TriQuadMesh::read_ply(&filename)?;
 
@@ -61,7 +61,7 @@ pub fn create_ply_mesh(
         )?;
     }
 
-    let mut mesh: Vec<Arc<Shape>> = Vec::new();
+    let mut mesh: Vec<Shape> = Vec::new();
     if !tri_quad_mesh.tri_indices.is_empty() {
         let tris = create_triangle_mesh(
             o2w,
@@ -74,7 +74,7 @@ pub fn create_ply_mesh(
             tri_quad_mesh.uv.clone(),
             params,
         )?;
-        mesh.extend(tris.into_iter().map(|tri| Arc::new(Shape::Triangle(tri))));
+        mesh.extend(tris.into_iter().map(Shape::Triangle));
     }
     if !tri_quad_mesh.quad_indices.is_empty() {
         let patches = create_bilinear_patch_mesh(
@@ -87,11 +87,7 @@ pub fn create_ply_mesh(
             tri_quad_mesh.uv,
             tri_quad_mesh.face_indices,
         )?;
-        mesh.extend(
-            patches
-                .into_iter()
-                .map(|patch| Arc::new(Shape::BilinearPatch(patch))),
-        );
+        mesh.extend(patches.into_iter().map(Shape::BilinearPatch));
     }
     if mesh.is_empty() {
         warn!(
@@ -103,13 +99,17 @@ pub fn create_ply_mesh(
     let alpha_mask_info = get_alpha_texture(params, float_textures)?;
     let shadow_alpha_mask_info = get_shadow_alpha_texture(params, float_textures)?;
     if alpha_mask_info.is_some() || shadow_alpha_mask_info.is_some() {
-        for i in 0..mesh.len() {
-            mesh[i] = Arc::new(Shape::AlphaMask(Box::new(AlphaMaskShape::new(
-                &mesh[i],
-                &alpha_mask_info,
-                &shadow_alpha_mask_info,
-            ))));
-        }
+        return Ok(mesh
+            .into_iter()
+            .map(|shape| {
+                let shape = Arc::new(shape);
+                Shape::AlphaMask(Box::new(AlphaMaskShape::new(
+                    &shape,
+                    &alpha_mask_info,
+                    &shadow_alpha_mask_info,
+                )))
+            })
+            .collect());
     }
 
     Ok(mesh)
@@ -122,7 +122,7 @@ impl PlyMesh {
         reverse_orientation: bool,
         params: &ParameterDictionary,
         float_textures: &FloatTextureMap,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         create_ply_mesh(o2w, w2o, reverse_orientation, params, float_textures)
     }
 }

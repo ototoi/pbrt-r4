@@ -44,7 +44,7 @@ impl BilinearPatchMesh {
         reverse_orientation: bool,
         params: &ParameterDictionary,
         float_textures: &FloatTextureMap,
-    ) -> Result<Vec<Arc<Shape>>, PbrtError> {
+    ) -> Result<Vec<Shape>, PbrtError> {
         create_bilinear_mesh_shape(o2w, w2o, reverse_orientation, params, float_textures)
     }
 }
@@ -770,7 +770,7 @@ pub fn create_bilinear_mesh_shape(
     reverse_orientation: bool,
     params: &ParameterDictionary,
     float_textures: &FloatTextureMap,
-) -> Result<Vec<Arc<Shape>>, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let mut p: Vec<Point3f> = Vec::new();
     if let Some(points) = params.get_points_ref("P") {
         let point_count = points.len() / 3;
@@ -830,7 +830,7 @@ pub fn create_bilinear_mesh_shape(
         face_indices.extend(indices.iter().copied());
     }
 
-    let mut shapes: Vec<Arc<Shape>> = create_bilinear_patch_mesh(
+    let shapes: Vec<Shape> = create_bilinear_patch_mesh(
         o2w,
         w2o,
         reverse_orientation,
@@ -841,19 +841,23 @@ pub fn create_bilinear_mesh_shape(
         face_indices,
     )?
     .into_iter()
-    .map(|patch| Arc::new(Shape::BilinearPatch(patch)))
+    .map(Shape::BilinearPatch)
     .collect();
 
     let alpha_mask_info = get_alpha_texture(params, float_textures)?;
     let shadow_alpha_mask_info = get_shadow_alpha_texture(params, float_textures)?;
     if alpha_mask_info.is_some() || shadow_alpha_mask_info.is_some() {
-        for shape in &mut shapes {
-            *shape = Arc::new(Shape::AlphaMask(Box::new(AlphaMaskShape::new(
-                shape,
-                &alpha_mask_info,
-                &shadow_alpha_mask_info,
-            ))));
-        }
+        return Ok(shapes
+            .into_iter()
+            .map(|shape| {
+                let shape = Arc::new(shape);
+                Shape::AlphaMask(Box::new(AlphaMaskShape::new(
+                    &shape,
+                    &alpha_mask_info,
+                    &shadow_alpha_mask_info,
+                )))
+            })
+            .collect());
     }
 
     Ok(shapes)

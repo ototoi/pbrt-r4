@@ -127,7 +127,7 @@ fn test_shape_create_bilinear_mesh() {
     .unwrap();
 
     assert_eq!(shapes.len(), 1);
-    assert!(matches!(shapes[0].as_ref(), Shape::BilinearPatch(_)));
+    assert!(matches!(shapes[0], Shape::BilinearPatch(_)));
 }
 
 #[test]
