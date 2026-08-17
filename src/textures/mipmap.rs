@@ -721,6 +721,12 @@ pub struct MIPMap<T> {
 pub type MIPMapFloatView = MIPMap<Float>;
 pub type MIPMapSpectrumView = MIPMap<RGBSpectrum>;
 
+impl<T> MIPMap<T> {
+    pub fn channel_count(&self) -> usize {
+        self.storage.pyramid[0].channels
+    }
+}
+
 impl<
         T: Default + Debug + Copy + std::ops::Add<T, Output = T> + std::ops::Mul<Float, Output = T>,
     > MIPMap<T>

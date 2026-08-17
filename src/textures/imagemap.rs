@@ -80,6 +80,12 @@ pub struct ImageTexture<Tmemory, Treturn> {
     phantom: PhantomData<Treturn>, //non allocate
 }
 
+impl<Tmemory, Treturn> ImageTexture<Tmemory, Treturn> {
+    pub fn mipmap_channel_count(&self) -> usize {
+        self.mipmap.channel_count()
+    }
+}
+
 impl ImageTexture<Float, Float> {
     pub fn new(
         mapping: TextureMapping2D,
@@ -395,10 +401,11 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
 
         let _p = ProfilePhase::new(Prof::TextureLoading);
         let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
-        let (data, resolution) = normalize_raw_image_for_spectrum(&raw)?;
-        let mipmap = MIPMap::<RGBSpectrum>::new_with_storage(
+        let (data, channels, resolution) = normalize_raw_image_for_spectrum(&raw)?;
+        let mipmap = MIPMap::<RGBSpectrum>::new_with_raw_channels_and_storage(
             &resolution,
             &data,
+            channels,
             texinfo.filter,
             texinfo.max_aniso,
             texinfo.swrap_mode,
@@ -538,7 +545,7 @@ pub fn create_texinfo(
 fn alpha_all_one(raw: &RawImage) -> bool {
     let alpha_offset = raw.channels - 1;
     let pixels = (raw.resolution.x * raw.resolution.y) as usize;
-    (0..pixels).all(|i| raw.channel(i, alpha_offset) >= 1.0 - 1e-6)
+    (0..pixels).all(|i| raw.channel(i, alpha_offset) == 1.0)
 }
 
 fn normalize_raw_image_for_float(raw: &RawImage) -> Result<(Vec<Float>, usize), PbrtError> {
@@ -578,33 +585,39 @@ fn normalize_raw_image_for_float(raw: &RawImage) -> Result<(Vec<Float>, usize), 
 
 fn normalize_raw_image_for_spectrum(
     raw: &RawImage,
-) -> Result<(Vec<RGBSpectrum>, Point2i), PbrtError> {
+) -> Result<(Vec<Float>, usize, Point2i), PbrtError> {
     let pixels = (raw.resolution.x * raw.resolution.y) as usize;
-    let mut data = Vec::with_capacity(pixels);
-    for pixel in 0..pixels {
-        match raw.channels {
-            1 => {
+    match raw.channels {
+        1 => Ok((raw.data_f32(), 1, raw.resolution)),
+        2 => {
+            let mut data = Vec::with_capacity(3 * pixels);
+            for pixel in 0..pixels {
                 let value = raw.channel(pixel, 0);
-                data.push(RGBSpectrum::new(value, value, value));
+                data.extend_from_slice(&[value, value, value]);
             }
-            2 => {
-                let value = raw.channel(pixel, 0);
-                data.push(RGBSpectrum::new(value, value, value));
-            }
-            3 | 4 => data.push(RGBSpectrum::new(
-                raw.channel(pixel, 0),
-                raw.channel(pixel, 1),
-                raw.channel(pixel, 2),
-            )),
-            _ => {
-                return Err(PbrtError::error(&format!(
-                    "Unsupported image channel count for Spectrum imagemap: {}",
-                    raw.channels
-                )));
+            Ok((data, 3, raw.resolution))
+        }
+        3 => Ok((raw.data_f32(), 3, raw.resolution)),
+        4 => {
+            if alpha_all_one(raw) {
+                let mut data = Vec::with_capacity(3 * pixels);
+                for pixel in 0..pixels {
+                    data.extend_from_slice(&[
+                        raw.channel(pixel, 0),
+                        raw.channel(pixel, 1),
+                        raw.channel(pixel, 2),
+                    ]);
+                }
+                Ok((data, 3, raw.resolution))
+            } else {
+                Ok((raw.data_f32(), 4, raw.resolution))
             }
         }
+        _ => Err(PbrtError::error(&format!(
+            "Unsupported image channel count for Spectrum imagemap: {}",
+            raw.channels
+        ))),
     }
-    Ok((data, raw.resolution))
 }
 
 pub type FloatImageTexture = ImageTexture<Float, Float>;
