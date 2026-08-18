@@ -8,7 +8,6 @@ use crate::textures::MIPMap;
 use crate::util::base::*;
 use crate::util::error::PbrtError;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::rgb_to_spectrum::RGBColorSpace;
 use crate::util::spectrum::*;
@@ -228,7 +227,6 @@ impl PortalImageInfiniteLight {
         lambda: &SampledWavelengths,
         _allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let bounds = self.image_bounds(&ctx.p)?;
         let (uv, map_pdf) = self.distribution.sample(&u, &bounds)?;
         let (wi, duv_dw) = self.render_from_image(&uv);
@@ -248,7 +246,6 @@ impl PortalImageInfiniteLight {
         wi: Vector3f,
         _allow_incomplete_pdf: bool,
     ) -> Float {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let (uv, duv_dw) = match self.image_from_render(&wi) {
             Some(x) => x,
             None => return 0.0,
@@ -270,7 +267,6 @@ impl PortalImageInfiniteLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let unit = Bounds2f::new(&Point2f::new(0.0, 0.0), &Point2f::new(1.0, 1.0));
         let (uv, map_pdf) = self.distribution.sample(&u1, &unit)?;
         let (w_pos, duv_dw) = self.render_from_image(&uv);
@@ -294,7 +290,6 @@ impl PortalImageInfiniteLight {
     }
 
     pub fn pdf_le_ray(&self, ray: &Ray) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let w = -ray.d.normalize();
         let (uv, duv_dw) = match self.image_from_render(&w) {
             Some(x) => x,

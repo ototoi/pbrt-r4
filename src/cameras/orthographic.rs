@@ -8,7 +8,6 @@ use crate::paramdict::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
@@ -150,8 +149,6 @@ impl OrthographicCamera {
         sample: &CameraSample,
         _lambda: &SampledWavelengths,
     ) -> Option<CameraRay> {
-        let _p = ProfilePhase::new(Prof::GenerateCameraRay);
-
         // Compute raster and camera sample positions
         let p_film = Point3f::new(sample.p_film.x, sample.p_film.y, 0.0);
         let p_camera = self.base.raster_to_camera.transform_point(&p_film);

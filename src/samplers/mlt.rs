@@ -3,7 +3,6 @@ use crate::options::PbrtOptions;
 use crate::samplers::*;
 
 use crate::util::base::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -142,7 +141,6 @@ impl MLTSampler {
     }
 
     pub fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
         let index = self.get_next_index() as usize;
         self.ensure_ready(index);
         return self.x[index].value;

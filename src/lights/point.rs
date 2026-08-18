@@ -7,7 +7,6 @@ use crate::paramdict::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
@@ -99,7 +98,6 @@ impl PointLight {
         lambda: &SampledWavelengths,
         _allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let p = self
             .base
             .render_from_light
@@ -131,7 +129,6 @@ impl PointLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let p = self
             .base
             .render_from_light
@@ -151,7 +148,6 @@ impl PointLight {
     //   *pdfPos = 0;
     //   *pdfDir = UniformSpherePDF();
     pub fn pdf_le_ray(&self, _ray: &Ray) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         (0.0, uniform_sphere_pdf())
     }
 

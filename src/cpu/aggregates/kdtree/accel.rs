@@ -5,8 +5,6 @@ use crate::paramdict::*;
 use crate::shapes::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
-
 use std::sync::Arc;
 
 // KDTreeAccel Local Declarations
@@ -290,8 +288,6 @@ impl KDTreeAccel {
         max_depth: i32,
     ) -> Self {
         // Build kd-tree for accelerator
-        let _p = ProfilePhase::new(Prof::AccelConstruction);
-
         let primitives: Vec<Arc<Primitive>> = prims.to_vec();
         if primitives.is_empty() {
             let mut primitive_indices = Vec::new();
@@ -370,8 +366,6 @@ impl KDTreeAccel {
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        let _p = ProfilePhase::new(Prof::AccelIntersect);
-
         // Compute initial parametric range of ray inside kd-tree extent
         let (t_min, t_max) = self.bounds.intersect_p(r, t_max)?;
 
@@ -445,8 +439,6 @@ impl KDTreeAccel {
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        let _p = ProfilePhase::new(Prof::AccelIntersectP);
-
         // Compute initial parametric range of ray inside kd-tree extent
         let (t_min, t_max) = if let Some((t_min, t_max)) = self.bounds.intersect_p(r, t_max) {
             (t_min, t_max)

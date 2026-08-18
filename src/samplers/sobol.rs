@@ -7,7 +7,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::lowdiscrepancy::sobol::sobolmatrices::{SOBOL_MATRICES_32, SOBOL_MATRIX_SIZE};
 use crate::util::lowdiscrepancy::*;
-use crate::util::profile::*;
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct SobolSampler {
@@ -49,7 +48,6 @@ impl SobolSampler {
     }
 
     pub fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
         if self.dimension >= n_sobol_dimensions() {
             self.dimension = 2;
         }
@@ -59,7 +57,6 @@ impl SobolSampler {
     }
 
     pub fn get_2d(&mut self) -> Point2f {
-        let _p = ProfilePhase::new(Prof::GetSample);
         if self.dimension + 1 >= n_sobol_dimensions() {
             self.dimension = 2;
         }

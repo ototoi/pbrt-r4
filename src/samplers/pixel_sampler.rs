@@ -1,6 +1,5 @@
 use super::base_sampler::BaseSampler;
 use crate::util::base::*;
-use crate::util::profile::*;
 use crate::util::rng::*;
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -49,8 +48,6 @@ impl BasePixelSampler {
     }
 
     pub fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
-
         let dim = self.current1d_dimension as usize;
         if dim < self.samples1d.len() {
             self.current1d_dimension += 1;
@@ -62,8 +59,6 @@ impl BasePixelSampler {
     }
 
     pub fn get_2d(&mut self) -> Point2f {
-        let _p = ProfilePhase::new(Prof::GetSample);
-
         let dim = self.current2d_dimension as usize;
         if dim < self.samples2d.len() {
             self.current2d_dimension += 1;

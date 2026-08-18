@@ -1,6 +1,6 @@
 use super::film_base::{
     add_splat_into_tiles, make_splat_tiles, merge_splat_tiles, normalize_pixel, FilmBase,
-    FilmBaseParameters, FILM_PIXEL_MEMORY,
+    FilmBaseParameters,
 };
 use super::film_tile::{FilmTile, SpectralTileConfig};
 use super::splat_tile::*;
@@ -9,7 +9,6 @@ use crate::film::film_base::add_splat_packet_into_tiles;
 use crate::util::base::*;
 use crate::util::geometry::*;
 use crate::util::imageio::*;
-use crate::util::profile::*;
 use crate::util::spectrum::*;
 
 use log::*;
@@ -78,11 +77,6 @@ impl SpectralFilm {
         let area = pixel_bounds.area() as usize;
         let pixels: Vec<SpectralPixel> =
             (0..area).map(|_| SpectralPixel::zero(n_buckets)).collect();
-        FILM_PIXEL_MEMORY.with(|s| {
-            let per_pixel_bytes =
-                std::mem::size_of::<SpectralPixel>() + 2 * n_buckets * std::mem::size_of::<Float>();
-            s.add(area * per_pixel_bytes);
-        });
         let splat_pixels = vec![[0.0; 3]; area];
         let (splat_tiles, splat_size) = make_splat_tiles(&pixel_bounds);
 
@@ -224,7 +218,6 @@ impl SpectralFilm {
         v: &Spectrum,
         lambda: Option<&SampledWavelengths>,
     ) {
-        let _p = ProfilePhase::new(Prof::SplatFilm);
         add_splat_into_tiles(
             &self.splat_tiles,
             self.splat_size,
@@ -240,7 +233,6 @@ impl SpectralFilm {
     /// `&self` because all mutation flows through the per-tile RwLock
     /// (see `RGBFilm::add_splat_packet`).
     pub fn add_splat_packet(&self, p: &Vector2f, v: &SampledSpectrum, lambda: &SampledWavelengths) {
-        let _p = ProfilePhase::new(Prof::SplatFilm);
         add_splat_packet_into_tiles(
             &self.splat_tiles,
             self.splat_size,

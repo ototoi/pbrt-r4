@@ -6,7 +6,6 @@ use crate::media::*;
 use crate::textures::{ImageWrap, MIPMap};
 use crate::util::base::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::rgb_to_spectrum::RGBColorSpace;
 use crate::util::spectrum::*;
@@ -155,7 +154,6 @@ impl ImageInfiniteLight {
         lambda: &SampledWavelengths,
         allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         // pbrt-v4 (lights.h:581-583): MIS-driven path tracers ask for
         // the "incomplete PDF" mode which samples from the compensated
         // distribution (peaks only). Bistro / sanmiguel / etc. with a
@@ -195,7 +193,6 @@ impl ImageInfiniteLight {
         wi: Vector3f,
         allow_incomplete_pdf: bool,
     ) -> Float {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let w = self.base.world_to_light().transform_vector(&wi);
         let uv = equal_area_sphere_to_square(&w);
         let dist = if allow_incomplete_pdf {
@@ -214,7 +211,6 @@ impl ImageInfiniteLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let (uv, map_pdf) = self.distribution.sample_continuous(&u1);
         if map_pdf <= 0.0 {
             return None;
@@ -240,7 +236,6 @@ impl ImageInfiniteLight {
 
     // v4 lights.cpp:1097-1102.
     pub fn pdf_le_ray(&self, ray: &Ray) -> (Float, Float) {
-        let _ = ProfilePhase::new(Prof::LightPdf);
         let d = -self.base.world_to_light().transform_vector(&ray.d);
         let uv = equal_area_sphere_to_square(&d);
         let map_pdf = Float::max(0.0, self.distribution.pdf(&uv));

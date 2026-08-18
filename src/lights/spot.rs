@@ -8,7 +8,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::math::newton_bisection;
-use crate::util::profile::*;
 use crate::util::sampling::safe_sqrt as sampling_safe_sqrt;
 use crate::util::sampling::*;
 use crate::util::scattering::cos_theta;
@@ -164,7 +163,6 @@ impl SpotLight {
         lambda: &SampledWavelengths,
         _allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let p = self
             .base
             .render_from_light
@@ -201,7 +199,6 @@ impl SpotLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let p0 = 1.0 - self.cos_falloff_start;
         let p1 = (self.cos_falloff_start - self.cos_falloff_end) / 2.0;
         let (section, section_pdf, _) = sample_discrete2(p0, p1, u2.x);
@@ -241,7 +238,6 @@ impl SpotLight {
 
     // v4 lights.cpp:1415-1425.
     pub fn pdf_le_ray(&self, ray: &Ray) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let p0 = 1.0 - self.cos_falloff_start;
         let p1 = (self.cos_falloff_start - self.cos_falloff_end) / 2.0;
         let cos_theta_v = cos_theta(&self.base.world_to_light().transform_vector(&ray.d));

@@ -1,6 +1,6 @@
 use super::film_base::{
     add_splat_into_tiles, add_splat_packet_into_tiles, make_splat_tiles, merge_splat_tiles,
-    normalize_pixel, FilmBase, FilmBaseParameters, FILM_PIXEL_MEMORY,
+    normalize_pixel, FilmBase, FilmBaseParameters,
 };
 use super::film_tile::FilmTile;
 use super::splat_tile::*;
@@ -9,7 +9,6 @@ use crate::util::base::*;
 use crate::util::geometry::*;
 use crate::util::image::Image;
 use crate::util::imageio::*;
-use crate::util::profile::*;
 use crate::util::spectrum::*;
 
 use log::*;
@@ -52,9 +51,6 @@ impl RGBFilm {
         let max_sample_luminance = p.max_sample_luminance;
 
         let pixels = vec![RGBPixel::zero(); pixel_bounds.area() as usize];
-        FILM_PIXEL_MEMORY.with(|s| {
-            s.add(pixel_bounds.area() as usize * std::mem::size_of::<RGBPixel>());
-        });
         let splat_pixels = vec![[0.0; 3]; pixel_bounds.area() as usize];
         let (splat_tiles, splat_size) = make_splat_tiles(&pixel_bounds);
 
@@ -145,7 +141,6 @@ impl RGBFilm {
         v: &Spectrum,
         lambda: Option<&SampledWavelengths>,
     ) {
-        let _p = ProfilePhase::new(Prof::SplatFilm);
         add_splat_into_tiles(
             &self.splat_tiles,
             self.splat_size,
@@ -159,7 +154,6 @@ impl RGBFilm {
 
     /// pbrt-v4 `Film::AddSplat(Point2f, SampledSpectrum, SampledWavelengths)`.
     pub fn add_splat_packet(&self, p: &Vector2f, v: &SampledSpectrum, lambda: &SampledWavelengths) {
-        let _p = ProfilePhase::new(Prof::SplatFilm);
         add_splat_packet_into_tiles(
             &self.splat_tiles,
             self.splat_size,

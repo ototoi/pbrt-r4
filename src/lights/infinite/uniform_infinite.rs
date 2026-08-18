@@ -6,7 +6,6 @@ use crate::media::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
 use crate::util::geometry::{Bounds3f, Ray};
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
@@ -90,7 +89,6 @@ impl UniformInfiniteLight {
         lambda: &SampledWavelengths,
         allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         if allow_incomplete_pdf {
             return None;
         }
@@ -130,7 +128,6 @@ impl UniformInfiniteLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let w = uniform_sample_sphere(&u1);
         let center = *self.scene_center.read().unwrap();
         let radius = *self.scene_radius.read().unwrap();
@@ -150,7 +147,6 @@ impl UniformInfiniteLight {
 
     // v4 lights.cpp:997-1000.
     pub fn pdf_le_ray(&self, _ray: &Ray) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let r = self.radius();
         let pdf_pos = 1.0 / (PI * r * r);
         let pdf_dir = uniform_sphere_pdf();

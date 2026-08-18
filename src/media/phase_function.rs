@@ -1,6 +1,5 @@
 use crate::util::base::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 
 #[derive(Debug, Clone)]
 pub enum PhaseFunction {
@@ -41,12 +40,10 @@ impl HGPhaseFunction {
     }
 
     pub fn p(&self, wo: &Vector3f, wi: &Vector3f) -> Float {
-        let _p = ProfilePhase::new(Prof::PhaseFuncEvaluation);
         phase_hg(Vector3f::dot(wo, wi), self.g)
     }
 
     pub fn sample_p(&self, wo: &Vector3f, u: &Point2f) -> (Float, Vector3f) {
-        let _p = ProfilePhase::new(Prof::PhaseFuncSampling);
         // v4 `SampleHenyeyGreenstein` (sampling.cpp): clamp g into a stable
         // range and key the small-angle branch off `|g|`, otherwise negative
         // g falls into the isotropic branch and breaks back-scattering.

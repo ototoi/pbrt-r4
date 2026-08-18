@@ -11,11 +11,9 @@ use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::lowdiscrepancy::*;
 use crate::util::misc::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::scattering::*; // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 use crate::util::transform::*; // For refract and other scattering functions
 
 use log::*;
@@ -24,8 +22,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::RwLock;
-
-thread_local!(static RAYS: StatPercent = StatPercent::new("Camera/Rays vignetted by lens system"));
 
 #[derive(Debug, Clone, Copy)]
 pub struct LensElementInterface {
@@ -636,13 +632,6 @@ impl RealisticCamera {
         sample: &CameraSample,
         _lambda: &SampledWavelengths,
     ) -> Option<CameraRay> {
-        let _p = ProfilePhase::new(Prof::GenerateCameraRay);
-
-        RAYS.with(|rays| {
-            //totalRays
-            rays.add_denom(1);
-        });
-
         let p_film = self.find_point_on_film(sample);
 
         // Trace ray from _pFilm_ through lens system
@@ -660,10 +649,6 @@ impl RealisticCamera {
         let ray = if let Some(ray) = self.base.trace_lenses_from_film(&r_film) {
             ray
         } else {
-            RAYS.with(|rays| {
-                //vignettedRays
-                rays.add_num(1);
-            });
             return None;
         };
 

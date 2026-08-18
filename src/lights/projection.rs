@@ -11,7 +11,6 @@ use crate::util::geometry::*;
 use crate::util::image::*;
 use crate::util::imageio::read_image_exr_with_metadata;
 use crate::util::imageio::*;
-use crate::util::profile::*;
 use crate::util::sampling::PiecewiseConstant2D;
 use crate::util::sampling::*;
 use crate::util::scattering::cos_theta;
@@ -140,7 +139,6 @@ impl ProjectionLight {
         lambda: &SampledWavelengths,
         _allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let p = self
             .base
             .render_from_light
@@ -195,7 +193,6 @@ impl ProjectionLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let medium = self.base.medium_interface.get_outside();
         let (ps, pdf) = self.distribution.sample_continuous(&u1);
         if pdf <= 0.0 {
@@ -227,7 +224,6 @@ impl ProjectionLight {
 
     // v4 lights.cpp:428-446.
     pub fn pdf_le_ray(&self, ray: &Ray) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let w = self
             .base
             .world_to_light()

@@ -23,17 +23,12 @@ use crate::util::error::PbrtError;
 use crate::util::geometry::*;
 use crate::util::rng::RNG;
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 use crate::util::transform::*;
 
 use rayon::prelude::*;
 use std::sync::Arc;
 
 use nanovdb_rs::{create_sampler1, Grid, GridType, NvdbFile, ReadAccessor, TreeData};
-
-thread_local!(
-    static NANOVDB_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/Volume density grid (sparse)")
-);
 
 /// Open the named `Float` grid from a `.nvdb` file for `NanoVDBMedium`,
 /// keeping the sparse NanoVDB tree alive.
@@ -371,18 +366,8 @@ impl NanoVDBMedium {
                 Some(NanoVDBFloatGrid::new(grid)?)
             }
         };
-        NANOVDB_BYTES.with(|s| {
-            s.add(std::mem::size_of::<NanoVDBMedium>());
-            s.add(density_grid.bytes_allocated());
-            if let Some(grid) = &temperature_grid {
-                s.add(grid.bytes_allocated());
-            }
-        });
 
         let majorant_grid = Self::build_majorant_grid(&density_grid, density_float_grid, bounds);
-        NANOVDB_BYTES.with(|s| {
-            s.add(std::mem::size_of::<Float>() * majorant_grid.values.len());
-        });
         Some(NanoVDBMedium {
             bounds,
             render_from_medium: *render_from_medium,

@@ -30,7 +30,6 @@ pub mod mesh;
 
 // Memory and performance
 pub mod memory;
-pub mod profile;
 pub mod stats;
 
 // Error handling and utilities
@@ -51,10 +50,8 @@ pub use math::*;
 pub use memory::*;
 pub use mesh::*;
 pub use misc::*;
-pub use profile::*;
 pub use quaternion::*;
 pub use sampling::*;
 pub use spectrum::*;
-pub use stats::*;
 pub use transform::*;
 pub use vecmath::*;

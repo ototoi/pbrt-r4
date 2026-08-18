@@ -8,12 +8,9 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 
 use log::*;
 use std::sync::{Arc, RwLock};
-
-thread_local!(pub static FILM_PIXEL_MEMORY: StatMemoryCounter = StatMemoryCounter::new("Memory/Film pixels"));
 
 /// Bundle of parameters shared by all Film variants, matching pbrt-v4's
 /// `FilmBaseParameters` in `src/pbrt/film.h`. `scale` and
