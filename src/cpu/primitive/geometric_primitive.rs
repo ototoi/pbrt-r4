@@ -5,7 +5,6 @@ use crate::interaction::*;
 use crate::media::*;
 use crate::shapes::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 
 use std::sync::Arc;
 
@@ -38,8 +37,6 @@ impl GeometricPrimitive {
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        let _p = ProfilePhase::new(Prof::GeometricPrimitiveIntersect);
-
         let s = self.shape.as_ref();
         if let Some(mut si) = s.intersect(r, t_max) {
             si.intr.set_intersection_properties(
@@ -55,8 +52,6 @@ impl GeometricPrimitive {
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        let _p = ProfilePhase::new(Prof::GeometricPrimitiveIntersectP);
-
         let s = self.shape.as_ref();
         s.intersect_p(r, t_max)
     }

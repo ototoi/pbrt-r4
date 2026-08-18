@@ -11,7 +11,6 @@ use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::image::*;
 use crate::util::imageio::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::rgb_to_spectrum::RGBColorSpace;
 use crate::util::spectrum::*;
@@ -219,7 +218,6 @@ impl DiffuseAreaLight {
         lambda: &SampledWavelengths,
         _allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         // v4 builds `ShapeSampleContext(ctx.pi, ctx.n, ctx.ns, 0)`.
         let shape_ctx = ShapeSampleContext {
             p: ctx.p,
@@ -255,7 +253,6 @@ impl DiffuseAreaLight {
         wi: Vector3f,
         _allow_incomplete_pdf: bool,
     ) -> Float {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         // v4 builds `ShapeSampleContext(ctx.pi, ctx.n, ctx.ns, 0)`
         // (lights.cpp:765); the spherical-triangle cosine warp in
         // `Triangle::pdf_from` reads `shading.n` from a
@@ -285,7 +282,6 @@ impl DiffuseAreaLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let shape = self.shape.as_ref();
         let (mut intr, pdf_pos) = shape.sample(&u1)?;
         intr.set_time(time);
@@ -316,7 +312,6 @@ impl DiffuseAreaLight {
     //   *pdfDir = twoSided ? CosineHemispherePDF(AbsDot(n, w))/2
     //                      : CosineHemispherePDF(Dot(n, w));
     pub fn pdf_le_interaction(&self, intr: &Interaction, w: Vector3f) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let shape = self.shape.as_ref();
         let n = intr.get_n();
         let pdf_pos = shape.pdf(intr);

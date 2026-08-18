@@ -10,12 +10,9 @@ use crate::util::base::*;
 use crate::util::error::PbrtError;
 use crate::util::geometry::*;
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 use crate::util::transform::*;
 
 use std::sync::Arc;
-
-thread_local!(static RGB_GRID_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/Volume RGB grid"));
 
 /// Counterpart to pbrt-v4 `RGBGridMedium`.
 #[derive(Debug, Clone)]
@@ -124,21 +121,6 @@ impl RGBGridMedium {
         }
         let majorant_grid =
             Self::build_majorant_grid(bounds, &sigma_a_grid, &sigma_s_grid, sigma_scale);
-
-        RGB_GRID_BYTES.with(|s| {
-            let mut bytes = std::mem::size_of::<RGBGridMedium>();
-            if let Some(grid) = &sigma_a_grid {
-                bytes += grid.bytes_allocated();
-            }
-            if let Some(grid) = &sigma_s_grid {
-                bytes += grid.bytes_allocated();
-            }
-            if let Some(grid) = &le_grid {
-                bytes += grid.bytes_allocated();
-            }
-            bytes += std::mem::size_of::<Float>() * majorant_grid.values.len();
-            s.add(bytes);
-        });
 
         RGBGridMedium {
             bounds: *bounds,

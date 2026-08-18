@@ -8,7 +8,6 @@ use crate::util::error::*;
 use crate::util::lowdiscrepancy::primes::PRIMES;
 use crate::util::lowdiscrepancy::DigitPermutation;
 use crate::util::lowdiscrepancy::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 
 use std::sync::Arc;
@@ -85,7 +84,6 @@ impl HaltonSampler {
     }
 
     pub fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
         if self.dimension >= PRIMES.len() as u32 {
             self.dimension = 2;
         }
@@ -95,7 +93,6 @@ impl HaltonSampler {
     }
 
     pub fn get_2d(&mut self) -> Point2f {
-        let _p = ProfilePhase::new(Prof::GetSample);
         if self.dimension + 1 >= PRIMES.len() as u32 {
             self.dimension = 2;
         }

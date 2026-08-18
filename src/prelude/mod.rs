@@ -44,11 +44,9 @@ pub use crate::util::lowdiscrepancy::*;
 pub use crate::util::math::*;
 pub use crate::util::memory::*;
 pub use crate::util::misc::*;
-pub use crate::util::profile::*;
 pub use crate::util::quaternion::*;
 pub use crate::util::rng::*;
 pub use crate::util::sampling::*;
 pub use crate::util::scattering::*; // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 pub use crate::util::spectrum::*;
-pub use crate::util::stats::*;
 pub use crate::util::transform::*;

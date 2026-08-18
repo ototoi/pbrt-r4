@@ -12,12 +12,9 @@ use crate::util::base::*;
 use crate::util::geometry::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 use crate::util::transform::*;
 
 use std::sync::Arc;
-
-thread_local!(static DENSITY_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/Volume density grid"));
 
 type FloatGrid = SampledGrid<Float>;
 
@@ -152,17 +149,6 @@ impl GridMedium {
         let sigma_s_spec = sigma_s.clone() * sigma_scale;
         let is_emissive = temperature_grid.is_some() || !le.is_black();
         let majorant_grid = Self::build_majorant_grid(bounds, &density_grid);
-
-        DENSITY_BYTES.with(|s| {
-            let mut bytes = std::mem::size_of::<GridMedium>()
-                + density_grid.bytes_allocated()
-                + le_scale.bytes_allocated()
-                + std::mem::size_of::<Float>() * majorant_grid.values.len();
-            if let Some(grid) = &temperature_grid {
-                bytes += grid.bytes_allocated();
-            }
-            s.add(bytes);
-        });
 
         GridMedium {
             bounds: *bounds,

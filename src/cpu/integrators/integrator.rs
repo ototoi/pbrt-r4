@@ -21,12 +21,8 @@ use crate::util::base::*;
 use crate::util::geometry::*;
 use crate::util::rng::RNG;
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 
 use std::sync::Arc;
-
-thread_local!(static N_INTERSECTION_TESTS_I: StatCounter = StatCounter::new("Integrator/Regular ray intersection tests"));
-thread_local!(static N_SHADOW_TESTS_I: StatCounter = StatCounter::new("Integrator/Shadow ray intersection tests"));
 
 /// Equivalent of pbrt-v4 `class Integrator`'s data members: the scene
 /// geometry aggregate and the light lists. Held by Arc so each
@@ -55,13 +51,11 @@ impl IntegratorBase {
 
     /// Direct ray intersection -- pbrt-v4 `Integrator::Intersect`.
     pub fn intersect(&self, ray: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        N_INTERSECTION_TESTS_I.with(|c| c.inc());
         self.aggregate.intersect(ray, t_max)
     }
 
     /// Shadow ray test -- pbrt-v4 `Integrator::IntersectP`.
     pub fn intersect_p(&self, ray: &Ray, t_max: Float) -> bool {
-        N_SHADOW_TESTS_I.with(|c| c.inc());
         self.aggregate.intersect_p(ray, t_max)
     }
 

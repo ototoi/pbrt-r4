@@ -8,13 +8,9 @@ use crate::util::geometry::*;
 use crate::util::lowdiscrepancy::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::SampledWavelengths;
-use crate::util::stats::*;
 //use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-
-thread_local!(static N_CREATED: StatCounter = StatCounter::new("SpatialLightDistribution/Distributions created"));
-thread_local!(static N_PROBES_PER_LOOKUP: StatIntDistribution = StatIntDistribution::new("SpatialLightDistribution/Hash probes per lookup"));
 
 #[derive(Debug, Clone)]
 struct HashEntry {
@@ -108,8 +104,6 @@ impl SpatialLightDistribution {
     }
 
     fn compute_distribution(&self, pi: &[u32; 3]) -> Arc<Distribution1D> {
-        N_CREATED.with(|c| c.inc());
-
         // Compute the world-space bounding box of the voxel corresponding to
         // |pi|.
         let world_bound = self.world_bound.clone();
@@ -201,9 +195,7 @@ impl LightDistribution for SpatialLightDistribution {
         // use quadratic probing when the hash table entry is already used for
         // another value; step stores the square root of the probe step.
         let mut step = 1;
-        let mut n_probes = 0;
         loop {
-            n_probes += 1;
             let mut hash_entry = self.hash_table[hash as usize].lock().unwrap();
             // Does the hash table entry at offset |hash| match the current point?
             if let Some(entry) = hash_entry.as_ref() {
@@ -234,7 +226,6 @@ impl LightDistribution for SpatialLightDistribution {
                     distribution: distrib.clone(),
                 });
 
-                N_PROBES_PER_LOOKUP.with(|c| c.add(n_probes));
                 return distrib;
             }
         }

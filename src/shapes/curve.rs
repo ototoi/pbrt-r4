@@ -6,7 +6,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
-use crate::util::stats::*;
 
 use std::sync::Arc;
 
@@ -15,11 +14,6 @@ const GAMMA3: Float = (3.0 * MACHINE_EPSILON) / (1.0 - (3.0 * MACHINE_EPSILON));
 fn radians(x: Float) -> Float {
     return x * PI / 180.0;
 }
-
-thread_local!(static TESTS: StatPercent = StatPercent::new("Intersections/Ray-curve intersection tests"));
-thread_local!(static REFINEMENT_LEVEL: StatIntDistribution = StatIntDistribution::new("Intersections/Curve refinement level"));
-thread_local!(static N_CURVES: StatCounter = StatCounter::new("Scene/Curves"));
-thread_local!(static N_SPLIT_CURVES: StatCounter = StatCounter::new("Scene/Split curves"));
 
 // CurveType Declarations
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,7 +140,6 @@ impl CurveCommon {
             }
             None => None,
         };
-        N_CURVES.with(|n| n.inc());
         CurveCommon {
             base: BaseShape::new(o2w, w2o, reverse_orientation),
             t,
@@ -337,8 +330,6 @@ fn recursive_intersect(
 
         let t_hit = pc.z / ray_length;
 
-        TESTS.with(|stat| stat.add_num(1));
-
         if !is_shadow {
             // Compute error bounds for curve intersection
             let p_error_coef = 2.0;
@@ -431,8 +422,6 @@ impl Curve {
         t_max: Float,
         is_shadow: bool,
     ) -> Option<(Float, Option<SurfaceInteraction>)> {
-        TESTS.with(|stat| stat.add_denom(1));
-
         let u_min = self.u_min;
         let u_max = self.u_max;
         let common = self.common.as_ref();
@@ -534,8 +523,6 @@ impl Curve {
         let r0 = log2(SQRT_2 * 6.0 * l0 / (8.0 * eps)) / 2;
 
         let max_depth = i32::clamp(r0, 0, 10); //
-
-        REFINEMENT_LEVEL.with(|stat| stat.add(max_depth as u64));
 
         return recursive_intersect(
             &common,
@@ -772,7 +759,6 @@ fn create_curve(
         let curve = Curve::new(&common, u_min, u_max);
         segments.push(curve);
     }
-    N_SPLIT_CURVES.with(|c| c.add(n_segments as u64));
     return Ok(segments);
 }
 

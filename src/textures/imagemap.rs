@@ -5,7 +5,6 @@ use crate::shapes::*;
 use crate::textures::*;
 use crate::util::error::*;
 use crate::util::imageio::*;
-use crate::util::profile::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 use crate::util::spectrum::*;
 
@@ -199,7 +198,6 @@ impl ImageTexture<Float, Float> {
             None
         };
 
-        let _p = ProfilePhase::new(Prof::TextureLoading);
         let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
         let mipmap = if matches!(raw.channels, 1 | 3) {
             MIPMap::<Float>::new_from_raw_image(
@@ -432,7 +430,6 @@ impl ImageTexture<RGBSpectrum, Spectrum> {
             None
         };
 
-        let _p = ProfilePhase::new(Prof::TextureLoading);
         let raw = read_raw_image_with_encoding(&texinfo.filename, encoding)?;
         let (data, channels, resolution) = normalize_raw_image_for_spectrum(&raw)?;
         let mipmap = MIPMap::<RGBSpectrum>::new_with_raw_channels_and_storage(

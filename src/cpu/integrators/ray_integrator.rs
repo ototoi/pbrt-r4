@@ -23,7 +23,6 @@ use crate::util::memory::*;
 use crate::util::misc::*;
 use crate::util::spectrum::*;
 use crate::util::stats::pixel_stats;
-use crate::util::stats::*;
 
 use std::ops::DerefMut;
 use std::path::Path;
@@ -33,8 +32,6 @@ use std::sync::RwLock;
 
 use log::*;
 use rayon::prelude::*;
-
-thread_local!(static N_CAMERA_RAYS: StatCounter = StatCounter::new("Integrator/Camera rays traced"));
 
 /// pbrt-v4 `class RayIntegrator : public ImageTileIntegrator`. Its only
 /// abstract method is `Li`; everything else lives on the base. Concrete
@@ -130,8 +127,6 @@ pub fn evaluate_pixel_sample_ray_default<I: RayIntegrator + ?Sized>(
             let ray_diff_scale = Float::max(0.125, 1.0 / Float::sqrt(samples_per_pixel));
             ray.scale_differentials(ray_diff_scale);
         }
-
-        N_CAMERA_RAYS.with(|c| c.inc());
 
         // Evaluate radiance along camera ray
         l = weight

@@ -43,8 +43,8 @@ Render a scene with the following command:
   <example.pbrt>
 ```
 
-Useful options include `--pixelsamples`, `--nthreads`, `--outfile`, `--stats`,
-`--profile`, and `--display-server`. The `--quick` option is intended for fast
+Useful options include `--pixelsamples`, `--nthreads`, `--outfile`, and
+`--display-server`. The `--quick` option is intended for fast
 visual checks and changes the rendering configuration; do not use it for a
 controlled comparison with pbrt-v4.
 
@@ -58,29 +58,11 @@ in pbrt-v4. After starting tev, display rendering progress with:
   <example.pbrt>
 ```
 
-## Stats and Profile
-
-Build with the optional features and pass the corresponding command-line
-options:
-
-### Build
-
-```sh
-cargo build --release --features stats --features profile
-```
-
-### Use
-
-```sh
-./target/release/pbrt-r4 --stats --profile <example.pbrt>
-```
-
 ## Build Options
 pbrt-r4 has several options as Rust features.
 | Feature | Description |
 |---------|-------------|
-| `profile` | Enables the `--profile` option. |
-| `stats` | Enables the `--stats` option. |
+| `stats` | Enables the pbrt-v4 `pixelstats` scene option. |
 | `float-as-double` | Uses double precision (64-bit) for floating-point calculations. This increases precision but also increases execution time and memory usage. |
 
 ## Example scenes

@@ -1,9 +1,5 @@
 use crate::util::base::*;
 use crate::util::geometry::*;
-use crate::util::stats::*;
-
-thread_local!(static INTERIOR_NODES: StatCounter = StatCounter::new("BVH/Interior nodes"));
-thread_local!(static LEAF_NODES: StatCounter = StatCounter::new("BVH/Leaf nodes"));
 
 #[derive(Copy, Clone, Debug)]
 pub enum SplitMethod {
@@ -51,8 +47,6 @@ impl BVHBuildNode {
     }
 
     pub fn init_leaf(first: usize, n: usize, b: &Bounds3f) -> Self {
-        LEAF_NODES.with(|c| c.inc());
-
         BVHBuildNode {
             bounds: b.clone(),
             children: [None, None],
@@ -84,8 +78,6 @@ impl BVHBuildNode {
         c0: Option<Box<BVHBuildNode>>,
         c1: Option<Box<BVHBuildNode>>,
     ) -> Self {
-        INTERIOR_NODES.with(|c| c.inc());
-
         let b = Self::get_bounds_helper(&c0, &c1);
         BVHBuildNode {
             bounds: b,

@@ -2,7 +2,6 @@ use super::pixel_sensor::PixelSensor;
 use super::visible_surface::VisibleSurface;
 use crate::util::base::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::spectrum::*;
 
 use std::sync::Arc;
@@ -222,7 +221,6 @@ impl FilmTile {
         visible_surface: Option<&VisibleSurface>,
         sample_weight: Float,
     ) {
-        let _p = ProfilePhase::new(Prof::AddFilmSample);
         self.add_sample_filter(p_film, &l, lambda, sample_weight, visible_surface);
     }
 
@@ -238,7 +236,6 @@ impl FilmTile {
         visible_surface: Option<&VisibleSurface>,
         sample_weight: Float,
     ) {
-        let _p = ProfilePhase::new(Prof::AddFilmSample);
         if p_pixel.x < self.pixel_bounds.min.x
             || self.pixel_bounds.max.x <= p_pixel.x
             || p_pixel.y < self.pixel_bounds.min.y

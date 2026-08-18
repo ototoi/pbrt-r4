@@ -3,7 +3,6 @@ use crate::cpu::primitive::*;
 use crate::interaction::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 
 use std::sync::Arc;
 
@@ -417,8 +416,6 @@ impl QBVHAccel {
         max_prims_in_node: usize,
         split_method: SplitMethod,
     ) -> Self {
-        let _p = ProfilePhase::new(Prof::AccelConstruction);
-
         let max_prims_in_node = usize::min(max_prims_in_node, 255);
         let mut orderd_prims = Vec::new();
         let root = create_bvh_node(&mut orderd_prims, prims, max_prims_in_node, split_method);
@@ -438,8 +435,6 @@ impl QBVHAccel {
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        let _p = ProfilePhase::new(Prof::AccelIntersect);
-
         if let Some((tmin, tmax)) = self.bounds.intersect_p(r, t_max) {
             unsafe {
                 return intersect_simd(&self.primitives, &self.nodes, r, tmin, tmax, t_max);
@@ -449,8 +444,6 @@ impl QBVHAccel {
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        let _p = ProfilePhase::new(Prof::AccelIntersectP);
-
         if let Some((tmin, tmax)) = self.bounds.intersect_p(r, t_max) {
             unsafe {
                 return intersect_simd_p(&self.primitives, &self.nodes, r, tmin, tmax, t_max);

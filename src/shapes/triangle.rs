@@ -8,16 +8,11 @@ use crate::textures::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
-use crate::util::stats::*;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-
-thread_local!(static TESTS: StatPercent = StatPercent::new("Intersections/Ray-triangle intersection tests"));
-thread_local!(static TRI_MESH_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/Triangle meshes"));
 
 pub struct TriangleMesh {
     pub object_to_world: Transform,
@@ -247,10 +242,6 @@ pub struct Triangle {
 
 impl Triangle {
     pub fn new(mesh: &Arc<TriangleMesh>, tri_index: u32) -> Self {
-        TRI_MESH_BYTES.with(|s| {
-            s.add(std::mem::size_of::<Triangle>());
-        });
-
         Triangle {
             mesh: Arc::clone(mesh),
             tri_index,
@@ -540,11 +531,6 @@ impl Triangle {
     /// two-step structure mirrors v4 verbatim so any shading-geometry
     /// regression is contained to `interaction_from_intersection`.
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        let _p = ProfilePhase::new(Prof::TriIntersect);
-        TESTS.with(|stat| {
-            stat.add_denom(1);
-        });
-
         let mesh = self.mesh.as_ref();
         let base = 3 * self.tri_index as usize;
         let p0 = mesh.p[self.mesh.vertex_indices[base] as usize];
@@ -554,18 +540,10 @@ impl Triangle {
         let ti = intersect_triangle(r, t_max, p0, p1, p2)?;
         let isect = self.interaction_from_intersection(ti, r.time, -r.d);
 
-        TESTS.with(|stat| {
-            stat.add_num(1);
-        });
         Some(ShapeIntersection::new(isect, ti.t))
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        let _p = ProfilePhase::new(Prof::TriIntersectP);
-        TESTS.with(|stat| {
-            stat.add_denom(1);
-        });
-
         let mesh = self.mesh.as_ref();
         let base = 3 * self.tri_index as usize;
         let p0 = mesh.p[self.mesh.vertex_indices[base] as usize];
@@ -573,11 +551,6 @@ impl Triangle {
         let p2 = mesh.p[self.mesh.vertex_indices[base + 2] as usize];
 
         let hit = intersect_triangle(r, t_max, p0, p1, p2).is_some();
-        if hit {
-            TESTS.with(|stat| {
-                stat.add_num(1);
-            });
-        }
         hit
     }
 

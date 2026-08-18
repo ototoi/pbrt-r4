@@ -7,7 +7,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::lowdiscrepancy::sobol::sobolmatrices::{SOBOL_MATRICES_32, SOBOL_MATRIX_SIZE};
 use crate::util::lowdiscrepancy::*;
-use crate::util::profile::*;
 
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct PaddedSobolSampler {
@@ -48,8 +47,6 @@ impl PaddedSobolSampler {
     }
 
     pub fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
-
         let hash = hash_pixel_dimension_seed(&self.pixel, self.dimension, self.seed);
         let index = permutation_element(self.sample_index, self.samples_per_pixel, hash as u32);
         self.dimension += 1;
@@ -57,8 +54,6 @@ impl PaddedSobolSampler {
     }
 
     pub fn get_2d(&mut self) -> Point2f {
-        let _p = ProfilePhase::new(Prof::GetSample);
-
         let hash = hash_pixel_dimension_seed(&self.pixel, self.dimension, self.seed);
         let index = permutation_element(self.sample_index, self.samples_per_pixel, hash as u32);
         self.dimension += 2;

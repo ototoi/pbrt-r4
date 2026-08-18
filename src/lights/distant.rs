@@ -11,7 +11,6 @@ use crate::paramdict::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
@@ -109,7 +108,6 @@ impl DistantLight {
         lambda: &SampledWavelengths,
         _allow_incomplete_pdf: bool,
     ) -> Option<LightLiSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let radius = *self.scene_radius.read().unwrap();
         let w = self.wi;
         let p_outside = ctx.p + w * (2.0 * radius);
@@ -146,7 +144,6 @@ impl DistantLight {
         lambda: &SampledWavelengths,
         time: Float,
     ) -> Option<LightLeSample> {
-        let _p = ProfilePhase::new(Prof::LightSample);
         let w = self.wi;
         let scene_center = *self.scene_center.read().unwrap();
         let scene_radius = *self.scene_radius.read().unwrap();
@@ -167,7 +164,6 @@ impl DistantLight {
     //   *pdfPos = 1 / (Pi * sceneRadius * sceneRadius);
     //   *pdfDir = 0;
     pub fn pdf_le_ray(&self, _ray: &Ray) -> (Float, Float) {
-        let _p = ProfilePhase::new(Prof::LightPdf);
         let r = *self.scene_radius.read().unwrap();
         (1.0 / (PI * r * r), 0.0)
     }

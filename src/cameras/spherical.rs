@@ -8,7 +8,6 @@ use crate::paramdict::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
 
@@ -163,8 +162,6 @@ impl SphericalCamera {
         sample: &CameraSample,
         _lambda: &SampledWavelengths,
     ) -> Option<CameraRay> {
-        let _p = ProfilePhase::new(Prof::GenerateCameraRay);
-
         // Compute spherical camera ray direction.
         let uv = {
             let film = self.base.get_film();

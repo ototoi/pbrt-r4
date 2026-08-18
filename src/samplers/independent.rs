@@ -5,7 +5,6 @@ use crate::samplers::*;
 
 use crate::util::base::*;
 use crate::util::error::*;
-use crate::util::profile::*;
 use crate::util::sampling::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,12 +35,10 @@ impl IndependentSampler {
     }
 
     pub fn get_1d(&mut self) -> Float {
-        let _p = ProfilePhase::new(Prof::GetSample);
         self.rng.uniform_float()
     }
 
     pub fn get_2d(&mut self) -> Point2f {
-        let _p = ProfilePhase::new(Prof::GetSample);
         Point2f::new(self.rng.uniform_float(), self.rng.uniform_float())
     }
 

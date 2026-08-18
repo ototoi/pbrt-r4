@@ -3,13 +3,9 @@ use crate::cpu::primitive::*;
 use crate::interaction::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
-use crate::util::profile::*;
-use crate::util::stats::*;
 
 use log::*;
 use std::sync::Arc;
-
-thread_local!(static TREE_BYTES: StatMemoryCounter = StatMemoryCounter::new("Memory/BVH tree"));
 
 #[derive(Clone, Copy)]
 pub struct LinearBVHNode {
@@ -97,12 +93,6 @@ impl LBVHAccel {
             allocated_memory as Float / (1024.0 * 1024.0)
         );
 
-        // Compute representation of depth-first traversal of BVH tree
-        let tree_bytes = total_nodes * std::mem::size_of::<LinearBVHNode>()
-            + std::mem::size_of::<Self>()
-            + prims.len() * std::mem::size_of::<Arc<Primitive>>();
-        TREE_BYTES.with(|c| c.add(tree_bytes));
-
         let mut nodes = Vec::new();
         nodes.reserve(root.node_count());
         flatten_bvh_tree(&mut nodes, &root);
@@ -117,8 +107,6 @@ impl LBVHAccel {
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        let _p = ProfilePhase::new(Prof::AccelIntersect);
-
         let mut isect = None;
         let mut nodes_to_visit: Vec<(usize, Float, Float)> = Vec::with_capacity(16);
         let mut t_max = t_max;
@@ -169,8 +157,6 @@ impl LBVHAccel {
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        let _p = ProfilePhase::new(Prof::AccelIntersectP);
-
         let mut nodes_to_visit: Vec<(usize, Float, Float)> = Vec::with_capacity(16);
         let t0: Float = 0.0;
         let t1: Float = t_max;

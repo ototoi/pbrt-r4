@@ -17,13 +17,9 @@ use crate::util::geometry::*;
 use crate::util::memory::*;
 use crate::util::sampling::power_heuristic;
 use crate::util::spectrum::*;
-use crate::util::stats::*;
 
 use std::sync::Arc;
 use std::sync::RwLock;
-
-thread_local!(static PATHS: StatPercent = StatPercent::new("Integrator/Zero-radiance paths"));
-thread_local!(static PATH_LENGTH: StatIntDistribution = StatIntDistribution::new("Integrator/Path length"));
 
 /// pbrt-v4 `class PathIntegrator` (integrators.h:207).
 pub struct PathIntegrator {
@@ -288,11 +284,7 @@ impl RayIntegrator for PathIntegrator {
 
             // Sample direct illumination from the light sources
             if is_non_specular(bsdf.flags()) {
-                PATHS.with(|s| s.add_denom(1));
                 let ld = self.sample_ld(&si.intr, bsdf, lambda, sampler);
-                if ld.is_black() {
-                    PATHS.with(|s| s.add_num(1));
-                }
                 l += beta * ld;
             }
 
@@ -333,7 +325,6 @@ impl RayIntegrator for PathIntegrator {
                 beta /= 1.0 - q;
             }
         }
-        PATH_LENGTH.with(|s| s.add(depth as u64));
         l
     }
 

@@ -15,7 +15,6 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::image::Image;
-use crate::util::profile::*;
 use crate::util::spectrum::*;
 
 use std::env;
@@ -403,7 +402,6 @@ impl Film {
     }
 
     pub fn merge_film_tile(&mut self, tile: &FilmTile) {
-        let _p = ProfilePhase::new(Prof::MergeFilmTile);
         match self {
             Self::Rgb(film) => film.merge_film_tile(tile),
             Self::GBuffer(film) => film.merge_film_tile(tile),

@@ -5,19 +5,12 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::imageio::*;
-use crate::util::profile::*;
 use crate::util::spectrum::*;
-use crate::util::stats::*;
-use std::mem::size_of;
 
 use log::*;
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::vec;
-
-thread_local!(static N_EWA_LOOKUPS: StatCounter = StatCounter::new("Texture/EWA lookups"));
-thread_local!(static N_TRILERP_LOOKUPS: StatCounter = StatCounter::new("Texture/Trilinear lookups"));
-thread_local!(static MIP_MAP_MEMORY: StatMemoryCounter = StatMemoryCounter::new("Memory/Texture MIP maps"));
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MIPMapStorageKind {
@@ -89,14 +82,6 @@ impl MIPMapLevelStorage {
                     encoding.to_linear(v) as f32
                 })
                 .collect(),
-        }
-    }
-
-    fn bytes_used(&self) -> usize {
-        match self {
-            MIPMapLevelStorage::F32(data) => data.len() * size_of::<f32>(),
-            MIPMapLevelStorage::F16(data) => data.len() * size_of::<half::f16>(),
-            MIPMapLevelStorage::U8 { data, .. } => data.len(),
         }
     }
 }
@@ -812,8 +797,6 @@ where
         twrap_mode: ImageWrap,
         storage: MIPMapStorageKind,
     ) -> Self {
-        let _p = ProfilePhase::new(Prof::MIPMapCreation);
-
         let resolution = (resolution.x as usize, resolution.y as usize);
         let pyramid = make_mipimages(data, resolution, swrap_mode, twrap_mode, storage);
         let mip = Self::make_from_pyramid(pyramid, filter, max_anisotropy, swrap_mode, twrap_mode);
@@ -876,7 +859,6 @@ where
         storage: MIPMapStorageKind,
     ) -> Self {
         assert!((1..=4).contains(&channels));
-        let _p = ProfilePhase::new(Prof::MIPMapCreation);
         let resolution = (resolution.x as usize, resolution.y as usize);
         let pyramid = make_mipimages_from_f32::<T>(
             data.to_vec(),
@@ -896,14 +878,6 @@ where
         swrap_mode: ImageWrap,
         twrap_mode: ImageWrap,
     ) -> Self {
-        {
-            let total_consumption: usize =
-                pyramid.iter().map(|p| p.as_data().data.bytes_used()).sum();
-            MIP_MAP_MEMORY.with(|m| {
-                m.add(total_consumption);
-            });
-        }
-
         let mip = MIPMap::<T> {
             storage: MIPMapStorage { pyramid },
             filter,
@@ -933,9 +907,6 @@ where
     }
 
     pub fn lookup(&self, st: &Point2f, width: Float) -> T {
-        N_TRILERP_LOOKUPS.with(|n| n.inc());
-        let _p = ProfilePhase::new(Prof::TexFiltTrilerp);
-
         let max_level = (self.levels() - 1) as Float;
         let level = max_level + Float::log2(Float::max(width, 1e-8));
         if level < 0.0 {
@@ -988,8 +959,6 @@ where
                 ImageFilter::EWA => unreachable!(),
             };
         } else {
-            N_EWA_LOOKUPS.with(|n| n.inc());
-            let _p = ProfilePhase::new(Prof::TexFiltEWA);
             let mut dst0 = *dst0;
             let mut dst1 = *dst1;
             // Compute ellipse minor and major axes
