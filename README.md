@@ -31,6 +31,20 @@ cargo build --release
 cargo test
 ```
 
+## Installation
+
+Install the published crate from crates.io with:
+
+```sh
+cargo install pbrt-r4
+```
+
+To install all command-line utilities in addition to the renderer, use:
+
+```sh
+cargo install pbrt-r4 --bins
+```
+
 ## How to use
 
 Render a scene with the following command:
@@ -66,11 +80,11 @@ pbrt-r4 has several options as Rust features.
 | `float-as-double` | Uses double precision (64-bit) for floating-point calculations. This increases precision but also increases execution time and memory usage. |
 
 ## Example scenes
-pbrt-r4 takes pbrt-v3 and pbrt-v4 scene files as input. The compatibility
-comparison set used by this project comes from the official
+pbrt-r4 renders pbrt-v4 scene files directly. The compatibility comparison
+set used by this project comes from the official
 [pbrt-v4-scenes repository](https://github.com/mmp/pbrt-v4-scenes).
 
-Legacy pbrt-v3 input should be converted before rendering:
+Legacy pbrt-v3 input must be converted before rendering:
 
 ```sh
 ./target/release/pbrt-r4 \
@@ -86,25 +100,47 @@ Legacy pbrt-v3 input should be converted before rendering:
 
 `--upgrade` writes the converted pbrt-v4 input and does not render an image.
 
+## Command-line utilities
+
+The pbrt-v4 CPU command-line utilities are built as separate binaries:
+
+| Binary | Purpose |
+|--------|---------|
+| `imgtool` | Inspect, convert, compare, and post-process images. |
+| `plytool` | Inspect, displace, concatenate, and split triangle PLY meshes. |
+| `nanovdb2pbrt` | Convert a NanoVDB grid into pbrt input. |
+| `cyhair2pbrt` | Convert CyHair data into pbrt input. |
+| `pspec` | Compute sampler power-spectrum data. |
+
+For example, after a release build:
+
+```sh
+./target/release/imgtool help
+./target/release/plytool help
+./target/release/nanovdb2pbrt --help
+```
+
+`cyhair2pbrt` and `pspec` print their usage when invoked without the required
+input. These utilities are CPU implementations. GPU-only utilities such as
+`pspec_gpu` and `denoise-optix` are not included.
+
 ## Implementation status
 
 The tables below describe the current implementation scope, not a claim of
 complete pixel-level parity for every feature combination. Known limitations
-include GPU/wavefront rendering, PTex, medium vertices in BDPT/MLT, complete
-volumetric BSSRDF parity, photometric film calibration, and the standalone
-pbrt-v4 command-line utilities.
+include GPU/wavefront rendering, PTex, and photometric film calibration.
 
 ### Integrators (`Integrator "<name>" ...`)
 | Name | pbrt-v4 reference | Status in pbrt-r4 |
 |------|-------------------|-------------------|
 | `path`           | `PathIntegrator`           | Full surface MIS path tracer. |
 | `simplepath`     | `SimplePathIntegrator`     | Toggleable `samplelights` / `samplebsdf` arms (no MIS). |
-| `volpath`        | `VolPathIntegrator`        | Volumetric path tracer with `r_u`/`r_l` rescaled-density MIS; BSSRDF subsurface scattering deferred. |
+| `volpath`        | `VolPathIntegrator`        | Volumetric path tracer with `r_u`/`r_l` rescaled-density MIS and the pbrt-v4 BSSRDF probe/reservoir path. |
 | `simplevolpath`  | `SimpleVolPathIntegrator`  | Delta-tracking volume path tracer, no surface scattering. |
 | `lightpath`      | `LightPathIntegrator`      | Light tracing with `Camera::SampleWi` splat. |
 | `sppm`           | `SPPMIntegrator`           | Stochastic Progressive Photon Mapping. |
-| `bdpt`           | `BDPTIntegrator`           | Bidirectional path tracing (surface-only; medium vertices deferred). |
-| `mlt`            | `MLTIntegrator`            | Primary-sample-space MLT on top of BDPT (single-threaded; medium vertices deferred). |
+| `bdpt`           | `BDPTIntegrator`           | Bidirectional path tracing with surface and medium vertices. |
+| `mlt`            | `MLTIntegrator`            | Primary-sample-space MLT on top of BDPT (single-threaded). |
 | `randomwalk`     | `RandomWalkIntegrator`     | Minimal uniform-sphere random walk (no MIS / RR / direct lighting). |
 | `ambientocclusion` | `AmbientOcclusionIntegrator` | Single AO sample per path. |
 | `function`       | `FunctionIntegrator`       | r4 extension (formerly `aov`) — surface attribute outputs: position, normal, uv, depth, etc. |
@@ -123,7 +159,7 @@ pbrt-v4 command-line utilities.
 | `interface` | — | r4 helper material that exposes a stored `BxDF`. |
 
 ### Lights
-`point`, `distant`, `spot`, `goniometric`, `projection`, `infinite` (uniform), `infinite` with `mapname` (image-based), and `diffuse` (area). Each is translated verbatim from `lights.h:189–625`. The light's `scale` parameter is a `Float` (pbrt-v4 shape); the `SpectrumToPhotometric` normalization is deferred until the film's photometric calibration lands.
+`point`, `distant`, `spot`, `goniometric`, `projection`, `infinite` (uniform), `infinite` with `mapname` (image-based), and `diffuse` (area). Each is translated verbatim from `lights.h:189–625`. The light's `scale` parameter is a `Float` (pbrt-v4 shape), and light emission is normalized with `SpectrumToPhotometric`. Photometric film calibration remains separate work.
 
 ### Films / Samplers / Accelerators
 - **Films**: `rgb` (`RGBFilm`), `gbuffer` (`GBufferFilm`), `spectral` (`SpectralFilm` with Fichet et al. spectral-EXR layout).
@@ -133,7 +169,7 @@ pbrt-v4 command-line utilities.
 ## Differences from pbrt-v4
 
 ### Relationship to upstream pbrt
-pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rewritten so its public class structure now matches pbrt-v4. Code paths are translated from pbrt-v4 line-by-line wherever practical; remaining pbrt-r3 inheritances are explicitly called out in source comments.
+pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rewritten so its public class structure now matches pbrt-v4. Code paths are translated from pbrt-v4 line-by-line wherever practical; remaining compatibility differences are documented in source or project documentation.
 
 ### Implementation choices
 - **Language**: Rust instead of C++. Ownership / lifetimes replace manual memory management. No `unsafe` outside SIMD intrinsics and a small set of FFI / raw-pointer helpers.
@@ -149,13 +185,14 @@ pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rew
 - **QBVH accelerator**: an r4-original quad-BVH aggregator using SSE intrinsics. v4-faithful in that it now passes the unclamped `t_max` to per-primitive intersect (fixes flat-AABB area-light hit loss).
 - **Function (AOV) integrator**: render scene attributes (position, normal, uv, depth, ...) for compositing or debugging.
 
-### Post-release scope
+### Out of scope
 
-The following areas are intentionally outside the initial release scope:
+The following areas are intentionally outside the current CPU release scope:
 
 - **GPU / wavefront rendering**: pbrt-v4's CUDA / OptiX backend is out of scope. pbrt-r4 is CPU-only.
 - **PTex textures**: not implemented.
-- **pbrt-v4 CLI utilities (`imgtool` etc.)**: pbrt-v4's stand-alone tools under `src/pbrt/cmd` are unported; priority is low.
+- **GPU-only command-line utilities**: `pspec_gpu` and `denoise-optix` require GPU backends and are not included in the CPU release.
+- **Build and test utilities**: `soac`, `rgb2spec_opt`, and `pbrt_test` are handled by build generation or Rust's test infrastructure rather than shipped as user-facing binaries.
 
 ### r4-specific fixes
 - Negative `pdf` from numerical drift is clamped (`pdf.max(0.0)`).
