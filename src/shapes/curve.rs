@@ -23,6 +23,17 @@ pub enum CurveType {
     Ribbon,
 }
 
+impl CurveType {
+    fn parse(s: &str) -> Result<Self, PbrtError> {
+        match s {
+            "flat" => Ok(Self::Flat),
+            "ribbon" => Ok(Self::Ribbon),
+            "cylinder" => Ok(Self::Cylinder),
+            _ => Err(PbrtError::error(&format!("Unknown curve type \"{}\".", s))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CurveNormal {
     pub n: [Normal3f; 2],
@@ -30,11 +41,16 @@ pub struct CurveNormal {
     pub inv_sin_normal_angle: Float,
 }
 
+#[derive(Debug)]
+struct CurvesCommon {
+    base: BaseShape,
+    curve_type: CurveType,
+}
+
 // CurveCommon Declarations
 #[derive(Debug, Clone)]
 pub struct CurveCommon {
-    pub base: BaseShape,
-    pub t: CurveType,
+    curves: Arc<CurvesCommon>,
     pub cp_obj: [Point3f; 4],
     pub width: [Float; 2],
     pub normals: Option<CurveNormal>,
@@ -112,6 +128,20 @@ fn transform_lookat(e: &Point3f, l: &Point3f, u: &Vector3f) -> Transform {
     return Transform::look_at(e.x, e.y, e.z, l.x, l.y, l.z, u.x, u.y, u.z);
 }
 
+impl CurvesCommon {
+    fn new(
+        o2w: &Transform,
+        w2o: &Transform,
+        reverse_orientation: bool,
+        curve_type: CurveType,
+    ) -> Self {
+        Self {
+            base: BaseShape::new(o2w, w2o, reverse_orientation),
+            curve_type,
+        }
+    }
+}
+
 impl CurveCommon {
     pub fn new(
         o2w: &Transform,
@@ -120,7 +150,18 @@ impl CurveCommon {
         c: &[Point3f],
         w0: Float,
         w1: Float,
-        t: CurveType,
+        curve_type: CurveType,
+        norm: &Option<Vec<Normal3f>>,
+    ) -> Self {
+        let curves = Arc::new(CurvesCommon::new(o2w, w2o, reverse_orientation, curve_type));
+        Self::new_with_common(&curves, c, w0, w1, norm)
+    }
+
+    fn new_with_common(
+        curves: &Arc<CurvesCommon>,
+        c: &[Point3f],
+        w0: Float,
+        w1: Float,
         norm: &Option<Vec<Normal3f>>,
     ) -> Self {
         let cp_obj: Vec<Point3f> = c.to_vec();
@@ -141,8 +182,7 @@ impl CurveCommon {
             None => None,
         };
         CurveCommon {
-            base: BaseShape::new(o2w, w2o, reverse_orientation),
-            t,
+            curves: Arc::clone(curves),
             cp_obj,
             width,
             normals,
@@ -181,7 +221,7 @@ fn recursive_intersect(
 ) -> Option<(Float, Option<SurfaceInteraction>)> {
     let mut t_max = t_max;
     let width = &common.width;
-    let t = common.t;
+    let t = common.curves.curve_type;
     let normals = &common.normals;
     let ray_length = ray.d.length();
 
@@ -362,7 +402,7 @@ fn recursive_intersect(
             let p = ray.o + t_hit * ray.d;
             let uv = Point2f::new(u, v); //u, v
             let wo = -ray.d;
-            let mut n = common.base.calc_normal(&dpdu, &dpdv);
+            let mut n = common.curves.base.calc_normal(&dpdu, &dpdv);
             if Vector3f::dot(&ray.d, &n) > 0.0 {
                 n *= -1.0;
             }
@@ -380,6 +420,7 @@ fn recursive_intersect(
                 0,
             );
             let si = common
+                .curves
                 .base
                 .object_to_world
                 .transform_surface_interaction(&si);
@@ -426,7 +467,7 @@ impl Curve {
         let u_max = self.u_max;
         let common = self.common.as_ref();
         // Transform _Ray_ to object space
-        let (ray, _o_err, _d_err) = common.base.world_to_object.transform_ray(r);
+        let (ray, _o_err, _d_err) = common.curves.base.world_to_object.transform_ray(r);
         // Compute object-space control points for curve segment, _cpObj_
         let cp_obj = [
             blossom_bezier(&common.cp_obj, u_min, u_min, u_min),
@@ -562,7 +603,7 @@ impl Curve {
     pub fn world_bound(&self) -> Bounds3f {
         let common = self.common.as_ref();
         let b = self.object_bound();
-        let b = common.base.object_to_world.transform_bounds(&b);
+        let b = common.curves.base.object_to_world.transform_bounds(&b);
         return b;
     }
 
@@ -628,7 +669,7 @@ impl Curve {
         let tangent = dpdu_obj.normalize();
         let (sx, sy) = coordinate_system(&tangent);
         let mut dpdv_obj = sx * width;
-        let n_obj = match common.t {
+        let n_obj = match common.curves.curve_type {
             CurveType::Ribbon => {
                 if let Some(n) = &common.normals {
                     let sin0 =
@@ -638,7 +679,7 @@ impl Curve {
                     dpdv_obj = Vector3f::cross(&n_hit, &tangent).normalize() * width;
                     n_hit
                 } else {
-                    common.base.calc_normal(&dpdu_obj, &dpdv_obj)
+                    common.curves.base.calc_normal(&dpdu_obj, &dpdv_obj)
                 }
             }
             CurveType::Cylinder => {
@@ -646,18 +687,20 @@ impl Curve {
                 let theta = radians(lerp(v_curve, -90.0, 90.0));
                 let around = Float::cos(theta) * sx + Float::sin(theta) * sy;
                 dpdv_obj = around.normalize() * width;
-                common.base.calc_normal(&dpdu_obj, &dpdv_obj)
+                common.curves.base.calc_normal(&dpdu_obj, &dpdv_obj)
             }
-            CurveType::Flat => common.base.calc_normal(&dpdu_obj, &dpdv_obj),
+            CurveType::Flat => common.curves.base.calc_normal(&dpdu_obj, &dpdv_obj),
         };
 
         let p_obj = p_center + (v_curve - 0.5) * dpdv_obj;
         let p_obj_error = GAMMA3 * Vector3f::new(p_obj.x, p_obj.y, p_obj.z).abs();
         let (p, p_error) = common
+            .curves
             .base
             .object_to_world
             .transform_point_with_abs_error(&p_obj, &p_obj_error);
         let n_world = common
+            .curves
             .base
             .object_to_world
             .transform_normal(&n_obj)
@@ -730,27 +773,15 @@ impl Curve {
 }
 
 fn create_curve(
-    o2w: &Transform,
-    w2o: &Transform,
-    reverse_orientation: bool,
+    curves_common: &Arc<CurvesCommon>,
     c: &[Point3f],
     w0: Float,
     w1: Float,
-    t: CurveType,
     norm: &Option<Vec<Normal3f>>,
     split_depth: i32,
 ) -> Result<Vec<Curve>, PbrtError> {
     let mut segments: Vec<Curve> = Vec::new();
-    let common = Arc::new(CurveCommon::new(
-        o2w,
-        w2o,
-        reverse_orientation,
-        c,
-        w0,
-        w1,
-        t,
-        norm,
-    ));
+    let common = Arc::new(CurveCommon::new_with_common(curves_common, c, w0, w1, norm));
     let n_segments = (1 << split_depth) as usize;
     segments.reserve(n_segments);
     for i in 0..n_segments {
@@ -760,18 +791,6 @@ fn create_curve(
         segments.push(curve);
     }
     return Ok(segments);
-}
-
-fn get_curve_type(s: &str) -> Result<CurveType, PbrtError> {
-    return match s {
-        "flat" => Ok(CurveType::Flat),
-        "ribbon" => Ok(CurveType::Ribbon),
-        "cylinder" => Ok(CurveType::Cylinder),
-        _ => {
-            let msg = format!("Unknown curve type \"{}\".", s);
-            return Err(PbrtError::error(&msg));
-        }
-    };
 }
 
 fn convert_to_point(f: &[Float]) -> Vec<Point3f> {
@@ -789,6 +808,51 @@ pub fn create_curve_shape(
     reverse_orientation: bool,
     params: &ParameterDictionary,
 ) -> Result<Vec<Curve>, PbrtError> {
+    create_curve_shape_impl(params, |curve_type| {
+        Ok(Arc::new(CurvesCommon::new(
+            o2w,
+            w2o,
+            reverse_orientation,
+            curve_type,
+        )))
+    })
+}
+
+pub fn create_curves_shape(
+    o2w: &Transform,
+    w2o: &Transform,
+    reverse_orientation: bool,
+    shape_params: &[ParameterDictionary],
+) -> Result<Vec<Vec<Curve>>, PbrtError> {
+    let Some(first) = shape_params.first() else {
+        return Err(PbrtError::error(
+            "create_curves_shape requires at least one curve parameter dictionary.",
+        ));
+    };
+    let curve_type = CurveType::parse(&first.get_one_string("type", "flat"))?;
+    let common = Arc::new(CurvesCommon::new(o2w, w2o, reverse_orientation, curve_type));
+    let mut curve_sets = Vec::with_capacity(shape_params.len());
+    for params in shape_params {
+        let curves = create_curve_shape_impl(params, |curve_type| {
+            if common.curve_type != curve_type {
+                return Err(PbrtError::error(
+                    "Curve types in one curves shape must match.",
+                ));
+            }
+            Ok(Arc::clone(&common))
+        })?;
+        curve_sets.push(curves);
+    }
+    Ok(curve_sets)
+}
+
+fn create_curve_shape_impl<F>(
+    params: &ParameterDictionary,
+    make_common: F,
+) -> Result<Vec<Curve>, PbrtError>
+where
+    F: FnOnce(CurveType) -> Result<Arc<CurvesCommon>, PbrtError>,
+{
     let width = params.get_one_float("width", 1.0);
     let width0 = params.get_one_float("width0", width);
     let width1 = params.get_one_float("width1", width);
@@ -855,8 +919,8 @@ pub fn create_curve_shape(
         }
     };
 
-    let curve_type = params.get_one_string("type", "flat");
-    let curve_type = get_curve_type(&curve_type)?;
+    let curve_type = CurveType::parse(&params.get_one_string("type", "flat"))?;
+    let curves_common = make_common(curve_type)?;
 
     let n = params.get_points_ref("N");
     let mut n = n.as_ref().map(|nn| convert_to_point(nn));
@@ -951,17 +1015,7 @@ pub fn create_curve_shape(
         }
         let w0 = lerp((seg as Float) / (n_segments as Float), width0, width1);
         let w1 = lerp(((seg + 1) as Float) / (n_segments as Float), width0, width1);
-        let mut c = create_curve(
-            o2w,
-            w2o,
-            reverse_orientation,
-            &seg_cp_bezier,
-            w0,
-            w1,
-            curve_type,
-            &n,
-            sd,
-        )?;
+        let mut c = create_curve(&curves_common, &seg_cp_bezier, w0, w1, &n, sd)?;
         curves.append(&mut c);
     }
 

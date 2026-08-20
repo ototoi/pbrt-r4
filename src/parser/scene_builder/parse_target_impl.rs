@@ -13,7 +13,7 @@ use super::scene_entity::{
     TextureSceneEntity, TransformedSceneEntity,
 };
 use super::state::{ApiState, PushKind};
-use super::SceneBuilder;
+use super::{SceneBuilder, CURVES_SHAPE_NAME};
 use crate::options::PbrtOptions;
 use crate::paramdict::ParameterDictionary;
 use crate::parser::{parse_file, parse_target::ParseTarget};
@@ -28,6 +28,73 @@ use log::{error, info, warn};
 use std::path::Path;
 
 impl SceneBuilder {
+    fn append_shape(shapes: &mut Vec<ShapeSceneEntity>, mut shape: ShapeSceneEntity) {
+        if let Some(parent) = shapes.last_mut() {
+            if Self::can_group_shapes(parent, &shape) {
+                parent.child_params.push(shape.base.params);
+                return;
+            }
+        }
+
+        if shape.base.name == "curve" && shape.area_light_index.is_none() {
+            shape.base.name = CURVES_SHAPE_NAME.to_owned();
+            shape
+                .child_params
+                .push(std::mem::take(&mut shape.base.params));
+        }
+        shapes.push(shape);
+    }
+
+    fn can_group_shapes(parent: &ShapeSceneEntity, child: &ShapeSceneEntity) -> bool {
+        if parent.base.name != CURVES_SHAPE_NAME
+            || child.base.name != "curve"
+            || parent.area_light_index.is_some()
+            || child.area_light_index.is_some()
+        {
+            return false;
+        }
+
+        if parent.render_from_object != child.render_from_object
+            || parent.reverse_orientation != child.reverse_orientation
+            || parent.material_index != child.material_index
+            || parent.material_name != child.material_name
+            || parent.material_is_default != child.material_is_default
+            || parent.medium_interface != child.medium_interface
+            || parent.instance_name != child.instance_name
+        {
+            return false;
+        }
+
+        let Some(parent_params) = parent.child_params.last() else {
+            return false;
+        };
+        Self::curve_params_share_group(parent_params, &child.base.params)
+    }
+
+    fn curve_params_share_group(a: &ParameterDictionary, b: &ParameterDictionary) -> bool {
+        a.get_one_string("type", "flat") == b.get_one_string("type", "flat")
+            && Self::same_curve_parameter(a, b, "alpha")
+            && Self::same_curve_parameter(a, b, "shadowalpha")
+    }
+
+    fn same_curve_parameter(a: &ParameterDictionary, b: &ParameterDictionary, name: &str) -> bool {
+        let a_textures = a.get_textures_ref(name);
+        let b_textures = b.get_textures_ref(name);
+        match (a_textures.as_ref(), b_textures.as_ref()) {
+            (Some(a), Some(b)) => return a.as_slice() == b.as_slice(),
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+
+        let a_values = a.get_floats_ref(name);
+        let b_values = b.get_floats_ref(name);
+        match (a_values.as_ref(), b_values.as_ref()) {
+            (Some(a), Some(b)) => a.as_slice() == b.as_slice(),
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => true,
+        }
+    }
+
     fn verify_options(&self, fun: &str) {
         if self.api_state != ApiState::OptionsBlock {
             error!(
@@ -507,6 +574,7 @@ impl ParseTarget for SceneBuilder {
         let gs = self.top_graphics_state();
         let entity = ShapeSceneEntity {
             base: SceneEntity::new(name, params, self.current_file_loc()),
+            child_params: Vec::new(),
             render_from_object: render_from_object.clone(),
             reverse_orientation: gs.reverse_orientation,
             material_index: gs.current_material_index.unwrap_or(usize::MAX),
@@ -529,14 +597,14 @@ impl ParseTarget for SceneBuilder {
                     animated_shapes: Vec::new(),
                 });
             if animated {
-                def.animated_shapes.push(entity);
+                Self::append_shape(&mut def.animated_shapes, entity);
             } else {
-                def.shapes.push(entity);
+                Self::append_shape(&mut def.shapes, entity);
             }
         } else if animated {
-            self.animated_shapes.push(entity);
+            Self::append_shape(&mut self.animated_shapes, entity);
         } else {
-            self.shapes.push(entity);
+            Self::append_shape(&mut self.shapes, entity);
         }
     }
 
