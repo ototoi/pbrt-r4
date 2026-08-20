@@ -73,7 +73,7 @@ pub struct TransformedSceneEntity {
 /// time, but for the deferred-build intermediate it is safer to hold
 /// only the names (Medium itself becomes an entity in SceneBuilder
 /// too).
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct MediumInterfaceNames {
     pub inside_medium: String,
     pub outside_medium: String,
@@ -96,7 +96,7 @@ impl MediumInterfaceNames {
 /// a single matrix; `Animated` holds the two-matrix interpolation
 /// pair plus the time interval. This is the source data for building
 /// v4's `AnimatedTransform` equivalent in the end.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum RenderFromObject {
     Static(Transform),
     Animated {
@@ -142,6 +142,9 @@ impl RenderFromObject {
 #[derive(Clone)]
 pub struct ShapeSceneEntity {
     pub base: SceneEntity,
+    /// Parameters for consecutive child shapes that share this entity's
+    /// transform and shading state. Empty for shapes that are not grouped.
+    pub child_params: Vec<ParameterDictionary>,
     pub render_from_object: RenderFromObject,
     pub reverse_orientation: bool,
     /// Resolved later as `materials[material_index]`. `usize::MAX`

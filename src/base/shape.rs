@@ -125,6 +125,28 @@ pub enum Shape {
 }
 
 impl Shape {
+    pub fn create_curves(
+        render_from_object: &Transform,
+        object_from_render: &Transform,
+        reverse_orientation: bool,
+        shape_params: &[ParameterDictionary],
+        float_textures: &HashMap<String, Arc<FloatTexture>>,
+    ) -> Result<Vec<Vec<Shape>>, PbrtError> {
+        let curve_sets = create_curves_shape(
+            render_from_object,
+            object_from_render,
+            reverse_orientation,
+            shape_params,
+        )?;
+        let mut shape_sets = Vec::with_capacity(curve_sets.len());
+        debug_assert_eq!(curve_sets.len(), shape_params.len());
+        for (curves, params) in curve_sets.into_iter().zip(shape_params) {
+            let curve_shapes = curves.into_iter().map(Shape::Curve).collect();
+            shape_sets.push(wrap_alpha_masks(curve_shapes, params, float_textures)?);
+        }
+        Ok(shape_sets)
+    }
+
     /// Create shapes from shape name and parameters
     ///
     /// Corresponds to pbrt-v4's Shape::Create

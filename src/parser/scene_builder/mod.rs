@@ -36,6 +36,8 @@ use crate::util::transform::transform_set::{TransformSet, ALL_TRANSFORM_BITS};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+const CURVES_SHAPE_NAME: &str = "curves";
+
 /// Parse-time state for the SceneBuilder loader, equivalent to the
 /// `BasicScene` + `BasicSceneBuilder` pair in pbrt-v4. The entity
 /// vectors accumulate immutably until `build()`; the other fields

@@ -34,7 +34,7 @@ use super::scene_entity::{
     InstanceDefinitionSceneEntity, InstanceSceneEntity, MediumInterfaceNames, RenderFromObject,
     ShapeSceneEntity,
 };
-use super::SceneBuilder;
+use super::{SceneBuilder, CURVES_SHAPE_NAME};
 use crate::base::camera::Camera;
 use crate::base::filter::Filter;
 use crate::base::light::Light;
@@ -596,9 +596,9 @@ impl SceneBuilder {
             let mut area_lights: Vec<Arc<Light>> = Vec::new();
 
             if build_parallel {
-                let realize_static_shape = |shape| {
-                    self.realize_shape_owned(
-                        shape,
+                let realize_static_shape = |entry| {
+                    self.realize_shape_entry_owned(
+                        entry,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -610,9 +610,9 @@ impl SceneBuilder {
                 };
                 let static_results: Vec<Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError>> =
                     def.shapes.par_iter().map(realize_static_shape).collect();
-                let realize_animated_shape = |shape| {
-                    self.realize_shape_owned(
-                        shape,
+                let realize_animated_shape = |entry| {
+                    self.realize_shape_entry_owned(
+                        entry,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -642,9 +642,9 @@ impl SceneBuilder {
                     area_lights.extend(l);
                 }
             } else {
-                for shape in &def.shapes {
-                    if let Err(e) = self.realize_shape(
-                        shape,
+                for entry in &def.shapes {
+                    if let Err(e) = self.realize_shape_entry(
+                        entry,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -658,9 +658,9 @@ impl SceneBuilder {
                         return ((*name).clone(), Err(e));
                     }
                 }
-                for shape in &def.animated_shapes {
-                    if let Err(e) = self.realize_shape(
-                        shape,
+                for entry in &def.animated_shapes {
+                    if let Err(e) = self.realize_shape_entry(
+                        entry,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -748,9 +748,9 @@ impl SceneBuilder {
         if build_parallel {
             // Process static and animated shape entities in declaration order.
             // The parallel path uses par_iter, whose collect preserves order.
-            let realize_static_shape = |shape| {
-                self.realize_shape_owned(
-                    shape,
+            let realize_static_shape = |entry| {
+                self.realize_shape_entry_owned(
+                    entry,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -760,9 +760,9 @@ impl SceneBuilder {
                     render_from_world,
                 )
             };
-            let realize_animated_shape = |shape| {
-                self.realize_shape_owned(
-                    shape,
+            let realize_animated_shape = |entry| {
+                self.realize_shape_entry_owned(
+                    entry,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -801,9 +801,9 @@ impl SceneBuilder {
                 area_lights.extend(l);
             }
         } else {
-            for shape in &self.shapes {
-                self.realize_shape(
-                    shape,
+            for entry in &self.shapes {
+                self.realize_shape_entry(
+                    entry,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -815,9 +815,9 @@ impl SceneBuilder {
                     &mut area_lights,
                 )?;
             }
-            for shape in &self.animated_shapes {
-                self.realize_shape(
-                    shape,
+            for entry in &self.animated_shapes {
+                self.realize_shape_entry(
+                    entry,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -834,12 +834,12 @@ impl SceneBuilder {
         Ok((prims, area_lights))
     }
 
-    /// Owned-output variant of `realize_shape` for parallel collection. Each
+    /// Owned-output variant of `realize_shape_entry` for parallel collection. Each
     /// parallel task gets its own buffers.
     #[allow(clippy::too_many_arguments)]
-    fn realize_shape_owned(
+    fn realize_shape_entry_owned(
         &self,
-        shape: &ShapeSceneEntity,
+        entry: &ShapeSceneEntity,
         float_tex: &FloatTextureMap,
         spectrum_tex: &SpectrumTextureMap,
         materials: &[Arc<Material>],
@@ -850,8 +850,8 @@ impl SceneBuilder {
     ) -> Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError> {
         let mut prims = Vec::new();
         let mut area_lights = Vec::new();
-        self.realize_shape(
-            shape,
+        self.realize_shape_entry(
+            entry,
             float_tex,
             spectrum_tex,
             materials,
@@ -863,6 +863,105 @@ impl SceneBuilder {
             &mut area_lights,
         )?;
         Ok((prims, area_lights))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn realize_shape_entry(
+        &self,
+        entry: &ShapeSceneEntity,
+        float_tex: &FloatTextureMap,
+        spectrum_tex: &SpectrumTextureMap,
+        materials: &[Arc<Material>],
+        named_materials: &HashMap<String, Arc<Material>>,
+        default_material: &Arc<Material>,
+        named_media: &MediumMap,
+        render_from_world: &Transform,
+        out_prims: &mut Vec<Arc<Primitive>>,
+        out_area_lights: &mut Vec<Arc<Light>>,
+    ) -> Result<(), PbrtError> {
+        if entry.base.name == CURVES_SHAPE_NAME && entry.child_params.is_empty() {
+            return Err(PbrtError::error(
+                "Shape \"curves\" is reserved for SceneBuilder's internal representation.",
+            ));
+        }
+
+        if entry.base.name == CURVES_SHAPE_NAME {
+            self.realize_curves(
+                entry,
+                float_tex,
+                spectrum_tex,
+                materials,
+                named_materials,
+                default_material,
+                named_media,
+                render_from_world,
+                out_prims,
+                out_area_lights,
+            )
+        } else {
+            self.realize_shape(
+                entry,
+                float_tex,
+                spectrum_tex,
+                materials,
+                named_materials,
+                default_material,
+                named_media,
+                render_from_world,
+                out_prims,
+                out_area_lights,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn realize_curves(
+        &self,
+        shape: &ShapeSceneEntity,
+        float_tex: &FloatTextureMap,
+        _spectrum_tex: &SpectrumTextureMap,
+        materials: &[Arc<Material>],
+        named_materials: &HashMap<String, Arc<Material>>,
+        default_material: &Arc<Material>,
+        named_media: &MediumMap,
+        render_from_world: &Transform,
+        out_prims: &mut Vec<Arc<Primitive>>,
+        out_area_lights: &mut Vec<Arc<Light>>,
+    ) -> Result<(), PbrtError> {
+        let rfo = compose_with_render_from_world(&shape.render_from_object, render_from_world);
+        let animated = matches!(rfo, RenderFromObject::Animated { .. });
+        let object_to_world = match &rfo {
+            RenderFromObject::Static(t) => *t,
+            RenderFromObject::Animated { from, .. } => *from,
+        };
+        let shape_object_to_world = if animated {
+            Transform::identity()
+        } else {
+            object_to_world
+        };
+        let shape_sets = Shape::create_curves(
+            &shape_object_to_world,
+            &shape_object_to_world.inverse(),
+            shape.reverse_orientation,
+            &shape.child_params,
+            float_tex,
+        )?;
+        for shapes in shape_sets {
+            self.emit_shape_primitives(
+                shape,
+                rfo.clone(),
+                object_to_world,
+                shapes,
+                false,
+                materials,
+                named_materials,
+                default_material,
+                named_media,
+                out_prims,
+                out_area_lights,
+            )?;
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -884,9 +983,9 @@ impl SceneBuilder {
         // collapses to identity (the helper short-circuits).
         let rfo = compose_with_render_from_world(&shape.render_from_object, render_from_world);
         let animated = matches!(rfo, RenderFromObject::Animated { .. });
-        let object_to_world = match rfo {
-            RenderFromObject::Static(t) => t,
-            RenderFromObject::Animated { from, .. } => from,
+        let object_to_world = match &rfo {
+            RenderFromObject::Static(t) => *t,
+            RenderFromObject::Animated { from, .. } => *from,
         };
         let shape_object_to_world = if animated {
             Transform::identity()
@@ -923,14 +1022,15 @@ impl SceneBuilder {
                 .get_textures_ref("displacement")
                 .is_some();
 
-        let shapes = match Shape::create(
+        let created_shapes = Shape::create(
             &shape.base.name,
             &shape_object_to_world,
             &shape_object_to_world.inverse(),
             shape.reverse_orientation,
             shape_params_for_create,
             float_tex,
-        ) {
+        );
+        let shapes = match created_shapes {
             Ok(s) => s,
             Err(e) => {
                 return Err(e);
@@ -942,6 +1042,41 @@ impl SceneBuilder {
         let use_dedicated_mesh_accelerator = shape.base.name == "plymesh"
             && shape.area_light_index.is_none()
             && (has_displacement || shapes.len() >= DEDICATED_MESH_BVH_THRESHOLD);
+
+        self.emit_shape_primitives(
+            shape,
+            rfo,
+            object_to_world,
+            shapes,
+            use_dedicated_mesh_accelerator,
+            materials,
+            named_materials,
+            default_material,
+            named_media,
+            out_prims,
+            out_area_lights,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_shape_primitives(
+        &self,
+        shape: &ShapeSceneEntity,
+        rfo: RenderFromObject,
+        object_to_world: Transform,
+        shapes: Vec<Shape>,
+        use_dedicated_mesh_accelerator: bool,
+        materials: &[Arc<Material>],
+        named_materials: &HashMap<String, Arc<Material>>,
+        default_material: &Arc<Material>,
+        named_media: &MediumMap,
+        out_prims: &mut Vec<Arc<Primitive>>,
+        out_area_lights: &mut Vec<Arc<Light>>,
+    ) -> Result<(), PbrtError> {
+        if shapes.is_empty() {
+            return Ok(());
+        }
+        let animated = matches!(rfo, RenderFromObject::Animated { .. });
 
         let material = if shape.material_is_default
             && shape.material_index == usize::MAX
