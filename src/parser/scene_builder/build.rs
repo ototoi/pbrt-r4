@@ -596,9 +596,9 @@ impl SceneBuilder {
             let mut area_lights: Vec<Arc<Light>> = Vec::new();
 
             if build_parallel {
-                let realize_static_shape = |entry| {
+                let realize_static_shape = |shape| {
                     self.realize_shape_entry_owned(
-                        entry,
+                        shape,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -610,9 +610,9 @@ impl SceneBuilder {
                 };
                 let static_results: Vec<Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError>> =
                     def.shapes.par_iter().map(realize_static_shape).collect();
-                let realize_animated_shape = |entry| {
+                let realize_animated_shape = |shape| {
                     self.realize_shape_entry_owned(
-                        entry,
+                        shape,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -642,9 +642,9 @@ impl SceneBuilder {
                     area_lights.extend(l);
                 }
             } else {
-                for entry in &def.shapes {
+                for shape in &def.shapes {
                     if let Err(e) = self.realize_shape_entry(
-                        entry,
+                        shape,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -658,9 +658,9 @@ impl SceneBuilder {
                         return ((*name).clone(), Err(e));
                     }
                 }
-                for entry in &def.animated_shapes {
+                for shape in &def.animated_shapes {
                     if let Err(e) = self.realize_shape_entry(
-                        entry,
+                        shape,
                         float_tex,
                         spectrum_tex,
                         materials,
@@ -748,9 +748,9 @@ impl SceneBuilder {
         if build_parallel {
             // Process static and animated shape entities in declaration order.
             // The parallel path uses par_iter, whose collect preserves order.
-            let realize_static_shape = |entry| {
+            let realize_static_shape = |shape| {
                 self.realize_shape_entry_owned(
-                    entry,
+                    shape,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -760,9 +760,9 @@ impl SceneBuilder {
                     render_from_world,
                 )
             };
-            let realize_animated_shape = |entry| {
+            let realize_animated_shape = |shape| {
                 self.realize_shape_entry_owned(
-                    entry,
+                    shape,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -801,9 +801,9 @@ impl SceneBuilder {
                 area_lights.extend(l);
             }
         } else {
-            for entry in &self.shapes {
+            for shape in &self.shapes {
                 self.realize_shape_entry(
-                    entry,
+                    shape,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -815,9 +815,9 @@ impl SceneBuilder {
                     &mut area_lights,
                 )?;
             }
-            for entry in &self.animated_shapes {
+            for shape in &self.animated_shapes {
                 self.realize_shape_entry(
-                    entry,
+                    shape,
                     float_tex,
                     spectrum_tex,
                     materials,
@@ -839,7 +839,7 @@ impl SceneBuilder {
     #[allow(clippy::too_many_arguments)]
     fn realize_shape_entry_owned(
         &self,
-        entry: &ShapeSceneEntity,
+        shape: &ShapeSceneEntity,
         float_tex: &FloatTextureMap,
         spectrum_tex: &SpectrumTextureMap,
         materials: &[Arc<Material>],
@@ -851,7 +851,7 @@ impl SceneBuilder {
         let mut prims = Vec::new();
         let mut area_lights = Vec::new();
         self.realize_shape_entry(
-            entry,
+            shape,
             float_tex,
             spectrum_tex,
             materials,
@@ -868,7 +868,7 @@ impl SceneBuilder {
     #[allow(clippy::too_many_arguments)]
     fn realize_shape_entry(
         &self,
-        entry: &ShapeSceneEntity,
+        shape: &ShapeSceneEntity,
         float_tex: &FloatTextureMap,
         spectrum_tex: &SpectrumTextureMap,
         materials: &[Arc<Material>],
@@ -879,15 +879,15 @@ impl SceneBuilder {
         out_prims: &mut Vec<Arc<Primitive>>,
         out_area_lights: &mut Vec<Arc<Light>>,
     ) -> Result<(), PbrtError> {
-        if entry.base.name == CURVES_SHAPE_NAME && entry.child_params.is_empty() {
+        if shape.base.name == CURVES_SHAPE_NAME && shape.child_params.is_empty() {
             return Err(PbrtError::error(
                 "Shape \"curves\" is reserved for SceneBuilder's internal representation.",
             ));
         }
 
-        if entry.base.name == CURVES_SHAPE_NAME {
+        if shape.base.name == CURVES_SHAPE_NAME {
             self.realize_curves(
-                entry,
+                shape,
                 float_tex,
                 spectrum_tex,
                 materials,
@@ -900,7 +900,7 @@ impl SceneBuilder {
             )
         } else {
             self.realize_shape(
-                entry,
+                shape,
                 float_tex,
                 spectrum_tex,
                 materials,
