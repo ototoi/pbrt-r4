@@ -597,7 +597,7 @@ impl SceneBuilder {
 
             if build_parallel {
                 let realize_static_shape = |shape| {
-                    self.realize_shape_entry_owned(
+                    self.realize_shape_owned(
                         shape,
                         float_tex,
                         spectrum_tex,
@@ -611,7 +611,7 @@ impl SceneBuilder {
                 let static_results: Vec<Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError>> =
                     def.shapes.par_iter().map(realize_static_shape).collect();
                 let realize_animated_shape = |shape| {
-                    self.realize_shape_entry_owned(
+                    self.realize_shape_owned(
                         shape,
                         float_tex,
                         spectrum_tex,
@@ -643,7 +643,7 @@ impl SceneBuilder {
                 }
             } else {
                 for shape in &def.shapes {
-                    if let Err(e) = self.realize_shape_entry(
+                    if let Err(e) = self.realize_shape(
                         shape,
                         float_tex,
                         spectrum_tex,
@@ -659,7 +659,7 @@ impl SceneBuilder {
                     }
                 }
                 for shape in &def.animated_shapes {
-                    if let Err(e) = self.realize_shape_entry(
+                    if let Err(e) = self.realize_shape(
                         shape,
                         float_tex,
                         spectrum_tex,
@@ -749,7 +749,7 @@ impl SceneBuilder {
             // Process static and animated shape entities in declaration order.
             // The parallel path uses par_iter, whose collect preserves order.
             let realize_static_shape = |shape| {
-                self.realize_shape_entry_owned(
+                self.realize_shape_owned(
                     shape,
                     float_tex,
                     spectrum_tex,
@@ -761,7 +761,7 @@ impl SceneBuilder {
                 )
             };
             let realize_animated_shape = |shape| {
-                self.realize_shape_entry_owned(
+                self.realize_shape_owned(
                     shape,
                     float_tex,
                     spectrum_tex,
@@ -802,7 +802,7 @@ impl SceneBuilder {
             }
         } else {
             for shape in &self.shapes {
-                self.realize_shape_entry(
+                self.realize_shape(
                     shape,
                     float_tex,
                     spectrum_tex,
@@ -816,7 +816,7 @@ impl SceneBuilder {
                 )?;
             }
             for shape in &self.animated_shapes {
-                self.realize_shape_entry(
+                self.realize_shape(
                     shape,
                     float_tex,
                     spectrum_tex,
@@ -834,10 +834,10 @@ impl SceneBuilder {
         Ok((prims, area_lights))
     }
 
-    /// Owned-output variant of `realize_shape_entry` for parallel collection. Each
+    /// Owned-output variant of `realize_shape` for parallel collection. Each
     /// parallel task gets its own buffers.
     #[allow(clippy::too_many_arguments)]
-    fn realize_shape_entry_owned(
+    fn realize_shape_owned(
         &self,
         shape: &ShapeSceneEntity,
         float_tex: &FloatTextureMap,
@@ -850,7 +850,7 @@ impl SceneBuilder {
     ) -> Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError> {
         let mut prims = Vec::new();
         let mut area_lights = Vec::new();
-        self.realize_shape_entry(
+        self.realize_shape(
             shape,
             float_tex,
             spectrum_tex,
@@ -863,55 +863,6 @@ impl SceneBuilder {
             &mut area_lights,
         )?;
         Ok((prims, area_lights))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn realize_shape_entry(
-        &self,
-        shape: &ShapeSceneEntity,
-        float_tex: &FloatTextureMap,
-        spectrum_tex: &SpectrumTextureMap,
-        materials: &[Arc<Material>],
-        named_materials: &HashMap<String, Arc<Material>>,
-        default_material: &Arc<Material>,
-        named_media: &MediumMap,
-        render_from_world: &Transform,
-        out_prims: &mut Vec<Arc<Primitive>>,
-        out_area_lights: &mut Vec<Arc<Light>>,
-    ) -> Result<(), PbrtError> {
-        if shape.base.name == CURVES_SHAPE_NAME && shape.child_params.is_empty() {
-            return Err(PbrtError::error(
-                "Shape \"curves\" is reserved for SceneBuilder's internal representation.",
-            ));
-        }
-
-        if shape.base.name == CURVES_SHAPE_NAME {
-            self.realize_curves(
-                shape,
-                float_tex,
-                spectrum_tex,
-                materials,
-                named_materials,
-                default_material,
-                named_media,
-                render_from_world,
-                out_prims,
-                out_area_lights,
-            )
-        } else {
-            self.realize_shape(
-                shape,
-                float_tex,
-                spectrum_tex,
-                materials,
-                named_materials,
-                default_material,
-                named_media,
-                render_from_world,
-                out_prims,
-                out_area_lights,
-            )
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -969,7 +920,7 @@ impl SceneBuilder {
         &self,
         shape: &ShapeSceneEntity,
         float_tex: &FloatTextureMap,
-        _spectrum_tex: &SpectrumTextureMap,
+        spectrum_tex: &SpectrumTextureMap,
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
         default_material: &Arc<Material>,
@@ -978,6 +929,27 @@ impl SceneBuilder {
         out_prims: &mut Vec<Arc<Primitive>>,
         out_area_lights: &mut Vec<Arc<Light>>,
     ) -> Result<(), PbrtError> {
+        if shape.base.name == CURVES_SHAPE_NAME && shape.child_params.is_empty() {
+            return Err(PbrtError::error(
+                "Shape \"curves\" is reserved for SceneBuilder's internal representation.",
+            ));
+        }
+
+        if shape.base.name == CURVES_SHAPE_NAME {
+            return self.realize_curves(
+                shape,
+                float_tex,
+                spectrum_tex,
+                materials,
+                named_materials,
+                default_material,
+                named_media,
+                render_from_world,
+                out_prims,
+                out_area_lights,
+            );
+        }
+
         // pbrt-v4 pre-composes shape transforms with `renderFromWorld`
         // before handing them to the shape ctor; for World mode this
         // collapses to identity (the helper short-circuits).
