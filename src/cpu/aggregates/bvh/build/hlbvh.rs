@@ -329,6 +329,10 @@ fn build_upper_sah(treelet_roots: Vec<Box<BVHBuildNode>>) -> Box<BVHBuildNode> {
         }
     }
 
+    assert!(
+        !c0.is_empty() && !c1.is_empty(),
+        "HLBVH upper SAH split must produce two non-empty children"
+    );
     let node0 = Some(build_upper_sah(c0));
     let node1 = Some(build_upper_sah(c1));
 
