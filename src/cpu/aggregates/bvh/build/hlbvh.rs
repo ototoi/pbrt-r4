@@ -98,60 +98,6 @@ fn radix_sort(v0: Vec<MortonPrimitive>) -> Vec<MortonPrimitive> {
     }
 }
 
-fn split_node(
-    morton_prims: &mut [MortonPrimitive],
-    primitive_info: &mut [BVHPrimitiveInfo],
-    ordered_indices: &mut Vec<usize>,
-    max_prims_in_node: usize,
-    dim: usize,
-) -> Box<BVHBuildNode> {
-    let n_primitives = morton_prims.len();
-    if n_primitives <= max_prims_in_node {
-        let first_prim_offset = ordered_indices.len();
-        let mut bounds = primitive_info[morton_prims[0].primitive_index as usize].bounds;
-        ordered_indices.push(morton_prims[0].primitive_index as usize);
-        for i in 1..n_primitives {
-            let primitive_index = morton_prims[i].primitive_index as usize;
-            ordered_indices.push(primitive_index);
-            bounds = Bounds3f::union(&bounds, &primitive_info[primitive_index].bounds);
-        }
-        let node = Box::new(BVHBuildNode::init_leaf(
-            first_prim_offset,
-            n_primitives,
-            &bounds,
-        ));
-        assert_eq!(n_primitives, node.primitive_count());
-        return node;
-    } else {
-        morton_prims.sort_by(|a, b| {
-            let ap = &primitive_info[a.primitive_index as usize];
-            let bp = &primitive_info[b.primitive_index as usize];
-            ap.centroid[dim].total_cmp(&bp.centroid[dim])
-        });
-
-        let next_dim = (dim + 3 - 1) % 3;
-        let split_offset = n_primitives / 2;
-
-        let node0 = split_node(
-            &mut morton_prims[0..split_offset],
-            primitive_info,
-            ordered_indices,
-            max_prims_in_node,
-            next_dim,
-        );
-        let node1 = split_node(
-            &mut morton_prims[split_offset..n_primitives],
-            primitive_info,
-            ordered_indices,
-            max_prims_in_node,
-            next_dim,
-        );
-
-        let node = Box::new(BVHBuildNode::init_interior(dim, Some(node0), Some(node1)));
-        return node;
-    }
-}
-
 fn emit_lbvh(
     morton_prims: &[MortonPrimitive],
     primitive_info: &mut [BVHPrimitiveInfo],
@@ -160,7 +106,7 @@ fn emit_lbvh(
     bit_index: i32,
 ) -> Box<BVHBuildNode> {
     let n_primitives = morton_prims.len();
-    if n_primitives <= max_prims_in_node {
+    if bit_index == -1 || n_primitives < max_prims_in_node {
         let first_prim_offset = ordered_indices.len();
         let mut bounds = primitive_info[morton_prims[0].primitive_index as usize].bounds;
         ordered_indices.push(morton_prims[0].primitive_index as usize);
@@ -177,68 +123,57 @@ fn emit_lbvh(
         assert_eq!(n_primitives, node.primitive_count());
         return node;
     } else {
-        if bit_index == -1 {
-            let mut new_morton = morton_prims.to_vec();
-            return split_node(
-                &mut new_morton,
-                primitive_info,
-                ordered_indices,
-                max_prims_in_node,
-                2,
-            );
-        } else {
-            let mask: u32 = 1 << bit_index;
-            // Advance to next subtree level if there's no LBVH split for this bit
-            if (morton_prims[0].morton_code & mask)
-                == (morton_prims[n_primitives - 1].morton_code & mask)
-            {
-                return emit_lbvh(
-                    morton_prims,
-                    primitive_info,
-                    ordered_indices,
-                    max_prims_in_node,
-                    bit_index - 1,
-                );
-            }
-
-            // Find LBVH split point for this dimension
-            let mut search_start = 0;
-            let mut search_end = n_primitives - 1;
-            while search_start + 1 != search_end {
-                let mid = (search_start + search_end) / 2;
-                if (morton_prims[search_start].morton_code & mask)
-                    == (morton_prims[mid].morton_code & mask)
-                {
-                    search_start = mid;
-                } else {
-                    search_end = mid;
-                }
-            }
-            let split_offset = search_end;
-            // Create and return interior LBVH node
-            let node0 = emit_lbvh(
-                &morton_prims[0..split_offset],
+        let mask: u32 = 1 << bit_index;
+        // Advance to next subtree level if there's no LBVH split for this bit
+        if (morton_prims[0].morton_code & mask)
+            == (morton_prims[n_primitives - 1].morton_code & mask)
+        {
+            return emit_lbvh(
+                morton_prims,
                 primitive_info,
                 ordered_indices,
                 max_prims_in_node,
                 bit_index - 1,
             );
-            let node1 = emit_lbvh(
-                &morton_prims[split_offset..n_primitives],
-                primitive_info,
-                ordered_indices,
-                max_prims_in_node,
-                bit_index - 1,
-            );
-
-            let axis = bit_index % 3;
-            let node = Box::new(BVHBuildNode::init_interior(
-                axis as usize,
-                Some(node0),
-                Some(node1),
-            ));
-            return node;
         }
+
+        // Find LBVH split point for this dimension
+        let mut search_start = 0;
+        let mut search_end = n_primitives - 1;
+        while search_start + 1 != search_end {
+            let mid = (search_start + search_end) / 2;
+            if (morton_prims[search_start].morton_code & mask)
+                == (morton_prims[mid].morton_code & mask)
+            {
+                search_start = mid;
+            } else {
+                search_end = mid;
+            }
+        }
+        let split_offset = search_end;
+        // Create and return interior LBVH node
+        let node0 = emit_lbvh(
+            &morton_prims[0..split_offset],
+            primitive_info,
+            ordered_indices,
+            max_prims_in_node,
+            bit_index - 1,
+        );
+        let node1 = emit_lbvh(
+            &morton_prims[split_offset..n_primitives],
+            primitive_info,
+            ordered_indices,
+            max_prims_in_node,
+            bit_index - 1,
+        );
+
+        let axis = bit_index % 3;
+        let node = Box::new(BVHBuildNode::init_interior(
+            axis as usize,
+            Some(node0),
+            Some(node1),
+        ));
+        return node;
     }
 }
 
@@ -345,20 +280,21 @@ pub fn hlbvh_build(
     ordered_indices: &mut Vec<usize>,
     max_prims_in_node: usize,
 ) -> Box<BVHBuildNode> {
-    let mut bounds = primitive_info[0].bounds.clone();
+    let mut centroid_bounds =
+        Bounds3f::new(&primitive_info[0].centroid, &primitive_info[0].centroid);
     for i in 1..primitive_info.len() {
-        bounds = Bounds3f::union(&bounds, &primitive_info[i].bounds);
+        centroid_bounds = Bounds3f::union_p(&centroid_bounds, &primitive_info[i].centroid);
     }
 
     let mut morton_prims = vec![MortonPrimitive::default(); primitive_info.len()];
     for i in 0..morton_prims.len() {
         // Initialize _mortonPrims[i]_ for _i_th primitive
         morton_prims[i].primitive_index = primitive_info[i].primitive_number as u32; //
-        let centroid_offset = bounds.offset(&primitive_info[i].centroid);
+        let centroid_offset = centroid_bounds.offset(&primitive_info[i].centroid);
         let scaled_centroid = [
-            centroid_offset.x.clamp(0.0, 1.0) * MORTON_SCALE as Float,
-            centroid_offset.y.clamp(0.0, 1.0) * MORTON_SCALE as Float,
-            centroid_offset.z.clamp(0.0, 1.0) * MORTON_SCALE as Float,
+            centroid_offset.x * MORTON_SCALE as Float,
+            centroid_offset.y * MORTON_SCALE as Float,
+            centroid_offset.z * MORTON_SCALE as Float,
         ];
         morton_prims[i].morton_code = encode_morton3(&scaled_centroid);
     }
