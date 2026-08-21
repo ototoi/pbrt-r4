@@ -65,6 +65,39 @@ fn rgba_u8_mipmap_cache_round_trips_storage_and_channels() {
 }
 
 #[test]
+fn mipmap_cache_writes_every_pyramid_level() {
+    let mipmap = MIPMap::<Float>::new_with_raw_channels_and_storage(
+        &Point2i::new(4, 4),
+        &[
+            0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5,
+        ],
+        1,
+        ImageFilter::Bilinear,
+        8.0,
+        ImageWrap::Clamp,
+        ImageWrap::Clamp,
+        MIPMapStorageKind::F32,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let cache_dir = dir.path().join("cache");
+    let info = texinfo();
+
+    save_float_mipmap_cache(cache_dir.to_str().unwrap(), &info, "hash", &mipmap).unwrap();
+
+    let metadata: serde_json::Value =
+        serde_json::from_reader(fs::File::open(cache_dir.join("metadata.json")).unwrap()).unwrap();
+    let levels = metadata["levels"].as_array().unwrap();
+    assert_eq!(levels.len(), mipmap.storage.pyramid.len());
+    for (index, level) in levels.iter().enumerate() {
+        let bytes = fs::read(cache_dir.join(format!("level-{index:03}.bin"))).unwrap();
+        assert_eq!(bytes.len(), level["byte_length"].as_u64().unwrap() as usize);
+    }
+
+    let restored = load_float_mipmap_cache(cache_dir.to_str().unwrap(), "hash", &info).unwrap();
+    assert_eq!(restored.storage.pyramid.len(), mipmap.storage.pyramid.len());
+}
+
+#[test]
 fn mipmap_cache_rejects_a_different_source_hash() {
     let mipmap = MIPMap::<Float>::new(
         &Point2i::new(1, 1),
