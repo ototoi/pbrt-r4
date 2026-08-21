@@ -286,11 +286,11 @@ fn build_upper_sah(treelet_roots: &[Box<BVHBuildNode>]) -> Box<BVHBuildNode> {
     // Compute costs for splitting after each bucket
     let mut cost: [Float; N_BUCKETS - 1] = [0.0; N_BUCKETS - 1];
     for i in 0..(N_BUCKETS - 1) {
-        let mut b0 = buckets[i].bounds;
-        let mut b1 = buckets[i].bounds;
+        let mut b0 = Bounds3f::default();
+        let mut b1 = Bounds3f::default();
         let mut count0 = 0;
-        let mut count1 = 1;
-        for j in 0..i {
+        let mut count1 = 0;
+        for j in 0..=i {
             b0 = Bounds3f::union(&b0, &buckets[j].bounds);
             count0 += buckets[j].count;
         }
