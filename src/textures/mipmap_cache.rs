@@ -120,73 +120,84 @@ fn storage_kind(image: &F32MIPMapImage) -> Result<CacheStorageKind, PbrtError> {
     })
 }
 
-fn storage_bytes(image: &F32MIPMapImage) -> Result<Vec<u8>, PbrtError> {
-    let mut bytes = Vec::new();
-    match &image.data {
-        MIPMapLevelStorage::F32(data) => {
-            for value in data {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        MIPMapLevelStorage::F16(data) => {
-            for value in data {
-                bytes.extend_from_slice(&value.to_bits().to_le_bytes());
-            }
-        }
-        MIPMapLevelStorage::U8 { data, .. } => bytes.extend_from_slice(data),
-    }
+fn validate_level(image: &F32MIPMapImage) -> Result<(), PbrtError> {
     if image.channels == 0 || image.resolution.0 == 0 || image.resolution.1 == 0 {
         return Err(PbrtError::error("Invalid MIPMap cache level dimensions."));
     }
-    Ok(bytes)
+    Ok(())
 }
 
-fn metadata_for<T>(
-    texinfo: &TexInfo,
-    file_hash: &str,
-    view: CacheView,
-    mipmap: &MIPMap<T>,
-) -> Result<(CacheMetadata, Vec<Vec<u8>>), PbrtError> {
+fn write_level(file: &mut File, image: &F32MIPMapImage) -> Result<(usize, String), PbrtError> {
+    const BUFFER_BYTES: usize = 64 * 1024;
+
+    let mut digest = Md5::new();
+    let byte_length = match &image.data {
+        MIPMapLevelStorage::F32(data) => {
+            let mut bytes = Vec::with_capacity(BUFFER_BYTES);
+            for values in data.chunks(BUFFER_BYTES / std::mem::size_of::<f32>()) {
+                bytes.clear();
+                for value in values {
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                digest.input(&bytes);
+                file.write_all(&bytes)?;
+            }
+            data.len()
+                .checked_mul(std::mem::size_of::<f32>())
+                .ok_or_else(|| PbrtError::error("MIPMap cache level is too large."))?
+        }
+        MIPMapLevelStorage::F16(data) => {
+            let mut bytes = Vec::with_capacity(BUFFER_BYTES);
+            for values in data.chunks(BUFFER_BYTES / std::mem::size_of::<u16>()) {
+                bytes.clear();
+                for value in values {
+                    bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+                }
+                digest.input(&bytes);
+                file.write_all(&bytes)?;
+            }
+            data.len()
+                .checked_mul(std::mem::size_of::<u16>())
+                .ok_or_else(|| PbrtError::error("MIPMap cache level is too large."))?
+        }
+        MIPMapLevelStorage::U8 { data, .. } => {
+            digest.input(data);
+            file.write_all(data)?;
+            data.len()
+        }
+    };
+
+    Ok((byte_length, digest.result_str()))
+}
+
+fn cache_layout<T>(mipmap: &MIPMap<T>) -> Result<(CacheStorageKind, usize, String), PbrtError> {
     let first = mipmap
         .storage
         .pyramid
         .first()
         .ok_or_else(|| PbrtError::error("Cannot cache an empty MIPMap."))?;
-    let kind = storage_kind(first)?;
-    let channels = first.channels;
-    let channel_layout = layout(channels)?.to_string();
-    let mut levels = Vec::with_capacity(mipmap.storage.pyramid.len());
-    let mut bytes_by_level = Vec::with_capacity(mipmap.storage.pyramid.len());
+    validate_level(first)?;
+    Ok((
+        storage_kind(first)?,
+        first.channels,
+        layout(first.channels)?.to_string(),
+    ))
+}
+
+fn validate_pyramid<T>(
+    mipmap: &MIPMap<T>,
+    kind: CacheStorageKind,
+    channels: usize,
+) -> Result<(), PbrtError> {
     for image in &mipmap.storage.pyramid {
+        validate_level(image)?;
         if image.channels != channels || storage_kind(image)? != kind {
             return Err(PbrtError::error(
                 "MIPMap cache levels have inconsistent layout.",
             ));
         }
-        let bytes = storage_bytes(image)?;
-        levels.push(CacheLevelInfo {
-            width: image.resolution.0,
-            height: image.resolution.1,
-            channels: image.channels,
-            byte_length: bytes.len(),
-            checksum: hash_bytes(&bytes),
-        });
-        bytes_by_level.push(bytes);
     }
-    Ok((
-        CacheMetadata {
-            format_version: MIPMAP_CACHE_FORMAT_VERSION,
-            texinfo: texinfo.clone(),
-            image_file_hash: file_hash.to_string(),
-            view,
-            storage_kind: kind,
-            encoding: texinfo.encoding,
-            channels,
-            channel_layout,
-            levels,
-        },
-        bytes_by_level,
-    ))
+    Ok(())
 }
 
 fn write_cache<T>(
@@ -196,7 +207,8 @@ fn write_cache<T>(
     view: CacheView,
     mipmap: &MIPMap<T>,
 ) -> Result<(), PbrtError> {
-    let (metadata, bytes_by_level) = metadata_for(texinfo, file_hash, view, mipmap)?;
+    let (kind, channels, channel_layout) = cache_layout(mipmap)?;
+    validate_pyramid(mipmap, kind, channels)?;
     let target = Path::new(dir);
     if target.exists() {
         if target.join("COMPLETE").exists() {
@@ -214,11 +226,30 @@ fn write_cache<T>(
     let temporary = target.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
     fs::create_dir_all(&temporary)?;
     let result = (|| {
-        for (index, bytes) in bytes_by_level.iter().enumerate() {
+        let mut levels = Vec::with_capacity(mipmap.storage.pyramid.len());
+        for (index, image) in mipmap.storage.pyramid.iter().enumerate() {
             let mut file = File::create(temporary.join(format!("level-{index:03}.bin")))?;
-            file.write_all(bytes)?;
+            let (byte_length, checksum) = write_level(&mut file, image)?;
             file.sync_all()?;
+            levels.push(CacheLevelInfo {
+                width: image.resolution.0,
+                height: image.resolution.1,
+                channels: image.channels,
+                byte_length,
+                checksum,
+            });
         }
+        let metadata = CacheMetadata {
+            format_version: MIPMAP_CACHE_FORMAT_VERSION,
+            texinfo: texinfo.clone(),
+            image_file_hash: file_hash.to_string(),
+            view,
+            storage_kind: kind,
+            encoding: texinfo.encoding,
+            channels,
+            channel_layout,
+            levels,
+        };
         let metadata_path = temporary.join("metadata.json");
         let mut file = File::create(metadata_path)?;
         serde_json::to_writer_pretty(&mut file, &metadata)
@@ -267,8 +298,17 @@ fn read_level(
             "MIPMap cache byte length is inconsistent.",
         ));
     }
-    let mut bytes = Vec::new();
-    File::open(path)?.read_to_end(&mut bytes)?;
+    let byte_length = u64::try_from(info.byte_length)
+        .map_err(|_| PbrtError::error("MIPMap cache level is too large."))?;
+    let file = File::open(path)?;
+    if file.metadata()?.len() != byte_length {
+        return Err(PbrtError::error("MIPMap cache level checksum mismatch."));
+    }
+    let max_read = byte_length
+        .checked_add(1)
+        .ok_or_else(|| PbrtError::error("MIPMap cache level is too large."))?;
+    let mut bytes = Vec::with_capacity(info.byte_length);
+    file.take(max_read).read_to_end(&mut bytes)?;
     if bytes.len() != info.byte_length || hash_bytes(&bytes) != info.checksum {
         return Err(PbrtError::error("MIPMap cache level checksum mismatch."));
     }
