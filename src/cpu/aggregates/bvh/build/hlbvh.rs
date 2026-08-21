@@ -248,9 +248,9 @@ struct BucketInfo {
     pub bounds: Bounds3f,
 }
 
-fn build_upper_sah(treelet_roots: &[Box<BVHBuildNode>]) -> Box<BVHBuildNode> {
-    if treelet_roots.len() <= 1 {
-        return treelet_roots[0].clone();
+fn build_upper_sah(treelet_roots: Vec<Box<BVHBuildNode>>) -> Box<BVHBuildNode> {
+    if treelet_roots.len() == 1 {
+        return treelet_roots.into_iter().next().unwrap();
     }
 
     let mut bounds = treelet_roots[0].bounds;
@@ -314,34 +314,23 @@ fn build_upper_sah(treelet_roots: &[Box<BVHBuildNode>]) -> Box<BVHBuildNode> {
     }
 
     // Split nodes and create interior HLBVH SAH node
-    let (c0, c1): (Vec<&Box<BVHBuildNode>>, Vec<&Box<BVHBuildNode>>) =
-        treelet_roots.iter().partition(|node| -> bool {
-            let c = (node.bounds.min[dim] + node.bounds.max[dim]) * 0.5;
-            let b = (N_BUCKETS as Float
-                * ((c - centroid_bounds.min[dim])
-                    / (centroid_bounds.max[dim] - centroid_bounds.min[dim])))
-                as usize;
-            let b = usize::min(b, N_BUCKETS - 1);
-            return b <= min_cost_split_bucket;
-        });
-
-    let node0;
-    {
-        let mut cc: Vec<Box<BVHBuildNode>> = Vec::new();
-        for c in c0.iter() {
-            cc.push((*c).clone());
+    let mut c0 = Vec::new();
+    let mut c1 = Vec::new();
+    for node in treelet_roots {
+        let c = (node.bounds.min[dim] + node.bounds.max[dim]) * 0.5;
+        let b = (N_BUCKETS as Float
+            * ((c - centroid_bounds.min[dim])
+                / (centroid_bounds.max[dim] - centroid_bounds.min[dim]))) as usize;
+        let b = usize::min(b, N_BUCKETS - 1);
+        if b <= min_cost_split_bucket {
+            c0.push(node);
+        } else {
+            c1.push(node);
         }
-        node0 = Some(build_upper_sah(&cc));
     }
 
-    let node1;
-    {
-        let mut cc: Vec<Box<BVHBuildNode>> = Vec::new();
-        for c in c1.iter() {
-            cc.push((*c).clone());
-        }
-        node1 = Some(build_upper_sah(&cc));
-    }
+    let node0 = Some(build_upper_sah(c0));
+    let node1 = Some(build_upper_sah(c1));
 
     let node = Box::new(BVHBuildNode::init_interior(dim, node0, node1));
     return node;
@@ -418,8 +407,8 @@ pub fn hlbvh_build(
     // Create and return SAH BVH from LBVH treelets
     let mut finished_treelets = Vec::with_capacity(treelets_to_build.len());
     for treelet in treelets_to_build {
-        finished_treelets.push(treelet.build_nodes.unwrap().clone());
+        finished_treelets.push(treelet.build_nodes.unwrap());
     }
-    let node = build_upper_sah(&finished_treelets);
+    let node = build_upper_sah(finished_treelets);
     return node;
 }
