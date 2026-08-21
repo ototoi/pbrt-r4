@@ -79,3 +79,28 @@ fn hlbvh_build_preserves_all_primitives_across_treelets() {
     assert_eq!(ordered_indices, (0..bounds.len()).collect::<Vec<_>>());
     assert_eq!(node.primitive_count(), bounds.len());
 }
+
+#[test]
+fn hlbvh_matches_v4_when_morton_bits_are_exhausted() {
+    let bounds: Vec<_> = (0..8)
+        .map(|index| {
+            let extent = 1.0 + index as Float;
+            Bounds3f::from(((-extent, -extent, -extent), (extent, extent, extent)))
+        })
+        .collect();
+    let mut primitive_info: Vec<_> = bounds
+        .iter()
+        .enumerate()
+        .map(|(index, bound)| {
+            let centroid = (bound.min + bound.max) * 0.5;
+            BVHPrimitiveInfo::new(index, bound, &centroid)
+        })
+        .collect();
+    let mut ordered_indices = Vec::new();
+
+    let node = hlbvh_build(&mut primitive_info, &mut ordered_indices, 4);
+
+    assert_eq!(node.n_primitives, bounds.len());
+    assert_eq!(node.node_count(), 1);
+    assert_eq!(ordered_indices.len(), bounds.len());
+}
