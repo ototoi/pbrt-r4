@@ -1,3 +1,4 @@
+use pbrt_r4::cpu::bvh::build::hlbvh::hlbvh_build;
 use pbrt_r4::cpu::bvh::sah::split_sah;
 use pbrt_r4::cpu::bvh::{BVHBuildNode, BVHPrimitiveInfo, SplitMethod};
 use pbrt_r4::prelude::*;
@@ -52,4 +53,29 @@ fn sah_matches_v4_split_decision_even_below_max_primitives() {
     assert!(node.children[1].is_some());
     assert_eq!(node.primitive_count(), 3);
     assert_eq!(ordered_indices.len(), 3);
+}
+
+#[test]
+fn hlbvh_build_preserves_all_primitives_across_treelets() {
+    let bounds: Vec<_> = (0..32)
+        .map(|index| {
+            let x = index as Float * 2.0;
+            Bounds3f::from(((x, 0.0, 0.0), (x + 1.0, 1.0, 1.0)))
+        })
+        .collect();
+    let mut primitive_info: Vec<_> = bounds
+        .iter()
+        .enumerate()
+        .map(|(index, bound)| {
+            let centroid = (bound.min + bound.max) * 0.5;
+            BVHPrimitiveInfo::new(index, bound, &centroid)
+        })
+        .collect();
+    let mut ordered_indices = Vec::new();
+
+    let node = hlbvh_build(&mut primitive_info, &mut ordered_indices, 4);
+
+    ordered_indices.sort_unstable();
+    assert_eq!(ordered_indices, (0..bounds.len()).collect::<Vec<_>>());
+    assert_eq!(node.primitive_count(), bounds.len());
 }
