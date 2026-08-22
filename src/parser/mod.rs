@@ -5,6 +5,7 @@ pub mod print_target;
 pub mod read_file;
 pub mod remove_comment;
 pub mod scene_builder;
+mod session;
 pub mod to_ply_target;
 pub mod upgrade;
 
@@ -15,10 +16,9 @@ pub use scene_builder::SceneBuilder;
 pub use to_ply_target::ToPlyTarget;
 
 use self::common::*;
-use self::read_file::{
-    read_file_with_include, read_file_with_include_sources, read_file_without_include,
-};
+use self::read_file::{read_file_with_include, read_file_without_include};
 use self::remove_comment::remove_comment;
+use self::session::ParserSession;
 use crate::paramdict::ParameterDictionary;
 use crate::util::base::Float;
 use crate::util::error::*;
@@ -68,11 +68,7 @@ fn parse_targz(filename: &str, context: &mut dyn ParseTarget) -> Result<(), Pbrt
         let path = entry.path();
         if let Some(path) = search_pbrt_file(&path) {
             let path = path.to_string_lossy();
-            let sources = read_file_with_include_sources(&path)?;
-            for source in sources {
-                parse_string_core(&source, context)?;
-            }
-            return Ok(());
+            return ParserSession::new(&path, context)?.parse();
         }
     }
     return Err(PbrtError::from(std::io::Error::from(
@@ -84,11 +80,7 @@ pub fn parse_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), P
     if filename.ends_with(".tar.gz") {
         return parse_targz(filename, context);
     } else {
-        let sources = read_file_with_include_sources(filename)?;
-        for source in sources {
-            parse_string_core(&source, context)?;
-        }
-        return Ok(());
+        return ParserSession::new(filename, context)?.parse();
     }
 }
 
@@ -121,6 +113,10 @@ pub fn parse_file_upgraded(filename: &str, context: &mut dyn ParseTarget) -> Res
 
 fn parser_error(source: &str, input: &str, operation: &str, message: &str) -> PbrtError {
     let offset = source.len().saturating_sub(input.len());
+    parser_error_at(source, offset, operation, message)
+}
+
+fn parser_error_at(source: &str, offset: usize, operation: &str, message: &str) -> PbrtError {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
     let column = prefix

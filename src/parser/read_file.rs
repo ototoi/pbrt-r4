@@ -64,6 +64,10 @@ fn read_to_string(path: &Path) -> Result<String, Error> {
     }
 }
 
+pub fn read_file_source(path: &Path) -> Result<String, Error> {
+    read_to_string(path)
+}
+
 fn read_file_with_include_core(
     path: &Path,
     dirs: &mut Vec<PathBuf>,

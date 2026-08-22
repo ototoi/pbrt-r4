@@ -25,6 +25,10 @@ impl PbrtError {
     pub fn error(msg: &str) -> Self {
         PbrtError::new(PbrtErrorKind::Error, msg)
     }
+
+    pub fn with_file(self, path: &std::path::Path) -> Self {
+        PbrtError::new(self.kind, &format!("{}: {}", path.display(), self.msg))
+    }
 }
 
 impl std::error::Error for PbrtError {}

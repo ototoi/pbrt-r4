@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::fs;
 use std::io::{Result as IoResult, Write};
 use std::sync::{Arc, Mutex};
+use tar::Builder;
 
 #[derive(Clone)]
 struct SharedWriter(Arc<Mutex<Vec<u8>>>);
@@ -73,7 +74,7 @@ fn include_sources_preserve_directive_order_and_work_directories() {
 }
 
 #[test]
-fn gzipped_include_is_parsed_in_order() {
+fn gzipped_root_is_parsed_in_order() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let root = directory.path().join("root.pbrt.gz");
     let child = directory.path().join("child.pbrt");
@@ -94,6 +95,62 @@ fn gzipped_include_is_parsed_in_order() {
 }
 
 #[test]
+fn pbrt_file_can_include_gzipped_source() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let root = directory.path().join("root.pbrt");
+    let child = directory.path().join("child.pbrt.gz");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(b"Translate 1 2 3\n")
+        .expect("gzipped child should be written");
+    fs::write(&child, encoder.finish().expect("gzip should finish"))
+        .expect("compressed child scene should be written");
+    fs::write(&root, "Identity\nInclude \"child.pbrt.gz\"\nScale 2 2 2\n")
+        .expect("root scene should be written");
+
+    let mut target = DebugTarget::new();
+    parse_file(root.to_str().unwrap(), &mut target).expect("scene should parse");
+    let names = operation_names(&target);
+    assert!(names.contains(&"Translate".to_string()));
+    assert!(names.contains(&"Scale".to_string()));
+}
+
+#[test]
+fn tar_gz_scene_uses_streaming_include_parser() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("scene.tar.gz");
+    let archive_file = fs::File::create(&archive_path).expect("archive should be created");
+    let encoder = GzEncoder::new(archive_file, Compression::default());
+    let mut archive = Builder::new(encoder);
+    let root = b"Identity\nInclude \"child.pbrt\"\nScale 2 2 2\n";
+    let child = b"Translate 1 2 3\n";
+
+    let mut root_header = tar::Header::new_gnu();
+    root_header.set_size(root.len() as u64);
+    root_header.set_mode(0o644);
+    root_header.set_cksum();
+    archive
+        .append_data(&mut root_header, "scene/root.pbrt", &root[..])
+        .expect("root should be added to archive");
+
+    let mut child_header = tar::Header::new_gnu();
+    child_header.set_size(child.len() as u64);
+    child_header.set_mode(0o644);
+    child_header.set_cksum();
+    archive
+        .append_data(&mut child_header, "scene/child.pbrt", &child[..])
+        .expect("child should be added to archive");
+    let encoder = archive.into_inner().expect("tar should finish");
+    encoder.finish().expect("gzip should finish");
+
+    let mut target = DebugTarget::new();
+    parse_file(archive_path.to_str().unwrap(), &mut target).expect("archive scene should parse");
+    let names = operation_names(&target);
+    assert!(names.contains(&"Translate".to_string()));
+    assert!(names.contains(&"Scale".to_string()));
+}
+
+#[test]
 fn include_cycle_is_reported_as_an_error() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let first = directory.path().join("first.pbrt");
@@ -104,6 +161,20 @@ fn include_cycle_is_reported_as_an_error() {
     let error = read_file_with_include_sources(first.to_str().unwrap())
         .expect_err("include cycle should be rejected");
     assert!(error.to_string().contains("Include cycle detected"));
+}
+
+#[test]
+fn include_cycle_is_reported_by_streaming_parser() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let first = directory.path().join("first.pbrt");
+    let second = directory.path().join("second.pbrt");
+    fs::write(&first, "Include \"second.pbrt\"\n").expect("first scene should be written");
+    fs::write(&second, "Include \"first.pbrt\"\n").expect("second scene should be written");
+
+    let mut target = DebugTarget::new();
+    let error = parse_file(first.to_str().unwrap(), &mut target)
+        .expect_err("include cycle should be rejected by the parser session");
+    assert!(error.msg.contains("Include cycle detected"));
 }
 
 #[test]
@@ -119,6 +190,39 @@ fn include_parse_errors_report_the_current_source_chunk() {
         .expect_err("invalid child operation should be rejected");
     assert!(error.msg.contains("line 1"));
     assert!(error.msg.contains("operation `NotAParserOperation`"));
+    assert!(error.msg.contains(child.to_str().unwrap()));
+}
+
+#[test]
+fn include_read_errors_name_the_child_file() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let root = directory.path().join("root.pbrt");
+    let child = directory.path().join("child.pbrt");
+    fs::write(&child, [0xff, 0xfe]).expect("invalid child scene should be written");
+    fs::write(&root, "Include \"child.pbrt\"\n").expect("root scene should be written");
+
+    let mut target = DebugTarget::new();
+    let error = parse_file(root.to_str().unwrap(), &mut target)
+        .expect_err("invalid child encoding should be rejected");
+    assert!(error.msg.contains(child.to_str().unwrap()));
+    assert!(error.msg.contains("line 1"));
+    assert!(error.msg.contains("operation `Include`"));
+}
+
+#[test]
+fn missing_include_error_reports_directive_location() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let root = directory.path().join("root.pbrt");
+    fs::write(&root, "# comment\nInclude \"missing.pbrt\"\n")
+        .expect("root scene should be written");
+
+    let mut target = DebugTarget::new();
+    let error = parse_file(root.to_str().unwrap(), &mut target)
+        .expect_err("missing Include should be rejected");
+    assert!(error.msg.contains(root.to_str().unwrap()));
+    assert!(error.msg.contains("line 2"));
+    assert!(error.msg.contains("column 1"));
+    assert!(error.msg.contains("operation `Include`"));
 }
 
 #[test]
@@ -142,7 +246,7 @@ fn include_result_reaches_scene_builder() {
 }
 
 #[test]
-fn include_result_reaches_print_target() {
+fn include_expansion_reaches_print_target() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let root = directory.path().join("root.pbrt");
     let child = directory.path().join("child.pbrt");
@@ -156,4 +260,44 @@ fn include_result_reaches_print_target() {
     let output = String::from_utf8(bytes.lock().unwrap().clone()).expect("output should be UTF-8");
     assert!(output.contains("Identity"));
     assert!(output.contains("Translate 1 2 3"));
+    assert!(!output.contains("Include \"child.pbrt\""));
+}
+
+#[test]
+fn include_preserves_transform_and_material_state() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let root = directory.path().join("root.pbrt");
+    let child = directory.path().join("child.pbrt");
+    fs::write(
+        &child,
+        "Translate 2 0 0\n\
+         Material \"diffuse\" \"rgb reflectance\" [.5 .5 .5]\n\
+         Shape \"sphere\" \"float radius\" [1]\n",
+    )
+    .expect("child scene should be written");
+    fs::write(
+        &root,
+        "WorldBegin\n\
+         Translate 1 0 0\n\
+         Include \"child.pbrt\"\n\
+         Shape \"sphere\" \"float radius\" [1]\n\
+         Translate 4 0 0\n\
+         Shape \"sphere\" \"float radius\" [1]\n\
+         WorldEnd\n",
+    )
+    .expect("root scene should be written");
+
+    let mut builder = SceneBuilder::new();
+    parse_file(root.to_str().unwrap(), &mut builder).expect("scene should parse");
+    assert_eq!(builder.shapes.len(), 3);
+
+    let translations: Vec<_> = builder
+        .shapes
+        .iter()
+        .map(|shape| shape.render_from_object.primary().m.m[3])
+        .collect();
+    assert_eq!(translations, [3.0, 3.0, 7.0]);
+    assert_eq!(builder.shapes[0].material_index, 0);
+    assert_eq!(builder.shapes[1].material_index, 0);
+    assert_eq!(builder.shapes[2].material_index, 0);
 }
