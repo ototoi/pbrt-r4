@@ -12,17 +12,26 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub fn read_file_with_include(path: &str) -> Result<String, Error> {
+    Ok(read_file_with_include_sources(path)?.concat())
+}
+
+pub fn read_file_with_include_sources(path: &str) -> Result<Vec<String>, Error> {
     let path = Path::new(path);
     if path.exists() {
         let path = path.canonicalize()?;
         let mut dirs = Vec::<PathBuf>::new();
         let parent = path.parent().ok_or(Error::from(ErrorKind::InvalidInput))?;
         dirs.push(PathBuf::from(parent));
-        let mut ss = String::new();
-        ss += &print_work_dir_begin(&dirs);
-        ss += &read_file_with_include_core(path.as_path(), &mut dirs)?;
-        ss += &print_work_dir_end();
-        return Ok(ss);
+        let mut files = vec![path.clone()];
+        let mut sources = Vec::new();
+        sources.push(print_work_dir_begin(&dirs));
+        sources.extend(read_file_with_include_core(
+            path.as_path(),
+            &mut dirs,
+            &mut files,
+        )?);
+        sources.push(print_work_dir_end());
+        return Ok(sources);
     } else {
         return Err(Error::from(ErrorKind::NotFound));
     }
@@ -55,9 +64,13 @@ fn read_to_string(path: &Path) -> Result<String, Error> {
     }
 }
 
-fn read_file_with_include_core(path: &Path, dirs: &mut Vec<PathBuf>) -> Result<String, Error> {
+fn read_file_with_include_core(
+    path: &Path,
+    dirs: &mut Vec<PathBuf>,
+    files: &mut Vec<PathBuf>,
+) -> Result<Vec<String>, Error> {
     let s = read_to_string(path)?;
-    return evaluate_include(&s, dirs);
+    return evaluate_include(&s, dirs, files);
 }
 
 pub fn read_file_without_include_core(path: &Path) -> Result<String, Error> {
@@ -110,11 +123,16 @@ fn parse_tokens(s: &str) -> Result<Vec<String>, Error> {
     }
 }
 
-fn evaluate_include(s: &str, dirs: &mut Vec<PathBuf>) -> Result<String, Error> {
+fn evaluate_include(
+    s: &str,
+    dirs: &mut Vec<PathBuf>,
+    files: &mut Vec<PathBuf>,
+) -> Result<Vec<String>, Error> {
     let s = remove_comment_result(s)?;
     let vs = parse_tokens(&s)?;
 
-    let mut ss = String::new();
+    let mut sources = Vec::new();
+    let mut source = String::new();
     //ss += &print_work_dir_begin(dirs);
     for s in vs {
         if s.starts_with("Include") {
@@ -124,31 +142,52 @@ fn evaluate_include(s: &str, dirs: &mut Vec<PathBuf>) -> Result<String, Error> {
             };
             let filename = Path::new(filename_str);
             if let Some(next_path) = get_next_path(filename, dirs) {
+                let next_path = next_path.canonicalize()?;
+                if files.iter().any(|file| file == &next_path) {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Include cycle detected at {}", next_path.display()),
+                    ));
+                }
                 let Some(parent) = next_path.parent() else {
                     return Err(Error::from(ErrorKind::InvalidInput));
                 };
+                if !source.is_empty() {
+                    sources.push(std::mem::take(&mut source));
+                }
                 dirs.push(PathBuf::from(parent));
-                ss += &print_work_dir_begin(dirs);
+                files.push(next_path.clone());
+                sources.push(print_work_dir_begin(dirs));
 
-                let rss = read_file_with_include_core(next_path.as_path(), dirs)?;
-                ss += &rss;
+                sources.extend(read_file_with_include_core(
+                    next_path.as_path(),
+                    dirs,
+                    files,
+                )?);
                 if vv.len() > 2 {
                     for i in 2..vv.len() {
-                        ss += &format!(" {}", vv[i]);
+                        source += &format!(" {}", vv[i]);
                     }
-                    ss += "\n";
+                    source += "\n";
                 }
+                if !source.is_empty() {
+                    sources.push(std::mem::take(&mut source));
+                }
+                files.pop();
                 dirs.pop();
-                ss += &print_work_dir_end();
+                sources.push(print_work_dir_end());
             } else {
                 return Err(Error::from(ErrorKind::NotFound));
             }
         } else {
-            ss += &s;
+            source += &s;
         }
     }
     //ss += &print_work_dir_end();
-    return Ok(ss);
+    if !source.is_empty() {
+        sources.push(source);
+    }
+    return Ok(sources);
 }
 
 fn parse_one(s: &str) -> IResult<&str, String> {
