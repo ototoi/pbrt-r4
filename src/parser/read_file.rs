@@ -22,9 +22,14 @@ pub fn read_file_with_include_sources(path: &str) -> Result<Vec<String>, Error> 
         let mut dirs = Vec::<PathBuf>::new();
         let parent = path.parent().ok_or(Error::from(ErrorKind::InvalidInput))?;
         dirs.push(PathBuf::from(parent));
+        let mut files = vec![path.clone()];
         let mut sources = Vec::new();
         sources.push(print_work_dir_begin(&dirs));
-        sources.extend(read_file_with_include_core(path.as_path(), &mut dirs)?);
+        sources.extend(read_file_with_include_core(
+            path.as_path(),
+            &mut dirs,
+            &mut files,
+        )?);
         sources.push(print_work_dir_end());
         return Ok(sources);
     } else {
@@ -59,9 +64,13 @@ fn read_to_string(path: &Path) -> Result<String, Error> {
     }
 }
 
-fn read_file_with_include_core(path: &Path, dirs: &mut Vec<PathBuf>) -> Result<Vec<String>, Error> {
+fn read_file_with_include_core(
+    path: &Path,
+    dirs: &mut Vec<PathBuf>,
+    files: &mut Vec<PathBuf>,
+) -> Result<Vec<String>, Error> {
     let s = read_to_string(path)?;
-    return evaluate_include(&s, dirs);
+    return evaluate_include(&s, dirs, files);
 }
 
 pub fn read_file_without_include_core(path: &Path) -> Result<String, Error> {
@@ -114,7 +123,11 @@ fn parse_tokens(s: &str) -> Result<Vec<String>, Error> {
     }
 }
 
-fn evaluate_include(s: &str, dirs: &mut Vec<PathBuf>) -> Result<Vec<String>, Error> {
+fn evaluate_include(
+    s: &str,
+    dirs: &mut Vec<PathBuf>,
+    files: &mut Vec<PathBuf>,
+) -> Result<Vec<String>, Error> {
     let s = remove_comment_result(s)?;
     let vs = parse_tokens(&s)?;
 
@@ -129,6 +142,13 @@ fn evaluate_include(s: &str, dirs: &mut Vec<PathBuf>) -> Result<Vec<String>, Err
             };
             let filename = Path::new(filename_str);
             if let Some(next_path) = get_next_path(filename, dirs) {
+                let next_path = next_path.canonicalize()?;
+                if files.iter().any(|file| file == &next_path) {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Include cycle detected at {}", next_path.display()),
+                    ));
+                }
                 let Some(parent) = next_path.parent() else {
                     return Err(Error::from(ErrorKind::InvalidInput));
                 };
@@ -136,9 +156,14 @@ fn evaluate_include(s: &str, dirs: &mut Vec<PathBuf>) -> Result<Vec<String>, Err
                     sources.push(std::mem::take(&mut source));
                 }
                 dirs.push(PathBuf::from(parent));
+                files.push(next_path.clone());
                 sources.push(print_work_dir_begin(dirs));
 
-                sources.extend(read_file_with_include_core(next_path.as_path(), dirs)?);
+                sources.extend(read_file_with_include_core(
+                    next_path.as_path(),
+                    dirs,
+                    files,
+                )?);
                 if vv.len() > 2 {
                     for i in 2..vv.len() {
                         source += &format!(" {}", vv[i]);
@@ -148,6 +173,7 @@ fn evaluate_include(s: &str, dirs: &mut Vec<PathBuf>) -> Result<Vec<String>, Err
                 if !source.is_empty() {
                     sources.push(std::mem::take(&mut source));
                 }
+                files.pop();
                 dirs.pop();
                 sources.push(print_work_dir_end());
             } else {
