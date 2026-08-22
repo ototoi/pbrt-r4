@@ -111,9 +111,57 @@ pub fn parse_file_upgraded(filename: &str, context: &mut dyn ParseTarget) -> Res
 }
 //-----------------------------------
 
+fn parser_error(source: &str, input: &str, operation: &str, message: &str) -> PbrtError {
+    let offset = source.len().saturating_sub(input.len());
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit('\n')
+        .next()
+        .map_or(1, |line| line.chars().count() + 1);
+    let message = format!(
+        "parser error at byte {offset}, line {line}, column {column}, operation `{operation}`: {message}"
+    );
+    PbrtError::error(&message)
+}
+
+fn operation_name(input: &str) -> &str {
+    input.split_whitespace().next().unwrap_or("<end-of-input>")
+}
+
+fn parse_next_operation<'a>(
+    source: &str,
+    input: &'a str,
+) -> Result<Option<(&'a str, &'a str, OPNode)>, PbrtError> {
+    let (remaining, _) = space0(input)
+        .map_err(|error| parser_error(source, input, "<whitespace>", &error.to_string()))?;
+    if remaining.is_empty() {
+        return Ok(None);
+    }
+
+    let operation_input = remaining;
+    let name = operation_name(operation_input);
+    let (remaining, operation) = parse_operation(operation_input)
+        .map_err(|error| parser_error(source, operation_input, name, &error.to_string()))?;
+    Ok(Some((remaining, operation_input, operation)))
+}
+
 pub fn parse_string_core(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let ops = parse_opnodes_core(s)?;
-    return evaluate_opnodes(&ops, context);
+    let mut input = s;
+    loop {
+        let Some((remaining, operation_input, operation)) = parse_next_operation(s, input)? else {
+            return Ok(());
+        };
+        if let Err(error) = evaluate_opnodes(std::slice::from_ref(&operation), context) {
+            return Err(parser_error(
+                s,
+                operation_input,
+                &operation.name,
+                &error.to_string(),
+            ));
+        }
+        input = remaining;
+    }
 }
 
 fn parse_opnodes(s: &str) -> Result<Vec<OPNode>, PbrtError> {
