@@ -1,6 +1,15 @@
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::parser::common::parse_params;
-use pbrt_r4::parser::{parse_string, DebugTarget};
+use pbrt_r4::parser::{parse_string, parse_string_upgraded, DebugTarget, SceneBuilder};
+
+fn debug_operations(target: &DebugTarget) -> Vec<(String, Vec<String>)> {
+    target
+        .operations
+        .borrow()
+        .iter()
+        .map(|operation| (operation.name.clone(), operation.args.clone()))
+        .collect()
+}
 
 #[test]
 fn parse_string_accepts_comments_between_arguments_and_operations() {
@@ -18,16 +27,16 @@ fn parse_string_accepts_comments_between_arguments_and_operations() {
 
 #[test]
 fn parse_string_evaluates_operations_in_order() {
-    let mut target = DebugTarget::new();
-    parse_string("Identity\nTranslate 1 2 3\nScale 2 2 2\n", &mut target)
-        .expect("operations should be evaluated in order");
+    let scene = "Identity\nTranslate 1 2 3\nScale 2 2 2\n";
+    let mut streaming_target = DebugTarget::new();
+    let mut ast_target = DebugTarget::new();
+    parse_string(scene, &mut streaming_target).expect("streaming parse should succeed");
+    parse_string_upgraded(scene, &mut ast_target).expect("AST parse should succeed");
 
-    let operations = target.operations.borrow();
-    let names: Vec<&str> = operations
-        .iter()
-        .map(|operation| operation.name.as_str())
-        .collect();
-    assert_eq!(names, ["Identitiy", "Translate", "Scale"]);
+    assert_eq!(
+        debug_operations(&streaming_target),
+        debug_operations(&ast_target)
+    );
 }
 
 #[test]
@@ -35,7 +44,28 @@ fn parse_string_rejects_an_invalid_operation_after_valid_input() {
     let mut target = DebugTarget::new();
     let result = parse_string("Identity\nNotAParserOperation\n", &mut target);
 
-    assert!(result.is_err());
+    let error = result.expect_err("invalid operation should be rejected");
+    assert!(error.msg.contains("line 2"));
+    assert!(error.msg.contains("operation `NotAParserOperation`"));
+    assert_eq!(debug_operations(&target).len(), 1);
+}
+
+#[test]
+fn streaming_and_ast_paths_keep_large_shape_counts() {
+    const SHAPE_COUNT: usize = 1024;
+    let mut scene = String::from("WorldBegin\n");
+    for _ in 0..SHAPE_COUNT {
+        scene.push_str("Shape \"sphere\" \"float radius\" [1]\n");
+    }
+    scene.push_str("WorldEnd\n");
+
+    let mut streaming_builder = SceneBuilder::new();
+    let mut ast_builder = SceneBuilder::new();
+    parse_string(&scene, &mut streaming_builder).expect("streaming parse should succeed");
+    parse_string_upgraded(&scene, &mut ast_builder).expect("AST parse should succeed");
+
+    assert_eq!(streaming_builder.shapes.len(), SHAPE_COUNT);
+    assert_eq!(streaming_builder.shapes.len(), ast_builder.shapes.len());
 }
 
 #[test]
