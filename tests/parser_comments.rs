@@ -17,6 +17,28 @@ fn parse_string_accepts_comments_between_arguments_and_operations() {
 }
 
 #[test]
+fn parse_string_evaluates_operations_in_order() {
+    let mut target = DebugTarget::new();
+    parse_string("Identity\nTranslate 1 2 3\nScale 2 2 2\n", &mut target)
+        .expect("operations should be evaluated in order");
+
+    let operations = target.operations.borrow();
+    let names: Vec<&str> = operations
+        .iter()
+        .map(|operation| operation.name.as_str())
+        .collect();
+    assert_eq!(names, ["Identitiy", "Translate", "Scale"]);
+}
+
+#[test]
+fn parse_string_rejects_an_invalid_operation_after_valid_input() {
+    let mut target = DebugTarget::new();
+    let result = parse_string("Identity\nNotAParserOperation\n", &mut target);
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn parse_params_accepts_comments_inside_arrays() {
     let (_, params): (&str, ParameterDictionary) =
         parse_params("\"float values\" [1 # between values\n 2 3]").unwrap();

@@ -112,8 +112,18 @@ pub fn parse_file_upgraded(filename: &str, context: &mut dyn ParseTarget) -> Res
 //-----------------------------------
 
 pub fn parse_string_core(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let ops = parse_opnodes_core(s)?;
-    return evaluate_opnodes(&ops, context);
+    let mut input = s;
+    loop {
+        let (remaining, _) = space0(input).map_err(|e| PbrtError::from(e.to_string()))?;
+        if remaining.is_empty() {
+            return Ok(());
+        }
+
+        let (remaining, op) =
+            parse_operation(remaining).map_err(|e| PbrtError::from(e.to_string()))?;
+        evaluate_opnodes(std::slice::from_ref(&op), context)?;
+        input = remaining;
+    }
 }
 
 fn parse_opnodes(s: &str) -> Result<Vec<OPNode>, PbrtError> {
