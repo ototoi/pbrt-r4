@@ -85,8 +85,7 @@ pub fn parse_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), P
 }
 
 pub fn parse_string(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let ops = parse_opnodes(s)?;
-    return evaluate_opnodes(&ops, context);
+    return parse_string_core(s, context);
 }
 
 /// Parses a legacy scene and evaluates its v4-compatible upgraded operations.
@@ -690,12 +689,9 @@ fn parse_op_floats<'a>(s: &'a str, opname: &str) -> IResult<&'a str, OPNode> {
         sequence::delimited(
             character::complete::char('['),
             sequence::delimited(
-                character::complete::multispace0,
-                multi::separated_list1(
-                    character::complete::multispace1,
-                    number::complete::recognize_float,
-                ),
-                character::complete::multispace0,
+                space0,
+                multi::separated_list1(space1, number::complete::recognize_float),
+                space0,
             ),
             character::complete::char(']'),
         ),
