@@ -76,8 +76,6 @@ type FloatTextureMap = HashMap<String, Arc<FloatTexture>>;
 type SpectrumTextureMap = HashMap<String, Arc<SpectrumTexture>>;
 type MediumMap = HashMap<String, Arc<Medium>>;
 
-const DEDICATED_MESH_BVH_THRESHOLD: usize = 100_000;
-
 impl SceneBuilder {
     /// pbrt-v4 builds `CameraTransform` near the start of `RenderCpu`
     /// from the CTM that was active at the `Camera` directive. r4
@@ -903,7 +901,6 @@ impl SceneBuilder {
                 rfo.clone(),
                 object_to_world,
                 shapes,
-                false,
                 materials,
                 named_materials,
                 default_material,
@@ -989,11 +986,6 @@ impl SceneBuilder {
             twosided_params.replace_one_bool("bool twosided", two_sided);
             shape_params_for_create = &twosided_params;
         }
-        let has_displacement = shape.base.name == "plymesh"
-            && shape_params_for_create
-                .get_textures_ref("displacement")
-                .is_some();
-
         let created_shapes = Shape::create(
             &shape.base.name,
             &shape_object_to_world,
@@ -1011,16 +1003,11 @@ impl SceneBuilder {
         if shapes.is_empty() {
             return Ok(());
         }
-        let use_dedicated_mesh_accelerator = shape.base.name == "plymesh"
-            && shape.area_light_index.is_none()
-            && (has_displacement || shapes.len() >= DEDICATED_MESH_BVH_THRESHOLD);
-
         self.emit_shape_primitives(
             shape,
             rfo,
             object_to_world,
             shapes,
-            use_dedicated_mesh_accelerator,
             materials,
             named_materials,
             default_material,
@@ -1037,7 +1024,6 @@ impl SceneBuilder {
         rfo: RenderFromObject,
         object_to_world: Transform,
         shapes: Vec<Shape>,
-        use_dedicated_mesh_accelerator: bool,
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
         default_material: &Arc<Material>,
@@ -1112,9 +1098,8 @@ impl SceneBuilder {
             return Ok(());
         }
 
-        // Static shapes normally follow pbrt-v4 and emit leaf primitives
-        // directly. Large or displaced PLY meshes are the exception: their
-        // triangle sets get a dedicated accelerator before entering the scene BVH.
+        // Static shapes emit leaf primitives directly. The scene-level
+        // accelerator is responsible for grouping them.
         let mut piece_prims = Vec::with_capacity(shapes.len());
         for s in shapes {
             if let Some(al_idx) = shape.area_light_index {
@@ -1154,11 +1139,7 @@ impl SceneBuilder {
                 piece_prims.push(prim);
             }
         }
-        if use_dedicated_mesh_accelerator && piece_prims.len() > 1 {
-            out_prims.push(self.create_shape_accelerator(&piece_prims)?);
-        } else {
-            out_prims.extend(piece_prims);
-        }
+        out_prims.extend(piece_prims);
         Ok(())
     }
 
