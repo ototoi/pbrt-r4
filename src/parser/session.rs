@@ -1,6 +1,6 @@
 use super::parse_target::ParseTarget;
 use super::read_file::read_file_source;
-use super::{evaluate_opnodes, parse_next_operation, parser_error_at, OPNode};
+use super::{evaluate_operation, parse_next_operation, parser_error_at, OPNode};
 use crate::util::error::PbrtError;
 use std::path::{Path, PathBuf};
 
@@ -105,7 +105,7 @@ impl<'a> ParserSession<'a> {
             }
 
             let operation_name = operation.name.clone();
-            if let Err(error) = evaluate_opnodes(vec![operation], self.context) {
+            if let Err(error) = evaluate_operation(operation, self.context) {
                 let Some(frame) = self.frames.last() else {
                     return Err(Self::stack_empty_error());
                 };
