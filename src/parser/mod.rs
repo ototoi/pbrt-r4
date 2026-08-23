@@ -181,7 +181,7 @@ pub fn parse_string_core(s: &str, context: &mut dyn ParseTarget) -> Result<(), P
             return Ok(());
         };
         let operation_name = operation.name.clone();
-        if let Err(error) = evaluate_opnodes(vec![operation], context) {
+        if let Err(error) = evaluate_operation(operation, context) {
             return Err(parser_error(
                 s,
                 operation_input,
@@ -291,456 +291,461 @@ impl OPNode {
     }
 }
 
-fn evaluate_opnodes(ops: Vec<OPNode>, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    for mut op in ops {
-        let opname: &str = &op.name;
-        match opname {
-            "Identity" => {
-                //fn identity(&mut self);
-                context.identity();
-            }
-            "Translate" => {
-                //fn translate(&mut self, dx: Float, dy: Float, dz: Float);
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Translate requires arguments."));
-                };
-                let vec = args.get_floats("args");
-                if vec.len() != 3 {
-                    let msg = format!("{} required {} arguments", opname, 3);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.translate(vec[0], vec[1], vec[2]);
-            }
-            "Rotate" => {
-                //fn rotate(&mut self, angle: Float, ax: Float, ay: Float, az: Float);
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Rotate requires arguments."));
-                };
-                let vec = args.get_floats("args");
-                if vec.len() != 4 {
-                    let msg = format!("{} required {} arguments", opname, 4);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.rotate(vec[0], vec[1], vec[2], vec[3]);
-            }
-            "Scale" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Scale requires arguments."));
-                };
-                let vec = args.get_floats("args");
-                if vec.len() != 3 {
-                    let msg = format!("{} required {} arguments", opname, 3);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.scale(vec[0], vec[1], vec[2]);
-            }
-            "LookAt" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("LookAt requires arguments."));
-                };
-                let vec = args.get_floats("args");
-                if vec.len() != 9 {
-                    let msg = format!("{} required {} arguments", opname, 9);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.look_at(
-                    vec[0], vec[1], vec[2], vec[3], vec[4], vec[5], vec[6], vec[7], vec[8],
-                );
-            }
-            "ConcatTransform" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("ConcatTransform requires arguments."));
-                };
-                let vec = args.get_floats("arg1");
-                if vec.len() != 16 {
-                    let msg = format!("{} required {} arguments", opname, 16);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.concat_transform(&vec);
-            }
-            "Transform" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Transform requires arguments."));
-                };
-                let vec = args.get_floats("arg1");
-                if vec.len() != 16 {
-                    let msg = format!("{} required {} arguments", opname, 16);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.transform(&vec);
-            }
-            "TransformTimes" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("TransformTimes requires arguments."));
-                };
-                let vec = args.get_floats("args");
-                if vec.len() != 2 {
-                    let msg = format!("{} required {} arguments", opname, 2);
-                    return Err(PbrtError::error(&msg));
-                }
-                context.transform_times(vec[0], vec[1]);
-            }
-            "CoordinateSystem" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("CoordinateSystem requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("CoordinateSystem requires a name."));
-                };
-                context.coordinate_system(name);
-            }
-            "CoordSysTransform" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("CoordSysTransform requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("CoordSysTransform requires a name."));
-                };
-                context.coord_sys_transform(name);
-            }
-            "ColorSpace" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("ColorSpace requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("ColorSpace requires a name."));
-                };
-                context.color_space(name);
-            }
-            "Option" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Option requires arguments."));
-                };
-                let name_vec = args.get_strings("arg1");
-                let value_vec = args.get_strings("arg2");
-                let Some(name) = name_vec.first() else {
-                    return Err(PbrtError::error("Option requires a name."));
-                };
-                let Some(value) = value_vec.first() else {
-                    return Err(PbrtError::error("Option requires a value."));
-                };
-                context.option(name, value);
-            }
-            "ActiveTransformAll" => {
-                context.active_transform_all();
-            }
-            "ActiveTransformEndTime" => {
-                context.active_transform_end_time();
-            }
-            "ActiveTransformStartTime" => {
-                context.active_transform_start_time();
-            }
-            "PixelFilter" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("PixelFilter requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("PixelFilter requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("PixelFilter requires parameters."));
-                };
-                context.pixel_filter(name, params);
-            }
-            "Film" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Film requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Film requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Film requires parameters."));
-                };
-                context.film(name, params);
-            }
-            "Sampler" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Sampler requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Sampler requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Sampler requires parameters."));
-                };
-                context.sampler(name, params);
-            }
-            "Accelerator" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Accelerator requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Accelerator requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Accelerator requires parameters."));
-                };
-                context.accelerator(name, params);
-            }
-            "Integrator" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Integrator requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Integrator requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Integrator requires parameters."));
-                };
-                context.integrator(name, params);
-            }
-            "Camera" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Camera requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Camera requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Camera requires parameters."));
-                };
-                context.camera(name, params);
-            }
-            "MakeNamedMedium" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("MakeNamedMedium requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("MakeNamedMedium requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("MakeNamedMedium requires parameters."));
-                };
-                context.make_named_medium(name, params);
-            }
-            "MediumInterface" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("MediumInterface requires arguments."));
-                };
-                let vec1 = args.get_strings("arg1");
-                let vec2 = args.get_strings("arg2");
-                let Some(inside_name) = vec1.first() else {
-                    return Err(PbrtError::error(
-                        "MediumInterface requires an inside medium name.",
-                    ));
-                };
-                let Some(outside_name) = vec2.first() else {
-                    return Err(PbrtError::error(
-                        "MediumInterface requires an outside medium name.",
-                    ));
-                };
-                context.medium_interface(inside_name, outside_name);
-            }
-            "WorldBegin" => {
-                context.world_begin();
-            }
-            "Attribute" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Attribute requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(target) = vec.first() else {
-                    return Err(PbrtError::error("Attribute requires a target."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Attribute requires parameters."));
-                };
-                context.attribute(target, params);
-            }
-            "AttributeBegin" => {
-                context.attribute_begin();
-            }
-            "AttributeEnd" => {
-                context.attribute_end();
-            }
-            "TransformBegin" => {
-                context.transform_begin();
-            }
-            "TransformEnd" => {
-                context.transform_end();
-            }
-            "Texture" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Texture requires arguments."));
-                };
-                let name_values = args.get_strings("arg1");
-                let Some(name) = name_values.first() else {
-                    return Err(PbrtError::error("Texture requires a name."));
-                };
-                let tp_values = args.get_strings("arg2");
-                let Some(tp) = tp_values.first() else {
-                    return Err(PbrtError::error("Texture requires a type."));
-                };
-                let tex_name_values = args.get_strings("arg3");
-                let Some(tex_name) = tex_name_values.first() else {
-                    return Err(PbrtError::error("Texture requires a texture target."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Texture requires parameters."));
-                };
-                context.texture(&name, &tp, &tex_name, params);
-            }
-            "Material" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Material requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Material requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Material requires parameters."));
-                };
-                context.material(name, params);
-            }
-            "MakeNamedMaterial" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("MakeNamedMaterial requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("MakeNamedMaterial requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("MakeNamedMaterial requires parameters."));
-                };
-                context.make_named_material(name, params);
-            }
-            "NamedMaterial" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("NamedMaterial requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("NamedMaterial requires a name."));
-                };
-                context.named_material(name);
-            }
-            "LightSource" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("LightSource requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("LightSource requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("LightSource requires parameters."));
-                };
-                context.light_source(name, params);
-            }
-            "AreaLightSource" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("AreaLightSource requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("AreaLightSource requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("AreaLightSource requires parameters."));
-                };
-                context.area_light_source(name, params);
-            }
-            "Shape" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Shape requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("Shape requires a name."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Shape requires parameters."));
-                };
-                context.shape(name, params);
-            }
-            "ReverseOrientation" => {
-                context.reverse_orientation();
-            }
-            "ObjectBegin" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("ObjectBegin requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("ObjectBegin requires a name."));
-                };
-                context.object_begin(name);
-            }
-            "ObjectEnd" => {
-                context.object_end();
-            }
-            "ObjectInstance" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("ObjectInstance requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(name) = vec.first() else {
-                    return Err(PbrtError::error("ObjectInstance requires a name."));
-                };
-                context.object_instance(name);
-            }
-            "WorldEnd" => {
-                context.world_end();
-            }
-            "WorkDirBegin" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("WorkDirBegin requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(path) = vec.first() else {
-                    return Err(PbrtError::error("WorkDirBegin requires a path."));
-                };
-                context.work_dir_begin(path);
-            }
-            "WorkDirEnd" => {
-                context.work_dir_end();
-            }
-            "Include" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Include requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(filename) = vec.first() else {
-                    return Err(PbrtError::error("Include requires a filename."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Include requires parameters."));
-                };
-                context.include(filename, params);
-            }
-            "Import" => {
-                let Some(args) = op.args.as_ref() else {
-                    return Err(PbrtError::error("Import requires arguments."));
-                };
-                let vec = args.get_strings("arg1");
-                let Some(filename) = vec.first() else {
-                    return Err(PbrtError::error("Import requires a filename."));
-                };
-                let Some(params) = take_params(&mut op) else {
-                    return Err(PbrtError::error("Import requires parameters."));
-                };
-                context.import(filename, params);
-            }
-            _ => {
-                let msg = format!("Unexpected token: {}", opname);
+fn evaluate_operation(mut op: OPNode, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    let opname: &str = &op.name;
+    match opname {
+        "Identity" => {
+            //fn identity(&mut self);
+            context.identity();
+        }
+        "Translate" => {
+            //fn translate(&mut self, dx: Float, dy: Float, dz: Float);
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Translate requires arguments."));
+            };
+            let vec = args.get_floats("args");
+            if vec.len() != 3 {
+                let msg = format!("{} required {} arguments", opname, 3);
                 return Err(PbrtError::error(&msg));
             }
+            context.translate(vec[0], vec[1], vec[2]);
+        }
+        "Rotate" => {
+            //fn rotate(&mut self, angle: Float, ax: Float, ay: Float, az: Float);
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Rotate requires arguments."));
+            };
+            let vec = args.get_floats("args");
+            if vec.len() != 4 {
+                let msg = format!("{} required {} arguments", opname, 4);
+                return Err(PbrtError::error(&msg));
+            }
+            context.rotate(vec[0], vec[1], vec[2], vec[3]);
+        }
+        "Scale" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Scale requires arguments."));
+            };
+            let vec = args.get_floats("args");
+            if vec.len() != 3 {
+                let msg = format!("{} required {} arguments", opname, 3);
+                return Err(PbrtError::error(&msg));
+            }
+            context.scale(vec[0], vec[1], vec[2]);
+        }
+        "LookAt" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("LookAt requires arguments."));
+            };
+            let vec = args.get_floats("args");
+            if vec.len() != 9 {
+                let msg = format!("{} required {} arguments", opname, 9);
+                return Err(PbrtError::error(&msg));
+            }
+            context.look_at(
+                vec[0], vec[1], vec[2], vec[3], vec[4], vec[5], vec[6], vec[7], vec[8],
+            );
+        }
+        "ConcatTransform" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("ConcatTransform requires arguments."));
+            };
+            let vec = args.get_floats("arg1");
+            if vec.len() != 16 {
+                let msg = format!("{} required {} arguments", opname, 16);
+                return Err(PbrtError::error(&msg));
+            }
+            context.concat_transform(&vec);
+        }
+        "Transform" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Transform requires arguments."));
+            };
+            let vec = args.get_floats("arg1");
+            if vec.len() != 16 {
+                let msg = format!("{} required {} arguments", opname, 16);
+                return Err(PbrtError::error(&msg));
+            }
+            context.transform(&vec);
+        }
+        "TransformTimes" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("TransformTimes requires arguments."));
+            };
+            let vec = args.get_floats("args");
+            if vec.len() != 2 {
+                let msg = format!("{} required {} arguments", opname, 2);
+                return Err(PbrtError::error(&msg));
+            }
+            context.transform_times(vec[0], vec[1]);
+        }
+        "CoordinateSystem" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("CoordinateSystem requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("CoordinateSystem requires a name."));
+            };
+            context.coordinate_system(name);
+        }
+        "CoordSysTransform" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("CoordSysTransform requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("CoordSysTransform requires a name."));
+            };
+            context.coord_sys_transform(name);
+        }
+        "ColorSpace" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("ColorSpace requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("ColorSpace requires a name."));
+            };
+            context.color_space(name);
+        }
+        "Option" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Option requires arguments."));
+            };
+            let name_vec = args.get_strings("arg1");
+            let value_vec = args.get_strings("arg2");
+            let Some(name) = name_vec.first() else {
+                return Err(PbrtError::error("Option requires a name."));
+            };
+            let Some(value) = value_vec.first() else {
+                return Err(PbrtError::error("Option requires a value."));
+            };
+            context.option(name, value);
+        }
+        "ActiveTransformAll" => {
+            context.active_transform_all();
+        }
+        "ActiveTransformEndTime" => {
+            context.active_transform_end_time();
+        }
+        "ActiveTransformStartTime" => {
+            context.active_transform_start_time();
+        }
+        "PixelFilter" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("PixelFilter requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("PixelFilter requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("PixelFilter requires parameters."));
+            };
+            context.pixel_filter(name, params);
+        }
+        "Film" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Film requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Film requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Film requires parameters."));
+            };
+            context.film(name, params);
+        }
+        "Sampler" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Sampler requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Sampler requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Sampler requires parameters."));
+            };
+            context.sampler(name, params);
+        }
+        "Accelerator" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Accelerator requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Accelerator requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Accelerator requires parameters."));
+            };
+            context.accelerator(name, params);
+        }
+        "Integrator" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Integrator requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Integrator requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Integrator requires parameters."));
+            };
+            context.integrator(name, params);
+        }
+        "Camera" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Camera requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Camera requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Camera requires parameters."));
+            };
+            context.camera(name, params);
+        }
+        "MakeNamedMedium" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("MakeNamedMedium requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("MakeNamedMedium requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("MakeNamedMedium requires parameters."));
+            };
+            context.make_named_medium(name, params);
+        }
+        "MediumInterface" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("MediumInterface requires arguments."));
+            };
+            let vec1 = args.get_strings("arg1");
+            let vec2 = args.get_strings("arg2");
+            let Some(inside_name) = vec1.first() else {
+                return Err(PbrtError::error(
+                    "MediumInterface requires an inside medium name.",
+                ));
+            };
+            let Some(outside_name) = vec2.first() else {
+                return Err(PbrtError::error(
+                    "MediumInterface requires an outside medium name.",
+                ));
+            };
+            context.medium_interface(inside_name, outside_name);
+        }
+        "WorldBegin" => {
+            context.world_begin();
+        }
+        "Attribute" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Attribute requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(target) = vec.first() else {
+                return Err(PbrtError::error("Attribute requires a target."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Attribute requires parameters."));
+            };
+            context.attribute(target, params);
+        }
+        "AttributeBegin" => {
+            context.attribute_begin();
+        }
+        "AttributeEnd" => {
+            context.attribute_end();
+        }
+        "TransformBegin" => {
+            context.transform_begin();
+        }
+        "TransformEnd" => {
+            context.transform_end();
+        }
+        "Texture" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Texture requires arguments."));
+            };
+            let name_values = args.get_strings("arg1");
+            let Some(name) = name_values.first() else {
+                return Err(PbrtError::error("Texture requires a name."));
+            };
+            let tp_values = args.get_strings("arg2");
+            let Some(tp) = tp_values.first() else {
+                return Err(PbrtError::error("Texture requires a type."));
+            };
+            let tex_name_values = args.get_strings("arg3");
+            let Some(tex_name) = tex_name_values.first() else {
+                return Err(PbrtError::error("Texture requires a texture target."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Texture requires parameters."));
+            };
+            context.texture(&name, &tp, &tex_name, params);
+        }
+        "Material" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Material requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Material requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Material requires parameters."));
+            };
+            context.material(name, params);
+        }
+        "MakeNamedMaterial" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("MakeNamedMaterial requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("MakeNamedMaterial requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("MakeNamedMaterial requires parameters."));
+            };
+            context.make_named_material(name, params);
+        }
+        "NamedMaterial" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("NamedMaterial requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("NamedMaterial requires a name."));
+            };
+            context.named_material(name);
+        }
+        "LightSource" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("LightSource requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("LightSource requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("LightSource requires parameters."));
+            };
+            context.light_source(name, params);
+        }
+        "AreaLightSource" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("AreaLightSource requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("AreaLightSource requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("AreaLightSource requires parameters."));
+            };
+            context.area_light_source(name, params);
+        }
+        "Shape" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Shape requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("Shape requires a name."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Shape requires parameters."));
+            };
+            context.shape(name, params);
+        }
+        "ReverseOrientation" => {
+            context.reverse_orientation();
+        }
+        "ObjectBegin" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("ObjectBegin requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("ObjectBegin requires a name."));
+            };
+            context.object_begin(name);
+        }
+        "ObjectEnd" => {
+            context.object_end();
+        }
+        "ObjectInstance" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("ObjectInstance requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(name) = vec.first() else {
+                return Err(PbrtError::error("ObjectInstance requires a name."));
+            };
+            context.object_instance(name);
+        }
+        "WorldEnd" => {
+            context.world_end();
+        }
+        "WorkDirBegin" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("WorkDirBegin requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(path) = vec.first() else {
+                return Err(PbrtError::error("WorkDirBegin requires a path."));
+            };
+            context.work_dir_begin(path);
+        }
+        "WorkDirEnd" => {
+            context.work_dir_end();
+        }
+        "Include" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Include requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(filename) = vec.first() else {
+                return Err(PbrtError::error("Include requires a filename."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Include requires parameters."));
+            };
+            context.include(filename, params);
+        }
+        "Import" => {
+            let Some(args) = op.args.as_ref() else {
+                return Err(PbrtError::error("Import requires arguments."));
+            };
+            let vec = args.get_strings("arg1");
+            let Some(filename) = vec.first() else {
+                return Err(PbrtError::error("Import requires a filename."));
+            };
+            let Some(params) = take_params(&mut op) else {
+                return Err(PbrtError::error("Import requires parameters."));
+            };
+            context.import(filename, params);
+        }
+        _ => {
+            let msg = format!("Unexpected token: {}", opname);
+            return Err(PbrtError::error(&msg));
         }
     }
     return Ok(());
+}
+
+fn evaluate_opnodes(ops: Vec<OPNode>, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    for op in ops {
+        evaluate_operation(op, context)?;
+    }
+    Ok(())
 }
 
 //-----------------------------------
