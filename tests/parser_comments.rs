@@ -1,5 +1,6 @@
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::parser::common::parse_params;
+use pbrt_r4::parser::parsed_parameter::into_parameter_dictionary;
 use pbrt_r4::parser::{parse_string, parse_string_upgraded, DebugTarget, SceneBuilder};
 
 fn debug_operations(target: &DebugTarget) -> Vec<(String, Vec<String>)> {
@@ -70,16 +71,16 @@ fn streaming_and_ast_paths_keep_large_shape_counts() {
 
 #[test]
 fn parse_params_accepts_comments_inside_arrays() {
-    let (_, params): (&str, ParameterDictionary) =
-        parse_params("\"float values\" [1 # between values\n 2 3]").unwrap();
+    let (_, params) = parse_params("\"float values\" [1 # between values\n 2 3]").unwrap();
+    let params: ParameterDictionary = into_parameter_dictionary(params);
 
     assert_eq!(params.get_floats("values"), vec![1.0, 2.0, 3.0]);
 }
 
 #[test]
 fn parse_params_accepts_comments_between_name_and_value() {
-    let (_, params): (&str, ParameterDictionary) =
-        parse_params("\"float value\" # before the value\n [1]").unwrap();
+    let (_, params) = parse_params("\"float value\" # before the value\n [1]").unwrap();
+    let params: ParameterDictionary = into_parameter_dictionary(params);
 
     assert_eq!(params.get_floats("value"), vec![1.0]);
 }
@@ -96,8 +97,8 @@ fn parse_string_accepts_comment_only_lines() {
 
 #[test]
 fn hash_inside_string_is_not_a_comment() {
-    let (_, params): (&str, ParameterDictionary) =
-        parse_params("\"string label\" [\"# not a comment\"]").unwrap();
+    let (_, params) = parse_params("\"string label\" [\"# not a comment\"]").unwrap();
+    let params: ParameterDictionary = into_parameter_dictionary(params);
 
     assert_eq!(params.get_strings("label"), vec!["# not a comment"]);
 }

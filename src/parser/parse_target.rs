@@ -1,4 +1,4 @@
-use crate::paramdict::*;
+use crate::parser::ParsedParameterVector;
 use crate::util::base::*;
 
 //Sized
@@ -30,28 +30,28 @@ pub trait ParseTarget {
     fn active_transform_end_time(&mut self);
     fn active_transform_start_time(&mut self);
     fn transform_times(&mut self, start: Float, end: Float);
-    fn pixel_filter(&mut self, name: &str, params: &ParameterDictionary);
-    fn film(&mut self, name: &str, params: &ParameterDictionary);
-    fn sampler(&mut self, name: &str, params: &ParameterDictionary);
-    fn accelerator(&mut self, name: &str, params: &ParameterDictionary);
-    fn integrator(&mut self, name: &str, params: &ParameterDictionary);
-    fn camera(&mut self, name: &str, params: &ParameterDictionary);
-    fn make_named_medium(&mut self, name: &str, params: &ParameterDictionary);
+    fn pixel_filter(&mut self, name: &str, params: ParsedParameterVector);
+    fn film(&mut self, name: &str, params: ParsedParameterVector);
+    fn sampler(&mut self, name: &str, params: ParsedParameterVector);
+    fn accelerator(&mut self, name: &str, params: ParsedParameterVector);
+    fn integrator(&mut self, name: &str, params: ParsedParameterVector);
+    fn camera(&mut self, name: &str, params: ParsedParameterVector);
+    fn make_named_medium(&mut self, name: &str, params: ParsedParameterVector);
     fn medium_interface(&mut self, inside_name: &str, outside_name: &str);
 
     fn world_begin(&mut self);
-    fn attribute(&mut self, target: &str, params: &ParameterDictionary);
+    fn attribute(&mut self, target: &str, params: ParsedParameterVector);
     fn attribute_begin(&mut self);
     fn attribute_end(&mut self);
     fn transform_begin(&mut self);
     fn transform_end(&mut self);
-    fn texture(&mut self, name: &str, _type: &str, tex_name: &str, params: &ParameterDictionary);
-    fn material(&mut self, name: &str, params: &ParameterDictionary);
-    fn make_named_material(&mut self, name: &str, params: &ParameterDictionary);
+    fn texture(&mut self, name: &str, _type: &str, tex_name: &str, params: ParsedParameterVector);
+    fn material(&mut self, name: &str, params: ParsedParameterVector);
+    fn make_named_material(&mut self, name: &str, params: ParsedParameterVector);
     fn named_material(&mut self, name: &str);
-    fn light_source(&mut self, name: &str, params: &ParameterDictionary);
-    fn area_light_source(&mut self, name: &str, params: &ParameterDictionary);
-    fn shape(&mut self, name: &str, params: &ParameterDictionary);
+    fn light_source(&mut self, name: &str, params: ParsedParameterVector);
+    fn area_light_source(&mut self, name: &str, params: ParsedParameterVector);
+    fn shape(&mut self, name: &str, params: ParsedParameterVector);
     fn reverse_orientation(&mut self);
     fn object_begin(&mut self, name: &str);
     fn object_end(&mut self);
@@ -64,7 +64,7 @@ pub trait ParseTarget {
     //----------------------------------------
     fn work_dir_begin(&mut self, _path: &str) {}
     fn work_dir_end(&mut self) {}
-    fn include(&mut self, _filename: &str, _params: &ParameterDictionary) {}
-    fn import(&mut self, filename: &str, params: &ParameterDictionary);
+    fn include(&mut self, _filename: &str, _params: ParsedParameterVector) {}
+    fn import(&mut self, filename: &str, params: ParsedParameterVector);
     //----------------------------------------
 }

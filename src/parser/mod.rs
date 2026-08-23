@@ -1,6 +1,7 @@
 pub mod common;
 pub mod debug_target;
 pub mod parse_target;
+pub mod parsed_parameter;
 pub mod print_target;
 pub mod read_file;
 pub mod remove_comment;
@@ -11,6 +12,10 @@ pub mod upgrade;
 
 pub use debug_target::DebugTarget;
 pub use parse_target::ParseTarget;
+pub use parsed_parameter::{
+    parsed_parameters_from_dictionary, ParsedParameter, ParsedParameterValues,
+    ParsedParameterVector, ParsedSpectrumToken,
+};
 pub use print_target::PrintTarget;
 pub use scene_builder::SceneBuilder;
 pub use to_ply_target::ToPlyTarget;
@@ -92,7 +97,7 @@ pub fn parse_string(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtEr
 pub fn parse_string_upgraded(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
     let mut ops = parse_opnodes(s)?;
     upgrade::upgrade_opnodes(&mut ops)?;
-    evaluate_opnodes(&ops, context)
+    evaluate_opnodes(ops, context)
 }
 
 pub fn parse_file_without_include(
@@ -175,11 +180,12 @@ pub fn parse_string_core(s: &str, context: &mut dyn ParseTarget) -> Result<(), P
         let Some((remaining, operation_input, operation)) = parse_next_operation(s, input)? else {
             return Ok(());
         };
-        if let Err(error) = evaluate_opnodes(std::slice::from_ref(&operation), context) {
+        let operation_name = operation.name.clone();
+        if let Err(error) = evaluate_opnodes(vec![operation], context) {
             return Err(parser_error(
                 s,
                 operation_input,
-                &operation.name,
+                &operation_name,
                 &error.to_string(),
             ));
         }
@@ -234,14 +240,48 @@ fn parse_operation_from_input(s: &str) -> IResult<&str, OPNode> {
 pub struct OPNode {
     pub name: String,
     pub args: Option<ParameterDictionary>,
-    pub params: Option<ParameterDictionary>,
+    pub params: Option<ParameterStorage>,
+}
+
+pub enum ParameterStorage {
+    Parsed(ParsedParameterVector),
+    Dictionary(ParameterDictionary),
+}
+
+impl ParameterStorage {
+    pub fn into_parsed(self) -> ParsedParameterVector {
+        match self {
+            Self::Parsed(parameters) => parameters,
+            Self::Dictionary(dictionary) => parsed_parameters_from_dictionary(&dictionary),
+        }
+    }
+
+    pub fn into_dictionary(self) -> ParameterDictionary {
+        match self {
+            Self::Parsed(parameters) => {
+                crate::parser::parsed_parameter::into_parameter_dictionary(parameters)
+            }
+            Self::Dictionary(dictionary) => dictionary,
+        }
+    }
+
+    pub fn as_dictionary_mut(&mut self) -> Option<&mut ParameterDictionary> {
+        match self {
+            Self::Dictionary(dictionary) => Some(dictionary),
+            Self::Parsed(_) => None,
+        }
+    }
+}
+
+fn take_params(op: &mut OPNode) -> Option<ParsedParameterVector> {
+    op.params.take().map(ParameterStorage::into_parsed)
 }
 
 impl OPNode {
     pub fn new(
         name: &str,
         args: Option<ParameterDictionary>,
-        params: Option<ParameterDictionary>,
+        params: Option<ParameterStorage>,
     ) -> Self {
         OPNode {
             name: String::from(name),
@@ -251,8 +291,8 @@ impl OPNode {
     }
 }
 
-fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    for op in ops {
+fn evaluate_opnodes(ops: Vec<OPNode>, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    for mut op in ops {
         let opname: &str = &op.name;
         match opname {
             "Identity" => {
@@ -401,7 +441,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("PixelFilter requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("PixelFilter requires parameters."));
                 };
                 context.pixel_filter(name, params);
@@ -414,7 +454,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Film requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Film requires parameters."));
                 };
                 context.film(name, params);
@@ -427,7 +467,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Sampler requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Sampler requires parameters."));
                 };
                 context.sampler(name, params);
@@ -440,7 +480,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Accelerator requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Accelerator requires parameters."));
                 };
                 context.accelerator(name, params);
@@ -453,7 +493,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Integrator requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Integrator requires parameters."));
                 };
                 context.integrator(name, params);
@@ -466,7 +506,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Camera requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Camera requires parameters."));
                 };
                 context.camera(name, params);
@@ -479,7 +519,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("MakeNamedMedium requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("MakeNamedMedium requires parameters."));
                 };
                 context.make_named_medium(name, params);
@@ -513,7 +553,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(target) = vec.first() else {
                     return Err(PbrtError::error("Attribute requires a target."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Attribute requires parameters."));
                 };
                 context.attribute(target, params);
@@ -546,7 +586,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(tex_name) = tex_name_values.first() else {
                     return Err(PbrtError::error("Texture requires a texture target."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Texture requires parameters."));
                 };
                 context.texture(&name, &tp, &tex_name, params);
@@ -559,7 +599,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Material requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Material requires parameters."));
                 };
                 context.material(name, params);
@@ -572,7 +612,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("MakeNamedMaterial requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("MakeNamedMaterial requires parameters."));
                 };
                 context.make_named_material(name, params);
@@ -595,7 +635,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("LightSource requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("LightSource requires parameters."));
                 };
                 context.light_source(name, params);
@@ -608,7 +648,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("AreaLightSource requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("AreaLightSource requires parameters."));
                 };
                 context.area_light_source(name, params);
@@ -621,7 +661,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(name) = vec.first() else {
                     return Err(PbrtError::error("Shape requires a name."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Shape requires parameters."));
                 };
                 context.shape(name, params);
@@ -676,7 +716,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(filename) = vec.first() else {
                     return Err(PbrtError::error("Include requires a filename."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Include requires parameters."));
                 };
                 context.include(filename, params);
@@ -689,7 +729,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                 let Some(filename) = vec.first() else {
                     return Err(PbrtError::error("Import requires a filename."));
                 };
-                let Some(params) = op.params.as_ref() else {
+                let Some(params) = take_params(&mut op) else {
                     return Err(PbrtError::error("Import requires parameters."));
                 };
                 context.import(filename, params);
@@ -848,7 +888,10 @@ fn parse_op_string_params<'a>(s: &'a str, opname: &str) -> IResult<&'a str, OPNo
     ))(s)?;
     let mut args = ParameterDictionary::new();
     args.add_string("arg1", a);
-    return Ok((s, OPNode::new(op, Some(args), Some(params))));
+    return Ok((
+        s,
+        OPNode::new(op, Some(args), Some(ParameterStorage::Parsed(params))),
+    ));
 }
 
 fn parse_op_string_string_string_params<'a>(s: &'a str, opname: &str) -> IResult<&'a str, OPNode> {
@@ -861,7 +904,10 @@ fn parse_op_string_string_string_params<'a>(s: &'a str, opname: &str) -> IResult
     args.add_string("arg1", a[0]);
     args.add_string("arg2", a[1]);
     args.add_string("arg3", a[2]);
-    return Ok((s, OPNode::new(op, Some(args), Some(params))));
+    return Ok((
+        s,
+        OPNode::new(op, Some(args), Some(ParameterStorage::Parsed(params))),
+    ));
 }
 
 fn parse_identity(s: &str) -> IResult<&str, OPNode> {

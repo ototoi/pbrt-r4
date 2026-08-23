@@ -104,14 +104,15 @@ impl<'a> ParserSession<'a> {
                 continue;
             }
 
-            if let Err(error) = evaluate_opnodes(std::slice::from_ref(&operation), self.context) {
+            let operation_name = operation.name.clone();
+            if let Err(error) = evaluate_opnodes(vec![operation], self.context) {
                 let Some(frame) = self.frames.last() else {
                     return Err(Self::stack_empty_error());
                 };
                 return Err(parser_error_at(
                     &frame.source,
                     operation_offset,
-                    &operation.name,
+                    &operation_name,
                     &error.to_string(),
                 )
                 .with_file(&frame.path));
