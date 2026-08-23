@@ -98,6 +98,7 @@ pub enum GpuGeometry {
 pub struct GpuPrimitive {
     pub geometry: GeometryId,
     pub transform: TransformId,
+    pub reverse_orientation: bool,
 }
 
 impl Default for GpuRenderConfig {

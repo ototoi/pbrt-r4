@@ -42,6 +42,7 @@ fn minimal_scene() -> GpuCompiledScene {
             primitives: vec![GpuPrimitive {
                 geometry: GeometryId(0),
                 transform: TransformId(0),
+                reverse_orientation: false,
             }],
             render: GpuRenderConfig::default(),
         },

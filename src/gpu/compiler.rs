@@ -1,12 +1,15 @@
 //! Host-side construction boundary for GPU IR.
 
 use super::ir::{
-    GeometryId, GpuFloat, GpuGeometry, GpuIndex, GpuMatrix4x4, GpuNormal3, GpuPoint2, GpuPoint3,
-    GpuPrimitive, GpuSceneData, GpuSceneDraft, GpuSceneIr, GpuSceneView, GpuStaticTransform,
-    GpuTransform, GpuTriangleMesh, GpuVector3, TransformId, CURRENT_IR_VERSION,
+    GeometryId, GpuBounds2i, GpuFloat, GpuGeometry, GpuIndex, GpuIrValidationErrors, GpuMatrix4x4,
+    GpuNormal3, GpuPoint2, GpuPoint3, GpuPrimitive, GpuRenderConfig, GpuSceneData, GpuSceneDraft,
+    GpuSceneIr, GpuSceneView, GpuStaticTransform, GpuTransform, GpuTriangleMesh, GpuVector3,
+    TransformId, CURRENT_IR_VERSION,
 };
+use crate::paramdict::ParameterDictionary;
 use crate::parser::scene_builder::{RenderFromObject, SceneBuilder, ShapeSceneEntity};
 use crate::util::base::Float;
+use crate::util::transform::{Matrix4x4, Transform};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +40,24 @@ pub enum GpuCompileError {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GpuSceneBuildError {
+    Compile(GpuCompileError),
+    Validation(GpuIrValidationErrors),
+}
+
+impl From<GpuCompileError> for GpuSceneBuildError {
+    fn from(error: GpuCompileError) -> Self {
+        Self::Compile(error)
+    }
+}
+
+impl From<GpuIrValidationErrors> for GpuSceneBuildError {
+    fn from(errors: GpuIrValidationErrors) -> Self {
+        Self::Validation(errors)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GpuCompiledScene {
     ir: Arc<GpuSceneIr>,
@@ -60,7 +81,15 @@ impl SceneBuilder {
     /// Compiles the currently supported subset of scene entities into the
     /// backend-independent GPU IR. Unsupported semantics are reported rather
     /// than silently omitted or delegated to the CPU renderer.
-    pub fn build_gpu_ir(&self) -> Result<GpuCompiledScene, GpuCompileError> {
+    pub fn build_gpu_ir(&self) -> Result<GpuCompiledScene, GpuSceneBuildError> {
+        if !self.instance_definitions.is_empty() || !self.instance_uses.is_empty() {
+            return Err(GpuSceneBuildError::Compile(
+                GpuCompileError::UnsupportedSceneFeature {
+                    feature: "instances",
+                    source: empty_source(),
+                },
+            ));
+        }
         let mut transforms = Vec::new();
         let mut geometry = Vec::new();
         let mut primitives = Vec::new();
@@ -70,29 +99,23 @@ impl SceneBuilder {
         }
         if !self.animated_shapes.is_empty() {
             let shape = &self.animated_shapes[0];
-            return Err(unsupported_feature(shape, "animated transforms"));
+            return Err(GpuSceneBuildError::Compile(unsupported_feature(
+                shape,
+                "animated transforms",
+            )));
         }
 
+        let render = render_config(self)?;
         let draft = GpuSceneDraft {
             version: CURRENT_IR_VERSION,
             data: GpuSceneData {
                 transforms,
                 geometry,
                 primitives,
-                render: Default::default(),
+                render,
             },
         };
-        let ir = draft
-            .finish()
-            .map_err(|errors| GpuCompileError::InvalidParameter {
-                parameter: "gpu-ir",
-                detail: format!("IR validation failed: {} issue(s)", errors.issues().len()),
-                source: GpuSourceLocation {
-                    filename: String::new(),
-                    line: 0,
-                    column: 0,
-                },
-            })?;
+        let ir = draft.finish()?;
         Ok(GpuCompiledScene::new(ir))
     }
 }
@@ -124,6 +147,9 @@ fn compile_shape(
             "material, area light, or medium binding",
         ));
     }
+    if shape.instance_name.is_some() {
+        return Err(unsupported_feature(shape, "instances"));
+    }
     let RenderFromObject::Static(transform) = &shape.render_from_object else {
         return Err(unsupported_feature(shape, "animated transforms"));
     };
@@ -136,12 +162,13 @@ fn compile_shape(
     primitives.push(GpuPrimitive {
         geometry: geometry_id,
         transform: transform_id,
+        reverse_orientation: shape.reverse_orientation,
     });
     Ok(())
 }
 
 fn triangle_mesh(
-    params: &crate::paramdict::ParameterDictionary,
+    params: &ParameterDictionary,
     source: &GpuSourceLocation,
 ) -> Result<GpuTriangleMesh, GpuCompileError> {
     let positions = params.get_points("P");
@@ -267,7 +294,7 @@ fn optional_vec3(
 }
 
 fn static_transform(
-    transform: &crate::util::transform::Transform,
+    transform: &Transform,
     source: &GpuSourceLocation,
 ) -> Result<GpuStaticTransform, GpuCompileError> {
     Ok(GpuStaticTransform {
@@ -277,10 +304,7 @@ fn static_transform(
     })
 }
 
-fn matrix(
-    matrix: crate::util::transform::Matrix4x4,
-    source: &GpuSourceLocation,
-) -> Result<GpuMatrix4x4, GpuCompileError> {
+fn matrix(matrix: Matrix4x4, source: &GpuSourceLocation) -> Result<GpuMatrix4x4, GpuCompileError> {
     let mut result = [[0.0; 4]; 4];
     for (row, values) in result.iter_mut().enumerate() {
         for (column, value) in values.iter_mut().enumerate() {
@@ -288,6 +312,106 @@ fn matrix(
         }
     }
     Ok(GpuMatrix4x4(result))
+}
+
+fn render_config(builder: &SceneBuilder) -> Result<GpuRenderConfig, GpuCompileError> {
+    let xresolution = builder.film_params.get_one_int("xresolution", 1280);
+    let yresolution = builder.film_params.get_one_int("yresolution", 720);
+    if xresolution <= 0 || yresolution <= 0 {
+        return Err(invalid_parameter(
+            "xresolution/yresolution",
+            "resolution must be positive",
+            &empty_source(),
+        ));
+    }
+
+    let mut min = [0_i32, 0_i32];
+    let mut max = [xresolution, yresolution];
+    if let Some(pixelbounds) = builder.film_params.get_ints_ref("pixelbounds") {
+        if pixelbounds.len() != 4 {
+            return Err(invalid_parameter(
+                "pixelbounds",
+                "value count must be 4",
+                &empty_source(),
+            ));
+        }
+        min = [pixelbounds[0], pixelbounds[2]];
+        max = [pixelbounds[1], pixelbounds[3]];
+        min[0] = min[0].max(0);
+        min[1] = min[1].max(0);
+        max[0] = max[0].min(xresolution);
+        max[1] = max[1].min(yresolution);
+    }
+    if let Some(cropwindow) = builder.film_params.get_floats_ref("cropwindow") {
+        if cropwindow.len() != 4 {
+            return Err(invalid_parameter(
+                "cropwindow",
+                "value count must be 4",
+                &empty_source(),
+            ));
+        }
+        let x0 = cropwindow[0].min(cropwindow[1]).clamp(0.0, 1.0);
+        let y0 = cropwindow[2].min(cropwindow[3]).clamp(0.0, 1.0);
+        let x1 = cropwindow[0].max(cropwindow[1]).clamp(0.0, 1.0);
+        let y1 = cropwindow[2].max(cropwindow[3]).clamp(0.0, 1.0);
+        min = [
+            (xresolution as Float * x0).ceil() as i32,
+            (yresolution as Float * y0).ceil() as i32,
+        ];
+        max = [
+            (xresolution as Float * x1).ceil() as i32,
+            (yresolution as Float * y1).ceil() as i32,
+        ];
+    }
+    if max[0] <= min[0] || max[1] <= min[1] {
+        return Err(invalid_parameter(
+            "pixelbounds/cropwindow",
+            "pixel bounds must have positive area",
+            &empty_source(),
+        ));
+    }
+    let sample_default = if builder.sampler_name == "independent" {
+        4
+    } else {
+        16
+    };
+    let sample_count = builder
+        .sampler_params
+        .get_one_int("pixelsamples", sample_default);
+    if sample_count <= 0 {
+        return Err(invalid_parameter(
+            "pixelsamples",
+            "sample count must be positive",
+            &empty_source(),
+        ));
+    }
+    Ok(GpuRenderConfig {
+        pixel_bounds: GpuBounds2i {
+            min: [
+                u32::try_from(min[0]).unwrap_or(0),
+                u32::try_from(min[1]).unwrap_or(0),
+            ],
+            max: [
+                u32::try_from(max[0]).unwrap_or(0),
+                u32::try_from(max[1]).unwrap_or(0),
+            ],
+        },
+        sample_count: u32::try_from(sample_count).map_err(|_| {
+            invalid_parameter(
+                "pixelsamples",
+                "sample count does not fit u32",
+                &empty_source(),
+            )
+        })?,
+    })
+}
+
+fn empty_source() -> GpuSourceLocation {
+    GpuSourceLocation {
+        filename: String::new(),
+        line: 0,
+        column: 0,
+    }
 }
 
 fn to_gpu_float(value: Float, source: &GpuSourceLocation) -> Result<GpuFloat, GpuCompileError> {
