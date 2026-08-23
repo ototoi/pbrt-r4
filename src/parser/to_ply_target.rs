@@ -1,4 +1,6 @@
 use super::parse_target::*;
+use super::parsed_parameter::{into_parameter_dictionary, parsed_parameters_from_dictionary};
+use super::{ParsedParameterValues, ParsedParameterVector};
 use crate::paramdict::*;
 use crate::util::base::*;
 use crate::util::error::*;
@@ -318,7 +320,7 @@ impl ParseTarget for ToPlyTarget {
         self.context.borrow_mut().option(name, value);
     }
 
-    fn attribute(&mut self, target: &str, params: &ParameterDictionary) {
+    fn attribute(&mut self, target: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().attribute(target, params);
     }
 
@@ -346,30 +348,30 @@ impl ParseTarget for ToPlyTarget {
         self.context.borrow_mut().transform_times(start, end);
     }
 
-    fn pixel_filter(&mut self, name: &str, params: &ParameterDictionary) {
+    fn pixel_filter(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().pixel_filter(name, params);
     }
 
-    fn film(&mut self, name: &str, params: &ParameterDictionary) {
+    fn film(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().film(name, params);
     }
 
-    fn sampler(&mut self, name: &str, params: &ParameterDictionary) {
+    fn sampler(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().sampler(name, params);
     }
 
-    fn accelerator(&mut self, name: &str, params: &ParameterDictionary) {
+    fn accelerator(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().accelerator(name, params);
     }
 
-    fn integrator(&mut self, name: &str, params: &ParameterDictionary) {
+    fn integrator(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().integrator(name, params);
     }
-    fn camera(&mut self, name: &str, params: &ParameterDictionary) {
+    fn camera(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().camera(name, params);
     }
 
-    fn make_named_medium(&mut self, name: &str, params: &ParameterDictionary) {
+    fn make_named_medium(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().make_named_medium(name, params);
     }
 
@@ -399,15 +401,15 @@ impl ParseTarget for ToPlyTarget {
         self.context.borrow_mut().transform_end();
     }
 
-    fn texture(&mut self, name: &str, t: &str, tex_name: &str, params: &ParameterDictionary) {
+    fn texture(&mut self, name: &str, t: &str, tex_name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().texture(name, t, tex_name, params);
     }
 
-    fn material(&mut self, name: &str, params: &ParameterDictionary) {
+    fn material(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().material(name, params);
     }
 
-    fn make_named_material(&mut self, name: &str, params: &ParameterDictionary) {
+    fn make_named_material(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().make_named_material(name, params);
     }
 
@@ -415,61 +417,67 @@ impl ParseTarget for ToPlyTarget {
         self.context.borrow_mut().named_material(name);
     }
 
-    fn light_source(&mut self, name: &str, params: &ParameterDictionary) {
+    fn light_source(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().light_source(name, params);
     }
 
-    fn area_light_source(&mut self, name: &str, params: &ParameterDictionary) {
+    fn area_light_source(&mut self, name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().area_light_source(name, params);
     }
 
-    fn shape(&mut self, name: &str, params: &ParameterDictionary) {
-        if name == "trianglemesh" {
-            if let Some(vi) = params.get_ints_ref("indices") {
-                if vi.len() < 500 {
-                    self.context.borrow_mut().shape(name, params);
-                    return;
-                }
-            }
-            if let Some(mesh) = convert_to_mesh(params) {
-                let dir = Path::new(&self.dir);
-                let dir = dir.join("geometry");
-                if let Err(e) = std::fs::create_dir_all(&dir) {
-                    error!("Error: {}", e);
-                    return;
-                }
-                let filename = self.get_ply_filename();
-                let filepath = dir.join(&filename);
-                {
-                    // Check if the mesh has tangent vectors
-                    if let Some(_) = params.get_points_ref("S") {
-                        warn!(
-                            "{}: PLY mesh will be missing tangent vectors \"S\".",
-                            filename
-                        );
-                    }
-                }
-                match write_mesh_to_ply(&mesh, &filepath) {
-                    Ok(_) => {
-                        let mut params = create_plymesh_params(params);
-                        let filepath = filepath
-                            .file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "mesh.ply".to_string());
-                        let filepath = Path::new("geometry").join(filepath);
-                        let filepath = filepath.to_string_lossy().into_owned();
-                        params.add_string("string filename", &filepath);
-                        self.context.borrow_mut().shape("plymesh", &params);
-                    }
-                    Err(e) => {
-                        error!("Error: {}", e);
-                    }
-                }
-            }
-            self.count += 1;
-        } else {
+    fn shape(&mut self, name: &str, params: ParsedParameterVector) {
+        if name != "trianglemesh" {
             self.context.borrow_mut().shape(name, params);
+            return;
         }
+
+        let has_small_index_buffer = params.iter().any(|parameter| {
+            parameter.name == "indices"
+                && matches!(&parameter.values, ParsedParameterValues::Ints(values) if values.len() < 500)
+        });
+        if has_small_index_buffer {
+            self.context.borrow_mut().shape(name, params);
+            return;
+        }
+
+        let params = into_parameter_dictionary(params);
+        if let Some(mesh) = convert_to_mesh(&params) {
+            let dir = Path::new(&self.dir).join("geometry");
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                error!("Error: {}", e);
+                return;
+            }
+            let filename = self.get_ply_filename();
+            let filepath = dir.join(&filename);
+            {
+                // Check if the mesh has tangent vectors
+                if params.get_points_ref("S").is_some() {
+                    warn!(
+                        "{}: PLY mesh will be missing tangent vectors \"S\".",
+                        filename
+                    );
+                }
+            }
+            match write_mesh_to_ply(&mesh, &filepath) {
+                Ok(_) => {
+                    let mut params = create_plymesh_params(&params);
+                    let filepath = filepath
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "mesh.ply".to_string());
+                    let filepath = Path::new("geometry").join(filepath);
+                    let filepath = filepath.to_string_lossy().into_owned();
+                    params.add_string("string filename", &filepath);
+                    self.context
+                        .borrow_mut()
+                        .shape("plymesh", parsed_parameters_from_dictionary(&params));
+                }
+                Err(e) => {
+                    error!("Error: {}", e);
+                }
+            }
+        }
+        self.count += 1;
     }
 
     fn reverse_orientation(&mut self) {
@@ -507,11 +515,11 @@ impl ParseTarget for ToPlyTarget {
         self.context.borrow_mut().work_dir_end();
     }
 
-    fn include(&mut self, file_name: &str, params: &ParameterDictionary) {
+    fn include(&mut self, file_name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().include(file_name, params);
     }
 
-    fn import(&mut self, file_name: &str, params: &ParameterDictionary) {
+    fn import(&mut self, file_name: &str, params: ParsedParameterVector) {
         self.context.borrow_mut().import(file_name, params);
     }
 }

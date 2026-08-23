@@ -1,7 +1,5 @@
 use crate::paramdict::wellknown_params;
-use crate::paramdict::ParameterDictionary;
-use crate::util::base::Float;
-use crate::util::spectrum::*;
+use crate::parser::parsed_parameter::{ParsedParameter, ParsedParameterValues};
 use nom::bytes;
 use nom::character;
 use nom::combinator::recognize;
@@ -9,7 +7,6 @@ use nom::multi;
 use nom::number;
 use nom::sequence;
 use nom::IResult;
-use std::io::{Error, ErrorKind};
 
 pub fn space0(s: &str) -> IResult<&str, &str> {
     return recognize(multi::many0_count(space_or_comment))(s);
@@ -70,17 +67,20 @@ pub fn parse_list(s: &str) -> IResult<&str, Vec<&str>> {
 }
 
 pub fn get_param_type(s: &str) -> (&str, &str) {
-    let ss: Vec<&str> = s.split_ascii_whitespace().collect();
-    if ss.len() == 2 {
-        return (ss[0], ss[1]);
-    } else if ss.len() == 1 {
-        if let Some(t) = wellknown_params::find_type_from_key(ss[0]) {
-            return (t, ss[0]);
-        } else {
-            return ("", ss[0]);
-        }
-    } else {
+    let mut parts = s.split_ascii_whitespace();
+    let Some(first) = parts.next() else {
         return ("", s);
+    };
+    let Some(second) = parts.next() else {
+        return (
+            wellknown_params::find_type_from_key(first).unwrap_or(""),
+            first,
+        );
+    };
+    if parts.next().is_none() {
+        (first, second)
+    } else {
+        ("", s)
     }
 }
 
@@ -96,203 +96,77 @@ pub fn convert_bool(s: &str) -> Result<bool, std::str::ParseBoolError> {
     }
 }
 
-pub fn parse_params(s: &str) -> IResult<&str, ParameterDictionary> {
-    let (s, v) = multi::separated_list0(
-        space1,
-        nom::branch::permutation((
-            sequence::terminated(string_literal, space1),
-            nom::branch::alt((parse_list, parse_listed_literal)),
-        )),
-    )(s)?;
-    let mut params = ParameterDictionary::new();
-    for vv in &v {
-        let org_key = vv.0;
-        let (t, key) = get_param_type(org_key);
-        let new_key = format!("{t} {key}");
-        match t {
-            "string" => {
-                let s_values = &vv.1;
-                params.add_strings(&new_key, &s_values);
-            }
-            "texture" => {
-                let s_values = &vv.1;
-                params.add_strings(&new_key, &s_values);
-            }
-            "spectrum" => {
-                let s_values = &vv.1;
-                let values: Result<Vec<Float>, _> =
-                    s_values.iter().map(|s| s.parse::<Float>()).collect();
-                if let Ok(values) = values {
-                    let spectrum = if values.len() == 1 {
-                        Some(Spectrum::from(values[0]))
-                    } else if values.len() == 3 {
-                        Some(Spectrum::from_rgb(&values, SpectrumType::Albedo))
-                    } else if values.len() >= 2 && values.len() % 2 == 0 {
-                        let mut lambda = Vec::with_capacity(values.len() / 2);
-                        let mut sampled = Vec::with_capacity(values.len() / 2);
-                        for pair in values.chunks_exact(2) {
-                            lambda.push(pair[0]);
-                            sampled.push(pair[1]);
-                        }
-                        params.add_sampled_spectrum(&new_key, &lambda, &sampled);
-                        Some(Spectrum::from_sampled(&lambda, &sampled))
-                    } else {
-                        None
-                    };
-                    if let Some(spectrum) = spectrum {
-                        params.add_spectrum(&new_key, &spectrum);
-                    } else {
-                        params.add_strings(&new_key, &s_values);
-                    }
-                } else {
-                    params.add_strings(&new_key, &s_values);
-                }
-            }
-            "bool" => {
-                let s_values = &vv.1;
-                let values: Result<Vec<bool>, _> =
-                    s_values.iter().map(|s| convert_bool(s)).collect();
-                let values = match values {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_bools(&new_key, &values);
-            }
-            "integer" => {
-                let s_values = &vv.1;
-                let values: Vec<i32> = match s_values.iter().map(|s| s.parse::<i32>()).collect() {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_ints(&new_key, &values);
-            }
-            "color" | "rgb" | "xyz" => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                match t {
-                    "color" => params.add_color(&new_key, &values),
-                    "rgb" => params.add_rgb(&new_key, &values),
-                    "xyz" => params.add_xyz(&new_key, &values),
-                    _ => {}
-                }
-            }
-            "blackbody" => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_blackbody(&new_key, &values);
-            }
-            "point" | "point2" | "point3" | "point4" => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_point(&new_key, &values);
-            }
-            "vector" | "vector2" | "vector3" | "vector4" => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_point(&new_key, &values);
-            }
-            "normal" => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_point(&new_key, &values);
-            }
-            "float" => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_floats(&new_key, &values);
-            }
-            _ => {
-                let s_values = &vv.1;
-                let values: Vec<Float> = match s_values.iter().map(|s| s.parse::<Float>()).collect()
-                {
-                    Ok(values) => values,
-                    Err(_) => {
-                        return Err(nom::Err::Failure(nom::error::Error::new(
-                            s,
-                            nom::error::ErrorKind::Fail,
-                        )))
-                    }
-                };
-                params.add_floats(&new_key, &values);
-            }
+fn parsed_values<'a>(s: &'a str, parameter_type: &str) -> IResult<&'a str, ParsedParameterValues> {
+    let (mut rest, in_array) = match nom::bytes::complete::tag::<_, _, nom::error::Error<_>>("[")(s)
+    {
+        Ok((rest, _)) => {
+            let (rest, _) = space0(rest)?;
+            (rest, true)
+        }
+        Err(_) => (s, false),
+    };
+    let mut values = ParsedParameterValues::new_for_type(parameter_type);
+    loop {
+        let (next, literal) = parse_literal(rest)?;
+        values.push_literal(literal).map_err(|_| {
+            nom::Err::Failure(nom::error::Error::new(rest, nom::error::ErrorKind::Fail))
+        })?;
+        rest = next;
+        let (next, _) = match space1(rest) {
+            Ok(value) => value,
+            Err(_) => break,
+        };
+        rest = next;
+        if in_array && rest.starts_with(']') {
+            break;
+        }
+        if !in_array {
+            break;
         }
     }
-    let rest = s.trim_start();
-    if v.is_empty() && rest.starts_with('"') {
+    let (rest_after_space, _) = space0(rest)?;
+    rest = rest_after_space;
+    if in_array {
+        let (rest_after_close, _) = character::complete::char(']')(rest)?;
+        Ok((rest_after_close, values))
+    } else {
+        Ok((rest, values))
+    }
+}
+
+pub fn parse_params(s: &str) -> IResult<&str, Vec<ParsedParameter>> {
+    let mut rest = s;
+    let mut parameters = Vec::new();
+    loop {
+        let after_space = match space1(rest) {
+            Ok((next, _)) => next,
+            Err(_) => rest,
+        };
+        rest = after_space;
+        if !rest.starts_with('"') {
+            break;
+        }
+        let (next, declaration) = sequence::terminated(string_literal, space1)(rest)?;
+        let (parameter_type, name) = get_param_type(declaration);
+        let (next, values) = parsed_values(next, parameter_type)?;
+        parameters.push(ParsedParameter {
+            parameter_type: parameter_type.to_string(),
+            name: name.to_string(),
+            values,
+        });
+        rest = next;
+    }
+    if parameters.is_empty() && rest.trim_start().starts_with('"') {
         return Err(nom::Err::Failure(nom::error::Error::new(
-            s,
+            rest,
             nom::error::ErrorKind::Fail,
         )));
     }
-    if rest.starts_with('[') {
+    if rest.trim_start().starts_with('[') {
         return Err(nom::Err::Failure(nom::error::Error::new(
-            s,
+            rest,
             nom::error::ErrorKind::Fail,
         )));
     }
-    return Ok((s, params));
+    Ok((rest, parameters))
 }
