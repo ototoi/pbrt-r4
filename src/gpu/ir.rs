@@ -98,6 +98,7 @@ pub enum GpuGeometry {
 pub struct GpuPrimitive {
     pub geometry: GeometryId,
     pub transform: TransformId,
+    pub reverse_orientation: bool,
 }
 
 impl Default for GpuRenderConfig {
@@ -132,9 +133,12 @@ pub struct GpuSceneIr {
     data: GpuSceneData,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GpuSceneView<'a> {
     pub version: &'a GpuIrVersion,
+    pub transforms: &'a [GpuTransform],
+    pub geometry: &'a [GpuGeometry],
+    pub primitives: &'a [GpuPrimitive],
     pub render: &'a GpuRenderConfig,
 }
 
@@ -286,6 +290,9 @@ impl GpuSceneIr {
     pub fn view(&self) -> GpuSceneView<'_> {
         GpuSceneView {
             version: &self.version,
+            transforms: &self.data.transforms,
+            geometry: &self.data.geometry,
+            primitives: &self.data.primitives,
             render: &self.data.render,
         }
     }
