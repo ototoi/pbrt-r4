@@ -16,6 +16,7 @@ readme = "README.md"
 default = []
 stats = []
 float-as-double = []
+webgpu = []
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -10,6 +10,7 @@ pub mod base; // Base trait definitions
 pub mod bsdf; // BSDF wrapper around BxDF
 pub mod bssrdf; // BSSRDF for subsurface scattering
 pub mod cpu;
+pub mod gpu;
 pub mod util; // Utility functions and data structures // CPU rendering implementation
 
 // Top-level modules (pbrt-v4 style)
