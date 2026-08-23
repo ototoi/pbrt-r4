@@ -11,7 +11,7 @@ use super::ir::{GpuRenderConfig, GpuSceneView};
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WebGpuPrepareOptions;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WebGpuExecutableScene {
     scene: GpuCompiledScene,
 }
