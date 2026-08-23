@@ -16,7 +16,8 @@ use super::state::{ApiState, PushKind};
 use super::{SceneBuilder, CURVES_SHAPE_NAME};
 use crate::options::PbrtOptions;
 use crate::paramdict::ParameterDictionary;
-use crate::parser::{parse_file, parse_target::ParseTarget};
+use crate::parser::parsed_parameter::into_parameter_dictionary;
+use crate::parser::{parse_file, parse_target::ParseTarget, ParsedParameterVector};
 use crate::util::base::Float;
 use crate::util::spectrum::rgb_to_spectrum::lookup_color_space_by_name;
 use crate::util::transform::transform_set::{
@@ -121,10 +122,10 @@ impl SceneBuilder {
     /// dictionary inherits `graphicsState.colorSpace`.
     fn params_with_attributes(
         &self,
-        params: &ParameterDictionary,
+        params: ParameterDictionary,
         attrs: &ParameterDictionary,
     ) -> ParameterDictionary {
-        let mut p = params.clone();
+        let mut p = params;
         p.merge_missing(attrs);
         if !p.has_parameter("displacement") {
             p.rename_parameter("bumpmap", "displacement");
@@ -268,40 +269,40 @@ impl ParseTarget for SceneBuilder {
     }
 
     // ===== Options-block setters =============================================
-    fn pixel_filter(&mut self, name: &str, params: &ParameterDictionary) {
+    fn pixel_filter(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("PixelFilter");
         self.filter_name = name.to_string();
-        self.filter_params = params.clone();
+        self.filter_params = into_parameter_dictionary(params);
     }
 
-    fn film(&mut self, name: &str, params: &ParameterDictionary) {
+    fn film(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("Film");
         self.film_name = name.to_string();
-        self.film_params = params.clone();
+        self.film_params = into_parameter_dictionary(params);
     }
 
-    fn sampler(&mut self, name: &str, params: &ParameterDictionary) {
+    fn sampler(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("Sampler");
         self.sampler_name = name.to_string();
-        self.sampler_params = params.clone();
+        self.sampler_params = into_parameter_dictionary(params);
     }
 
-    fn accelerator(&mut self, name: &str, params: &ParameterDictionary) {
+    fn accelerator(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("Accelerator");
         self.accelerator_name = name.to_string();
-        self.accelerator_params = params.clone();
+        self.accelerator_params = into_parameter_dictionary(params);
     }
 
-    fn integrator(&mut self, name: &str, params: &ParameterDictionary) {
+    fn integrator(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("Integrator");
         self.integrator_name = name.to_string();
-        self.integrator_params = params.clone();
+        self.integrator_params = into_parameter_dictionary(params);
     }
 
-    fn camera(&mut self, name: &str, params: &ParameterDictionary) {
+    fn camera(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("Camera");
         self.camera_name = name.to_string();
-        self.camera_params = params.clone();
+        self.camera_params = into_parameter_dictionary(params);
         // pbrt's `LookAt` accumulates `cameraFromWorld` into the CTM, so
         // the active transform at the `Camera` directive is actually the
         // world-to-camera direction; `realize_camera` inverts it before
@@ -316,7 +317,8 @@ impl ParseTarget for SceneBuilder {
             .insert(String::from("camera"), self.camera_to_world.inverse());
     }
 
-    fn make_named_medium(&mut self, name: &str, params: &ParameterDictionary) {
+    fn make_named_medium(&mut self, name: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         if self.media.contains_key(name) {
             warn!("Named medium \"{}\" redefined.", name);
         }
@@ -350,7 +352,8 @@ impl ParseTarget for SceneBuilder {
             .insert(String::from("world"), *self.top_transform());
     }
 
-    fn attribute(&mut self, target: &str, params: &ParameterDictionary) {
+    fn attribute(&mut self, target: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         self.verify_world("Attribute");
         let gs = self.top_graphics_state_mut();
         let dict = match target {
@@ -421,8 +424,9 @@ impl ParseTarget for SceneBuilder {
         name: &str,
         type_name: &str,
         tex_name: &str,
-        params: &ParameterDictionary,
+        params: ParsedParameterVector,
     ) {
+        let params = into_parameter_dictionary(params);
         self.verify_world("Texture");
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().texture_attributes);
@@ -456,7 +460,8 @@ impl ParseTarget for SceneBuilder {
         }
     }
 
-    fn material(&mut self, name: &str, params: &ParameterDictionary) {
+    fn material(&mut self, name: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         self.verify_world("Material");
         if name.is_empty() || name == "interface" {
             // No surface material (used for volume boundaries).
@@ -478,7 +483,8 @@ impl ParseTarget for SceneBuilder {
         }
     }
 
-    fn make_named_material(&mut self, name: &str, params: &ParameterDictionary) {
+    fn make_named_material(&mut self, name: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         let type_name = params.get_one_string("type", "");
         if type_name.is_empty() {
             error!("No parameter string \"type\" found in MakeNamedMaterial");
@@ -504,7 +510,8 @@ impl ParseTarget for SceneBuilder {
         gs.current_material_is_default = false;
     }
 
-    fn light_source(&mut self, name: &str, params: &ParameterDictionary) {
+    fn light_source(&mut self, name: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         self.verify_world("LightSource");
         let render_from_object = self.render_from_object();
         let gs = self.top_graphics_state();
@@ -524,7 +531,8 @@ impl ParseTarget for SceneBuilder {
         });
     }
 
-    fn area_light_source(&mut self, name: &str, params: &ParameterDictionary) {
+    fn area_light_source(&mut self, name: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         self.verify_world("AreaLightSource");
         // Bound to the next Shape; the actual entity push happens in
         // `shape()`.
@@ -535,7 +543,8 @@ impl ParseTarget for SceneBuilder {
         gs.area_light_params = params;
     }
 
-    fn shape(&mut self, name: &str, params: &ParameterDictionary) {
+    fn shape(&mut self, name: &str, params: ParsedParameterVector) {
+        let params = into_parameter_dictionary(params);
         self.verify_world("Shape");
 
         let render_from_object = self.render_from_object();
@@ -713,7 +722,7 @@ impl ParseTarget for SceneBuilder {
         self.work_dirs.pop();
     }
 
-    fn import(&mut self, filename: &str, _params: &ParameterDictionary) {
+    fn import(&mut self, filename: &str, _params: ParsedParameterVector) {
         let path = Path::new(filename);
         let resolved = if path.is_absolute() {
             path.to_path_buf()

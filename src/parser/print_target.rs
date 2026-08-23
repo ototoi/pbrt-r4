@@ -1,4 +1,6 @@
 use super::parse_target::*;
+use super::parsed_parameter::into_parameter_dictionary;
+use super::ParsedParameterVector;
 use crate::paramdict::*;
 use crate::util::base::*;
 
@@ -280,8 +282,8 @@ impl ParseTarget for PrintTarget {
         self.print(&format!("{}Option \"{name}\" {value}\n", self.get_indent()));
     }
 
-    fn attribute(&mut self, target: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn attribute(&mut self, target: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Attribute \"{target}\"{s_params}\n",
             self.get_indent()
@@ -321,53 +323,53 @@ impl ParseTarget for PrintTarget {
         ));
     }
 
-    fn pixel_filter(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn pixel_filter(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}PixelFilter \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn film(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn film(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!("{}Film \"{name}\"{s_params}\n", self.get_indent()));
     }
 
-    fn sampler(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn sampler(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Sampler \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn accelerator(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn accelerator(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Accelerator \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn integrator(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn integrator(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Integrator \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn camera(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn camera(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Camera \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn make_named_medium(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn make_named_medium(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}NamedMedium \"{name}\"{s_params}\n",
             self.get_indent()
@@ -406,24 +408,24 @@ impl ParseTarget for PrintTarget {
         self.print(&format!("{}TransformEnd\n", self.get_indent()));
     }
 
-    fn texture(&mut self, name: &str, t: &str, tex_name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn texture(&mut self, name: &str, t: &str, tex_name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Texture \"{name}\" \"{t}\" \"{tex_name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn material(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn material(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Material \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn make_named_material(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn make_named_material(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}MakeNamedMaterial \"{name}\"{s_params}\n",
             self.get_indent()
@@ -434,24 +436,24 @@ impl ParseTarget for PrintTarget {
         self.print(&format!("{}NamedMaterial \"{name}\"\n", self.get_indent()));
     }
 
-    fn light_source(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn light_source(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}LightSource \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn area_light_source(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn area_light_source(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}AreaLightSource \"{name}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn shape(&mut self, name: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn shape(&mut self, name: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Shape \"{name}\"{s_params}\n",
             self.get_indent()
@@ -492,16 +494,16 @@ impl ParseTarget for PrintTarget {
         //Do not anything!
     }
 
-    fn include(&mut self, filename: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn include(&mut self, filename: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Include \"{filename}\"{s_params}\n",
             self.get_indent()
         ));
     }
 
-    fn import(&mut self, filename: &str, params: &ParameterDictionary) {
-        let s_params = self.with_params(params);
+    fn import(&mut self, filename: &str, params: ParsedParameterVector) {
+        let s_params = self.with_params(&into_parameter_dictionary(params));
         self.print(&format!(
             "{}Import \"{filename}\"{s_params}\n",
             self.get_indent()

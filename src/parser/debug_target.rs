@@ -1,5 +1,5 @@
 use super::parse_target::*;
-use crate::paramdict::*;
+use super::ParsedParameterVector;
 use crate::util::base::*;
 use std::cell::{Cell, RefCell};
 
@@ -175,49 +175,49 @@ impl ParseTarget for DebugTarget {
             .borrow_mut()
             .push(Operation::new("TransformTimes", &v));
     }
-    fn pixel_filter(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn pixel_filter(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}pixel_filter:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("PixelFilter", &v));
     }
-    fn film(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn film(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}film:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("Film", &v));
     }
-    fn sampler(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn sampler(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}sampler:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("Sampler", &v));
     }
-    fn accelerator(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn accelerator(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}accelerator:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("Accelerator", &v));
     }
-    fn integrator(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn integrator(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}integrator:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("Integrator", &v));
     }
-    fn camera(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn camera(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}camera:\"{name}\"", self.get_indent());
         let v = vec![String::from("")];
         self.operations
             .borrow_mut()
             .push(Operation::new("Camera", &v));
     }
-    fn make_named_medium(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn make_named_medium(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}make_named_medium:\"{name}\"", self.get_indent());
         let v = vec![String::from("")];
         self.operations
@@ -242,7 +242,7 @@ impl ParseTarget for DebugTarget {
             .push(Operation::new("WorldBegin", &v));
         self.inc_indent();
     }
-    fn attribute(&mut self, target: &str, _params: &ParameterDictionary) {
+    fn attribute(&mut self, target: &str, _params: ParsedParameterVector) {
         println!("{}attribute:\"{target}\"", self.get_indent());
         let v = vec![String::from(target)];
         self.operations
@@ -281,7 +281,7 @@ impl ParseTarget for DebugTarget {
             .borrow_mut()
             .push(Operation::new("TransformEnd", &v));
     }
-    fn texture(&mut self, name: &str, t: &str, tex_name: &str, _params: &ParameterDictionary) {
+    fn texture(&mut self, name: &str, t: &str, tex_name: &str, _params: ParsedParameterVector) {
         println!(
             "{}texture:\"{}\", \"{}\", \"{}\"",
             self.get_indent(),
@@ -294,14 +294,14 @@ impl ParseTarget for DebugTarget {
             .borrow_mut()
             .push(Operation::new("Texture", &v));
     }
-    fn material(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn material(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}material:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("Material", &v));
     }
-    fn make_named_material(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn make_named_material(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}make_named_material:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
@@ -315,21 +315,21 @@ impl ParseTarget for DebugTarget {
             .borrow_mut()
             .push(Operation::new("NamedMaterial", &v));
     }
-    fn light_source(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn light_source(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}light_source:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("LightSource", &v));
     }
-    fn area_light_source(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn area_light_source(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}area_light_source:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
             .borrow_mut()
             .push(Operation::new("AreaLightSource", &v));
     }
-    fn shape(&mut self, name: &str, _params: &ParameterDictionary) {
+    fn shape(&mut self, name: &str, _params: ParsedParameterVector) {
         println!("{}shape:\"{name}\"", self.get_indent());
         let v = vec![String::from(name)];
         self.operations
@@ -405,7 +405,7 @@ impl ParseTarget for DebugTarget {
             .push(Operation::new("WorkDirEnd", &v));
     }
 
-    fn include(&mut self, filename: &str, _params: &ParameterDictionary) {
+    fn include(&mut self, filename: &str, _params: ParsedParameterVector) {
         println!("{}include:\"{filename}\"", self.get_indent());
         let v = vec![String::from(filename)];
         self.operations
@@ -413,7 +413,7 @@ impl ParseTarget for DebugTarget {
             .push(Operation::new("Include", &v));
     }
 
-    fn import(&mut self, filename: &str, _params: &ParameterDictionary) {
+    fn import(&mut self, filename: &str, _params: ParsedParameterVector) {
         println!("{}import:\"{filename}\"", self.get_indent());
         let v = vec![String::from(filename)];
         self.operations

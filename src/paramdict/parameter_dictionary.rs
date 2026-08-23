@@ -125,6 +125,41 @@ fn add_values<T: Clone>(
     }
 }
 
+fn add_owned_values<T>(
+    k: &mut Vec<String>,
+    m: &mut HashMap<String, SharedValues<T>>,
+    key: &str,
+    values: Vec<T>,
+) {
+    k.push(key.to_string());
+    let keyname = get_key_name(key);
+    if let Some(storage) = m.get(&keyname) {
+        *write_values(storage) = values;
+    } else {
+        m.insert(keyname, RwLock::new(values));
+    }
+}
+
+fn add_owned_values_with_type<T>(
+    k: &mut Vec<String>,
+    m: &mut HashMap<String, SharedValues<T>>,
+    parameter_type: &str,
+    name: &str,
+    values: Vec<T>,
+) {
+    let key = if parameter_type.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parameter_type} {name}")
+    };
+    k.push(key);
+    if let Some(storage) = m.get(name) {
+        *write_values(storage) = values;
+    } else {
+        m.insert(name.to_string(), RwLock::new(values));
+    }
+}
+
 fn add_value_no_key<T: Clone>(m: &mut HashMap<String, SharedValues<T>>, key: &str, v: T) {
     let keyname = get_key_name(key);
     match m.get(&keyname) {
@@ -230,6 +265,28 @@ impl ParameterDictionary {
         add_values(&mut self.keys, &mut self.ints, key, v);
     }
 
+    pub fn add_owned_bools(&mut self, key: &str, values: Vec<bool>) {
+        add_owned_values(&mut self.keys, &mut self.bools, key, values);
+    }
+
+    pub fn add_owned_bools_typed(&mut self, parameter_type: &str, name: &str, values: Vec<bool>) {
+        add_owned_values_with_type(
+            &mut self.keys,
+            &mut self.bools,
+            parameter_type,
+            name,
+            values,
+        );
+    }
+
+    pub fn add_owned_ints(&mut self, key: &str, values: Vec<i32>) {
+        add_owned_values(&mut self.keys, &mut self.ints, key, values);
+    }
+
+    pub fn add_owned_ints_typed(&mut self, parameter_type: &str, name: &str, values: Vec<i32>) {
+        add_owned_values_with_type(&mut self.keys, &mut self.ints, parameter_type, name, values);
+    }
+
     pub fn add_float(&mut self, key: &str, v: Float) {
         add_value(&mut self.keys, &mut self.floats, key, v);
     }
@@ -251,6 +308,57 @@ impl ParameterDictionary {
         }
     }
 
+    pub fn add_owned_floats(&mut self, key: &str, values: Vec<Float>) {
+        let t = get_key_type(key);
+        match t.as_str() {
+            "point" | "point2" | "point3" | "point4" | "normal" | "vector" | "vector2"
+            | "vector3" | "vector4" | "color" | "rgb" => {
+                add_owned_values(&mut self.keys, &mut self.points, key, values)
+            }
+            "xyz" => self.add_xyz(key, &values),
+            "blackbody" => add_owned_values(&mut self.keys, &mut self.floats, key, values),
+            _ => add_owned_values(&mut self.keys, &mut self.floats, key, values),
+        }
+    }
+
+    pub fn add_owned_floats_typed(&mut self, parameter_type: &str, name: &str, values: Vec<Float>) {
+        match parameter_type {
+            "point" | "point2" | "point3" | "point4" | "normal" | "vector" | "vector2"
+            | "vector3" | "vector4" | "color" | "rgb" => add_owned_values_with_type(
+                &mut self.keys,
+                &mut self.points,
+                parameter_type,
+                name,
+                values,
+            ),
+            "xyz" => {
+                let xyz = RGBSpectrum::rgb_from_xyz(&values);
+                let rgb = xyz.to_rgb();
+                add_owned_values_with_type(
+                    &mut self.keys,
+                    &mut self.points,
+                    parameter_type,
+                    name,
+                    rgb.to_vec(),
+                );
+            }
+            "blackbody" => add_owned_values_with_type(
+                &mut self.keys,
+                &mut self.floats,
+                parameter_type,
+                name,
+                values,
+            ),
+            _ => add_owned_values_with_type(
+                &mut self.keys,
+                &mut self.floats,
+                parameter_type,
+                name,
+                values,
+            ),
+        }
+    }
+
     pub fn add_string(&mut self, key: &str, v: &str) {
         add_value(&mut self.keys, &mut self.strings, key, String::from(v));
     }
@@ -260,8 +368,42 @@ impl ParameterDictionary {
         add_values(&mut self.keys, &mut self.strings, key, &vv);
     }
 
+    pub fn add_owned_strings(&mut self, key: &str, values: Vec<String>) {
+        add_owned_values(&mut self.keys, &mut self.strings, key, values);
+    }
+
+    pub fn add_owned_strings_typed(
+        &mut self,
+        parameter_type: &str,
+        name: &str,
+        values: Vec<String>,
+    ) {
+        add_owned_values_with_type(
+            &mut self.keys,
+            &mut self.strings,
+            parameter_type,
+            name,
+            values,
+        );
+    }
+
     pub fn add_spectrum(&mut self, key: &str, v: &Spectrum) {
         add_value(&mut self.keys, &mut self.spectrums, key, v.clone());
+    }
+
+    pub fn add_owned_spectrums_typed(
+        &mut self,
+        parameter_type: &str,
+        name: &str,
+        values: Vec<Spectrum>,
+    ) {
+        add_owned_values_with_type(
+            &mut self.keys,
+            &mut self.spectrums,
+            parameter_type,
+            name,
+            values,
+        );
     }
 
     pub fn add_spectrums(&mut self, key: &str, v: &[Spectrum]) {
@@ -276,8 +418,37 @@ impl ParameterDictionary {
         add_value(&mut self.keys, &mut self.sampled_spectra, key, sampled);
     }
 
+    pub fn add_owned_sampled_spectra_typed(
+        &mut self,
+        parameter_type: &str,
+        name: &str,
+        values: Vec<SampledSpectrumParam>,
+    ) {
+        add_owned_values_with_type(
+            &mut self.keys,
+            &mut self.sampled_spectra,
+            parameter_type,
+            name,
+            values,
+        );
+    }
+
     pub fn add_point(&mut self, key: &str, v: &[Float]) {
         add_values(&mut self.keys, &mut self.points, key, v);
+    }
+
+    pub fn add_owned_points(&mut self, key: &str, values: Vec<Float>) {
+        add_owned_values(&mut self.keys, &mut self.points, key, values);
+    }
+
+    pub fn add_owned_points_typed(&mut self, parameter_type: &str, name: &str, values: Vec<Float>) {
+        add_owned_values_with_type(
+            &mut self.keys,
+            &mut self.points,
+            parameter_type,
+            name,
+            values,
+        );
     }
 
     //--------------------

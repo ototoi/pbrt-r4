@@ -285,7 +285,11 @@ fn upgrade_directive(op: &mut OPNode) -> Result<(), PbrtError> {
         return Ok(());
     };
     let mut name = args.get_one_string("arg1", "");
-    let Some(params) = op.params.as_mut() else {
+    let Some(params) = op
+        .params
+        .as_mut()
+        .and_then(crate::parser::ParameterStorage::as_dictionary_mut)
+    else {
         return Ok(());
     };
     match op.name.as_str() {
@@ -467,8 +471,17 @@ pub fn upgrade_opnodes(ops: &mut [OPNode]) -> Result<(), PbrtError> {
     let mut texture_rename_count = 0usize;
     let mut object_rename_count = 0usize;
     for op in ops {
+        if let Some(params) = op.params.take() {
+            op.params = Some(crate::parser::ParameterStorage::Dictionary(
+                params.into_dictionary(),
+            ));
+        }
         for (before, after) in &texture_names {
-            if let Some(params) = op.params.as_mut() {
+            if let Some(params) = op
+                .params
+                .as_mut()
+                .and_then(crate::parser::ParameterStorage::as_dictionary_mut)
+            {
                 params.rename_texture_references(before, after);
             }
         }
@@ -487,7 +500,11 @@ pub fn upgrade_opnodes(ops: &mut [OPNode]) -> Result<(), PbrtError> {
                         op.name
                     )));
                 }
-                if let Some(params) = op.params.as_mut() {
+                if let Some(params) = op
+                    .params
+                    .as_mut()
+                    .and_then(crate::parser::ParameterStorage::as_dictionary_mut)
+                {
                     upgrade_material(&mut name, params)?;
                 }
                 args.replace_one_string("arg1", &name);
@@ -502,7 +519,11 @@ pub fn upgrade_opnodes(ops: &mut [OPNode]) -> Result<(), PbrtError> {
                             texture_rename_count += 1;
                             texture_names.insert(original.clone(), renamed.clone());
                             args.replace_one_string("arg1", &renamed);
-                            if let Some(params) = op.params.as_mut() {
+                            if let Some(params) = op
+                                .params
+                                .as_mut()
+                                .and_then(crate::parser::ParameterStorage::as_dictionary_mut)
+                            {
                                 params.rename_texture_references(&original, &previous);
                             }
                         } else {
