@@ -130,7 +130,14 @@ fn parser_error_at(source: &str, offset: usize, operation: &str, message: &str) 
 }
 
 fn operation_name(input: &str) -> &str {
-    input.split_whitespace().next().unwrap_or("<end-of-input>")
+    operation_name_token(input).unwrap_or("<end-of-input>")
+}
+
+fn operation_name_token(input: &str) -> Option<&str> {
+    let end = input
+        .find(|character: char| character.is_ascii_whitespace() || character == '#')
+        .unwrap_or(input.len());
+    (!input[..end].is_empty()).then_some(&input[..end])
 }
 
 fn parse_next_operation<'a>(
@@ -660,56 +667,62 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
 //-----------------------------------
 
 fn parse_operation(s: &str) -> IResult<&str, OPNode> {
-    return nom::branch::alt((
-        nom::branch::alt((
-            parse_identity,
-            parse_translate,
-            parse_rotate,
-            parse_scale,
-            parse_look_at,
-            parse_concat_transform,
-            parse_transform,
-            parse_coordinate_system,
-            parse_coord_sys_transform,
-            parse_color_space,
-            parse_active_transform,
-            parse_transform_times,
-        )),
-        nom::branch::alt((
-            parse_pixel_filter,
-            parse_film,
-            parse_sampler,
-            parse_accelerator,
-            parse_integrator,
-            parse_camera,
-            parse_make_named_medium,
-            parse_medium_interface,
-            parse_option,
-        )),
-        nom::branch::alt((
-            parse_world_begin,
-            parse_attribute,
-            parse_attribute_begin,
-            parse_attribute_end,
-            parse_transform_begin,
-            parse_transform_end,
-            parse_texture,
-            parse_material,
-            parse_make_named_material,
-            parse_named_material,
-            parse_light_source,
-            parse_area_light_source,
-            parse_shape,
-            parse_reverse_orientation,
-            parse_object_begin,
-            parse_object_end,
-            parse_object_instance,
-            parse_world_end,
-            parse_include,
-            parse_import,
-        )),
-        nom::branch::alt((parse_work_dir_begin, parse_work_dir_end)),
-    ))(s);
+    let Some(name) = operation_name_token(s) else {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            s,
+            nom::error::ErrorKind::Tag,
+        )));
+    };
+
+    match name {
+        "Identity" => parse_identity(s),
+        "Translate" => parse_translate(s),
+        "Rotate" => parse_rotate(s),
+        "Scale" => parse_scale(s),
+        "LookAt" => parse_look_at(s),
+        "ConcatTransform" => parse_concat_transform(s),
+        "Transform" => parse_transform(s),
+        "CoordinateSystem" => parse_coordinate_system(s),
+        "CoordSysTransform" => parse_coord_sys_transform(s),
+        "ColorSpace" => parse_color_space(s),
+        "ActiveTransform" => parse_active_transform(s),
+        "TransformTimes" => parse_transform_times(s),
+        "PixelFilter" => parse_pixel_filter(s),
+        "Film" => parse_film(s),
+        "Sampler" => parse_sampler(s),
+        "Accelerator" => parse_accelerator(s),
+        "Integrator" => parse_integrator(s),
+        "Camera" => parse_camera(s),
+        "MakeNamedMedium" => parse_make_named_medium(s),
+        "MediumInterface" => parse_medium_interface(s),
+        "Option" => parse_option(s),
+        "WorldBegin" => parse_world_begin(s),
+        "Attribute" => parse_attribute(s),
+        "AttributeBegin" => parse_attribute_begin(s),
+        "AttributeEnd" => parse_attribute_end(s),
+        "TransformBegin" => parse_transform_begin(s),
+        "TransformEnd" => parse_transform_end(s),
+        "Texture" => parse_texture(s),
+        "Material" => parse_material(s),
+        "MakeNamedMaterial" => parse_make_named_material(s),
+        "NamedMaterial" => parse_named_material(s),
+        "LightSource" => parse_light_source(s),
+        "AreaLightSource" => parse_area_light_source(s),
+        "Shape" => parse_shape(s),
+        "ReverseOrientation" => parse_reverse_orientation(s),
+        "ObjectBegin" => parse_object_begin(s),
+        "ObjectEnd" => parse_object_end(s),
+        "ObjectInstance" => parse_object_instance(s),
+        "WorldEnd" => parse_world_end(s),
+        "Include" => parse_include(s),
+        "Import" => parse_import(s),
+        "WorkDirBegin" => parse_work_dir_begin(s),
+        "WorkDirEnd" => parse_work_dir_end(s),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            s,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
 }
 
 fn parse_op_void<'a>(s: &'a str, name: &str) -> IResult<&'a str, OPNode> {
