@@ -129,15 +129,12 @@ fn parser_error_at(source: &str, offset: usize, operation: &str, message: &str) 
     PbrtError::error(&message)
 }
 
-fn operation_name(input: &str) -> &str {
-    operation_name_token(input).unwrap_or("<end-of-input>")
-}
-
-fn operation_name_token(input: &str) -> Option<&str> {
+fn operation_name_token(input: &str) -> Option<(&str, bool)> {
     let end = input
         .find(|character: char| character.is_ascii_whitespace() || character == '#')
         .unwrap_or(input.len());
-    (!input[..end].is_empty()).then_some(&input[..end])
+    let token = &input[..end];
+    (!token.is_empty()).then_some((token, token.bytes().all(|byte| byte.is_ascii_alphabetic())))
 }
 
 fn parse_next_operation<'a>(
@@ -151,8 +148,23 @@ fn parse_next_operation<'a>(
     }
 
     let operation_input = remaining;
-    let name = operation_name(operation_input);
-    let (remaining, operation) = parse_operation(operation_input)
+    let Some((name, valid_identifier)) = operation_name_token(operation_input) else {
+        return Err(parser_error(
+            source,
+            operation_input,
+            "<end-of-input>",
+            "expected a directive name",
+        ));
+    };
+    if !valid_identifier {
+        return Err(parser_error(
+            source,
+            operation_input,
+            name,
+            "directive name must contain only ASCII letters",
+        ));
+    }
+    let (remaining, operation) = parse_operation(operation_input, name)
         .map_err(|error| parser_error(source, operation_input, name, &error.to_string()))?;
     Ok(Some((remaining, operation_input, operation)))
 }
@@ -190,7 +202,7 @@ fn parse_opnodes(s: &str) -> Result<Vec<OPNode>, PbrtError> {
 fn parse_opnodes_core(s: &str) -> Result<Vec<OPNode>, PbrtError> {
     let result = nom::combinator::all_consuming(multi::many0(sequence::delimited(
         space0,
-        parse_operation,
+        parse_operation_from_input,
         space0,
     )))(s);
     match result {
@@ -201,6 +213,22 @@ fn parse_opnodes_core(s: &str) -> Result<Vec<OPNode>, PbrtError> {
             return Err(PbrtError::from(e.to_string()));
         }
     }
+}
+
+fn parse_operation_from_input(s: &str) -> IResult<&str, OPNode> {
+    let Some((name, valid_identifier)) = operation_name_token(s) else {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            s,
+            nom::error::ErrorKind::Tag,
+        )));
+    };
+    if !valid_identifier {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            s,
+            nom::error::ErrorKind::Alpha,
+        )));
+    }
+    parse_operation(s, name)
 }
 
 pub struct OPNode {
@@ -300,6 +328,17 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
                     return Err(PbrtError::error(&msg));
                 }
                 context.transform(&vec);
+            }
+            "TransformTimes" => {
+                let Some(args) = op.args.as_ref() else {
+                    return Err(PbrtError::error("TransformTimes requires arguments."));
+                };
+                let vec = args.get_floats("args");
+                if vec.len() != 2 {
+                    let msg = format!("{} required {} arguments", opname, 2);
+                    return Err(PbrtError::error(&msg));
+                }
+                context.transform_times(vec[0], vec[1]);
             }
             "CoordinateSystem" => {
                 let Some(args) = op.args.as_ref() else {
@@ -666,14 +705,7 @@ fn evaluate_opnodes(ops: &[OPNode], context: &mut dyn ParseTarget) -> Result<(),
 
 //-----------------------------------
 
-fn parse_operation(s: &str) -> IResult<&str, OPNode> {
-    let Some(name) = operation_name_token(s) else {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            s,
-            nom::error::ErrorKind::Tag,
-        )));
-    };
-
+fn parse_operation<'a>(s: &'a str, name: &str) -> IResult<&'a str, OPNode> {
     match name {
         "Identity" => parse_identity(s),
         "Translate" => parse_translate(s),
