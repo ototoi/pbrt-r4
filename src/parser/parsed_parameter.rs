@@ -5,6 +5,7 @@
 //! `ParameterDictionary` and lets a parse target take ownership of the
 //! values without first collecting borrowed strings.
 
+use crate::paramdict::{ParameterDictionary, SampledSpectrumParam};
 use crate::util::base::Float;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 use std::collections::HashSet;
@@ -22,7 +23,7 @@ pub enum ParsedParameterValues {
     Strings(Vec<String>),
     SpectrumTokens(Vec<ParsedSpectrumToken>),
     Spectrums(Vec<Spectrum>),
-    SampledSpectrums(Vec<crate::paramdict::SampledSpectrumParam>),
+    SampledSpectrums(Vec<SampledSpectrumParam>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -45,7 +46,7 @@ pub type ParsedParameterVector = Vec<ParsedParameter>;
 /// The streaming parser does not use this adapter. It exists for targets such
 /// as ToPly that still need to modify dictionary-shaped parameters.
 pub fn parsed_parameters_from_dictionary(
-    dictionary: &crate::paramdict::ParameterDictionary,
+    dictionary: &ParameterDictionary,
 ) -> ParsedParameterVector {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
@@ -151,10 +152,8 @@ impl ParsedParameterValues {
     }
 }
 
-pub fn into_parameter_dictionary(
-    parameters: ParsedParameterVector,
-) -> crate::paramdict::ParameterDictionary {
-    let mut dictionary = crate::paramdict::ParameterDictionary::new();
+pub fn into_parameter_dictionary(parameters: ParsedParameterVector) -> ParameterDictionary {
+    let mut dictionary = ParameterDictionary::new();
     for parameter in parameters {
         let parameter_type = parameter.parameter_type;
         let name = parameter.name;
@@ -205,7 +204,7 @@ pub fn into_parameter_dictionary(
                             dictionary.add_owned_sampled_spectra_typed(
                                 &parameter_type,
                                 &name,
-                                vec![crate::paramdict::SampledSpectrumParam {
+                                vec![SampledSpectrumParam {
                                     lambda,
                                     values: sampled,
                                 }],
