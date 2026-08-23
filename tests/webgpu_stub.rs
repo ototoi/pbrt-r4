@@ -2,7 +2,9 @@
 
 use pbrt_r4::gpu::compiler::GpuCompiledScene;
 use pbrt_r4::gpu::ir::{
-    GpuIrVersion, GpuRenderConfig, GpuSceneData, GpuSceneDraft, CURRENT_IR_VERSION,
+    GeometryId, GpuGeometry, GpuIrValidationError, GpuIrVersion, GpuMatrix4x4, GpuPoint3,
+    GpuPrimitive, GpuRenderConfig, GpuSceneData, GpuSceneDraft, GpuStaticTransform, GpuTransform,
+    GpuTriangleMesh, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{WebGpuPrepareOptions, WebGpuRenderer};
 
@@ -10,6 +12,37 @@ fn minimal_scene() -> GpuCompiledScene {
     let draft = GpuSceneDraft {
         version: CURRENT_IR_VERSION,
         data: GpuSceneData {
+            transforms: vec![GpuTransform::Static(GpuStaticTransform {
+                render_from_object: GpuMatrix4x4([
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]),
+                object_from_render: GpuMatrix4x4([
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]),
+                swaps_handedness: false,
+            })],
+            geometry: vec![GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions: vec![
+                    GpuPoint3([0.0, 0.0, 0.0]),
+                    GpuPoint3([1.0, 0.0, 0.0]),
+                    GpuPoint3([0.0, 1.0, 0.0]),
+                ],
+                indices: vec![[0, 1, 2]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            })],
+            primitives: vec![GpuPrimitive {
+                geometry: GeometryId(0),
+                transform: TransformId(0),
+            }],
             render: GpuRenderConfig::default(),
         },
     };
@@ -44,8 +77,36 @@ fn incompatible_ir_version_is_rejected_before_prepare() {
             minor: 0,
         },
         data: GpuSceneData {
+            transforms: Vec::new(),
+            geometry: Vec::new(),
+            primitives: Vec::new(),
             render: GpuRenderConfig::default(),
         },
     };
     assert!(draft.finish().is_err());
+}
+
+#[test]
+fn invalid_triangle_index_is_rejected() {
+    let draft = GpuSceneDraft {
+        version: CURRENT_IR_VERSION,
+        data: GpuSceneData {
+            transforms: Vec::new(),
+            geometry: vec![GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions: vec![GpuPoint3([0.0, 0.0, 0.0])],
+                indices: vec![[0, 1, 0]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            })],
+            primitives: Vec::new(),
+            render: GpuRenderConfig::default(),
+        },
+    };
+    let errors = draft.finish().unwrap_err();
+    assert!(errors
+        .issues()
+        .iter()
+        .any(|issue| matches!(issue, GpuIrValidationError::TriangleIndexOutOfBounds { .. })));
 }

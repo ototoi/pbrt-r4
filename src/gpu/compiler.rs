@@ -3,7 +3,7 @@
 use super::ir::{GpuSceneIr, GpuSceneView};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GpuCompiledScene {
     ir: Arc<GpuSceneIr>,
 }
