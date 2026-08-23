@@ -11,11 +11,11 @@ use nom::IResult;
 use std::io::{Error, ErrorKind};
 
 pub fn space0(s: &str) -> IResult<&str, &str> {
-    return nom::combinator::recognize(multi::many0(space_or_comment))(s);
+    return nom::combinator::recognize(multi::many0_count(space_or_comment))(s);
 }
 
 pub fn space1(s: &str) -> IResult<&str, &str> {
-    return nom::combinator::recognize(multi::many1(space_or_comment))(s);
+    return nom::combinator::recognize(multi::many1_count(space_or_comment))(s);
 }
 
 fn space_or_comment(s: &str) -> IResult<&str, &str> {
