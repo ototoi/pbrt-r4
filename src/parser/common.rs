@@ -11,11 +11,21 @@ use nom::IResult;
 use std::io::{Error, ErrorKind};
 
 pub fn space0(s: &str) -> IResult<&str, &str> {
-    return character::complete::multispace0(s);
+    return nom::combinator::recognize(multi::many0(space_or_comment))(s);
 }
 
 pub fn space1(s: &str) -> IResult<&str, &str> {
-    return character::complete::multispace1(s);
+    return nom::combinator::recognize(multi::many1(space_or_comment))(s);
+}
+
+fn space_or_comment(s: &str) -> IResult<&str, &str> {
+    return nom::branch::alt((
+        character::complete::multispace1,
+        sequence::preceded(
+            character::complete::char('#'),
+            bytes::complete::take_till(|c| c == '\n'),
+        ),
+    ))(s);
 }
 
 pub fn bool_literal(s: &str) -> IResult<&str, &str> {

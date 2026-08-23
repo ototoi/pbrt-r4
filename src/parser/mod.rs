@@ -5,6 +5,7 @@ pub mod print_target;
 pub mod read_file;
 pub mod remove_comment;
 pub mod scene_builder;
+mod session;
 pub mod to_ply_target;
 pub mod upgrade;
 
@@ -17,6 +18,7 @@ pub use to_ply_target::ToPlyTarget;
 use self::common::*;
 use self::read_file::{read_file_with_include, read_file_without_include};
 use self::remove_comment::remove_comment;
+use self::session::ParserSession;
 use crate::paramdict::ParameterDictionary;
 use crate::util::base::Float;
 use crate::util::error::*;
@@ -66,8 +68,7 @@ fn parse_targz(filename: &str, context: &mut dyn ParseTarget) -> Result<(), Pbrt
         let path = entry.path();
         if let Some(path) = search_pbrt_file(&path) {
             let path = path.to_string_lossy();
-            let s = read_file_with_include(&path)?;
-            return parse_string_core(&s, context);
+            return ParserSession::new(&path, context)?.parse();
         }
     }
     return Err(PbrtError::from(std::io::Error::from(
@@ -79,14 +80,12 @@ pub fn parse_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), P
     if filename.ends_with(".tar.gz") {
         return parse_targz(filename, context);
     } else {
-        let s = read_file_with_include(filename)?;
-        return parse_string_core(&s, context);
+        return ParserSession::new(filename, context)?.parse();
     }
 }
 
 pub fn parse_string(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let ops = parse_opnodes(s)?;
-    return evaluate_opnodes(&ops, context);
+    return parse_string_core(s, context);
 }
 
 /// Parses a legacy scene and evaluates its v4-compatible upgraded operations.
@@ -112,9 +111,61 @@ pub fn parse_file_upgraded(filename: &str, context: &mut dyn ParseTarget) -> Res
 }
 //-----------------------------------
 
+fn parser_error(source: &str, input: &str, operation: &str, message: &str) -> PbrtError {
+    let offset = source.len().saturating_sub(input.len());
+    parser_error_at(source, offset, operation, message)
+}
+
+fn parser_error_at(source: &str, offset: usize, operation: &str, message: &str) -> PbrtError {
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit('\n')
+        .next()
+        .map_or(1, |line| line.chars().count() + 1);
+    let message = format!(
+        "parser error at byte {offset}, line {line}, column {column}, operation `{operation}`: {message}"
+    );
+    PbrtError::error(&message)
+}
+
+fn operation_name(input: &str) -> &str {
+    input.split_whitespace().next().unwrap_or("<end-of-input>")
+}
+
+fn parse_next_operation<'a>(
+    source: &str,
+    input: &'a str,
+) -> Result<Option<(&'a str, &'a str, OPNode)>, PbrtError> {
+    let (remaining, _) = space0(input)
+        .map_err(|error| parser_error(source, input, "<whitespace>", &error.to_string()))?;
+    if remaining.is_empty() {
+        return Ok(None);
+    }
+
+    let operation_input = remaining;
+    let name = operation_name(operation_input);
+    let (remaining, operation) = parse_operation(operation_input)
+        .map_err(|error| parser_error(source, operation_input, name, &error.to_string()))?;
+    Ok(Some((remaining, operation_input, operation)))
+}
+
 pub fn parse_string_core(s: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let ops = parse_opnodes_core(s)?;
-    return evaluate_opnodes(&ops, context);
+    let mut input = s;
+    loop {
+        let Some((remaining, operation_input, operation)) = parse_next_operation(s, input)? else {
+            return Ok(());
+        };
+        if let Err(error) = evaluate_opnodes(std::slice::from_ref(&operation), context) {
+            return Err(parser_error(
+                s,
+                operation_input,
+                &operation.name,
+                &error.to_string(),
+            ));
+        }
+        input = remaining;
+    }
 }
 
 fn parse_opnodes(s: &str) -> Result<Vec<OPNode>, PbrtError> {
@@ -690,12 +741,9 @@ fn parse_op_floats<'a>(s: &'a str, opname: &str) -> IResult<&'a str, OPNode> {
         sequence::delimited(
             character::complete::char('['),
             sequence::delimited(
-                character::complete::multispace0,
-                multi::separated_list1(
-                    character::complete::multispace1,
-                    number::complete::recognize_float,
-                ),
-                character::complete::multispace0,
+                space0,
+                multi::separated_list1(space1, number::complete::recognize_float),
+                space0,
             ),
             character::complete::char(']'),
         ),
