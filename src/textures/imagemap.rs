@@ -591,9 +591,12 @@ fn normalize_raw_image_for_float(raw: &RawImage) -> Result<(Vec<Float>, usize), 
     let normalized = match raw.channels {
         1 => (raw.data_f32(), 1),
         2 => {
-            return Err(PbrtError::error(
-                "Unsupported two-channel image for Float imagemap",
-            ));
+            // Match pbrt-v4 Image::Read: treat Y+A images as a Y-only image.
+            let mut y = Vec::with_capacity(pixels);
+            for pixel in 0..pixels {
+                y.push(raw.channel(pixel, 0));
+            }
+            (y, 1)
         }
         3 => (raw.data_f32(), 3),
         4 => {

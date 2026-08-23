@@ -68,7 +68,7 @@ fn nonopaque_rgba_float_imagemap_uses_alpha_for_bilinear() {
 }
 
 #[test]
-fn two_channel_float_imagemap_is_rejected() {
+fn two_channel_float_imagemap_uses_luma_and_ignores_alpha() {
     let file = tempfile::Builder::new()
         .prefix("pbrt-r4-two-channel-imagemap-")
         .suffix(".png")
@@ -84,7 +84,15 @@ fn two_channel_float_imagemap_is_rejected() {
     let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
     let tp = TextureParameterDictionary::new(&geom_params, &f_tex, &s_tex);
 
-    assert!(FloatTexture::create("imagemap", &Transform::identity(), &tp).is_err());
+    let texture = FloatTexture::create("imagemap", &Transform::identity(), &tp).unwrap();
+    let value = texture.evaluate(&TextureEvalContext::default());
+    assert!((value - 51.0 / 255.0).abs() < 1e-5);
+    match texture {
+        FloatTexture::ImageMap(image_map) => {
+            assert_eq!(image_map.mipmap_channel_count(), 1);
+        }
+        _ => panic!("expected imagemap texture"),
+    }
 }
 
 #[test]
