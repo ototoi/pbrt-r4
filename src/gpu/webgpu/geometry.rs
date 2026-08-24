@@ -135,6 +135,7 @@ pub struct TransformPlan {
 pub struct LightPlan {
     pub position: [f32; 4],
     pub intensity: [f32; 4],
+    pub kind: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -728,40 +729,59 @@ fn spectrum_rgb(
 fn lower_lights(scene: GpuSceneView<'_>) -> Result<Vec<LightPlan>, BackendError> {
     let mut lights = Vec::with_capacity(scene.lights.len().max(1));
     for (index, light) in scene.lights.iter().enumerate() {
-        let GpuLight::Point(point) = light else {
-            return Err(BackendError::Plan(PlanError::UnsupportedLight {
-                light: index as u32,
-            }));
-        };
-        let transform = scene
-            .transforms
-            .get(point.render_from_light.0 as usize)
-            .ok_or(BackendError::Plan(PlanError::InvalidReference {
-                resource: "light transform",
-                index: point.render_from_light.0,
-            }))?;
-        let GpuTransform::Static(transform) = transform else {
-            return Err(BackendError::Plan(PlanError::UnsupportedTransform {
-                transform: point.render_from_light,
-            }));
-        };
-        let matrix = transform.render_from_object.0;
-        let position = [matrix[0][3], matrix[1][3], matrix[2][3], 1.0];
-        let rgb = spectrum_rgb(scene, point.intensity, index as u32)?;
-        lights.push(LightPlan {
-            position,
-            intensity: [
-                rgb[0] * point.scale,
-                rgb[1] * point.scale,
-                rgb[2] * point.scale,
-                1.0,
-            ],
-        });
+        match light {
+            GpuLight::Point(point) => {
+                let transform = scene
+                    .transforms
+                    .get(point.render_from_light.0 as usize)
+                    .ok_or(BackendError::Plan(PlanError::InvalidReference {
+                        resource: "light transform",
+                        index: point.render_from_light.0,
+                    }))?;
+                let GpuTransform::Static(transform) = transform else {
+                    return Err(BackendError::Plan(PlanError::UnsupportedTransform {
+                        transform: point.render_from_light,
+                    }));
+                };
+                let matrix = transform.render_from_object.0;
+                let position = [matrix[0][3], matrix[1][3], matrix[2][3], 1.0];
+                let rgb = spectrum_rgb(scene, point.intensity, index as u32)?;
+                lights.push(LightPlan {
+                    position,
+                    intensity: [
+                        rgb[0] * point.scale,
+                        rgb[1] * point.scale,
+                        rgb[2] * point.scale,
+                        1.0,
+                    ],
+                    kind: 0,
+                });
+            }
+            GpuLight::UniformInfinite(infinite) => {
+                let rgb = spectrum_rgb(scene, infinite.radiance, index as u32)?;
+                lights.push(LightPlan {
+                    position: [0.0; 4],
+                    intensity: [
+                        rgb[0] * infinite.scale,
+                        rgb[1] * infinite.scale,
+                        rgb[2] * infinite.scale,
+                        1.0,
+                    ],
+                    kind: 1,
+                });
+            }
+            _ => {
+                return Err(BackendError::Plan(PlanError::UnsupportedLight {
+                    light: index as u32,
+                }))
+            }
+        }
     }
     if lights.is_empty() {
         lights.push(LightPlan {
             position: [0.0; 4],
             intensity: [0.0; 4],
+            kind: 0,
         });
     }
     Ok(lights)
@@ -999,6 +1019,8 @@ pub fn light_bytes(plan: &ScenePlan) -> Vec<u8> {
                 .into_iter()
                 .chain(light.intensity)
                 .flat_map(f32::to_le_bytes)
+                .chain(light.kind.to_le_bytes())
+                .chain([0u32, 0, 0].into_iter().flat_map(u32::to_le_bytes))
         })
         .collect()
 }

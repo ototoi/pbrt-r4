@@ -223,6 +223,17 @@ fn image_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn uniform_infinite_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
+        pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
+            radiance: SpectrumId(0),
+            scale: 1.0,
+        },
+    )];
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 #[test]
 fn scene_plan_lowers_triangle_geometry_and_transform() {
     let scene = minimal_scene();
@@ -294,7 +305,7 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
     assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
     assert_eq!(transforms.len(), 64);
-    assert_eq!(lights.len(), 32);
+    assert_eq!(lights.len(), 48);
     assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
 }
 
@@ -472,6 +483,25 @@ fn software_bvh_renderer_returns_a_pixel_buffer() {
     assert_eq!(output.rgb.len(), 1);
     let expected = 0.25 * (2.0 / (4.125_f32).sqrt()) / 4.125;
     assert!((output.rgb[0][0] - expected).abs() < 1.0e-4);
+}
+
+#[test]
+fn software_renderer_evaluates_uniform_infinite_light() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&uniform_infinite_scene()).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert!((output.rgb[0][0] - 0.25).abs() < 1.0e-4);
+    assert!((output.rgb[0][1] - 0.25).abs() < 1.0e-4);
+    assert!((output.rgb[0][2] - 0.25).abs() < 1.0e-4);
 }
 
 #[test]

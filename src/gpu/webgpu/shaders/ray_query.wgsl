@@ -33,6 +33,8 @@ struct Transform {
 struct Light {
     position: vec4<f32>,
     intensity: vec4<f32>,
+    kind: u32,
+    _padding: array<u32, 3>,
 };
 
 @group(0) @binding(0)
@@ -210,11 +212,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var radiance = vec3<f32>(0.0, 0.0, 0.0);
         for (var light_index = 0u; light_index < arrayLength(&lights); light_index++) {
             let light = lights[light_index];
-            let to_light = light.position.xyz - position;
-            let distance_squared = max(dot(to_light, to_light), 1.0e-8);
-            let wi = normalize(to_light);
-            let cosine = max(dot(normal, wi), 0.0);
-            radiance += reflectance * light.intensity.xyz * cosine / distance_squared;
+            if (light.kind == 1u) {
+                radiance += reflectance * light.intensity.xyz;
+            } else {
+                let to_light = light.position.xyz - position;
+                let distance_squared = max(dot(to_light, to_light), 1.0e-8);
+                let wi = normalize(to_light);
+                let cosine = max(dot(normal, wi), 0.0);
+                radiance += reflectance * light.intensity.xyz * cosine / distance_squared;
+            }
         }
         color = vec4<f32>(radiance, 1.0);
     }
