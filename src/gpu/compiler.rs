@@ -110,11 +110,11 @@ pub struct GpuSourceEntry {
 }
 
 impl GpuCompiledScene {
-    pub fn new(ir: GpuSceneIr) -> Self {
+    pub fn new(ir: GpuSceneIr, source_map: GpuSourceMap) -> Self {
         let requirements = ir.requirements();
         Self {
             ir: Arc::new(ir),
-            source_map: Arc::new(GpuSourceMap::default()),
+            source_map: Arc::new(source_map),
             requirements: Arc::new(requirements),
         }
     }
@@ -2592,7 +2592,10 @@ fn attach_requirement_sources(
             | GpuFeature::WavefrontVolPath
             | GpuFeature::UniformLightSampler => &[],
         };
-        required.sources = sources.to_vec().into_boxed_slice();
+        let mut sources = sources.to_vec();
+        sources.sort_unstable();
+        sources.dedup();
+        required.sources = sources.into_boxed_slice();
     }
 }
 

@@ -9,7 +9,7 @@ pub type GpuIndex = u32;
 
 macro_rules! typed_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(pub GpuIndex);
     };
 }

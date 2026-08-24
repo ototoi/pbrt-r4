@@ -1,6 +1,6 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::compiler::GpuCompiledScene;
+use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
     GeometryId, GpuDiffuseMaterial, GpuGeometry, GpuIrValidationError, GpuIrVersion, GpuMaterial,
     GpuMatrix4x4, GpuPoint3, GpuPrimitive, GpuRenderConfig, GpuRenderRequest, GpuSceneData,
@@ -69,7 +69,7 @@ fn minimal_scene() -> GpuCompiledScene {
             render: GpuRenderConfig::default(),
         },
     };
-    GpuCompiledScene::new(draft.finish().unwrap())
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
 #[test]
