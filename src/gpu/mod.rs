@@ -1,8 +1,8 @@
 //! GPU rendering boundaries.
 //!
 //! The default CPU build exposes this namespace without compiling a GPU
-//! backend. Backend-independent IR and the compile-only WebGPU adapter are
-//! enabled by the `webgpu` feature.
+//! backend. Backend-independent IR and the WebGPU backend are enabled by the
+//! corresponding GPU feature.
 
 #[cfg(any(feature = "cuda", feature = "webgpu"))]
 pub mod compiler;

@@ -1,0 +1,146 @@
+use super::super::ir::{GeometryId, TransformId};
+use super::device::AccelerationMode;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BackendError {
+    InvalidPrepareOptions { reason: &'static str },
+    AdapterRequest(String),
+    DeviceRequest(String),
+    MissingRayQueryFeature,
+    Plan(PlanError),
+    InvalidRenderRequest(super::super::ir::GpuRenderRequestError),
+    UnsupportedRenderRequest { reason: &'static str },
+    Readback(String),
+    UnsupportedAccelerationMode(AccelerationMode),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlanError {
+    EmptyScene,
+    UnsupportedGeometry {
+        geometry: GeometryId,
+    },
+    EmptyGeometry {
+        geometry: GeometryId,
+    },
+    UnsupportedTransform {
+        transform: TransformId,
+    },
+    UnsupportedInstances,
+    UnsupportedAlpha {
+        primitive: u32,
+    },
+    UnsupportedAreaLight {
+        primitive: u32,
+    },
+    UnsupportedReverseOrientation {
+        primitive: u32,
+    },
+    InvalidReference {
+        resource: &'static str,
+        index: u32,
+    },
+    LimitExceeded {
+        resource: &'static str,
+        value: u32,
+        maximum: u32,
+    },
+    UnsupportedMaterial {
+        primitive: u32,
+    },
+    UnsupportedLight {
+        light: u32,
+    },
+}
+
+impl std::fmt::Display for BackendError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPrepareOptions { reason } => {
+                write!(formatter, "invalid WebGPU prepare options: {reason}")
+            }
+            Self::AdapterRequest(message) => write!(formatter, "adapter request failed: {message}"),
+            Self::DeviceRequest(message) => write!(formatter, "device request failed: {message}"),
+            Self::MissingRayQueryFeature => {
+                write!(formatter, "adapter does not support experimental ray query")
+            }
+            Self::Plan(error) => error.fmt(formatter),
+            Self::InvalidRenderRequest(error) => {
+                write!(formatter, "invalid render request: {error:?}")
+            }
+            Self::UnsupportedRenderRequest { reason } => {
+                write!(formatter, "unsupported render request: {reason}")
+            }
+            Self::Readback(message) => write!(formatter, "GPU readback failed: {message}"),
+            Self::UnsupportedAccelerationMode(mode) => {
+                write!(formatter, "unsupported acceleration mode: {mode:?}")
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for PlanError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyScene => write!(formatter, "scene contains no world primitives"),
+            Self::UnsupportedGeometry { geometry } => {
+                write!(
+                    formatter,
+                    "unsupported geometry for hardware ray query: {geometry:?}"
+                )
+            }
+            Self::EmptyGeometry { geometry } => {
+                write!(formatter, "empty triangle geometry: {geometry:?}")
+            }
+            Self::UnsupportedTransform { transform } => {
+                write!(
+                    formatter,
+                    "animated transform is not supported: {transform:?}"
+                )
+            }
+            Self::UnsupportedInstances => {
+                write!(
+                    formatter,
+                    "instance definitions are not supported by the initial plan"
+                )
+            }
+            Self::UnsupportedAlpha { primitive } => {
+                write!(
+                    formatter,
+                    "alpha masking is unsupported for primitive {primitive}"
+                )
+            }
+            Self::UnsupportedAreaLight { primitive } => {
+                write!(
+                    formatter,
+                    "area lights are unsupported for primitive {primitive}"
+                )
+            }
+            Self::UnsupportedReverseOrientation { primitive } => {
+                write!(
+                    formatter,
+                    "reverseorientation is unsupported for primitive {primitive}"
+                )
+            }
+            Self::InvalidReference { resource, index } => {
+                write!(formatter, "invalid {resource} reference: {index}")
+            }
+            Self::LimitExceeded {
+                resource,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "{resource} value {value} exceeds maximum {maximum}"
+            ),
+            Self::UnsupportedMaterial { primitive } => {
+                write!(formatter, "unsupported material for primitive {primitive}")
+            }
+            Self::UnsupportedLight { light } => {
+                write!(formatter, "unsupported light {light}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BackendError {}
