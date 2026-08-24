@@ -204,32 +204,31 @@ impl SceneBuilder {
             )?;
             world_primitives.push(primitive);
         }
-        if !self.animated_shapes.is_empty() {
-            let shape = &self.animated_shapes[0];
-            return Err(GpuSceneBuildError::Compile(unsupported_feature(
+        for shape in &self.animated_shapes {
+            let primitive = compile_shape(
+                self,
                 shape,
-                "animated transforms",
-            )));
+                &mut transforms,
+                &mut geometry,
+                &mut spectra,
+                &mut spectrum_textures,
+                &float_textures,
+                &float_texture_ids,
+                &spectrum_texture_ids,
+                &mut images,
+                &mut materials,
+                &mut primitives,
+                &mut lights,
+            )?;
+            world_primitives.push(primitive);
         }
 
         let mut definitions: Vec<_> = self.instance_definitions.iter().collect();
         definitions.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (name, definition) in definitions {
-            if !definition.animated_shapes.is_empty() {
-                return Err(GpuSceneBuildError::Compile(
-                    GpuCompileError::UnsupportedSceneFeature {
-                        feature: "animated shapes in instance definitions",
-                        source: GpuSourceLocation {
-                            filename: definition.loc.filename.clone(),
-                            line: definition.loc.line,
-                            column: definition.loc.column,
-                        },
-                    },
-                ));
-            }
             let definition_id = InstanceDefinitionId(instance_definitions.len() as GpuIndex);
             let mut definition_primitives = Vec::new();
-            for shape in &definition.shapes {
+            for shape in definition.shapes.iter().chain(&definition.animated_shapes) {
                 let primitive = compile_shape(
                     self,
                     shape,
@@ -318,14 +317,8 @@ fn compile_light(
     lights: &mut Vec<GpuLight>,
 ) -> Result<(), GpuCompileError> {
     let source = light_source_location(light);
-    let RenderFromObject::Static(transform) = &light.base.render_from_object else {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
-            feature: "animated light transforms",
-            source,
-        });
-    };
     let transform_id = TransformId(transforms.len() as GpuIndex);
-    transforms.push(GpuTransform::Static(static_transform(transform, &source)?));
+    transforms.push(compile_transform(&light.base.render_from_object, &source)?);
     let (spectrum_name, default_scale) = match light.base.base.name.as_str() {
         "point" => ("I", 1.0),
         "infinite" => ("L", 1.0),
@@ -902,12 +895,8 @@ fn compile_shape(
             "shape displacement on non-PLY geometry",
         ));
     }
-    let RenderFromObject::Static(transform) = &shape.render_from_object else {
-        return Err(unsupported_feature(shape, "animated transforms"));
-    };
-
     let transform_id = TransformId(transforms.len() as GpuIndex);
-    transforms.push(GpuTransform::Static(static_transform(transform, &source)?));
+    transforms.push(compile_transform(&shape.render_from_object, &source)?);
     let material = compile_material(
         builder,
         shape,
@@ -1488,7 +1477,17 @@ fn compile_instance_transform(
     transforms: &mut Vec<GpuTransform>,
     source: &GpuSourceLocation,
 ) -> Result<TransformId, GpuCompileError> {
-    let transform = match render_from_instance {
+    let transform = compile_transform(render_from_instance, source)?;
+    let id = TransformId(transforms.len() as GpuIndex);
+    transforms.push(transform);
+    Ok(id)
+}
+
+fn compile_transform(
+    render_from_object: &RenderFromObject,
+    source: &GpuSourceLocation,
+) -> Result<GpuTransform, GpuCompileError> {
+    Ok(match render_from_object {
         RenderFromObject::Static(transform) => {
             GpuTransform::Static(static_transform(transform, source)?)
         }
@@ -1503,10 +1502,7 @@ fn compile_instance_transform(
             start_time: to_gpu_float(*start_time, source)?,
             end_time: to_gpu_float(*end_time, source)?,
         }),
-    };
-    let id = TransformId(transforms.len() as GpuIndex);
-    transforms.push(transform);
-    Ok(id)
+    })
 }
 
 fn bounds_for_primitives(
@@ -2393,10 +2389,16 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
     for shape in &builder.shapes {
         add_source(&mut locations, &mut groups.shapes, source_location(shape));
     }
+    for shape in &builder.animated_shapes {
+        add_source(&mut locations, &mut groups.shapes, source_location(shape));
+    }
     let mut definitions: Vec<_> = builder.instance_definitions.iter().collect();
     definitions.sort_by(|(left, _), (right, _)| left.cmp(right));
     for (_, definition) in &definitions {
         for shape in &definition.shapes {
+            add_source(&mut locations, &mut groups.shapes, source_location(shape));
+        }
+        for shape in &definition.animated_shapes {
             add_source(&mut locations, &mut groups.shapes, source_location(shape));
         }
         add_source(

@@ -200,6 +200,41 @@ fn scene_builder_compiles_instances_without_flattening() {
 }
 
 #[test]
+fn scene_builder_compiles_animated_shape_transforms() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+            Film "rgb"
+            PixelFilter "box"
+            Sampler "independent"
+            Integrator "volpath"
+            WorldBegin
+            ActiveTransform StartTime
+            Translate 0 0 0
+            ActiveTransform EndTime
+            Translate 1 0 0
+            ActiveTransform All
+            Shape "trianglemesh"
+                "point3 P" [0 0 0 1 0 0 0 1 0]
+                "integer indices" [0 1 2]
+            WorldEnd
+        "#,
+        &mut builder,
+    )
+    .unwrap();
+
+    let compiled = builder.build_gpu_ir().unwrap();
+    assert!(matches!(
+        compiled.view().transforms[0],
+        pbrt_r4::gpu::ir::GpuTransform::Animated(_)
+    ));
+    assert!(compiled.requirements().features.iter().any(|required| {
+        required.feature == pbrt_r4::gpu::ir::GpuFeature::AnimatedTransform
+            && required.sources.as_ref() == [pbrt_r4::gpu::ir::SourceId(0)]
+    }));
+}
+
+#[test]
 fn scene_builder_compiles_point_light() {
     let mut builder = SceneBuilder::new();
     parse_string(
