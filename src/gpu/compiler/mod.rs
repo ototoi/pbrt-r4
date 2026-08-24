@@ -27,33 +27,12 @@ use crate::util::transform::{Matrix4x4, Transform};
 use std::path::Path;
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GpuSourceLocation {
-    pub filename: String,
-    pub line: u32,
-    pub column: u32,
-}
+mod diagnostics;
+mod light;
+mod source_map;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum GpuCompileError {
-    UnsupportedShape {
-        name: String,
-        source: GpuSourceLocation,
-    },
-    UnsupportedSceneFeature {
-        feature: &'static str,
-        source: GpuSourceLocation,
-    },
-    MissingParameter {
-        parameter: &'static str,
-        source: GpuSourceLocation,
-    },
-    InvalidParameter {
-        parameter: &'static str,
-        detail: String,
-        source: GpuSourceLocation,
-    },
-}
+pub use diagnostics::{GpuCompileError, GpuSourceLocation};
+pub use source_map::{GpuResourceKind, GpuSourceEntry, GpuSourceMap};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GpuSceneBuildError {
@@ -78,35 +57,6 @@ pub struct GpuCompiledScene {
     ir: Arc<GpuSceneIr>,
     source_map: Arc<GpuSourceMap>,
     requirements: Arc<super::ir::GpuRequirements>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct GpuSourceMap {
-    pub locations: Box<[GpuSourceLocation]>,
-    pub resources: Box<[GpuSourceEntry]>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum GpuResourceKind {
-    Transform,
-    Spectrum,
-    Image,
-    TextureMapping,
-    FloatTexture,
-    SpectrumTexture,
-    Material,
-    Light,
-    Geometry,
-    Primitive,
-    InstanceDefinition,
-    Instance,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GpuSourceEntry {
-    pub kind: GpuResourceKind,
-    pub index: GpuIndex,
-    pub source: SourceId,
 }
 
 impl GpuCompiledScene {
@@ -183,7 +133,7 @@ impl SceneBuilder {
         let mut world_instances = Vec::new();
 
         for light in &self.lights {
-            compile_light(self, light, &mut transforms, &mut spectra, &mut lights)?;
+            light::compile_light(self, light, &mut transforms, &mut spectra, &mut lights)?;
         }
 
         for shape in &self.shapes {
@@ -307,87 +257,6 @@ impl SceneBuilder {
             requirements,
         ))
     }
-}
-
-fn compile_light(
-    _builder: &SceneBuilder,
-    light: &LightSceneEntity,
-    transforms: &mut Vec<GpuTransform>,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    lights: &mut Vec<GpuLight>,
-) -> Result<(), GpuCompileError> {
-    let source = light_source_location(light);
-    let transform_id = TransformId(transforms.len() as GpuIndex);
-    transforms.push(compile_transform(&light.base.render_from_object, &source)?);
-    let (spectrum_name, default_scale) = match light.base.base.name.as_str() {
-        "point" => ("I", 1.0),
-        "infinite" => ("L", 1.0),
-        _ => {
-            return Err(GpuCompileError::UnsupportedSceneFeature {
-                feature: "non-point/non-infinite light",
-                source,
-            })
-        }
-    };
-    let spectrum = compile_rgb_spectrum(
-        &light.base.base.params,
-        spectrum_name,
-        [1.0, 1.0, 1.0],
-        &source,
-        spectra,
-    )?;
-    let scale = finite_parameter(&light.base.base.params, "scale", default_scale, &source)?;
-    match light.base.base.name.as_str() {
-        "point" => lights.push(GpuLight::Point(GpuPointLight {
-            render_from_light: transform_id,
-            intensity: spectrum,
-            scale,
-        })),
-        "infinite" => lights.push(GpuLight::UniformInfinite(GpuUniformInfiniteLight {
-            radiance: spectrum,
-            scale,
-        })),
-        _ => unreachable!(),
-    }
-    Ok(())
-}
-
-fn compile_area_light(
-    area: &crate::parser::scene_builder::AreaLightSceneEntity,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    spectrum_textures: &mut Vec<GpuSpectrumTexture>,
-    lights: &mut Vec<GpuLight>,
-    source: &GpuSourceLocation,
-) -> Result<super::ir::LightId, GpuCompileError> {
-    if area.base.name != "diffuse" {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
-            feature: "non-diffuse area light",
-            source: source.clone(),
-        });
-    }
-    if !area.base.params.get_one_filename("filename", "").is_empty() {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
-            feature: "area light image emission",
-            source: source.clone(),
-        });
-    }
-    if area.base.params.get_textures_ref("L").is_some() {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
-            feature: "textured area light emission",
-            source: source.clone(),
-        });
-    }
-    let emission = compile_rgb_spectrum(&area.base.params, "L", [1.0, 1.0, 1.0], source, spectra)?;
-    let emission_texture = super::ir::SpectrumTextureId(spectrum_textures.len() as GpuIndex);
-    spectrum_textures.push(GpuSpectrumTexture::Constant { value: emission });
-    let scale = finite_parameter(&area.base.params, "scale", 1.0, source)?;
-    let light_id = super::ir::LightId(lights.len() as GpuIndex);
-    lights.push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
-        emission: emission_texture,
-        scale,
-        two_sided: area.base.params.get_one_bool("twosided", false),
-    }));
-    Ok(light_id)
 }
 
 struct CompiledImageTexture {
@@ -917,7 +786,7 @@ fn compile_shape(
                     &source,
                 )
             })?;
-            compile_area_light(area, spectra, spectrum_textures, lights, &source)
+            light::compile_area_light(area, spectra, spectrum_textures, lights, &source)
         })
         .transpose()?;
     let alpha = material_texture_id(
