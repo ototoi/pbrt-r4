@@ -3,6 +3,8 @@ struct Camera {
     render_from_camera: mat4x4<f32>,
     viewport: vec4<f32>,
     bvh_info: vec4<u32>,
+    sampler_info: vec4<u32>,
+    filter_info: vec4<f32>,
 };
 
 struct Primitive {
@@ -579,6 +581,104 @@ fn u64_mul(left: vec2<u32>, right: vec2<u32>) -> vec2<u32> {
     );
 }
 
+fn u64_add(left: vec2<u32>, right: vec2<u32>) -> vec2<u32> {
+    let low = left.x + right.x;
+    return vec2<u32>(low, left.y + right.y + select(0u, 1u, low < left.x));
+}
+
+fn u64_shift_right(value: vec2<u32>, shift: u32) -> vec2<u32> {
+    if (shift == 0u) {
+        return value;
+    }
+    if (shift < 32u) {
+        return vec2<u32>(
+            (value.x >> shift) | (value.y << (32u - shift)),
+            value.y >> shift,
+        );
+    }
+    if (shift < 64u) {
+        return vec2<u32>(value.y >> (shift - 32u), 0u);
+    }
+    return vec2<u32>(0u);
+}
+
+fn u64_shift_left_one(value: vec2<u32>) -> vec2<u32> {
+    return vec2<u32>(value.x << 1u, (value.y << 1u) | (value.x >> 31u));
+}
+
+fn mix_bits(value: vec2<u32>) -> vec2<u32> {
+    var mixed = value ^ u64_shift_right(value, 31u);
+    mixed = u64_mul(mixed, vec2<u32>(0x728ea185u, 0x7fb5d329u));
+    mixed = mixed ^ u64_shift_right(mixed, 27u);
+    mixed = u64_mul(mixed, vec2<u32>(0xbc2dd44du, 0x81dadef4u));
+    return mixed ^ u64_shift_right(mixed, 33u);
+}
+
+fn hash_pixel_seed(pixel: vec2<i32>, seed: u32) -> vec2<u32> {
+    let multiplier = vec2<u32>(0x5bd1e995u, 0xc6a4a793u);
+    var hash = u64_mul(vec2<u32>(12u, 0u), multiplier);
+    var key = vec2<u32>(bitcast<u32>(pixel.x), bitcast<u32>(pixel.y));
+    key = u64_mul(key, multiplier);
+    key = key ^ u64_shift_right(key, 47u);
+    key = u64_mul(key, multiplier);
+    hash = u64_mul(hash ^ key, multiplier);
+    hash = u64_mul(hash ^ vec2<u32>(seed, 0u), multiplier);
+    hash = hash ^ u64_shift_right(hash, 47u);
+    hash = u64_mul(hash, multiplier);
+    return hash ^ u64_shift_right(hash, 47u);
+}
+
+struct IndependentRng {
+    state: vec2<u32>,
+    increment: vec2<u32>,
+};
+
+fn rng_uniform_u32(rng: ptr<function, IndependentRng>) -> u32 {
+    let old_state = (*rng).state;
+    (*rng).state = u64_add(
+        u64_mul(old_state, vec2<u32>(0x4c957f2du, 0x5851f42du)),
+        (*rng).increment,
+    );
+    let xorshifted = u64_shift_right(u64_shift_right(old_state, 18u) ^ old_state, 27u).x;
+    let rotation = u64_shift_right(old_state, 59u).x;
+    return (xorshifted >> rotation) | (xorshifted << ((0u - rotation) & 31u));
+}
+
+fn rng_advance(rng: ptr<function, IndependentRng>, sample_index: u32) {
+    var current_multiplier = vec2<u32>(0x4c957f2du, 0x5851f42du);
+    var current_plus = (*rng).increment;
+    var accumulated_multiplier = vec2<u32>(1u, 0u);
+    var accumulated_plus = vec2<u32>(0u);
+    var delta = vec2<u32>(sample_index << 16u, sample_index >> 16u);
+    while (delta.x != 0u || delta.y != 0u) {
+        if ((delta.x & 1u) != 0u) {
+            accumulated_multiplier = u64_mul(accumulated_multiplier, current_multiplier);
+            accumulated_plus = u64_add(u64_mul(accumulated_plus, current_multiplier), current_plus);
+        }
+        current_plus = u64_mul(u64_add(current_multiplier, vec2<u32>(1u, 0u)), current_plus);
+        current_multiplier = u64_mul(current_multiplier, current_multiplier);
+        delta = u64_shift_right(delta, 1u);
+    }
+    (*rng).state = u64_add(
+        u64_mul(accumulated_multiplier, (*rng).state),
+        accumulated_plus,
+    );
+}
+
+fn independent_pixel_sample(pixel: vec2<i32>, sample_index: u32) -> vec2<f32> {
+    let sequence = hash_pixel_seed(pixel, camera.sampler_info.x);
+    var rng = IndependentRng(vec2<u32>(0u), u64_shift_left_one(sequence) | vec2<u32>(1u, 0u));
+    _ = rng_uniform_u32(&rng);
+    rng.state = u64_add(rng.state, mix_bits(sequence));
+    _ = rng_uniform_u32(&rng);
+    rng_advance(&rng, sample_index);
+    let scale = 2.3283064365386963e-10;
+    return min(
+        vec2<f32>(0.9999999403953552),
+        vec2<f32>(f32(rng_uniform_u32(&rng)), f32(rng_uniform_u32(&rng))) * scale,
+    );
+}
+
 fn u64_shift_right_47(value: vec2<u32>) -> vec2<u32> {
     return vec2<u32>(value.y >> 15u, 0u);
 }
@@ -647,15 +747,7 @@ fn ray_hits_triangle(origin: vec3<f32>, direction: vec3<f32>, p0: vec3<f32>, p1:
     return -1.0;
 }
 
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let width = u32(camera.viewport.z);
-    let height = u32(camera.viewport.w);
-    if (global_id.x >= width || global_id.y >= height) {
-        return;
-    }
-
-    let pixel = vec2<f32>(global_id.xy) + vec2<f32>(0.5) + camera.viewport.xy;
+fn render_sample(pixel: vec2<f32>) -> vec3<f32> {
     let camera_target = transform(camera.camera_from_raster, vec4<f32>(pixel, 0.0, 1.0));
     let origin = transform(camera.render_from_camera, vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
     let ray_target = transform(camera.render_from_camera, camera_target).xyz;
@@ -870,5 +962,27 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
         }
     }
-    output[global_id.y * width + global_id.x] = vec4<f32>(color, 1.0);
+    return color;
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let width = u32(camera.viewport.z);
+    let height = u32(camera.viewport.w);
+    if (global_id.x >= width || global_id.y >= height) {
+        return;
+    }
+    let pixel = vec2<i32>(global_id.xy) + vec2<i32>(camera.viewport.xy);
+    var accumulated = vec3<f32>(0.0);
+    for (var local_sample = 0u; local_sample < camera.sampler_info.w; local_sample++) {
+        let sample_index = camera.sampler_info.z + local_sample;
+        let u = independent_pixel_sample(pixel, sample_index);
+        let filter_offset = mix(-camera.filter_info.xy, camera.filter_info.xy, u);
+        let film_position = vec2<f32>(pixel) + filter_offset + vec2<f32>(0.5);
+        accumulated += render_sample(film_position);
+    }
+    output[global_id.y * width + global_id.x] = vec4<f32>(
+        accumulated / f32(camera.sampler_info.w),
+        1.0,
+    );
 }

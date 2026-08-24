@@ -73,12 +73,6 @@ impl Renderer {
             request.sample_count,
         )
         .map_err(BackendError::InvalidRenderRequest)?;
-        if request.sample_start != 0 || request.sample_count != 1 {
-            return Err(BackendError::UnsupportedRenderRequest {
-                reason: "the initial WebGPU pipelines support exactly one sample",
-            });
-        }
-
         let pixel_bounds = scene_view.render.film.pixel_bounds;
         let width = pixel_bounds.max[0]
             .checked_sub(pixel_bounds.min[0])
@@ -114,7 +108,12 @@ impl Renderer {
             .device
             .create_buffer_init(&BufferInitDescriptor {
                 label: Some("pbrt-r4 WebGPU camera uniforms"),
-                contents: &camera_uniform_bytes(scene_view, bvh_primitive_offset, bvh_node_offset),
+                contents: &camera_uniform_bytes(
+                    scene_view,
+                    request,
+                    bvh_primitive_offset,
+                    bvh_node_offset,
+                ),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let output_buffer = self
@@ -360,6 +359,7 @@ fn common_bind_group_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
 
 fn camera_uniform_bytes(
     scene: GpuSceneView<'_>,
+    request: GpuRenderRequest,
     bvh_primitive_offset: u32,
     bvh_node_offset: u32,
 ) -> Vec<u8> {
@@ -373,7 +373,7 @@ fn camera_uniform_bytes(
     let pixel_bounds = scene.render.film.pixel_bounds;
     let width = (pixel_bounds.max[0] - pixel_bounds.min[0]) as f32;
     let height = (pixel_bounds.max[1] - pixel_bounds.min[1]) as f32;
-    let mut values = Vec::with_capacity(9 * 16);
+    let mut values = Vec::with_capacity(12 * 16);
     for matrix in [scene.render.camera.camera_from_raster, camera_transform] {
         super::geometry::append_wgsl_matrix(&mut values, matrix.0);
     }
@@ -391,6 +391,27 @@ fn camera_uniform_bytes(
         [bvh_primitive_offset, bvh_node_offset, 0, 0]
             .into_iter()
             .flat_map(u32::to_ne_bytes),
+    );
+    let seed = scene.render.sampler.seed;
+    values.extend(
+        [
+            seed as u32,
+            (seed >> 32) as u32,
+            request.sample_start as u32,
+            request.sample_count,
+        ]
+        .into_iter()
+        .flat_map(u32::to_ne_bytes),
+    );
+    values.extend(
+        [
+            scene.render.filter.radius.0[0],
+            scene.render.filter.radius.0[1],
+            0.0,
+            0.0,
+        ]
+        .into_iter()
+        .flat_map(f32::to_ne_bytes),
     );
     values
 }

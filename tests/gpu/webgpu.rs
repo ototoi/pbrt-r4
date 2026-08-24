@@ -17,6 +17,7 @@ use pbrt_r4::gpu::webgpu::{
     transform_bytes, vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan,
     PlanError, PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
 };
+use pbrt_r4::prelude::{IndependentSampler, Point2i};
 
 fn minimal_scene_draft() -> GpuSceneDraft {
     let identity = GpuMatrix4x4([
@@ -123,6 +124,8 @@ fn minimal_scene_draft() -> GpuSceneDraft {
             },
         },
     };
+    let mut draft = draft;
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.0, 0.0]);
     draft
 }
 
@@ -131,6 +134,29 @@ fn minimal_scene() -> GpuCompiledScene {
         minimal_scene_draft().finish().unwrap(),
         GpuSourceMap::default(),
     )
+}
+
+fn sampled_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn expected_independent_sample_radiance(
+    samples_per_pixel: u32,
+    seed: u32,
+    sample_index: u32,
+) -> f32 {
+    let mut sampler = IndependentSampler::new(samples_per_pixel, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    assert!(sampler.set_sample_number(sample_index));
+    let sample = sampler.get_pixel_2d();
+    let x = 0.5 * sample.x as f32;
+    let y = 0.5 * sample.y as f32;
+    let distance_squared = x * x + y * y + 4.0;
+    0.5 / (distance_squared * distance_squared.sqrt())
 }
 
 fn image_scene() -> GpuCompiledScene {
@@ -852,6 +878,89 @@ fn software_bvh_renderer_returns_a_pixel_buffer() {
     assert_eq!(output.rgb.len(), 1);
     let expected = 0.25 * (2.0 / (4.125_f32).sqrt()) / 4.125;
     assert!((output.rgb[0][0] - expected).abs() < 1.0e-4);
+}
+
+#[test]
+fn software_renderer_matches_independent_sampler_sequence() {
+    const SAMPLE_COUNT: u32 = 4;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = sampled_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+
+    for sample_index in 0..SAMPLE_COUNT {
+        let request = GpuRenderRequest {
+            sample_start: u64::from(sample_index),
+            sample_count: 1,
+        };
+        let output = renderer.render(&executable, &request).unwrap();
+        let expected = expected_independent_sample_radiance(SAMPLE_COUNT, SEED, sample_index);
+        for channel in output.rgb[0] {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample {sample_index}: actual={:?}, expected={expected}",
+                output.rgb[0]
+            );
+        }
+    }
+}
+
+#[test]
+fn software_renderer_averages_requested_sample_range() {
+    const SAMPLE_COUNT: u32 = 4;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = sampled_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 1,
+        sample_count: 2,
+    };
+    let output = renderer.render(&executable, &request).unwrap();
+    let expected = (expected_independent_sample_radiance(SAMPLE_COUNT, SEED, 1)
+        + expected_independent_sample_radiance(SAMPLE_COUNT, SEED, 2))
+        * 0.5;
+    for channel in output.rgb[0] {
+        assert!(
+            (channel - expected).abs() < 1.0e-5,
+            "{:?} {expected}",
+            output.rgb[0]
+        );
+    }
+}
+
+#[test]
+fn hardware_and_software_independent_sample_ranges_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = sampled_scene(4, 17);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 4,
+    };
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in
+        hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
 }
 
 #[test]
