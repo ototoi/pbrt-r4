@@ -307,6 +307,33 @@ fn scene_plan_flattens_static_instances_with_composed_transform() {
 }
 
 #[test]
+fn scene_plan_rejects_static_instance_cycles() {
+    let mut draft = minimal_scene_draft();
+    draft.data.instance_definitions = vec![GpuInstanceDefinition {
+        primitives: Vec::new(),
+        instances: vec![InstanceId(0)],
+        local_bounds: GpuBounds3 {
+            min: GpuPoint3([0.0, 0.0, 0.0]),
+            max: GpuPoint3([1.0, 1.0, 1.0]),
+        },
+    }];
+    draft.data.instances = vec![GpuInstance {
+        definition: InstanceDefinitionId(0),
+        transform: TransformId(0),
+    }];
+    draft.data.world_primitives = Vec::new().into_boxed_slice();
+    draft.data.world_instances = vec![InstanceId(0)].into_boxed_slice();
+    let scene = GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default());
+
+    assert_eq!(
+        ScenePlan::from_scene(scene.view()),
+        Err(pbrt_r4::gpu::webgpu::BackendError::Plan(
+            PlanError::InstanceCycle { instance: 0 }
+        ))
+    );
+}
+
+#[test]
 fn image_texture_lowering_preserves_channels_mips_and_encoding() {
     let plan = ScenePlan::from_scene(image_scene().view()).unwrap();
     assert_eq!(plan.images.len(), 3);
