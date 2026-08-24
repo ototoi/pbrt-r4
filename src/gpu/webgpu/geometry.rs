@@ -1108,8 +1108,8 @@ pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
 }
 
 /// Serializes the image-texture ABI. All offsets are u32 word offsets relative
-/// to this buffer. The descriptor tables retain every mip level even though
-/// the initial shader samples level zero.
+/// to this buffer. The descriptor tables retain every mip level for
+/// shader-side point/bilinear LOD selection.
 pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
     let image_offset = 8u32;
     let mip_count: u32 = plan

@@ -224,6 +224,55 @@ fn image_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn mipmap_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 1.0,
+        sv: 1.0,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    draft.data.images = vec![GpuImageResource {
+        resolution: [2, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(
+            vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0].into_boxed_slice(),
+        ),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 0,
+                texel_count: 6,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 6,
+                texel_count: 3,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Repeat,
+        twrap: GpuImageWrapMode::Repeat,
+        filter,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn uniform_infinite_scene() -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
@@ -271,8 +320,8 @@ fn normal_map_scene() -> GpuCompiledScene {
 fn bump_map_scene() -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
-        su: 1.0,
-        sv: 1.0,
+        su: 0.1,
+        sv: 0.1,
         du: 0.0,
         dv: 0.0,
     }];
@@ -808,6 +857,54 @@ fn software_renderer_evaluates_spectrum_image_texture() {
         .unwrap();
     assert!(output.rgb[0][0] > output.rgb[0][1]);
     assert!(output.rgb[0][1] > output.rgb[0][2]);
+}
+
+#[test]
+fn software_renderer_selects_mipmap_level_for_point_and_bilinear() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    for filter in [GpuImageFilter::Point, GpuImageFilter::Bilinear] {
+        let executable = renderer.prepare(&mipmap_lod_scene(filter)).unwrap();
+        let output = renderer
+            .render(
+                &executable,
+                &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            output.rgb[0][1] > output.rgb[0][0],
+            "selected the base mip level for {filter:?}: {:?}",
+            output.rgb[0]
+        );
+        assert!(output.rgb[0][1] > output.rgb[0][2]);
+    }
+}
+
+#[test]
+fn hardware_and_software_mipmap_lod_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = mipmap_lod_scene(GpuImageFilter::Bilinear);
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
 }
 
 #[test]
