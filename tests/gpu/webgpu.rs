@@ -273,6 +273,110 @@ fn mipmap_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn trilinear_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 0.707_106_77,
+        sv: 0.1,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    let mut texels = vec![0.0; 12];
+    texels.extend([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    texels.extend([0.0, 1.0, 0.0]);
+    draft.data.images = vec![GpuImageResource {
+        resolution: [4, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(texels.into_boxed_slice()),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [4, 1],
+                texel_offset: 0,
+                texel_count: 12,
+            },
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 12,
+                texel_count: 6,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 18,
+                texel_count: 3,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Repeat,
+        twrap: GpuImageWrapMode::Repeat,
+        filter,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn point_rounding_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 0.1,
+        sv: 0.1,
+        du: 0.575,
+        dv: 0.45,
+    }];
+    draft.data.images = vec![GpuImageResource {
+        resolution: [2, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(
+            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0].into_boxed_slice(),
+        ),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 0,
+                texel_count: 6,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 6,
+                texel_count: 3,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Clamp,
+        twrap: GpuImageWrapMode::Clamp,
+        filter: GpuImageFilter::Point,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn uniform_infinite_scene() -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
@@ -317,7 +421,7 @@ fn normal_map_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
-fn bump_map_scene() -> GpuCompiledScene {
+fn bump_map_scene(filter: GpuImageFilter) -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
         su: 0.1,
@@ -351,7 +455,7 @@ fn bump_map_scene() -> GpuCompiledScene {
         invert: false,
         swrap: GpuImageWrapMode::Repeat,
         twrap: GpuImageWrapMode::Repeat,
-        filter: GpuImageFilter::Bilinear,
+        filter,
         channel: GpuFloatImageChannel::Channel0,
     }];
     if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
@@ -526,6 +630,27 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     );
     assert_eq!(lights.len(), 48);
     assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
+}
+
+#[test]
+fn texture_serialization_preserves_trilinear_filter_modes() {
+    let float_scene = bump_map_scene(GpuImageFilter::Trilinear);
+    let float_plan = ScenePlan::from_scene(float_scene.view()).unwrap();
+    let float_words = texture_bytes(&float_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let float_offset = float_words[4] as usize;
+    assert_eq!((float_words[float_offset + 6] >> 5) & 3, 2);
+
+    let spectrum_scene = trilinear_lod_scene(GpuImageFilter::Trilinear);
+    let spectrum_plan = ScenePlan::from_scene(spectrum_scene.view()).unwrap();
+    let spectrum_words = texture_bytes(&spectrum_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let spectrum_offset = spectrum_words[6] as usize;
+    assert_eq!((spectrum_words[spectrum_offset + 6] >> 5) & 3, 2);
 }
 
 #[test]
@@ -774,7 +899,7 @@ fn software_renderer_evaluates_bump_map() {
         })
         .unwrap();
     let bumped = renderer
-        .prepare(&bump_map_scene())
+        .prepare(&bump_map_scene(GpuImageFilter::Bilinear))
         .and_then(|executable| {
             renderer.render(
                 &executable,
@@ -803,17 +928,19 @@ fn hardware_and_software_bump_map_results_match() {
         ..Default::default()
     })
     .unwrap();
-    let scene = bump_map_scene();
     let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
-    let hardware_scene = hardware.prepare(&scene).unwrap();
-    let software_scene = software.prepare(&scene).unwrap();
-    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
-    let software_output = software.render(&software_scene, &request).unwrap();
-    for (hardware_channel, software_channel) in hardware_output.rgb[0]
-        .iter()
-        .zip(software_output.rgb[0].iter())
-    {
-        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    for filter in [GpuImageFilter::Bilinear, GpuImageFilter::Trilinear] {
+        let scene = bump_map_scene(filter);
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in hardware_output.rgb[0]
+            .iter()
+            .zip(software_output.rgb[0].iter())
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+        }
     }
 }
 
@@ -898,6 +1025,50 @@ fn software_renderer_selects_mipmap_level_for_point_and_bilinear() {
 }
 
 #[test]
+fn software_renderer_interpolates_trilinear_mipmap_levels() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let bilinear_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Bilinear))
+        .unwrap();
+    let trilinear_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Trilinear))
+        .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let bilinear = renderer.render(&bilinear_scene, &request).unwrap().rgb[0];
+    let trilinear = renderer.render(&trilinear_scene, &request).unwrap().rgb[0];
+
+    assert!(bilinear[0] > bilinear[1] * 4.0, "{bilinear:?}");
+    assert!(trilinear[0] > trilinear[2], "{trilinear:?}");
+    assert!(trilinear[1] > trilinear[2], "{trilinear:?}");
+    assert!(
+        trilinear[1] > bilinear[1] + 0.05,
+        "{bilinear:?} {trilinear:?}"
+    );
+}
+
+#[test]
+fn software_renderer_rounds_point_sample_coordinates() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&point_rounding_scene()).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert!(output.rgb[0][1] > output.rgb[0][0], "{:?}", output.rgb[0]);
+    assert!(output.rgb[0][1] > output.rgb[0][2], "{:?}", output.rgb[0]);
+}
+
+#[test]
 fn hardware_and_software_mipmap_lod_results_match() {
     let Some(mut hardware) = renderer_or_skip() else {
         return;
@@ -907,17 +1078,21 @@ fn hardware_and_software_mipmap_lod_results_match() {
         ..Default::default()
     })
     .unwrap();
-    let scene = mipmap_lod_scene(GpuImageFilter::Bilinear);
     let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
-    let hardware_scene = hardware.prepare(&scene).unwrap();
-    let software_scene = software.prepare(&scene).unwrap();
-    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
-    let software_output = software.render(&software_scene, &request).unwrap();
-    for (hardware_channel, software_channel) in hardware_output.rgb[0]
-        .iter()
-        .zip(software_output.rgb[0].iter())
-    {
-        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    for scene in [
+        mipmap_lod_scene(GpuImageFilter::Bilinear),
+        trilinear_lod_scene(GpuImageFilter::Trilinear),
+    ] {
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in hardware_output.rgb[0]
+            .iter()
+            .zip(software_output.rgb[0].iter())
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+        }
     }
 }
 

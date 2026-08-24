@@ -71,16 +71,14 @@ fn image_mip_base(image_base: u32, level: u32) -> u32 {
     return scene_data[image_base + 3u] + selected * 4u;
 }
 
-fn texture_lod(image_base: u32, differentials: vec4<f32>) -> u32 {
+fn texture_lod(image_base: u32, differentials: vec4<f32>) -> f32 {
     let levels = scene_data[image_base + 4u];
-    let width = f32(scene_data[image_base]);
-    let height = f32(scene_data[image_base + 1u]);
     let footprint = 2.0 * max(
-        max(abs(differentials.x) * width, abs(differentials.y) * height),
-        max(abs(differentials.z) * width, abs(differentials.w) * height),
+        max(abs(differentials.x), abs(differentials.y)),
+        max(abs(differentials.z), abs(differentials.w)),
     );
     let level = f32(levels - 1u) + log2(max(footprint, 1.0e-8));
-    return u32(clamp(floor(level), 0.0, f32(levels - 1u)));
+    return level;
 }
 
 fn image_texel(
@@ -136,6 +134,64 @@ fn image_texel(
     return vec4<f32>(r, g, b, a);
 }
 
+fn sample_image_level(
+    image_base: u32,
+    level: u32,
+    st: vec2<f32>,
+    swrap: u32,
+    twrap: u32,
+    bilinear: bool,
+) -> vec4<f32> {
+    let mip_base = image_mip_base(image_base, level);
+    let resolution = vec2<f32>(f32(scene_data[mip_base]), f32(scene_data[mip_base + 1u]));
+    let coordinate = st * resolution - vec2<f32>(0.5);
+    if (!bilinear) {
+        return image_texel(
+            image_base,
+            level,
+            i32(round(coordinate.x)),
+            i32(round(coordinate.y)),
+            swrap,
+            twrap,
+        );
+    }
+    let p = vec2<i32>(floor(coordinate));
+    let weight = fract(coordinate);
+    let p00 = image_texel(image_base, level, p.x, p.y, swrap, twrap);
+    let p10 = image_texel(image_base, level, p.x + 1, p.y, swrap, twrap);
+    let p01 = image_texel(image_base, level, p.x, p.y + 1, swrap, twrap);
+    let p11 = image_texel(image_base, level, p.x + 1, p.y + 1, swrap, twrap);
+    return p00 * (1.0 - weight.x) * (1.0 - weight.y)
+        + p10 * weight.x * (1.0 - weight.y)
+        + p01 * (1.0 - weight.x) * weight.y
+        + p11 * weight.x * weight.y;
+}
+
+fn sample_image(
+    image_base: u32,
+    st: vec2<f32>,
+    swrap: u32,
+    twrap: u32,
+    filter_mode: u32,
+    differentials: vec4<f32>,
+) -> vec4<f32> {
+    let levels = scene_data[image_base + 4u];
+    let level = texture_lod(image_base, differentials);
+    if (level >= f32(levels - 1u)) {
+        return image_texel(image_base, levels - 1u, 0, 0, swrap, twrap);
+    }
+    let i_level = u32(max(0.0, floor(level)));
+    if (filter_mode == 0u) {
+        return sample_image_level(image_base, i_level, st, swrap, twrap, false);
+    }
+    let value = sample_image_level(image_base, i_level, st, swrap, twrap, true);
+    if (filter_mode != 2u || i_level == 0u) {
+        return value;
+    }
+    let next = sample_image_level(image_base, i_level + 1u, st, swrap, twrap, true);
+    return mix(value, next, level - f32(i_level));
+}
+
 fn sample_texture(texture_id: u32, uv: vec2<f32>, differentials: vec4<f32>) -> vec3<f32> {
     let texture_base = scene_data[6u] + texture_id * 8u;
     let image_id = scene_data[texture_base];
@@ -155,33 +211,18 @@ fn sample_texture(texture_id: u32, uv: vec2<f32>, differentials: vec4<f32>) -> v
     st.x = select(fract(st.x), clamp(st.x, 0.0, 1.0), swrap == 1u);
     st.y = select(fract(st.y), clamp(st.y, 0.0, 1.0), twrap == 1u);
     let image_base = scene_data[0u] + image_id * 8u;
-    let mip_level = texture_lod(
+    var value = sample_image(
         image_base,
+        st,
+        swrap,
+        twrap,
+        (flags >> 5u) & 3u,
         differentials * vec4<f32>(su, sv, su, sv),
     );
-    let mip_base = image_mip_base(image_base, mip_level);
-    let width = scene_data[mip_base];
-    let height = scene_data[mip_base + 1u];
-    let coordinate = st * vec2<f32>(f32(width), f32(height)) - vec2<f32>(0.5);
-    let x0 = i32(floor(coordinate.x));
-    let y0 = i32(floor(coordinate.y));
-    let tx = fract(coordinate.x);
-    let ty = fract(coordinate.y);
-    let p00 = image_texel(image_base, mip_level, x0, y0, swrap, twrap);
-    var value = p00;
-    if (((flags >> 5u) & 1u) != 0u) {
-        let p10 = image_texel(image_base, mip_level, x0 + 1, y0, swrap, twrap);
-        let p01 = image_texel(image_base, mip_level, x0, y0 + 1, swrap, twrap);
-        let p11 = image_texel(image_base, mip_level, x0 + 1, y0 + 1, swrap, twrap);
-        value = p00 * (1.0 - tx) * (1.0 - ty)
-            + p10 * tx * (1.0 - ty)
-            + p01 * (1.0 - tx) * ty
-            + p11 * tx * ty;
-    }
     if ((flags & 1u) != 0u) {
         value = vec4<f32>(vec3<f32>(1.0) - value.xyz, value.w);
     }
-    if (((flags >> 6u) & 3u) == 0u) {
+    if (((flags >> 7u) & 3u) == 0u) {
         value = vec4<f32>(clamp(value.xyz, vec3<f32>(0.0), vec3<f32>(1.0)), value.w);
     }
     return value.xyz * scale;
@@ -418,31 +459,16 @@ fn sample_float_texture(texture_id: u32, uv: vec2<f32>, differentials: vec4<f32>
     st.x = select(fract(st.x), clamp(st.x, 0.0, 1.0), swrap == 1u);
     st.y = select(fract(st.y), clamp(st.y, 0.0, 1.0), twrap == 1u);
     let image_base = scene_data[0u] + image_id * 8u;
-    let mip_level = texture_lod(
+    let value = sample_image(
         image_base,
+        st,
+        swrap,
+        twrap,
+        (flags >> 5u) & 3u,
         differentials * vec4<f32>(su, sv, su, sv),
     );
-    let mip_base = image_mip_base(image_base, mip_level);
-    let width = scene_data[mip_base];
-    let height = scene_data[mip_base + 1u];
-    let coordinate = st * vec2<f32>(f32(width), f32(height)) - vec2<f32>(0.5);
-    let x0 = i32(floor(coordinate.x));
-    let y0 = i32(floor(coordinate.y));
-    let tx = fract(coordinate.x);
-    let ty = fract(coordinate.y);
-    let p00 = image_texel(image_base, mip_level, x0, y0, swrap, twrap);
-    var value = p00;
-    if (((flags >> 5u) & 1u) != 0u) {
-        let p10 = image_texel(image_base, mip_level, x0 + 1, y0, swrap, twrap);
-        let p01 = image_texel(image_base, mip_level, x0, y0 + 1, swrap, twrap);
-        let p11 = image_texel(image_base, mip_level, x0 + 1, y0 + 1, swrap, twrap);
-        value = p00 * (1.0 - tx) * (1.0 - ty)
-            + p10 * tx * (1.0 - ty)
-            + p01 * (1.0 - tx) * ty
-            + p11 * tx * ty;
-    }
-    var result = select(value.r, value.a, ((flags >> 8u) & 3u) == 1u);
-    if (((flags >> 8u) & 3u) == 2u) {
+    var result = select(value.r, value.a, ((flags >> 9u) & 3u) == 1u);
+    if (((flags >> 9u) & 3u) == 2u) {
         result = (value.r + value.g + value.b) / 3.0;
     }
     if ((flags & 1u) != 0u) {

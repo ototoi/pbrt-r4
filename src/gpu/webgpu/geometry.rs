@@ -719,7 +719,10 @@ fn lower_spectrum_texture(
             index: mapping.0,
         }))?;
     if !matches!(mapping, GpuTextureMapping::Uv { .. })
-        || !matches!(filter, GpuImageFilter::Point | GpuImageFilter::Bilinear)
+        || !matches!(
+            filter,
+            GpuImageFilter::Point | GpuImageFilter::Bilinear | GpuImageFilter::Trilinear
+        )
         || !supported_wrap(swrap)
         || !supported_wrap(twrap)
     {
@@ -807,7 +810,10 @@ fn lower_float_texture(
                     index: image.0,
                 }))?;
             if !matches!(mapping, GpuTextureMapping::Uv { .. })
-                || !matches!(filter, GpuImageFilter::Point | GpuImageFilter::Bilinear)
+                || !matches!(
+                    filter,
+                    GpuImageFilter::Point | GpuImageFilter::Bilinear | GpuImageFilter::Trilinear
+                )
                 || !supported_wrap(swrap)
                 || !supported_wrap(twrap)
             {
@@ -1176,8 +1182,8 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
                 let flags = u32::from(*invert)
                     | wrap_bits(*swrap, 1)
                     | wrap_bits(*twrap, 3)
-                    | (u32::from(matches!(filter, GpuImageFilter::Bilinear)) << 5)
-                    | (float_channel_bits(*channel) << 8);
+                    | (filter_bits(*filter) << 5)
+                    | (float_channel_bits(*channel) << 9);
                 words.extend([
                     *image,
                     mapping[0],
@@ -1196,8 +1202,8 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
         let flags = u32::from(texture.invert)
             | wrap_bits(texture.swrap, 1)
             | wrap_bits(texture.twrap, 3)
-            | (u32::from(matches!(texture.filter, GpuImageFilter::Bilinear)) << 5)
-            | (spectrum_bits(texture.spectrum_type) << 6);
+            | (filter_bits(texture.filter) << 5)
+            | (spectrum_bits(texture.spectrum_type) << 7);
         words.extend([
             texture.image,
             mapping[0],
@@ -1229,6 +1235,15 @@ fn float_channel_bits(channel: GpuFloatImageChannel) -> u32 {
         GpuFloatImageChannel::Channel0 => 0,
         GpuFloatImageChannel::Alpha => 1,
         GpuFloatImageChannel::RgbAverage => 2,
+    }
+}
+
+fn filter_bits(filter: GpuImageFilter) -> u32 {
+    match filter {
+        GpuImageFilter::Point => 0,
+        GpuImageFilter::Bilinear => 1,
+        GpuImageFilter::Trilinear => 2,
+        GpuImageFilter::Ewa { .. } => unreachable!("EWA textures are rejected during lowering"),
     }
 }
 
