@@ -124,7 +124,6 @@ pub struct PrimitivePlan {
     pub triangle_count: u32,
     pub material: u32,
     pub alpha: Option<u32>,
-    pub shadow_alpha: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -387,11 +386,6 @@ impl ScenePlan {
                     geometry: primitive.geometry,
                 }));
             }
-            if primitive.shadow_alpha.is_some() {
-                return Err(BackendError::Plan(PlanError::UnsupportedAlpha {
-                    primitive: primitive_id.0,
-                }));
-            }
             if !matches!(primitive.area_light, GpuAreaLightBinding::None) {
                 return Err(BackendError::Plan(PlanError::UnsupportedAreaLight {
                     primitive: primitive_id.0,
@@ -519,28 +513,12 @@ impl ScenePlan {
                 }
             });
             let alpha = alpha.transpose()?;
-            let shadow_alpha = primitive.shadow_alpha.map(|texture| {
-                if usize::try_from(texture.0)
-                    .ok()
-                    .and_then(|index| float_textures.get(index))
-                    .is_none()
-                {
-                    Err(BackendError::Plan(PlanError::InvalidReference {
-                        resource: "shadow alpha texture",
-                        index: texture.0,
-                    }))
-                } else {
-                    Ok(texture.0)
-                }
-            });
-            let shadow_alpha = shadow_alpha.transpose()?;
             primitives.push(PrimitivePlan {
                 first_vertex: blases[blas].first_vertex,
                 first_index: blases[blas].first_index,
                 triangle_count: blases[blas].index_count / 3,
                 material: custom_data,
                 alpha,
-                shadow_alpha,
             });
             materials.push(material);
             transforms.push(TransformPlan {
@@ -1082,7 +1060,7 @@ pub fn primitive_bytes(plan: &ScenePlan) -> Vec<u8> {
                 primitive.first_index,
                 primitive.material,
                 primitive.alpha.unwrap_or(u32::MAX),
-                primitive.shadow_alpha.unwrap_or(u32::MAX),
+                u32::MAX,
                 0,
                 0,
                 0,

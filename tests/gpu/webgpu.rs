@@ -103,7 +103,6 @@ fn minimal_scene_draft() -> GpuSceneDraft {
                 transform: TransformId(0),
                 material: Some(MaterialId(0)),
                 alpha: None,
-                shadow_alpha: None,
                 area_light: pbrt_r4::gpu::ir::GpuAreaLightBinding::None,
                 reverse_orientation: false,
             }],
@@ -223,7 +222,6 @@ fn shadow_scene(with_occluder: bool, transparent_occluder: bool) -> GpuCompiledS
             transform: TransformId(0),
             material: Some(MaterialId(0)),
             alpha,
-            shadow_alpha: None,
             area_light: pbrt_r4::gpu::ir::GpuAreaLightBinding::None,
             reverse_orientation: false,
         });
@@ -1323,20 +1321,6 @@ fn hardware_and_software_normal_map_results_match() {
     {
         assert!((hardware_channel - software_channel).abs() < 1.0e-4);
     }
-}
-
-#[test]
-fn scene_plan_rejects_unimplemented_shadow_alpha() {
-    let mut draft = minimal_scene_draft();
-    draft.data.float_textures = vec![GpuFloatTexture::Constant { value: 0.0 }];
-    draft.data.primitives[0].shadow_alpha = Some(FloatTextureId(0));
-    let scene = GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default());
-    assert_eq!(
-        ScenePlan::from_scene(scene.view()),
-        Err(pbrt_r4::gpu::webgpu::BackendError::Plan(
-            PlanError::UnsupportedAlpha { primitive: 0 }
-        ))
-    );
 }
 
 #[test]

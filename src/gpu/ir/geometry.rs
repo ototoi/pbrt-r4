@@ -106,7 +106,6 @@ pub struct GpuPrimitive {
     pub transform: TransformId,
     pub material: Option<MaterialId>,
     pub alpha: Option<FloatTextureId>,
-    pub shadow_alpha: Option<FloatTextureId>,
     pub area_light: GpuAreaLightBinding,
     pub reverse_orientation: bool,
 }

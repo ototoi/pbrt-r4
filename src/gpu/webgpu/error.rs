@@ -33,9 +33,6 @@ pub enum PlanError {
     InstanceCycle {
         instance: u32,
     },
-    UnsupportedAlpha {
-        primitive: u32,
-    },
     UnsupportedAreaLight {
         primitive: u32,
     },
@@ -118,12 +115,6 @@ impl std::fmt::Display for PlanError {
             }
             Self::InstanceCycle { instance } => {
                 write!(formatter, "instance cycle detected at instance {instance}")
-            }
-            Self::UnsupportedAlpha { primitive } => {
-                write!(
-                    formatter,
-                    "alpha masking is unsupported for primitive {primitive}"
-                )
             }
             Self::UnsupportedAreaLight { primitive } => {
                 write!(

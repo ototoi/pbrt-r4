@@ -15,7 +15,7 @@ struct Primitive {
     first_index: u32,
     material: u32,
     alpha: u32,
-    shadow_alpha: u32,
+    _reserved_alpha: u32,
     _flags: u32,
     _padding: vec2<u32>,
 };
