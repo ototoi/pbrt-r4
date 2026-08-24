@@ -19,8 +19,8 @@ struct Material {
     reflectance: vec4<f32>,
     texture: u32,
     normal_map: u32,
+    displacement: u32,
     flags: u32,
-    _padding: u32,
 };
 
 struct Vertex {
@@ -208,6 +208,138 @@ fn triangle_dpdu(
     return coordinate_tangent(normal);
 }
 
+fn triangle_dpdv(
+    p0: vec3<f32>,
+    p1: vec3<f32>,
+    p2: vec3<f32>,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    uv2: vec2<f32>,
+    normal: vec3<f32>,
+) -> vec3<f32> {
+    let dp02 = p0 - p2;
+    let dp12 = p1 - p2;
+    let duv02 = uv0 - uv2;
+    let duv12 = uv1 - uv2;
+    let determinant = duv02.x * duv12.y - duv02.y * duv12.x;
+    if (abs(determinant) >= 1.0e-9) {
+        let inverse = 1.0 / determinant;
+        return (dp12 * duv02.x - dp02 * duv12.x) * inverse;
+    }
+    let tangent = coordinate_tangent(normal);
+    return cross(normal, tangent);
+}
+
+fn normal_derivative_u(
+    n0: vec3<f32>,
+    n1: vec3<f32>,
+    n2: vec3<f32>,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    uv2: vec2<f32>,
+) -> vec3<f32> {
+    let duv02 = uv0 - uv2;
+    let duv12 = uv1 - uv2;
+    let determinant = duv02.x * duv12.y - duv02.y * duv12.x;
+    if (abs(determinant) < 1.0e-9) {
+        return vec3<f32>(0.0);
+    }
+    return ((n0 - n2) * duv12.y - (n1 - n2) * duv02.y) / determinant;
+}
+
+fn normal_derivative_v(
+    n0: vec3<f32>,
+    n1: vec3<f32>,
+    n2: vec3<f32>,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    uv2: vec2<f32>,
+) -> vec3<f32> {
+    let duv02 = uv0 - uv2;
+    let duv12 = uv1 - uv2;
+    let determinant = duv02.x * duv12.y - duv02.y * duv12.x;
+    if (abs(determinant) < 1.0e-9) {
+        return vec3<f32>(0.0);
+    }
+    return ((n1 - n2) * duv02.x - (n0 - n2) * duv12.x) / determinant;
+}
+
+fn sane_derivative(value: f32) -> f32 {
+    if (value != value || abs(value) > 1.0e8) {
+        return 0.0;
+    }
+    return clamp(value, -1.0e8, 1.0e8);
+}
+
+fn uv_differentials(
+    p: vec3<f32>,
+    normal: vec3<f32>,
+    dpdu: vec3<f32>,
+    dpdv: vec3<f32>,
+    rx_origin: vec3<f32>,
+    rx_direction: vec3<f32>,
+    ry_origin: vec3<f32>,
+    ry_direction: vec3<f32>,
+) -> vec4<f32> {
+    let plane_distance = -dot(normal, p);
+    var dpdx = vec3<f32>(0.0);
+    var dpdy = vec3<f32>(0.0);
+    let x_denominator = dot(normal, rx_direction);
+    if (abs(x_denominator) > 1.0e-8) {
+        let tx = (-dot(normal, rx_origin) - plane_distance) / x_denominator;
+        dpdx = rx_origin + tx * rx_direction - p;
+    }
+    let y_denominator = dot(normal, ry_direction);
+    if (abs(y_denominator) > 1.0e-8) {
+        let ty = (-dot(normal, ry_origin) - plane_distance) / y_denominator;
+        dpdy = ry_origin + ty * ry_direction - p;
+    }
+    let ata00 = dot(dpdu, dpdu);
+    let ata01 = dot(dpdu, dpdv);
+    let ata11 = dot(dpdv, dpdv);
+    let determinant = ata00 * ata11 - ata01 * ata01;
+    var inverse = 0.0;
+    if (abs(determinant) > 1.0e-20) {
+        inverse = 1.0 / determinant;
+    }
+    let atb0x = dot(dpdu, dpdx);
+    let atb1x = dot(dpdv, dpdx);
+    let atb0y = dot(dpdu, dpdy);
+    let atb1y = dot(dpdv, dpdy);
+    return vec4<f32>(
+        sane_derivative((ata11 * atb0x - ata01 * atb1x) * inverse),
+        sane_derivative((ata00 * atb1x - ata01 * atb0x) * inverse),
+        sane_derivative((ata11 * atb0y - ata01 * atb1y) * inverse),
+        sane_derivative((ata00 * atb1y - ata01 * atb0y) * inverse),
+    );
+}
+
+fn apply_bump_map(
+    texture_id: u32,
+    uv: vec2<f32>,
+    normal: vec3<f32>,
+    dpdu: vec3<f32>,
+    dpdv: vec3<f32>,
+    dndu: vec3<f32>,
+    dndv: vec3<f32>,
+    differentials: vec4<f32>,
+) -> vec3<f32> {
+    var du = 0.5 * (abs(differentials.x) + abs(differentials.z));
+    var dv = 0.5 * (abs(differentials.y) + abs(differentials.w));
+    if (du == 0.0) {
+        du = 0.0005;
+    }
+    if (dv == 0.0) {
+        dv = 0.0005;
+    }
+    let displacement = sample_float_texture(texture_id, uv);
+    let u_displacement = sample_float_texture(texture_id, uv + vec2<f32>(du, 0.0));
+    let v_displacement = sample_float_texture(texture_id, uv + vec2<f32>(0.0, dv));
+    let bumped_dpdu = dpdu + (u_displacement - displacement) / du * normal + displacement * dndu;
+    let bumped_dpdv = dpdv + (v_displacement - displacement) / dv * normal + displacement * dndv;
+    return normalize(cross(bumped_dpdu, bumped_dpdv));
+}
+
 fn apply_normal_map(
     image_id: u32,
     uv: vec2<f32>,
@@ -382,6 +514,22 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let origin = transform(camera.render_from_camera, vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
     let ray_target = transform(camera.render_from_camera, camera_target).xyz;
     let direction = normalize(ray_target - origin);
+    let x_target = transform(
+        camera.camera_from_raster,
+        vec4<f32>(pixel + vec2<f32>(1.0, 0.0), 0.0, 1.0),
+    );
+    let y_target = transform(
+        camera.camera_from_raster,
+        vec4<f32>(pixel + vec2<f32>(0.0, 1.0), 0.0, 1.0),
+    );
+    let rx_origin = origin;
+    let ry_origin = origin;
+    let rx_direction = normalize(
+        transform(camera.render_from_camera, x_target).xyz - rx_origin,
+    );
+    let ry_direction = normalize(
+        transform(camera.render_from_camera, y_target).xyz - ry_origin,
+    );
     let inverse_direction = 1.0 / direction;
 
     var closest = 1.0e30;
@@ -504,10 +652,31 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let uv2 = vertices[v2].uv.xy;
         let uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
         let object_dpdu = triangle_dpdu(p0, p1, p2, uv0, uv1, uv2, object_normal);
+        let object_dpdv = triangle_dpdv(p0, p1, p2, uv0, uv1, uv2, object_normal);
+        let object_dndu = normal_derivative_u(
+            vertices[v0].normal.xyz,
+            vertices[v1].normal.xyz,
+            vertices[v2].normal.xyz,
+            uv0,
+            uv1,
+            uv2,
+        );
+        let object_dndv = normal_derivative_v(
+            vertices[v0].normal.xyz,
+            vertices[v1].normal.xyz,
+            vertices[v2].normal.xyz,
+            uv0,
+            uv1,
+            uv2,
+        );
         let object_tangent = vertices[v0].tangent.xyz * barycentrics.x
             + vertices[v1].tangent.xyz * barycentrics.y
             + vertices[v2].tangent.xyz * barycentrics.z;
         var normal = normalize(transform(transform_table.normal_rows, vec4<f32>(object_normal, 0.0)).xyz);
+        let dpdu = transform(transform_table.rows, vec4<f32>(object_dpdu, 0.0)).xyz;
+        let dpdv = transform(transform_table.rows, vec4<f32>(object_dpdv, 0.0)).xyz;
+        let dndu = transform(transform_table.normal_rows, vec4<f32>(object_dndu, 0.0)).xyz;
+        let dndv = transform(transform_table.normal_rows, vec4<f32>(object_dndv, 0.0)).xyz;
         if ((material.flags & 2u) != 0u) {
             normal = apply_normal_map(
                 material.normal_map,
@@ -517,6 +686,26 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 object_tangent,
                 transform_table.rows,
                 transform_table.normal_rows,
+            );
+        } else if ((material.flags & 4u) != 0u) {
+            normal = apply_bump_map(
+                material.displacement,
+                uv,
+                normalize(transform(transform_table.normal_rows, vec4<f32>(object_normal, 0.0)).xyz),
+                dpdu,
+                dpdv,
+                dndu,
+                dndv,
+                uv_differentials(
+                    position,
+                    normalize(transform(transform_table.normal_rows, vec4<f32>(object_normal, 0.0)).xyz),
+                    dpdu,
+                    dpdv,
+                    rx_origin,
+                    rx_direction,
+                    ry_origin,
+                    ry_direction,
+                ),
             );
         }
         var reflectance = material.reflectance.xyz;

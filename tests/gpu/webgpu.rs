@@ -268,6 +268,55 @@ fn normal_map_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn bump_map_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 1.0,
+        sv: 1.0,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    draft.data.images = vec![GpuImageResource {
+        resolution: [2, 1],
+        channels: GpuImageChannels::R,
+        storage: GpuTexelStorage::F32(vec![0.0, 1.0, 0.5].into_boxed_slice()),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 0,
+                texel_count: 2,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 2,
+                texel_count: 1,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.float_textures = vec![GpuFloatTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Repeat,
+        twrap: GpuImageWrapMode::Repeat,
+        filter: GpuImageFilter::Bilinear,
+        channel: GpuFloatImageChannel::Channel0,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    let GpuMaterial::Diffuse(material) = &mut draft.data.materials[0];
+    material.displacement = Some(FloatTextureId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn instance_scene() -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft
@@ -643,6 +692,66 @@ fn software_renderer_evaluates_normal_map() {
         )
         .unwrap();
     assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-5));
+}
+
+#[test]
+fn software_renderer_evaluates_bump_map() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let base = renderer
+        .prepare(&minimal_scene())
+        .and_then(|executable| {
+            renderer.render(
+                &executable,
+                &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+            )
+        })
+        .unwrap();
+    let bumped = renderer
+        .prepare(&bump_map_scene())
+        .and_then(|executable| {
+            renderer.render(
+                &executable,
+                &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+            )
+        })
+        .unwrap();
+    assert!(
+        bumped.rgb[0]
+            .iter()
+            .zip(base.rgb[0].iter())
+            .any(|(bumped, base)| (bumped - base).abs() > 1.0e-5),
+        "bump map did not change the shading result: base={:?}, bumped={:?}",
+        base.rgb[0],
+        bumped.rgb[0]
+    );
+}
+
+#[test]
+fn hardware_and_software_bump_map_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = bump_map_scene();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
 }
 
 #[test]

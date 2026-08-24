@@ -96,6 +96,7 @@ impl MaterialPlan {
             self.reflectance,
             MaterialReflectancePlan::SpectrumTexture(_)
         ) || self.normal_map.is_some()
+            || self.displacement.is_some()
     }
 }
 
@@ -130,6 +131,7 @@ pub struct PrimitivePlan {
 pub struct MaterialPlan {
     pub reflectance: MaterialReflectancePlan,
     pub normal_map: Option<u32>,
+    pub displacement: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -589,11 +591,18 @@ fn lower_material(
             index: material_id.0,
         }))?;
     let GpuMaterial::Diffuse(diffuse) = material;
-    if diffuse.displacement.is_some() {
-        return Err(BackendError::Plan(PlanError::UnsupportedMaterial {
-            primitive: primitive.0,
-        }));
-    }
+    let displacement = diffuse
+        .displacement
+        .map(|texture| {
+            if scene.float_textures.get(texture.0 as usize).is_none() {
+                return Err(BackendError::Plan(PlanError::InvalidReference {
+                    resource: "material displacement texture",
+                    index: texture.0,
+                }));
+            }
+            Ok(texture.0)
+        })
+        .transpose()?;
     let normal_map = diffuse
         .normal_map
         .map(|image| lower_normal_map_image(scene, image, images, image_to_plan, primitive))
@@ -642,6 +651,7 @@ fn lower_material(
     Ok(MaterialPlan {
         reflectance,
         normal_map,
+        displacement,
     })
 }
 
@@ -1082,14 +1092,17 @@ pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
                 MaterialReflectancePlan::SpectrumTexture(texture) => ([0.0; 4], texture, 1),
             };
             let normal_map = material.normal_map.unwrap_or(u32::MAX);
-            let flags = flags | u32::from(material.normal_map.is_some()) << 1;
+            let displacement = material.displacement.unwrap_or(u32::MAX);
+            let flags = flags
+                | u32::from(material.normal_map.is_some()) << 1
+                | u32::from(material.displacement.is_some()) << 2;
             reflectance
                 .into_iter()
                 .flat_map(f32::to_le_bytes)
                 .chain(texture.to_le_bytes())
                 .chain(normal_map.to_le_bytes())
+                .chain(displacement.to_le_bytes())
                 .chain(flags.to_le_bytes())
-                .chain(0u32.to_le_bytes())
         })
         .collect()
 }
