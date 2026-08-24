@@ -26,6 +26,9 @@ pub enum PlanError {
     UnsupportedTransform {
         transform: TransformId,
     },
+    InvalidTransform {
+        primitive: u32,
+    },
     UnsupportedInstances,
     InstanceCycle {
         instance: u32,
@@ -103,6 +106,9 @@ impl std::fmt::Display for PlanError {
                     formatter,
                     "animated transform is not supported: {transform:?}"
                 )
+            }
+            Self::InvalidTransform { primitive } => {
+                write!(formatter, "singular transform for primitive {primitive}")
             }
             Self::UnsupportedInstances => {
                 write!(

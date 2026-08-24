@@ -20,17 +20,21 @@ struct Primitive {
 struct Material {
     reflectance: vec4<f32>,
     texture: u32,
+    normal_map: u32,
     flags: u32,
-    _padding: vec2<u32>,
+    _padding: u32,
 };
 
 struct Vertex {
     position: vec4<f32>,
     uv: vec4<f32>,
+    normal: vec4<f32>,
+    tangent: vec4<f32>,
 };
 
 struct Transform {
     rows: array<vec4<f32>, 4>,
+    normal_rows: array<vec4<f32>, 4>,
 };
 
 struct Light {
@@ -156,6 +160,75 @@ fn sample_texture(texture_id: u32, uv: vec2<f32>) -> vec3<f32> {
         value = vec4<f32>(clamp(value.xyz, vec3<f32>(0.0), vec3<f32>(1.0)), value.w);
     }
     return value.xyz * scale;
+}
+
+fn sample_normal_map(image_id: u32, uv: vec2<f32>) -> vec3<f32> {
+    var st = vec2<f32>(uv.x, 1.0 - uv.y);
+    st = fract(st);
+    let image_base = scene_data[0u] + image_id * 8u;
+    let width = scene_data[image_base];
+    let height = scene_data[image_base + 1u];
+    let coordinate = st * vec2<f32>(f32(width), f32(height)) - vec2<f32>(0.5);
+    let x0 = i32(floor(coordinate.x));
+    let y0 = i32(floor(coordinate.y));
+    let tx = fract(coordinate.x);
+    let ty = fract(coordinate.y);
+    let p00 = image_texel(image_base, x0, y0, 2u, 2u).xyz;
+    let p10 = image_texel(image_base, x0 + 1, y0, 2u, 2u).xyz;
+    let p01 = image_texel(image_base, x0, y0 + 1, 2u, 2u).xyz;
+    let p11 = image_texel(image_base, x0 + 1, y0 + 1, 2u, 2u).xyz;
+    let value = p00 * (1.0 - tx) * (1.0 - ty)
+        + p10 * tx * (1.0 - ty)
+        + p01 * (1.0 - tx) * ty
+        + p11 * tx * ty;
+    return normalize(2.0 * value - vec3<f32>(1.0));
+}
+
+fn coordinate_tangent(normal: vec3<f32>) -> vec3<f32> {
+    if (abs(normal.x) > abs(normal.y)) {
+        return normalize(vec3<f32>(-normal.z, 0.0, normal.x));
+    }
+    return normalize(vec3<f32>(0.0, normal.z, -normal.y));
+}
+
+fn triangle_dpdu(
+    p0: vec3<f32>,
+    p1: vec3<f32>,
+    p2: vec3<f32>,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    uv2: vec2<f32>,
+    normal: vec3<f32>,
+) -> vec3<f32> {
+    let dp02 = p0 - p2;
+    let dp12 = p1 - p2;
+    let duv02 = uv0 - uv2;
+    let duv12 = uv1 - uv2;
+    let determinant = duv02.x * duv12.y - duv02.y * duv12.x;
+    if (abs(determinant) >= 1.0e-9) {
+        let inverse = 1.0 / determinant;
+        return (dp02 * duv12.y - dp12 * duv02.y) * inverse;
+    }
+    return coordinate_tangent(normal);
+}
+
+fn apply_normal_map(
+    image_id: u32,
+    uv: vec2<f32>,
+    object_normal: vec3<f32>,
+    object_dpdu: vec3<f32>,
+    object_tangent: vec3<f32>,
+    rows: array<vec4<f32>, 4>,
+    normal_rows: array<vec4<f32>, 4>,
+) -> vec3<f32> {
+    let normal = normalize(transform(normal_rows, vec4<f32>(object_normal, 0.0)).xyz);
+    let tangent_source = select(object_dpdu, object_tangent, dot(object_tangent, object_tangent) > 1.0e-20);
+    let transformed_tangent = transform(rows, vec4<f32>(tangent_source, 0.0)).xyz;
+    let tangent = normalize(transformed_tangent - normal * dot(normal, transformed_tangent));
+    let safe_tangent = select(coordinate_tangent(normal), tangent, dot(tangent, tangent) > 1.0e-20);
+    let bitangent = cross(normal, safe_tangent);
+    let mapped = sample_normal_map(image_id, uv);
+    return normalize(safe_tangent * mapped.x + bitangent * mapped.y + normal * mapped.z);
 }
 
 fn sample_float_texture(texture_id: u32, uv: vec2<f32>) -> f32 {
@@ -332,19 +405,49 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let object_position = vertices[i0].position.xyz * barycentrics.x
             + vertices[i1].position.xyz * barycentrics.y
             + vertices[i2].position.xyz * barycentrics.z;
-        let object_normal = normalize(cross(
+        let geometric_normal = normalize(cross(
             vertices[i1].position.xyz - vertices[i0].position.xyz,
             vertices[i2].position.xyz - vertices[i0].position.xyz,
         ));
         let transform_table = transforms[intersection.instance_custom_data];
         let position = transform(transform_table.rows, vec4<f32>(object_position, 1.0)).xyz;
-        let normal = normalize(transform(transform_table.rows, vec4<f32>(object_normal, 0.0)).xyz);
         let material = materials[primitive.material];
+        let interpolated_normal = vertices[i0].normal.xyz * barycentrics.x
+            + vertices[i1].normal.xyz * barycentrics.y
+            + vertices[i2].normal.xyz * barycentrics.z;
+        var object_normal = geometric_normal;
+        if (dot(interpolated_normal, interpolated_normal) > 1.0e-20) {
+            object_normal = normalize(interpolated_normal);
+        }
+        let uv = vertices[i0].uv.xy * barycentrics.x
+            + vertices[i1].uv.xy * barycentrics.y
+            + vertices[i2].uv.xy * barycentrics.z;
+        let object_dpdu = triangle_dpdu(
+            vertices[i0].position.xyz,
+            vertices[i1].position.xyz,
+            vertices[i2].position.xyz,
+            vertices[i0].uv.xy,
+            vertices[i1].uv.xy,
+            vertices[i2].uv.xy,
+            object_normal,
+        );
+        let object_tangent = vertices[i0].tangent.xyz * barycentrics.x
+            + vertices[i1].tangent.xyz * barycentrics.y
+            + vertices[i2].tangent.xyz * barycentrics.z;
+        var normal = normalize(transform(transform_table.normal_rows, vec4<f32>(object_normal, 0.0)).xyz);
+        if ((material.flags & 2u) != 0u) {
+            normal = apply_normal_map(
+                material.normal_map,
+                uv,
+                object_normal,
+                object_dpdu,
+                object_tangent,
+                transform_table.rows,
+                transform_table.normal_rows,
+            );
+        }
         var reflectance = material.reflectance.xyz;
         if ((material.flags & 1u) != 0u) {
-            let uv = vertices[i0].uv.xy * barycentrics.x
-                + vertices[i1].uv.xy * barycentrics.y
-                + vertices[i2].uv.xy * barycentrics.z;
             reflectance = sample_texture(material.texture, uv);
         }
         var radiance = vec3<f32>(0.0, 0.0, 0.0);

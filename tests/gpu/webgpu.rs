@@ -242,6 +242,32 @@ fn alpha_scene(alpha: f32) -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn normal_map_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.images = vec![GpuImageResource {
+        resolution: [1, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(vec![1.0, 0.5, 0.5].into_boxed_slice()),
+        mip_levels: vec![GpuMipLevel {
+            resolution: [1, 1],
+            texel_offset: 0,
+            texel_count: 3,
+        }]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    let GpuMaterial::Diffuse(material) = &mut draft.data.materials[0];
+    material.normal_map = Some(ImageId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn instance_scene() -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft
@@ -370,7 +396,7 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     let transforms = transform_bytes(&plan);
     let lights = light_bytes(&plan);
 
-    assert_eq!(vertices.len(), 3 * 32);
+    assert_eq!(vertices.len(), 3 * 64);
     assert_eq!(&vertices[0..4], &0.0f32.to_le_bytes());
     assert_eq!(&vertices[12..16], &0.0f32.to_le_bytes());
     assert_eq!(&vertices[20..24], &0.0f32.to_le_bytes());
@@ -385,7 +411,7 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     assert_eq!(materials.len(), 32);
     assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
     assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
-    assert_eq!(transforms.len(), 64);
+    assert_eq!(transforms.len(), 128);
     assert_eq!(lights.len(), 48);
     assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
 }
@@ -600,6 +626,47 @@ fn software_renderer_rejects_zero_alpha_intersections() {
         )
         .unwrap();
     assert_eq!(output.rgb[0], [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn software_renderer_evaluates_normal_map() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&normal_map_scene()).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-5));
+}
+
+#[test]
+fn hardware_and_software_normal_map_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = normal_map_scene();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
 }
 
 #[test]

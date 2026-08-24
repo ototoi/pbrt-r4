@@ -6,6 +6,7 @@ use super::super::ir::{
 };
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
+use crate::util::transform::Matrix4x4;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     AccelerationStructureFlags, AccelerationStructureGeometryFlags,
@@ -37,6 +38,8 @@ pub fn tlas_transform(matrix: [[f32; 4]; 4]) -> [f32; 12] {
 pub struct VertexPlan {
     pub position: [f32; 3],
     pub uv: [f32; 2],
+    pub normal: [f32; 3],
+    pub tangent: [f32; 3],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,7 +95,7 @@ impl MaterialPlan {
         matches!(
             self.reflectance,
             MaterialReflectancePlan::SpectrumTexture(_)
-        )
+        ) || self.normal_map.is_some()
     }
 }
 
@@ -126,11 +129,13 @@ pub struct PrimitivePlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialPlan {
     pub reflectance: MaterialReflectancePlan,
+    pub normal_map: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransformPlan {
     pub render_from_object: [[f32; 4]; 4],
+    pub normal_from_object: [[f32; 4]; 4],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -254,6 +259,42 @@ fn matrix_mul(left: [[f32; 4]; 4], right: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
         }
     }
     result
+}
+
+fn normal_transform(
+    render_from_object: [[f32; 4]; 4],
+    primitive: u32,
+) -> Result<[[f32; 4]; 4], BackendError> {
+    let matrix = Matrix4x4::from([
+        render_from_object[0][0],
+        render_from_object[0][1],
+        render_from_object[0][2],
+        render_from_object[0][3],
+        render_from_object[1][0],
+        render_from_object[1][1],
+        render_from_object[1][2],
+        render_from_object[1][3],
+        render_from_object[2][0],
+        render_from_object[2][1],
+        render_from_object[2][2],
+        render_from_object[2][3],
+        render_from_object[3][0],
+        render_from_object[3][1],
+        render_from_object[3][2],
+        render_from_object[3][3],
+    ]);
+    let inverse = matrix
+        .inverse()
+        .ok_or(BackendError::Plan(PlanError::InvalidTransform {
+            primitive,
+        }))?;
+    let normal = inverse.transpose();
+    Ok([
+        [normal.m[0], normal.m[1], normal.m[2], normal.m[3]],
+        [normal.m[4], normal.m[5], normal.m[6], normal.m[7]],
+        [normal.m[8], normal.m[9], normal.m[10], normal.m[11]],
+        [normal.m[12], normal.m[13], normal.m[14], normal.m[15]],
+    ])
 }
 
 impl ScenePlan {
@@ -413,6 +454,18 @@ impl ScenePlan {
                                 uv: uvs
                                     .and_then(|uvs| uvs.get(index).map(|uv| uv.0))
                                     .unwrap_or([0.0, 0.0]),
+                                normal: triangle_mesh
+                                    .normals
+                                    .as_deref()
+                                    .and_then(|normals| normals.get(index).map(|normal| normal.0))
+                                    .unwrap_or([0.0, 0.0, 0.0]),
+                                tangent: triangle_mesh
+                                    .tangents
+                                    .as_deref()
+                                    .and_then(|tangents| {
+                                        tangents.get(index).map(|tangent| tangent.0)
+                                    })
+                                    .unwrap_or([0.0, 0.0, 0.0]),
                             }
                         },
                     ));
@@ -490,6 +543,7 @@ impl ScenePlan {
             materials.push(material);
             transforms.push(TransformPlan {
                 render_from_object: object_to_render,
+                normal_from_object: normal_transform(object_to_render, primitive_id.0)?,
             });
             tlas_instances.push(TlasInstancePlan {
                 blas: blas as u32,
@@ -535,11 +589,15 @@ fn lower_material(
             index: material_id.0,
         }))?;
     let GpuMaterial::Diffuse(diffuse) = material;
-    if diffuse.displacement.is_some() || diffuse.normal_map.is_some() {
+    if diffuse.displacement.is_some() {
         return Err(BackendError::Plan(PlanError::UnsupportedMaterial {
             primitive: primitive.0,
         }));
     }
+    let normal_map = diffuse
+        .normal_map
+        .map(|image| lower_normal_map_image(scene, image, images, image_to_plan, primitive))
+        .transpose()?;
     let texture = scene
         .spectrum_textures
         .get(diffuse.reflectance.0 as usize)
@@ -581,7 +639,43 @@ fn lower_material(
             MaterialReflectancePlan::SpectrumTexture(texture_index)
         }
     };
-    Ok(MaterialPlan { reflectance })
+    Ok(MaterialPlan {
+        reflectance,
+        normal_map,
+    })
+}
+
+fn lower_normal_map_image(
+    scene: GpuSceneView<'_>,
+    image: super::super::ir::ImageId,
+    images: &mut Vec<ImagePlan>,
+    image_to_plan: &mut [Option<u32>],
+    primitive: PrimitiveId,
+) -> Result<u32, BackendError> {
+    let image_resource = scene
+        .images
+        .get(image.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "normal map image",
+            index: image.0,
+        }))?;
+    if !matches!(
+        image_resource.channels,
+        GpuImageChannels::Rgb | GpuImageChannels::Rgba
+    ) {
+        return Err(BackendError::Plan(PlanError::UnsupportedTexture {
+            texture: primitive.0,
+        }));
+    }
+    if let Some(index) = image_to_plan.get(image.0 as usize).and_then(|index| *index) {
+        return Ok(index);
+    }
+    let index = checked_len(images.len(), "image table")?;
+    images.push(lower_image(image_resource)?);
+    if let Some(slot) = image_to_plan.get_mut(image.0 as usize) {
+        *slot = Some(index);
+    }
+    Ok(index)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -943,6 +1037,10 @@ pub fn vertex_bytes(plan: &ScenePlan) -> Vec<u8> {
                 .chain(std::iter::once(0.0))
                 .chain(vertex.uv)
                 .chain([0.0, 0.0])
+                .chain(vertex.normal)
+                .chain(std::iter::once(0.0))
+                .chain(vertex.tangent)
+                .chain(std::iter::once(0.0))
                 .flat_map(|value| value.to_le_bytes())
         })
         .collect()
@@ -983,12 +1081,14 @@ pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
                 MaterialReflectancePlan::Constant(value) => (value, 0, 0),
                 MaterialReflectancePlan::SpectrumTexture(texture) => ([0.0; 4], texture, 1),
             };
+            let normal_map = material.normal_map.unwrap_or(u32::MAX);
+            let flags = flags | u32::from(material.normal_map.is_some()) << 1;
             reflectance
                 .into_iter()
                 .flat_map(f32::to_le_bytes)
                 .chain(texture.to_le_bytes())
+                .chain(normal_map.to_le_bytes())
                 .chain(flags.to_le_bytes())
-                .chain(0u32.to_le_bytes())
                 .chain(0u32.to_le_bytes())
         })
         .collect()
@@ -1145,6 +1245,7 @@ pub fn transform_bytes(plan: &ScenePlan) -> Vec<u8> {
                 .render_from_object
                 .into_iter()
                 .flatten()
+                .chain(transform.normal_from_object.into_iter().flatten())
                 .flat_map(f32::to_le_bytes)
         })
         .collect()
@@ -1288,7 +1389,7 @@ impl HardwareAcceleration {
                     size,
                     vertex_buffer: &vertex_buffer,
                     first_vertex: blas.first_vertex,
-                    vertex_stride: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    vertex_stride: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
                     index_buffer: Some(&index_buffer),
                     first_index: Some(blas.first_index),
                     transform_buffer: None,
