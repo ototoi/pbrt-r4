@@ -2,14 +2,15 @@
 
 use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
-    GeometryId, GpuBounds2i, GpuColorEncoding, GpuDiffuseMaterial, GpuFloatImageChannel,
-    GpuFloatTexture, GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource,
-    GpuImageWrapMode, GpuIrValidationError, GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4,
-    GpuMipLevel, GpuPoint3, GpuPointLight, GpuPrimitive, GpuRenderConfig, GpuRenderOutput,
-    GpuRenderRequest, GpuSceneData, GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture,
-    GpuSpectrumType, GpuStaticTransform, GpuTexelStorage, GpuTextureMapping, GpuTransform,
-    GpuTriangleMesh, ImageId, MaterialId, PrimitiveId, SpectrumId, SpectrumTextureId,
-    TextureMappingId, TransformId, CURRENT_IR_VERSION,
+    GeometryId, GpuBounds2i, GpuBounds3, GpuColorEncoding, GpuDiffuseMaterial,
+    GpuFloatImageChannel, GpuFloatTexture, GpuGeometry, GpuImageChannels, GpuImageFilter,
+    GpuImageResource, GpuImageWrapMode, GpuInstance, GpuInstanceDefinition, GpuIrValidationError,
+    GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4, GpuMipLevel, GpuPoint3, GpuPointLight,
+    GpuPrimitive, GpuRenderConfig, GpuRenderOutput, GpuRenderRequest, GpuSceneData, GpuSceneDraft,
+    GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType, GpuStaticTransform, GpuTexelStorage,
+    GpuTextureMapping, GpuTransform, GpuTriangleMesh, ImageId, InstanceDefinitionId, InstanceId,
+    MaterialId, PrimitiveId, SpectrumId, SpectrumTextureId, TextureMappingId, TransformId,
+    CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{
     index_bytes, light_bytes, material_bytes, primitive_bytes, texture_bytes, tlas_transform,
@@ -234,6 +235,43 @@ fn uniform_infinite_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn instance_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft
+        .data
+        .transforms
+        .push(GpuTransform::Static(GpuStaticTransform {
+            render_from_object: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            object_from_render: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            swaps_handedness: false,
+        }));
+    draft.data.instance_definitions = vec![GpuInstanceDefinition {
+        primitives: vec![PrimitiveId(0)],
+        instances: Vec::new(),
+        local_bounds: GpuBounds3 {
+            min: GpuPoint3([0.0, 0.0, 0.0]),
+            max: GpuPoint3([1.0, 1.0, 0.0]),
+        },
+    }];
+    draft.data.instances = vec![GpuInstance {
+        definition: InstanceDefinitionId(0),
+        transform: TransformId(3),
+    }];
+    draft.data.world_primitives = Vec::new().into_boxed_slice();
+    draft.data.world_instances = vec![InstanceId(0)].into_boxed_slice();
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 #[test]
 fn scene_plan_lowers_triangle_geometry_and_transform() {
     let scene = minimal_scene();
@@ -257,6 +295,15 @@ fn scene_plan_lowers_triangle_geometry_and_transform() {
     );
     assert_eq!(plan.lights[0].position, [0.0, 0.0, 2.0, 1.0]);
     assert_eq!(plan.lights[0].intensity, [0.5, 0.5, 0.5, 1.0]);
+}
+
+#[test]
+fn scene_plan_flattens_static_instances_with_composed_transform() {
+    let plan = ScenePlan::from_scene(instance_scene().view()).unwrap();
+    assert_eq!(plan.primitives.len(), 1);
+    assert_eq!(plan.tlas_instances.len(), 1);
+    assert_eq!(plan.transforms[0].render_from_object[0][3], 1.0);
+    assert_eq!(plan.tlas_instances[0].transform[3], 1.0);
 }
 
 #[test]

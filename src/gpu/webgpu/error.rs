@@ -27,6 +27,9 @@ pub enum PlanError {
         transform: TransformId,
     },
     UnsupportedInstances,
+    InstanceCycle {
+        instance: u32,
+    },
     UnsupportedAlpha {
         primitive: u32,
     },
@@ -106,6 +109,9 @@ impl std::fmt::Display for PlanError {
                     formatter,
                     "instance definitions are not supported by the initial plan"
                 )
+            }
+            Self::InstanceCycle { instance } => {
+                write!(formatter, "instance cycle detected at instance {instance}")
             }
             Self::UnsupportedAlpha { primitive } => {
                 write!(

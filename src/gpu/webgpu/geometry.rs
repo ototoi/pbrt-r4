@@ -2,7 +2,7 @@ use super::super::ir::{
     GeometryId, GpuAreaLightBinding, GpuColorEncoding, GpuFloatImageChannel, GpuFloatTexture,
     GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuLight,
     GpuMaterial, GpuSceneView, GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType,
-    GpuTexelStorage, GpuTextureMapping, GpuTransform, PrimitiveId,
+    GpuTexelStorage, GpuTextureMapping, GpuTransform, InstanceId, PrimitiveId,
 };
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
@@ -153,6 +153,107 @@ pub struct ScenePlan {
     pub spectrum_textures: Vec<SpectrumTexturePlan>,
 }
 
+fn primitive_transform(
+    scene: GpuSceneView<'_>,
+    primitive_id: PrimitiveId,
+) -> Result<[[f32; 4]; 4], BackendError> {
+    let primitive = scene
+        .primitives
+        .get(primitive_id.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "primitive",
+            index: primitive_id.0,
+        }))?;
+    let transform =
+        scene
+            .transforms
+            .get(primitive.transform.0 as usize)
+            .ok_or(BackendError::Plan(PlanError::InvalidReference {
+                resource: "transform",
+                index: primitive.transform.0,
+            }))?;
+    match transform {
+        GpuTransform::Static(transform) => Ok(transform.render_from_object.0),
+        GpuTransform::Animated(_) => Err(BackendError::Plan(PlanError::UnsupportedTransform {
+            transform: primitive.transform,
+        })),
+    }
+}
+
+fn collect_instance_primitives(
+    scene: GpuSceneView<'_>,
+    instance_id: InstanceId,
+    parent: [[f32; 4]; 4],
+    output: &mut Vec<(PrimitiveId, [[f32; 4]; 4])>,
+    stack: &mut Vec<InstanceId>,
+) -> Result<(), BackendError> {
+    if stack.contains(&instance_id) {
+        return Err(BackendError::Plan(PlanError::InstanceCycle {
+            instance: instance_id.0,
+        }));
+    }
+    if stack.len() >= 64 {
+        return Err(BackendError::Plan(PlanError::LimitExceeded {
+            resource: "instance_depth",
+            value: stack.len() as u32 + 1,
+            maximum: 64,
+        }));
+    }
+    let instance = scene
+        .instances
+        .get(instance_id.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "instance",
+            index: instance_id.0,
+        }))?;
+    let instance_transform =
+        scene
+            .transforms
+            .get(instance.transform.0 as usize)
+            .ok_or(BackendError::Plan(PlanError::InvalidReference {
+                resource: "instance transform",
+                index: instance.transform.0,
+            }))?;
+    let GpuTransform::Static(instance_transform) = instance_transform else {
+        return Err(BackendError::Plan(PlanError::UnsupportedTransform {
+            transform: instance.transform,
+        }));
+    };
+    let instance_to_render = matrix_mul(parent, instance_transform.render_from_object.0);
+    let definition = scene
+        .instance_definitions
+        .get(instance.definition.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "instance definition",
+            index: instance.definition.0,
+        }))?;
+    stack.push(instance_id);
+    for primitive_id in &definition.primitives {
+        let primitive_to_instance = primitive_transform(scene, *primitive_id)?;
+        output.push((
+            *primitive_id,
+            matrix_mul(instance_to_render, primitive_to_instance),
+        ));
+    }
+    for nested in &definition.instances {
+        collect_instance_primitives(scene, *nested, instance_to_render, output, stack)?;
+    }
+    stack.pop();
+    Ok(())
+}
+
+fn matrix_mul(left: [[f32; 4]; 4], right: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut result = [[0.0; 4]; 4];
+    for row in 0..4 {
+        for column in 0..4 {
+            result[row][column] = (0..4)
+                .map(|index| left[row][index] * right[index][column])
+                .sum();
+        }
+    }
+    result
+}
+
 impl ScenePlan {
     pub fn validate_custom_data(custom_data: u32) -> Result<(), PlanError> {
         if custom_data > MAX_TLAS_CUSTOM_DATA {
@@ -166,13 +267,26 @@ impl ScenePlan {
     }
 
     pub fn from_scene(scene: GpuSceneView<'_>) -> Result<Self, BackendError> {
-        if !scene.instance_definitions.is_empty()
-            || !scene.instances.is_empty()
-            || !scene.world_instances.is_empty()
-        {
-            return Err(BackendError::Plan(PlanError::UnsupportedInstances));
+        let mut world_entries = Vec::new();
+        for primitive_id in scene.world_primitives {
+            world_entries.push((*primitive_id, primitive_transform(scene, *primitive_id)?));
         }
-        if scene.world_primitives.is_empty() {
+        let identity = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        for instance_id in scene.world_instances {
+            collect_instance_primitives(
+                scene,
+                *instance_id,
+                identity,
+                &mut world_entries,
+                &mut Vec::new(),
+            )?;
+        }
+        if world_entries.is_empty() {
             return Err(BackendError::Plan(PlanError::EmptyScene));
         }
 
@@ -198,7 +312,7 @@ impl ScenePlan {
             )?);
         }
 
-        for primitive_id in scene.world_primitives {
+        for (primitive_id, object_to_render) in world_entries {
             let primitive =
                 scene
                     .primitives
@@ -245,26 +359,10 @@ impl ScenePlan {
                     },
                 ));
             }
-            let transform =
-                scene
-                    .transforms
-                    .get(primitive.transform.0 as usize)
-                    .ok_or(BackendError::Plan(PlanError::InvalidReference {
-                        resource: "transform",
-                        index: primitive.transform.0,
-                    }))?;
-            let transform = match transform {
-                GpuTransform::Static(transform) => transform.render_from_object.0,
-                GpuTransform::Animated(_) => {
-                    return Err(BackendError::Plan(PlanError::UnsupportedTransform {
-                        transform: primitive.transform,
-                    }))
-                }
-            };
             let material = lower_material(
                 scene,
                 primitive.material,
-                *primitive_id,
+                primitive_id,
                 &mut images,
                 &mut spectrum_textures,
                 &mut image_to_plan,
@@ -353,11 +451,11 @@ impl ScenePlan {
             });
             materials.push(material);
             transforms.push(TransformPlan {
-                render_from_object: [transform[0], transform[1], transform[2], transform[3]],
+                render_from_object: object_to_render,
             });
             tlas_instances.push(TlasInstancePlan {
                 blas: blas as u32,
-                transform: tlas_transform(transform),
+                transform: tlas_transform(object_to_render),
                 custom_data,
                 mask: u8::MAX,
             });
