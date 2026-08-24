@@ -8,6 +8,9 @@ mod software;
 
 pub use device::{AccelerationMode, BackendPreference, PowerPreference, PrepareOptions};
 pub use error::{BackendError, PlanError};
-pub use geometry::{tlas_transform, BlasPlan, ScenePlan, TlasInstancePlan};
+pub use geometry::{
+    index_bytes, light_bytes, material_bytes, primitive_bytes, tlas_transform, transform_bytes,
+    vertex_bytes, BlasPlan, ScenePlan, TlasInstancePlan,
+};
 pub use renderer::{ExecutableScene, Renderer};
 pub use software::SoftwareBvhPlan;

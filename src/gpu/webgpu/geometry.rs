@@ -388,7 +388,7 @@ pub fn vertex_bytes(plan: &ScenePlan) -> Vec<u8> {
             vertex
                 .iter()
                 .chain(std::iter::once(&0.0))
-                .flat_map(|value| value.to_ne_bytes())
+                .flat_map(|value| value.to_le_bytes())
         })
         .collect()
 }
@@ -396,7 +396,7 @@ pub fn vertex_bytes(plan: &ScenePlan) -> Vec<u8> {
 pub fn index_bytes(plan: &ScenePlan) -> Vec<u8> {
     plan.indices
         .iter()
-        .flat_map(|index| index.to_ne_bytes())
+        .flat_map(|index| index.to_le_bytes())
         .collect()
 }
 
@@ -411,7 +411,7 @@ pub fn primitive_bytes(plan: &ScenePlan) -> Vec<u8> {
                 0,
             ]
             .into_iter()
-            .flat_map(u32::to_ne_bytes)
+            .flat_map(u32::to_le_bytes)
         })
         .collect()
 }
@@ -419,7 +419,7 @@ pub fn primitive_bytes(plan: &ScenePlan) -> Vec<u8> {
 pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
     plan.materials
         .iter()
-        .flat_map(|material| material.reflectance.into_iter().flat_map(f32::to_ne_bytes))
+        .flat_map(|material| material.reflectance.into_iter().flat_map(f32::to_le_bytes))
         .collect()
 }
 
@@ -431,7 +431,7 @@ pub fn transform_bytes(plan: &ScenePlan) -> Vec<u8> {
                 .render_from_object
                 .into_iter()
                 .flatten()
-                .flat_map(f32::to_ne_bytes)
+                .flat_map(f32::to_le_bytes)
         })
         .collect()
 }
@@ -444,7 +444,7 @@ pub fn light_bytes(plan: &ScenePlan) -> Vec<u8> {
                 .position
                 .into_iter()
                 .chain(light.intensity)
-                .flat_map(f32::to_ne_bytes)
+                .flat_map(f32::to_le_bytes)
         })
         .collect()
 }

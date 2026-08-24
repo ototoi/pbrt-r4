@@ -9,7 +9,8 @@ use pbrt_r4::gpu::ir::{
     SpectrumId, SpectrumTextureId, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{
-    tlas_transform, AccelerationMode, BackendPreference, PlanError, PrepareOptions, Renderer,
+    index_bytes, light_bytes, material_bytes, primitive_bytes, tlas_transform, transform_bytes,
+    vertex_bytes, AccelerationMode, BackendPreference, PlanError, PrepareOptions, Renderer,
     ScenePlan, SoftwareBvhPlan,
 };
 
@@ -141,6 +142,35 @@ fn scene_plan_lowers_triangle_geometry_and_transform() {
     assert_eq!(plan.materials[0].reflectance, [0.5, 0.5, 0.5, 1.0]);
     assert_eq!(plan.lights[0].position, [0.0, 0.0, 2.0, 1.0]);
     assert_eq!(plan.lights[0].intensity, [0.5, 0.5, 0.5, 1.0]);
+}
+
+#[test]
+fn gpu_buffer_serialization_matches_wgsl_layout() {
+    let plan = ScenePlan::from_scene(minimal_scene().view()).unwrap();
+    let vertices = vertex_bytes(&plan);
+    let indices = index_bytes(&plan);
+    let primitives = primitive_bytes(&plan);
+    let materials = material_bytes(&plan);
+    let transforms = transform_bytes(&plan);
+    let lights = light_bytes(&plan);
+
+    assert_eq!(vertices.len(), 3 * 16);
+    assert_eq!(&vertices[0..4], &0.0f32.to_le_bytes());
+    assert_eq!(&vertices[12..16], &0.0f32.to_le_bytes());
+    assert_eq!(
+        indices,
+        [0u32, 1, 2]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(primitives.len(), 16);
+    assert_eq!(materials.len(), 16);
+    assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
+    assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
+    assert_eq!(transforms.len(), 64);
+    assert_eq!(lights.len(), 32);
+    assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
 }
 
 #[test]
