@@ -1,8 +1,8 @@
 enable wgpu_ray_query;
 
 struct Camera {
-    camera_from_raster: array<vec4<f32>, 4>,
-    render_from_camera: array<vec4<f32>, 4>,
+    camera_from_raster: mat4x4<f32>,
+    render_from_camera: mat4x4<f32>,
     viewport: vec4<f32>,
     bvh_info: vec4<u32>,
 };
@@ -33,8 +33,8 @@ struct Vertex {
 };
 
 struct Transform {
-    rows: array<vec4<f32>, 4>,
-    normal_rows: array<vec4<f32>, 4>,
+    render_from_object: mat4x4<f32>,
+    normal_from_object: mat4x4<f32>,
 };
 
 struct Light {
@@ -65,13 +65,8 @@ var<storage, read> lights: array<Light>;
 @group(0) @binding(9)
 var<storage, read> scene_data: array<u32>;
 
-fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
-    return vec4<f32>(
-        dot(rows[0], value),
-        dot(rows[1], value),
-        dot(rows[2], value),
-        dot(rows[3], value),
-    );
+fn transform(matrix: mat4x4<f32>, value: vec4<f32>) -> vec4<f32> {
+    return matrix * value;
 }
 
 fn image_mip_base(image_base: u32, level: u32) -> u32 {
@@ -392,12 +387,12 @@ fn apply_normal_map(
     object_normal: vec3<f32>,
     object_dpdu: vec3<f32>,
     object_tangent: vec3<f32>,
-    rows: array<vec4<f32>, 4>,
-    normal_rows: array<vec4<f32>, 4>,
+    render_from_object: mat4x4<f32>,
+    normal_from_object: mat4x4<f32>,
 ) -> vec3<f32> {
-    let normal = normalize(transform(normal_rows, vec4<f32>(object_normal, 0.0)).xyz);
+    let normal = normalize(transform(normal_from_object, vec4<f32>(object_normal, 0.0)).xyz);
     let tangent_source = select(object_dpdu, object_tangent, dot(object_tangent, object_tangent) > 1.0e-20);
-    let transformed_tangent = transform(rows, vec4<f32>(tangent_source, 0.0)).xyz;
+    let transformed_tangent = transform(render_from_object, vec4<f32>(tangent_source, 0.0)).xyz;
     let tangent = normalize(transformed_tangent - normal * dot(normal, transformed_tangent));
     let safe_tangent = select(coordinate_tangent(normal), tangent, dot(tangent, tangent) > 1.0e-20);
     let bitangent = cross(normal, safe_tangent);
@@ -605,7 +600,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             vertices[i2].position.xyz - vertices[i0].position.xyz,
         ));
         let transform_table = transforms[intersection.instance_custom_data];
-        let position = transform(transform_table.rows, vec4<f32>(object_position, 1.0)).xyz;
+        let position = transform(transform_table.render_from_object, vec4<f32>(object_position, 1.0)).xyz;
         let material = materials[primitive.material];
         let interpolated_normal = vertices[i0].normal.xyz * barycentrics.x
             + vertices[i1].normal.xyz * barycentrics.y
@@ -654,11 +649,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let object_tangent = vertices[i0].tangent.xyz * barycentrics.x
             + vertices[i1].tangent.xyz * barycentrics.y
             + vertices[i2].tangent.xyz * barycentrics.z;
-        var normal = normalize(transform(transform_table.normal_rows, vec4<f32>(object_normal, 0.0)).xyz);
-        let dpdu = transform(transform_table.rows, vec4<f32>(object_dpdu, 0.0)).xyz;
-        let dpdv = transform(transform_table.rows, vec4<f32>(object_dpdv, 0.0)).xyz;
-        let dndu = transform(transform_table.normal_rows, vec4<f32>(object_dndu, 0.0)).xyz;
-        let dndv = transform(transform_table.normal_rows, vec4<f32>(object_dndv, 0.0)).xyz;
+        var normal = normalize(transform(transform_table.normal_from_object, vec4<f32>(object_normal, 0.0)).xyz);
+        let dpdu = transform(transform_table.render_from_object, vec4<f32>(object_dpdu, 0.0)).xyz;
+        let dpdv = transform(transform_table.render_from_object, vec4<f32>(object_dpdv, 0.0)).xyz;
+        let dndu = transform(transform_table.normal_from_object, vec4<f32>(object_dndu, 0.0)).xyz;
+        let dndv = transform(transform_table.normal_from_object, vec4<f32>(object_dndv, 0.0)).xyz;
         let differentials = uv_differentials(
             position,
             normal,
@@ -676,14 +671,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 object_normal,
                 object_dpdu,
                 object_tangent,
-                transform_table.rows,
-                transform_table.normal_rows,
+                transform_table.render_from_object,
+                transform_table.normal_from_object,
             );
         } else if ((material.flags & 4u) != 0u) {
             normal = apply_bump_map(
                 material.displacement,
                 uv,
-                normalize(transform(transform_table.normal_rows, vec4<f32>(object_normal, 0.0)).xyz),
+                normalize(transform(transform_table.normal_from_object, vec4<f32>(object_normal, 0.0)).xyz),
                 dpdu,
                 dpdv,
                 dndu,

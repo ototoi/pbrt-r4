@@ -375,9 +375,7 @@ fn camera_uniform_bytes(
     let height = (pixel_bounds.max[1] - pixel_bounds.min[1]) as f32;
     let mut values = Vec::with_capacity(9 * 16);
     for matrix in [scene.render.camera.camera_from_raster, camera_transform] {
-        for row in matrix.0 {
-            values.extend(row.into_iter().flat_map(f32::to_ne_bytes));
-        }
+        super::geometry::append_wgsl_matrix(&mut values, matrix.0);
     }
     values.extend(
         [

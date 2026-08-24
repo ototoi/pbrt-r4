@@ -1251,17 +1251,20 @@ fn spectrum_bits(spectrum: GpuSpectrumType) -> u32 {
 }
 
 pub fn transform_bytes(plan: &ScenePlan) -> Vec<u8> {
-    plan.transforms
-        .iter()
-        .flat_map(|transform| {
-            transform
-                .render_from_object
-                .into_iter()
-                .flatten()
-                .chain(transform.normal_from_object.into_iter().flatten())
-                .flat_map(f32::to_le_bytes)
-        })
-        .collect()
+    let mut bytes = Vec::with_capacity(plan.transforms.len() * 2 * 16 * size_of::<f32>());
+    for transform in &plan.transforms {
+        append_wgsl_matrix(&mut bytes, transform.render_from_object);
+        append_wgsl_matrix(&mut bytes, transform.normal_from_object);
+    }
+    bytes
+}
+
+pub fn append_wgsl_matrix(bytes: &mut Vec<u8>, matrix: [[f32; 4]; 4]) {
+    for column in 0..4 {
+        for row in &matrix {
+            bytes.extend(row[column].to_le_bytes());
+        }
+    }
 }
 
 pub fn light_bytes(plan: &ScenePlan) -> Vec<u8> {

@@ -486,7 +486,13 @@ fn image_texture_lowering_preserves_channels_mips_and_encoding() {
 
 #[test]
 fn gpu_buffer_serialization_matches_wgsl_layout() {
-    let plan = ScenePlan::from_scene(minimal_scene().view()).unwrap();
+    let mut plan = ScenePlan::from_scene(minimal_scene().view()).unwrap();
+    plan.transforms[0].render_from_object = [
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
+        [9.0, 10.0, 11.0, 12.0],
+        [13.0, 14.0, 15.0, 16.0],
+    ];
     let vertices = vertex_bytes(&plan);
     let indices = index_bytes(&plan);
     let primitives = primitive_bytes(&plan);
@@ -510,6 +516,14 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
     assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
     assert_eq!(transforms.len(), 128);
+    let matrix_values = transforms[..64]
+        .chunks_exact(4)
+        .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matrix_values,
+        [1.0, 5.0, 9.0, 13.0, 2.0, 6.0, 10.0, 14.0, 3.0, 7.0, 11.0, 15.0, 4.0, 8.0, 12.0, 16.0,]
+    );
     assert_eq!(lights.len(), 48);
     assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
 }
