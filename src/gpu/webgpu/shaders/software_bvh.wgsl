@@ -680,6 +680,17 @@ struct IndependentDirectSample {
     light_sample: vec2<f32>,
 };
 
+struct IndependentIndirectSample {
+    component: f32,
+    direction: vec2<f32>,
+    roulette: f32,
+};
+
+struct IndependentRaySample {
+    direct: IndependentDirectSample,
+    indirect: IndependentIndirectSample,
+};
+
 fn uniform_float(rng: ptr<function, IndependentRng>) -> f32 {
     return min(0.9999999403953552, f32(rng_uniform_u32(rng)) * 2.3283064365386963e-10);
 }
@@ -703,11 +714,25 @@ fn independent_camera_sample(pixel: vec2<i32>, sample_index: u32) -> Independent
     );
 }
 
-fn independent_direct_sample(pixel: vec2<i32>, sample_index: u32) -> IndependentDirectSample {
-    var rng = independent_rng(pixel, sample_index, 6u);
-    return IndependentDirectSample(
-        uniform_float(&rng),
-        vec2<f32>(uniform_float(&rng), uniform_float(&rng)),
+fn independent_ray_sample(pixel: vec2<i32>, sample_index: u32, depth: u32) -> IndependentRaySample {
+    var rng = independent_rng(pixel, sample_index, 6u + 7u * depth);
+    let direct_selection = uniform_float(&rng);
+    let direct_u0 = uniform_float(&rng);
+    let direct_u1 = uniform_float(&rng);
+    let indirect_component = uniform_float(&rng);
+    let indirect_u0 = uniform_float(&rng);
+    let indirect_u1 = uniform_float(&rng);
+    let roulette = uniform_float(&rng);
+    return IndependentRaySample(
+        IndependentDirectSample(
+            direct_selection,
+            vec2<f32>(direct_u0, direct_u1),
+        ),
+        IndependentIndirectSample(
+            indirect_component,
+            vec2<f32>(indirect_u0, indirect_u1),
+            roulette,
+        ),
     );
 }
 
@@ -969,7 +994,8 @@ fn shadow_visible(
 fn render_sample(
     pixel: vec2<f32>,
     lens_sample: vec2<f32>,
-    direct_sample: IndependentDirectSample,
+    sample_pixel: vec2<i32>,
+    sample_index: u32,
 ) -> vec3<f32> {
     let camera_target = transform(camera.camera_from_raster, vec4<f32>(pixel, 0.0, 1.0));
     var camera_origin = vec3<f32>(0.0);
@@ -981,8 +1007,8 @@ fn render_sample(
         camera_origin = vec3<f32>(lens, 0.0);
         camera_direction = normalize(focus - camera_origin);
     }
-    let origin = transform(camera.render_from_camera, vec4<f32>(camera_origin, 1.0)).xyz;
-    let direction = normalize(transform(camera.render_from_camera, vec4<f32>(camera_direction, 0.0)).xyz);
+    var ray_origin = transform(camera.render_from_camera, vec4<f32>(camera_origin, 1.0)).xyz;
+    var ray_direction = normalize(transform(camera.render_from_camera, vec4<f32>(camera_direction, 0.0)).xyz);
     let x_target = transform(
         camera.camera_from_raster,
         vec4<f32>(pixel + vec2<f32>(1.0, 0.0), 0.0, 1.0),
@@ -1004,10 +1030,20 @@ fn render_sample(
         rx_camera_direction = normalize(rx_focus - rx_camera_origin);
         ry_camera_direction = normalize(ry_focus - ry_camera_origin);
     }
-    let rx_origin = transform(camera.render_from_camera, vec4<f32>(rx_camera_origin, 1.0)).xyz;
-    let ry_origin = transform(camera.render_from_camera, vec4<f32>(ry_camera_origin, 1.0)).xyz;
-    let rx_direction = normalize(transform(camera.render_from_camera, vec4<f32>(rx_camera_direction, 0.0)).xyz);
-    let ry_direction = normalize(transform(camera.render_from_camera, vec4<f32>(ry_camera_direction, 0.0)).xyz);
+    var ray_rx_origin = transform(camera.render_from_camera, vec4<f32>(rx_camera_origin, 1.0)).xyz;
+    var ray_ry_origin = transform(camera.render_from_camera, vec4<f32>(ry_camera_origin, 1.0)).xyz;
+    var ray_rx_direction = normalize(transform(camera.render_from_camera, vec4<f32>(rx_camera_direction, 0.0)).xyz);
+    var ray_ry_direction = normalize(transform(camera.render_from_camera, vec4<f32>(ry_camera_direction, 0.0)).xyz);
+    var color = vec3<f32>(0.0);
+    var throughput = vec3<f32>(1.0);
+
+    for (var depth = 0u; depth <= camera.bvh_info.z; depth += 1u) {
+    let origin = ray_origin;
+    let direction = ray_direction;
+    let rx_origin = ray_rx_origin;
+    let ry_origin = ray_ry_origin;
+    let rx_direction = ray_rx_direction;
+    let ry_direction = ray_ry_direction;
     let inverse_direction = 1.0 / direction;
 
     var closest = 1.0e30;
@@ -1094,8 +1130,10 @@ fn render_sample(
         }
     }
 
-    var color = vec3<f32>(0.0);
     if (closest < 1.0e30) {
+        if (depth == camera.bvh_info.z) {
+            break;
+        }
         let primitive = primitives[hit_primitive];
         let index_offset = primitive.first_index + hit_triangle * 3u;
         let p0 = vertices[primitive.first_vertex + indices[index_offset]].position.xyz;
@@ -1203,6 +1241,8 @@ fn render_sample(
         if ((material.flags & 1u) != 0u) {
             reflectance = sample_texture(material.texture, uv, differentials);
         }
+        let ray_sample = independent_ray_sample(sample_pixel, sample_index, depth);
+        let direct_sample = ray_sample.direct;
         let light_count = arrayLength(&lights);
         let light_index = min(u32(direct_sample.light_selection * f32(light_count)), light_count - 1u);
         let light = lights[light_index];
@@ -1223,9 +1263,49 @@ fn render_sample(
             hit_primitive,
             hit_triangle,
         )) {
-            color = reflectance * light.intensity.xyz * cosine
+            color += throughput * reflectance * light.intensity.xyz * cosine
                 * f32(light_count) / (3.141592653589793 * distance_squared);
         }
+        let disk = sample_uniform_disk_concentric(ray_sample.indirect.direction);
+        var local_wi = vec3<f32>(disk, sqrt(max(0.0, 1.0 - dot(disk, disk))));
+        if (dot(normal, -direction) < 0.0) {
+            local_wi.z = -local_wi.z;
+        }
+        let projected_dpdu = dpdu - normal * dot(normal, dpdu);
+        let frame_x = normalize(select(
+            coordinate_tangent(normal),
+            projected_dpdu,
+            dot(projected_dpdu, projected_dpdu) > 1.0e-20,
+        ));
+        let frame_y = cross(normal, frame_x);
+        let next_direction = normalize(
+            frame_x * local_wi.x + frame_y * local_wi.y + normal * local_wi.z,
+        );
+        throughput *= reflectance;
+        if (depth >= 1u) {
+            let maximum = max(throughput.x, max(throughput.y, throughput.z));
+            if (maximum < 1.0) {
+                let q = 1.0 - maximum;
+                if (ray_sample.indirect.roulette < q) {
+                    break;
+                }
+                throughput /= 1.0 - q;
+            }
+        }
+        ray_origin = offset_ray_origin(
+            position,
+            position_error,
+            geometric_render_normal,
+            next_direction,
+        );
+        ray_direction = next_direction;
+        ray_rx_origin = ray_origin;
+        ray_ry_origin = ray_origin;
+        ray_rx_direction = ray_direction;
+        ray_ry_direction = ray_direction;
+    } else {
+        break;
+    }
     }
     return color;
 }
@@ -1246,8 +1326,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let film_position = vec2<f32>(pixel) + filter_offset + vec2<f32>(0.5);
         let sample_time = mix(camera.camera_info.z, camera.camera_info.w, camera_sample.time);
         _ = sample_time;
-        let direct_sample = independent_direct_sample(pixel, sample_index);
-        accumulated += render_sample(film_position, camera_sample.lens, direct_sample);
+        accumulated += render_sample(film_position, camera_sample.lens, pixel, sample_index);
     }
     output[global_id.y * width + global_id.x] = vec4<f32>(
         accumulated / f32(camera.sampler_info.w),

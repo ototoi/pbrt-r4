@@ -1,5 +1,6 @@
 #![cfg(feature = "webgpu")]
 
+use glam::Vec3;
 use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
     FloatTextureId, GeometryId, GpuBounds2i, GpuBounds3, GpuColorEncoding, GpuDiffuseMaterial,
@@ -218,6 +219,108 @@ fn depth_of_field_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
     draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
     draft.data.render.camera.lens_radius = 0.1;
     draft.data.render.camera.focal_distance = 4.0;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn coordinate_tangent(normal: Vec3) -> Vec3 {
+    if normal.x.abs() > normal.y.abs() {
+        Vec3::new(-normal.z, 0.0, normal.x).normalize()
+    } else {
+        Vec3::new(0.0, normal.z, -normal.y).normalize()
+    }
+}
+
+fn diffuse_sample(seed: u32, depth: u32, normal: Vec3) -> (Vec3, f32) {
+    let mut sampler = IndependentSampler::new(1, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6 + 7 * depth);
+    let _direct_selection = sampler.get_1d();
+    let _direct_light_sample = sampler.get_2d();
+    let _component = sampler.get_1d();
+    let indirect_sample = sampler.get_2d();
+    let roulette = sampler.get_1d() as f32;
+    let disk = concentric_sample_disk(&indirect_sample);
+    let local_wi = Vec3::new(
+        disk.x as f32,
+        disk.y as f32,
+        (1.0 - disk.x as f32 * disk.x as f32 - disk.y as f32 * disk.y as f32).sqrt(),
+    );
+    let frame_x = coordinate_tangent(normal);
+    let frame_y = normal.cross(frame_x);
+    let wi = (frame_x * local_wi.x + frame_y * local_wi.y + normal * local_wi.z).normalize();
+    (wi, roulette)
+}
+
+fn triangle_at(center: Vec3, normal: Vec3, radius: f32) -> [GpuPoint3; 3] {
+    let x = coordinate_tangent(normal);
+    let y = normal.cross(x);
+    [
+        GpuPoint3((center - radius * x - radius * y).to_array()),
+        GpuPoint3((center + radius * x - radius * y).to_array()),
+        GpuPoint3((center - radius * x + radius * y).to_array()),
+    ]
+}
+
+fn set_point_light_position(draft: &mut GpuSceneDraft, position: Vec3) {
+    draft.data.transforms[2] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, position.x],
+            [0.0, 1.0, 0.0, position.y],
+            [0.0, 0.0, 1.0, position.z],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, -position.x],
+            [0.0, 1.0, 0.0, -position.y],
+            [0.0, 0.0, 1.0, -position.z],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+}
+
+fn indirect_bounce_scene(max_depth: u32) -> GpuCompiledScene {
+    let (wi, _) = diffuse_sample(17, 0, Vec3::Z);
+    let first_hit = Vec3::new(0.25, 0.25, 0.0);
+    let second_hit = first_hit + 2.0 * wi;
+    let second_normal = -wi;
+    let light_position = second_hit + 0.5 * second_normal;
+
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!()
+    };
+    mesh.positions
+        .extend(triangle_at(second_hit, second_normal, 0.5));
+    mesh.indices.push([3, 4, 5]);
+    set_point_light_position(&mut draft, light_position);
+    draft.data.render.integrator.max_depth = max_depth;
+    draft.data.render.sampler.seed = 17;
+    draft.data.render.sampler.samples_per_pixel = 2;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn roulette_bounce_scene(max_depth: u32, seed: u32) -> GpuCompiledScene {
+    let first_hit = Vec3::new(0.25, 0.25, 0.0);
+    let (first_wi, _) = diffuse_sample(seed, 0, Vec3::Z);
+    let second_hit = first_hit + 2.0 * first_wi;
+    let second_normal = -first_wi;
+    let (second_wi, _) = diffuse_sample(seed, 1, second_normal);
+    let third_hit = second_hit + 2.0 * second_wi;
+    let third_normal = -second_wi;
+
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!()
+    };
+    mesh.positions
+        .extend(triangle_at(second_hit, second_normal, 0.8));
+    mesh.positions
+        .extend(triangle_at(third_hit, third_normal, 0.8));
+    mesh.indices.extend([[3, 4, 5], [6, 7, 8]]);
+    set_point_light_position(&mut draft, third_hit + 0.5 * third_normal);
+    draft.data.render.integrator.max_depth = max_depth;
+    draft.data.render.sampler.seed = u64::from(seed);
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
@@ -1166,6 +1269,143 @@ fn software_renderer_matches_perspective_depth_of_field() {
                 output.rgb[0]
             );
         }
+    }
+}
+
+#[test]
+fn software_renderer_traces_diffuse_indirect_bounce() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let one_bounce = renderer.prepare(&indirect_bounce_scene(1)).unwrap();
+    let two_bounces = renderer.prepare(&indirect_bounce_scene(2)).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let one_bounce = renderer.render(&one_bounce, &request).unwrap().rgb[0];
+    let two_bounces = renderer.render(&two_bounces, &request).unwrap().rgb[0];
+    let expected_indirect = 0.5 / std::f32::consts::PI;
+    for (one, two) in one_bounce.into_iter().zip(two_bounces) {
+        assert!(
+            ((two - one) - expected_indirect).abs() < 1.0e-4,
+            "one={one_bounce:?}, two={two_bounces:?}, expected indirect={expected_indirect}"
+        );
+    }
+}
+
+#[test]
+fn software_renderer_honors_zero_max_depth() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer.prepare(&indirect_bounce_scene(0)).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|channel| *channel == 0.0));
+}
+
+#[test]
+fn software_renderer_averages_indirect_sample_range() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer.prepare(&indirect_bounce_scene(2)).unwrap();
+    let first = renderer
+        .render(
+            &scene,
+            &GpuRenderRequest {
+                sample_start: 0,
+                sample_count: 1,
+            },
+        )
+        .unwrap()
+        .rgb[0];
+    let second = renderer
+        .render(
+            &scene,
+            &GpuRenderRequest {
+                sample_start: 1,
+                sample_count: 1,
+            },
+        )
+        .unwrap()
+        .rgb[0];
+    let combined = renderer
+        .render(
+            &scene,
+            &GpuRenderRequest {
+                sample_start: 0,
+                sample_count: 2,
+            },
+        )
+        .unwrap()
+        .rgb[0];
+    for ((first, second), combined) in first.into_iter().zip(second).zip(combined) {
+        assert!((combined - 0.5 * (first + second)).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_applies_v4_russian_roulette() {
+    let continuing_seed = (0..1024)
+        .find(|seed| {
+            let (first_wi, _) = diffuse_sample(*seed, 0, Vec3::Z);
+            let (second_wi, roulette) = diffuse_sample(*seed, 1, -first_wi);
+            roulette >= 0.75 && second_wi.z > 0.0
+        })
+        .unwrap();
+    let terminating_seed = (0..1024)
+        .find(|seed| diffuse_sample(*seed, 1, Vec3::Z).1 < 0.75)
+        .unwrap();
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+
+    for (seed, expected_indirect) in [
+        (continuing_seed, 1.0 / std::f32::consts::PI),
+        (terminating_seed, 0.0),
+    ] {
+        let two_bounces = renderer.prepare(&roulette_bounce_scene(2, seed)).unwrap();
+        let three_bounces = renderer.prepare(&roulette_bounce_scene(3, seed)).unwrap();
+        let two_bounces = renderer.render(&two_bounces, &request).unwrap().rgb[0];
+        let three_bounces = renderer.render(&three_bounces, &request).unwrap().rgb[0];
+        for (two, three) in two_bounces.into_iter().zip(three_bounces) {
+            assert!(
+                ((three - two) - expected_indirect).abs() < 1.0e-4,
+                "seed={seed}, two={two_bounces:?}, three={three_bounces:?}, expected={expected_indirect}"
+            );
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_diffuse_indirect_bounce_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = indirect_bounce_scene(2);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .into_iter()
+        .zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
     }
 }
 

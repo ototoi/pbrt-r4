@@ -388,9 +388,14 @@ fn camera_uniform_bytes(
         .flat_map(f32::to_ne_bytes),
     );
     values.extend(
-        [bvh_primitive_offset, bvh_node_offset, 0, 0]
-            .into_iter()
-            .flat_map(u32::to_ne_bytes),
+        [
+            bvh_primitive_offset,
+            bvh_node_offset,
+            scene.render.integrator.max_depth,
+            0,
+        ]
+        .into_iter()
+        .flat_map(u32::to_ne_bytes),
     );
     let seed = scene.render.sampler.seed;
     values.extend(
