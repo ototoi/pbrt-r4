@@ -745,6 +745,125 @@ fn alpha_accept(alpha: f32, origin: vec3<f32>, direction: vec3<f32>) -> bool {
     return murmur_hash_float_ray(origin, direction) <= alpha;
 }
 
+fn next_float_up(value: f32) -> f32 {
+    if (value == bitcast<f32>(0x7f800000u)) {
+        return value;
+    }
+    var adjusted = value;
+    if (adjusted == -0.0) {
+        adjusted = 0.0;
+    }
+    var bits = bitcast<u32>(adjusted);
+    if (adjusted >= 0.0) {
+        bits += 1u;
+    } else {
+        bits -= 1u;
+    }
+    return bitcast<f32>(bits);
+}
+
+fn next_float_down(value: f32) -> f32 {
+    if (value == bitcast<f32>(0xff800000u)) {
+        return value;
+    }
+    var adjusted = value;
+    if (adjusted == 0.0) {
+        adjusted = -0.0;
+    }
+    var bits = bitcast<u32>(adjusted);
+    if (adjusted > 0.0) {
+        bits -= 1u;
+    } else {
+        bits += 1u;
+    }
+    return bitcast<f32>(bits);
+}
+
+fn transformed_position_error(
+    matrix: mat4x4<f32>,
+    position: vec3<f32>,
+    position_error: vec3<f32>,
+) -> vec3<f32> {
+    let gamma3 = 1.7881397e-7;
+    var result = vec3<f32>(0.0);
+    for (var row = 0u; row < 3u; row++) {
+        let propagated = abs(matrix[0u][row]) * position_error.x
+            + abs(matrix[1u][row]) * position_error.y
+            + abs(matrix[2u][row]) * position_error.z;
+        let rounded = abs(matrix[0u][row] * position.x)
+            + abs(matrix[1u][row] * position.y)
+            + abs(matrix[2u][row] * position.z)
+            + abs(matrix[3u][row]);
+        result[row] = (1.0 + gamma3) * propagated + gamma3 * rounded;
+    }
+    return result;
+}
+
+fn offset_ray_origin(
+    position: vec3<f32>,
+    position_error: vec3<f32>,
+    normal: vec3<f32>,
+    direction: vec3<f32>,
+) -> vec3<f32> {
+    let distance = dot(abs(normal), position_error);
+    var offset = distance * normal;
+    if (dot(direction, normal) < 0.0) {
+        offset = -offset;
+    }
+    var origin = position + offset;
+    for (var axis = 0u; axis < 3u; axis++) {
+        if (offset[axis] > 0.0) {
+            origin[axis] = next_float_up(origin[axis]);
+        } else if (offset[axis] < 0.0) {
+            origin[axis] = next_float_down(origin[axis]);
+        }
+    }
+    return origin;
+}
+
+fn shadow_visible(
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    source_primitive: u32,
+    source_triangle: u32,
+) -> bool {
+    var query: ray_query;
+    rayQueryInitialize(
+        &query,
+        acceleration,
+        RayDesc(0u, 0xFFu, 0.0, 0.9999, origin, direction),
+    );
+    while (rayQueryProceed(&query)) {
+        let candidate = rayQueryGetCandidateIntersection(&query);
+        if (candidate.instance_custom_data == source_primitive
+            && candidate.primitive_index == source_triangle) {
+            continue;
+        }
+        let primitive = primitives[candidate.instance_custom_data];
+        let index_offset = primitive.first_index + candidate.primitive_index * 3u;
+        let i0 = primitive.first_vertex + indices[index_offset];
+        let i1 = primitive.first_vertex + indices[index_offset + 1u];
+        let i2 = primitive.first_vertex + indices[index_offset + 2u];
+        let barycentrics = vec3<f32>(
+            1.0 - candidate.barycentrics.x - candidate.barycentrics.y,
+            candidate.barycentrics.x,
+            candidate.barycentrics.y,
+        );
+        let uv = vertices[i0].uv.xy * barycentrics.x
+            + vertices[i1].uv.xy * barycentrics.y
+            + vertices[i2].uv.xy * barycentrics.z;
+        if (primitive.alpha == 0xffffffffu
+            || alpha_accept(
+                sample_float_texture(primitive.alpha, uv, vec4<f32>(0.0)),
+                origin,
+                direction,
+            )) {
+            rayQueryConfirmIntersection(&query);
+        }
+    }
+    return rayQueryGetCommittedIntersection(&query).kind == RAY_QUERY_INTERSECTION_NONE;
+}
+
 fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
     let camera_target = transform(
         camera.camera_from_raster,
@@ -839,6 +958,20 @@ fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
         ));
         let transform_table = transforms[intersection.instance_custom_data];
         let position = transform(transform_table.render_from_object, vec4<f32>(object_position, 1.0)).xyz;
+        let object_position_error = 4.172327e-7 * (
+            abs(barycentrics.x * vertices[i0].position.xyz)
+            + abs(barycentrics.y * vertices[i1].position.xyz)
+            + abs(barycentrics.z * vertices[i2].position.xyz)
+        );
+        let position_error = transformed_position_error(
+            transform_table.render_from_object,
+            object_position,
+            object_position_error,
+        );
+        let render_p0 = transform(transform_table.render_from_object, vertices[i0].position).xyz;
+        let render_p1 = transform(transform_table.render_from_object, vertices[i1].position).xyz;
+        let render_p2 = transform(transform_table.render_from_object, vertices[i2].position).xyz;
+        let geometric_render_normal = normalize(cross(render_p1 - render_p0, render_p2 - render_p0));
         let material = materials[primitive.material];
         let interpolated_normal = vertices[i0].normal.xyz * barycentrics.x
             + vertices[i1].normal.xyz * barycentrics.y
@@ -938,7 +1071,20 @@ fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
                 let distance_squared = max(dot(to_light, to_light), 1.0e-8);
                 let wi = normalize(to_light);
                 let cosine = max(dot(normal, wi), 0.0);
-                radiance += reflectance * light.intensity.xyz * cosine / distance_squared;
+                let shadow_origin = offset_ray_origin(
+                    position,
+                    position_error,
+                    geometric_render_normal,
+                    to_light,
+                );
+                if (cosine > 0.0 && shadow_visible(
+                    shadow_origin,
+                    to_light,
+                    intersection.instance_custom_data,
+                    intersection.primitive_index,
+                )) {
+                    radiance += reflectance * light.intensity.xyz * cosine / distance_squared;
+                }
             }
         }
         color = vec4<f32>(radiance, 1.0);

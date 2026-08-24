@@ -741,6 +741,82 @@ fn alpha_accept(alpha: f32, origin: vec3<f32>, direction: vec3<f32>) -> bool {
     return murmur_hash_float_ray(origin, direction) <= alpha;
 }
 
+fn next_float_up(value: f32) -> f32 {
+    if (value == bitcast<f32>(0x7f800000u)) {
+        return value;
+    }
+    var adjusted = value;
+    if (adjusted == -0.0) {
+        adjusted = 0.0;
+    }
+    var bits = bitcast<u32>(adjusted);
+    if (adjusted >= 0.0) {
+        bits += 1u;
+    } else {
+        bits -= 1u;
+    }
+    return bitcast<f32>(bits);
+}
+
+fn next_float_down(value: f32) -> f32 {
+    if (value == bitcast<f32>(0xff800000u)) {
+        return value;
+    }
+    var adjusted = value;
+    if (adjusted == 0.0) {
+        adjusted = -0.0;
+    }
+    var bits = bitcast<u32>(adjusted);
+    if (adjusted > 0.0) {
+        bits -= 1u;
+    } else {
+        bits += 1u;
+    }
+    return bitcast<f32>(bits);
+}
+
+fn transformed_position_error(
+    matrix: mat4x4<f32>,
+    position: vec3<f32>,
+    position_error: vec3<f32>,
+) -> vec3<f32> {
+    let gamma3 = 1.7881397e-7;
+    var result = vec3<f32>(0.0);
+    for (var row = 0u; row < 3u; row++) {
+        let propagated = abs(matrix[0u][row]) * position_error.x
+            + abs(matrix[1u][row]) * position_error.y
+            + abs(matrix[2u][row]) * position_error.z;
+        let rounded = abs(matrix[0u][row] * position.x)
+            + abs(matrix[1u][row] * position.y)
+            + abs(matrix[2u][row] * position.z)
+            + abs(matrix[3u][row]);
+        result[row] = (1.0 + gamma3) * propagated + gamma3 * rounded;
+    }
+    return result;
+}
+
+fn offset_ray_origin(
+    position: vec3<f32>,
+    position_error: vec3<f32>,
+    normal: vec3<f32>,
+    direction: vec3<f32>,
+) -> vec3<f32> {
+    let distance = dot(abs(normal), position_error);
+    var offset = distance * normal;
+    if (dot(direction, normal) < 0.0) {
+        offset = -offset;
+    }
+    var origin = position + offset;
+    for (var axis = 0u; axis < 3u; axis++) {
+        if (offset[axis] > 0.0) {
+            origin[axis] = next_float_up(origin[axis]);
+        } else if (offset[axis] < 0.0) {
+            origin[axis] = next_float_down(origin[axis]);
+        }
+    }
+    return origin;
+}
+
 fn ray_hits_box(origin: vec3<f32>, inverse_direction: vec3<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>, closest: f32) -> bool {
     let t0 = (bounds_min - origin) * inverse_direction;
     let t1 = (bounds_max - origin) * inverse_direction;
@@ -749,7 +825,14 @@ fn ray_hits_box(origin: vec3<f32>, inverse_direction: vec3<f32>, bounds_min: vec
     return near <= far && near <= closest;
 }
 
-fn ray_hits_triangle(origin: vec3<f32>, direction: vec3<f32>, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> f32 {
+fn ray_hits_triangle(
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    p0: vec3<f32>,
+    p1: vec3<f32>,
+    p2: vec3<f32>,
+    minimum_distance: f32,
+) -> f32 {
     let edge1 = p1 - p0;
     let edge2 = p2 - p0;
     let pvec = cross(direction, edge2);
@@ -769,10 +852,97 @@ fn ray_hits_triangle(origin: vec3<f32>, direction: vec3<f32>, p0: vec3<f32>, p1:
         return -1.0;
     }
     let distance = dot(edge2, qvec) * inverse_determinant;
-    if (distance > 0.0001) {
+    if (distance > minimum_distance) {
         return distance;
     }
     return -1.0;
+}
+
+fn shadow_visible(
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    source_primitive: u32,
+    source_triangle: u32,
+) -> bool {
+    let inverse_direction = 1.0 / direction;
+    var stack: array<u32, 64>;
+    var stack_size = 1u;
+    stack[0] = 0u;
+    loop {
+        if (stack_size == 0u) {
+            break;
+        }
+        stack_size -= 1u;
+        let node_base = camera.bvh_info.y + stack[stack_size] * 12u;
+        let node_bounds_min = vec3<f32>(
+            bitcast<f32>(scene_data[node_base]),
+            bitcast<f32>(scene_data[node_base + 1u]),
+            bitcast<f32>(scene_data[node_base + 2u]),
+        );
+        let node_bounds_max = vec3<f32>(
+            bitcast<f32>(scene_data[node_base + 4u]),
+            bitcast<f32>(scene_data[node_base + 5u]),
+            bitcast<f32>(scene_data[node_base + 6u]),
+        );
+        let node_first = scene_data[node_base + 8u];
+        let node_count = scene_data[node_base + 9u];
+        let node_flags = scene_data[node_base + 10u];
+        if (!ray_hits_box(origin, inverse_direction, node_bounds_min, node_bounds_max, 0.9999)) {
+            continue;
+        }
+        if (node_flags == 1u) {
+            for (var offset = 0u; offset < node_count; offset += 1u) {
+                let reference_base = camera.bvh_info.x + (node_first + offset) * 2u;
+                let primitive_index = scene_data[reference_base];
+                let triangle_index = scene_data[reference_base + 1u];
+                if (primitive_index == source_primitive && triangle_index == source_triangle) {
+                    continue;
+                }
+                let primitive = primitives[primitive_index];
+                let index_offset = primitive.first_index + triangle_index * 3u;
+                let i0 = primitive.first_vertex + indices[index_offset];
+                let i1 = primitive.first_vertex + indices[index_offset + 1u];
+                let i2 = primitive.first_vertex + indices[index_offset + 2u];
+                let transform_table = transforms[primitive_index];
+                let p0 = transform(transform_table.render_from_object, vertices[i0].position).xyz;
+                let p1 = transform(transform_table.render_from_object, vertices[i1].position).xyz;
+                let p2 = transform(transform_table.render_from_object, vertices[i2].position).xyz;
+                let distance = ray_hits_triangle(origin, direction, p0, p1, p2, 0.0);
+                if (distance <= 0.0 || distance >= 0.9999) {
+                    continue;
+                }
+                if (primitive.alpha != 0xffffffffu) {
+                    let hit = origin + distance * direction;
+                    let edge1 = p1 - p0;
+                    let edge2 = p2 - p0;
+                    let denominator = dot(edge1, edge1) * dot(edge2, edge2)
+                        - dot(edge1, edge2) * dot(edge1, edge2);
+                    let relative = hit - p0;
+                    let beta = (dot(relative, edge2) * dot(edge1, edge1)
+                        - dot(relative, edge1) * dot(edge1, edge2)) / denominator;
+                    let gamma = (dot(relative, edge1) * dot(edge2, edge2)
+                        - dot(relative, edge2) * dot(edge1, edge2)) / denominator;
+                    let barycentric = 1.0 - beta - gamma;
+                    let uv = vertices[i0].uv.xy * barycentric
+                        + vertices[i1].uv.xy * beta
+                        + vertices[i2].uv.xy * gamma;
+                    if (!alpha_accept(
+                        sample_float_texture(primitive.alpha, uv, vec4<f32>(0.0)),
+                        origin,
+                        direction,
+                    )) {
+                        continue;
+                    }
+                }
+                return false;
+            }
+        } else {
+            stack[stack_size] = node_first;
+            stack[stack_size + 1u] = node_first + 1u;
+            stack_size += 2u;
+        }
+    }
+    return true;
 }
 
 fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
@@ -862,7 +1032,7 @@ fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
                 let p0 = transform(transform_table.render_from_object, vec4<f32>(object_p0, 1.0)).xyz;
                 let p1 = transform(transform_table.render_from_object, vec4<f32>(object_p1, 1.0)).xyz;
                 let p2 = transform(transform_table.render_from_object, vec4<f32>(object_p2, 1.0)).xyz;
-                let distance = ray_hits_triangle(origin, direction, p0, p1, p2);
+                let distance = ray_hits_triangle(origin, direction, p0, p1, p2, 0.0001);
                 if (distance > 0.0 && distance < closest) {
                     let hit = origin + distance * direction;
                     let edge1 = p1 - p0;
@@ -919,6 +1089,18 @@ fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
         let gamma = (dot(rel, edge1) * dot(edge2, edge2) - dot(rel, edge2) * dot(edge1, edge2)) / d;
         let barycentrics = vec3<f32>(1.0 - beta - gamma, beta, gamma);
         let geometric_normal = normalize(cross(p1 - p0, p2 - p0));
+        let object_position = p0 * barycentrics.x + p1 * barycentrics.y + p2 * barycentrics.z;
+        let object_position_error = 4.172327e-7 * (
+            abs(barycentrics.x * p0)
+            + abs(barycentrics.y * p1)
+            + abs(barycentrics.z * p2)
+        );
+        let position_error = transformed_position_error(
+            transform_table.render_from_object,
+            object_position,
+            object_position_error,
+        );
+        let geometric_render_normal = normalize(cross(wp1 - wp0, wp2 - wp0));
         let material = materials[primitive.material];
         let v0 = primitive.first_vertex + indices[index_offset];
         let v1 = primitive.first_vertex + indices[index_offset + 1u];
@@ -1003,7 +1185,21 @@ fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
             } else {
                 let to_light = light.position.xyz - position;
                 let distance_squared = max(dot(to_light, to_light), 1.0e-8);
-                color += reflectance * light.intensity.xyz * max(dot(normal, normalize(to_light)), 0.0) / distance_squared;
+                let cosine = max(dot(normal, normalize(to_light)), 0.0);
+                let shadow_origin = offset_ray_origin(
+                    position,
+                    position_error,
+                    geometric_render_normal,
+                    to_light,
+                );
+                if (cosine > 0.0 && shadow_visible(
+                    shadow_origin,
+                    to_light,
+                    hit_primitive,
+                    hit_triangle,
+                )) {
+                    color += reflectance * light.intensity.xyz * cosine / distance_squared;
+                }
             }
         }
     }

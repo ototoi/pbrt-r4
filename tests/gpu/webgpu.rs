@@ -176,6 +176,62 @@ fn depth_of_field_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn shadow_scene(with_occluder: bool, transparent_occluder: bool) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.transforms[2] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    if with_occluder {
+        draft
+            .data
+            .geometry
+            .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions: vec![
+                    GpuPoint3([0.35, -0.25, 1.0]),
+                    GpuPoint3([0.9, -0.25, 1.0]),
+                    GpuPoint3([0.6, 0.55, 1.0]),
+                ],
+                indices: vec![[0, 1, 2]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            }));
+        let alpha = if transparent_occluder {
+            draft
+                .data
+                .float_textures
+                .push(GpuFloatTexture::Constant { value: 0.0 });
+            Some(FloatTextureId(0))
+        } else {
+            None
+        };
+        draft.data.primitives.push(GpuPrimitive {
+            geometry: GeometryId(1),
+            transform: TransformId(0),
+            material: Some(MaterialId(0)),
+            alpha,
+            shadow_alpha: None,
+            area_light: pbrt_r4::gpu::ir::GpuAreaLightBinding::None,
+            reverse_orientation: false,
+        });
+        draft.data.world_primitives = vec![PrimitiveId(0), PrimitiveId(1)].into_boxed_slice();
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn expected_independent_sample_radiance(
     samples_per_pixel: u32,
     seed: u32,
@@ -1018,6 +1074,43 @@ fn software_renderer_matches_perspective_depth_of_field() {
 }
 
 #[test]
+fn software_renderer_traces_opaque_point_light_shadows() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let visible_scene = shadow_scene(false, false);
+    let occluded_scene = shadow_scene(true, false);
+    let visible_scene = renderer.prepare(&visible_scene).unwrap();
+    let occluded_scene = renderer.prepare(&occluded_scene).unwrap();
+    let visible = renderer.render(&visible_scene, &request).unwrap();
+    let occluded = renderer.render(&occluded_scene, &request).unwrap();
+    assert!(visible.rgb[0][0] > 0.01, "{:?}", visible.rgb[0]);
+    assert!(occluded.rgb[0].iter().all(|channel| channel.abs() < 1.0e-6));
+}
+
+#[test]
+fn software_renderer_rejects_zero_alpha_shadow_occluders() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let visible_scene = shadow_scene(false, false);
+    let transparent_scene = shadow_scene(true, true);
+    let visible_scene = renderer.prepare(&visible_scene).unwrap();
+    let transparent_scene = renderer.prepare(&transparent_scene).unwrap();
+    let visible = renderer.render(&visible_scene, &request).unwrap();
+    let transparent = renderer.render(&transparent_scene, &request).unwrap();
+    for (visible_channel, transparent_channel) in visible.rgb[0].iter().zip(transparent.rgb[0]) {
+        assert!((visible_channel - transparent_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
 fn hardware_and_software_independent_sample_ranges_match() {
     let Some(mut hardware) = renderer_or_skip() else {
         return;
@@ -1066,6 +1159,30 @@ fn hardware_and_software_depth_of_field_match() {
         hardware_output.rgb[0].iter().zip(software_output.rgb[0])
     {
         assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn hardware_and_software_point_light_shadows_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    for scene in [shadow_scene(true, false), shadow_scene(true, true)] {
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in
+            hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+        }
     }
 }
 
