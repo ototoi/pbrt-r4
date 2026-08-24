@@ -9,8 +9,8 @@ use pbrt_r4::gpu::ir::{
     SpectrumId, SpectrumTextureId, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{
-    tlas_transform, AccelerationMode, PlanError, PrepareOptions, Renderer, ScenePlan,
-    SoftwareBvhPlan,
+    tlas_transform, AccelerationMode, BackendPreference, PlanError, PrepareOptions, Renderer,
+    ScenePlan, SoftwareBvhPlan,
 };
 
 fn minimal_scene() -> GpuCompiledScene {
@@ -190,6 +190,49 @@ fn prepare_rejects_zero_texture_limit_before_device_creation() {
         }),
         Err(pbrt_r4::gpu::webgpu::BackendError::InvalidPrepareOptions { .. })
     ));
+}
+
+#[test]
+fn adapter_name_mismatch_does_not_fallback_to_another_adapter() {
+    let result = Renderer::new(&PrepareOptions {
+        adapter_name: Some("pbrt-r4 adapter that does not exist".to_string()),
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    });
+    assert!(matches!(
+        result,
+        Err(pbrt_r4::gpu::webgpu::BackendError::AdapterRequest(_))
+    ));
+}
+
+#[test]
+fn selected_adapter_info_is_exposed() {
+    let renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let info = renderer.adapter_info();
+    assert!(!info.name.is_empty());
+    assert_eq!(renderer.acceleration_mode(), AccelerationMode::SoftwareBvh);
+    assert!(renderer.max_texture_dimension_2d() > 0);
+}
+
+#[test]
+fn explicit_backend_preference_does_not_fallback() {
+    let result = Renderer::new(&PrepareOptions {
+        backend: BackendPreference::Metal,
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    });
+    if cfg!(target_os = "macos") {
+        assert!(result.is_ok());
+    } else {
+        assert!(matches!(
+            result,
+            Err(pbrt_r4::gpu::webgpu::BackendError::AdapterRequest(_))
+        ));
+    }
 }
 
 #[test]
