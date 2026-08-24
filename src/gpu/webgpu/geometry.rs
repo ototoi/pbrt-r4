@@ -719,10 +719,7 @@ fn lower_spectrum_texture(
             index: mapping.0,
         }))?;
     if !matches!(mapping, GpuTextureMapping::Uv { .. })
-        || !matches!(
-            filter,
-            GpuImageFilter::Point | GpuImageFilter::Bilinear | GpuImageFilter::Trilinear
-        )
+        || !supported_filter(filter)
         || !supported_wrap(swrap)
         || !supported_wrap(twrap)
     {
@@ -776,6 +773,16 @@ fn supported_wrap(wrap: GpuImageWrapMode) -> bool {
     )
 }
 
+fn supported_filter(filter: GpuImageFilter) -> bool {
+    matches!(
+        filter,
+        GpuImageFilter::Point
+            | GpuImageFilter::Bilinear
+            | GpuImageFilter::Trilinear
+            | GpuImageFilter::Ewa { .. }
+    )
+}
+
 fn lower_float_texture(
     scene: GpuSceneView<'_>,
     texture: GpuFloatTexture,
@@ -810,10 +817,7 @@ fn lower_float_texture(
                     index: image.0,
                 }))?;
             if !matches!(mapping, GpuTextureMapping::Uv { .. })
-                || !matches!(
-                    filter,
-                    GpuImageFilter::Point | GpuImageFilter::Bilinear | GpuImageFilter::Trilinear
-                )
+                || !supported_filter(filter)
                 || !supported_wrap(swrap)
                 || !supported_wrap(twrap)
             {
@@ -1115,9 +1119,10 @@ pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
 
 /// Serializes the image-texture ABI. All offsets are u32 word offsets relative
 /// to this buffer. The descriptor tables retain every mip level for
-/// shader-side point/bilinear LOD selection.
+/// shader-side MIPMap filtering.
 pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
-    let image_offset = 8u32;
+    const EWA_LUT_SIZE: u32 = 128;
+    let image_offset = 8 + EWA_LUT_SIZE;
     let mip_count: u32 = plan
         .images
         .iter()
@@ -1137,6 +1142,11 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
         spectrum_offset,
         plan.spectrum_textures.len() as u32,
     ];
+    let exp_minus_two = (-2.0f32).exp();
+    words.extend((0..EWA_LUT_SIZE).map(|index| {
+        let radius_squared = index as f32 / (EWA_LUT_SIZE - 1) as f32;
+        ((-2.0 * radius_squared).exp() - exp_minus_two).to_bits()
+    }));
     let mut image_data_offset = scalar_offset;
     let mut next_mip_offset = mip_offset;
     for image in &plan.images {
@@ -1192,7 +1202,7 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
                     mapping[3],
                     scale.to_bits(),
                     flags,
-                    0,
+                    max_anisotropy_bits(*filter),
                 ]);
             }
         }
@@ -1212,7 +1222,7 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
             mapping[3],
             texture.scale.to_bits(),
             flags,
-            0,
+            max_anisotropy_bits(texture.filter),
         ]);
     }
     for image in &plan.images {
@@ -1243,7 +1253,14 @@ fn filter_bits(filter: GpuImageFilter) -> u32 {
         GpuImageFilter::Point => 0,
         GpuImageFilter::Bilinear => 1,
         GpuImageFilter::Trilinear => 2,
-        GpuImageFilter::Ewa { .. } => unreachable!("EWA textures are rejected during lowering"),
+        GpuImageFilter::Ewa { .. } => 3,
+    }
+}
+
+fn max_anisotropy_bits(filter: GpuImageFilter) -> u32 {
+    match filter {
+        GpuImageFilter::Ewa { max_anisotropy } => max_anisotropy.to_bits(),
+        _ => 0,
     }
 }
 

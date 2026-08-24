@@ -171,15 +171,91 @@ fn sample_image_level(
         + p11 * weight.x * weight.y;
 }
 
+fn sample_image_ewa_level(
+    image_base: u32,
+    level: u32,
+    st: vec2<f32>,
+    swrap: u32,
+    twrap: u32,
+    dst0: vec2<f32>,
+    dst1: vec2<f32>,
+) -> vec4<f32> {
+    let levels = scene_data[image_base + 4u];
+    if (level >= levels) {
+        return image_texel(image_base, levels - 1u, 0, 0, swrap, twrap);
+    }
+    let mip_base = image_mip_base(image_base, level);
+    let resolution = vec2<f32>(f32(scene_data[mip_base]), f32(scene_data[mip_base + 1u]));
+    let texture_st = st * resolution - vec2<f32>(0.5);
+    let d0 = dst0 * resolution;
+    let d1 = dst1 * resolution;
+    var a = d0.y * d0.y + d1.y * d1.y + 1.0;
+    var b = -2.0 * (d0.x * d0.y + d1.x * d1.y);
+    var c = d0.x * d0.x + d1.x * d1.x + 1.0;
+    let inverse_f = 1.0 / (a * c - 0.25 * b * b);
+    a *= inverse_f;
+    b *= inverse_f;
+    c *= inverse_f;
+    let determinant = -b * b + 4.0 * a * c;
+    let inverse_determinant = 1.0 / determinant;
+    let u_sqrt = sqrt(max(0.0, determinant * c));
+    let v_sqrt = sqrt(max(0.0, a * determinant));
+    let s0 = i32(ceil(texture_st.x - 2.0 * inverse_determinant * u_sqrt));
+    let s1 = i32(floor(texture_st.x + 2.0 * inverse_determinant * u_sqrt));
+    let t0 = i32(ceil(texture_st.y - 2.0 * inverse_determinant * v_sqrt));
+    let t1 = i32(floor(texture_st.y + 2.0 * inverse_determinant * v_sqrt));
+    var sum = vec4<f32>(0.0);
+    var sum_weights = 0.0;
+    for (var t = t0; t <= t1; t++) {
+        let tt = f32(t) - texture_st.y;
+        for (var s = s0; s <= s1; s++) {
+            let ss = f32(s) - texture_st.x;
+            let radius_squared = a * ss * ss + b * ss * tt + c * tt * tt;
+            if (radius_squared < 1.0) {
+                let index = min(u32(radius_squared * 128.0), 127u);
+                let weight = bitcast<f32>(scene_data[8u + index]);
+                sum += weight * image_texel(image_base, level, s, t, swrap, twrap);
+                sum_weights += weight;
+            }
+        }
+    }
+    return sum / sum_weights;
+}
+
 fn sample_image(
     image_base: u32,
     st: vec2<f32>,
     swrap: u32,
     twrap: u32,
     filter_mode: u32,
+    max_anisotropy: f32,
     differentials: vec4<f32>,
 ) -> vec4<f32> {
     let levels = scene_data[image_base + 4u];
+    if (filter_mode == 3u) {
+        var dst0 = differentials.xy;
+        var dst1 = differentials.zw;
+        if (dot(dst0, dst0) < dot(dst1, dst1)) {
+            let temporary = dst0;
+            dst0 = dst1;
+            dst1 = temporary;
+        }
+        let longer_length = length(dst0);
+        var shorter_length = length(dst1);
+        if (shorter_length * max_anisotropy < longer_length && shorter_length > 0.0) {
+            let scale = longer_length / (shorter_length * max_anisotropy);
+            dst1 *= scale;
+            shorter_length *= scale;
+        }
+        if (shorter_length == 0.0) {
+            return sample_image_level(image_base, 0u, st, swrap, twrap, true);
+        }
+        let lod = max(0.0, f32(levels - 1u) + log2(shorter_length));
+        let integer_lod = u32(floor(lod));
+        let value = sample_image_ewa_level(image_base, integer_lod, st, swrap, twrap, dst0, dst1);
+        let next = sample_image_ewa_level(image_base, integer_lod + 1u, st, swrap, twrap, dst0, dst1);
+        return mix(value, next, lod - f32(integer_lod));
+    }
     let level = texture_lod(image_base, differentials);
     if (level >= f32(levels - 1u)) {
         return image_texel(image_base, levels - 1u, 0, 0, swrap, twrap);
@@ -221,6 +297,7 @@ fn sample_texture(texture_id: u32, uv: vec2<f32>, differentials: vec4<f32>) -> v
         swrap,
         twrap,
         (flags >> 5u) & 3u,
+        bitcast<f32>(scene_data[texture_base + 7u]),
         differentials * vec4<f32>(su, sv, su, sv),
     );
     if ((flags & 1u) != 0u) {
@@ -469,6 +546,7 @@ fn sample_float_texture(texture_id: u32, uv: vec2<f32>, differentials: vec4<f32>
         swrap,
         twrap,
         (flags >> 5u) & 3u,
+        bitcast<f32>(scene_data[texture_base + 7u]),
         differentials * vec4<f32>(su, sv, su, sv),
     );
     var result = select(value.r, value.a, ((flags >> 9u) & 3u) == 1u);

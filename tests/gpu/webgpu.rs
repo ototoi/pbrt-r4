@@ -328,14 +328,9 @@ fn trilinear_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
-fn point_rounding_scene() -> GpuCompiledScene {
+fn two_texel_scene(mapping: GpuTextureMapping, filter: GpuImageFilter) -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
-    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
-        su: 0.1,
-        sv: 0.1,
-        du: 0.575,
-        dv: 0.45,
-    }];
+    draft.data.texture_mappings = vec![mapping];
     draft.data.images = vec![GpuImageResource {
         resolution: [2, 1],
         channels: GpuImageChannels::Rgb,
@@ -364,7 +359,7 @@ fn point_rounding_scene() -> GpuCompiledScene {
         invert: false,
         swrap: GpuImageWrapMode::Clamp,
         twrap: GpuImageWrapMode::Clamp,
-        filter: GpuImageFilter::Point,
+        filter,
         spectrum_type: GpuSpectrumType::Unbounded,
     }];
     if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
@@ -581,7 +576,7 @@ fn image_texture_lowering_preserves_channels_mips_and_encoding() {
     assert!((plan.images[2].texels[0] - 0.25).abs() < 1.0e-6);
     assert_eq!(plan.float_textures.len(), 3);
     assert_eq!(plan.spectrum_textures.len(), 1);
-    assert!(texture_bytes(&plan).len() >= 8 * 4);
+    assert!(texture_bytes(&plan).len() >= 136 * 4);
     assert!(matches!(
         plan.materials[0].reflectance,
         MaterialReflectancePlan::SpectrumTexture(0)
@@ -651,6 +646,36 @@ fn texture_serialization_preserves_trilinear_filter_modes() {
         .collect::<Vec<_>>();
     let spectrum_offset = spectrum_words[6] as usize;
     assert_eq!((spectrum_words[spectrum_offset + 6] >> 5) & 3, 2);
+}
+
+#[test]
+fn texture_serialization_preserves_ewa_filter_parameters() {
+    let float_scene = bump_map_scene(GpuImageFilter::Ewa {
+        max_anisotropy: 3.0,
+    });
+    let float_plan = ScenePlan::from_scene(float_scene.view()).unwrap();
+    let float_words = texture_bytes(&float_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(float_words[0], 136);
+    let float_offset = float_words[4] as usize;
+    assert_eq!((float_words[float_offset + 6] >> 5) & 3, 3);
+    assert_eq!(f32::from_bits(float_words[float_offset + 7]), 3.0);
+
+    let spectrum_scene = trilinear_lod_scene(GpuImageFilter::Ewa {
+        max_anisotropy: 4.0,
+    });
+    let spectrum_plan = ScenePlan::from_scene(spectrum_scene.view()).unwrap();
+    let spectrum_words = texture_bytes(&spectrum_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let spectrum_offset = spectrum_words[6] as usize;
+    assert_eq!((spectrum_words[spectrum_offset + 6] >> 5) & 3, 3);
+    assert_eq!(f32::from_bits(spectrum_words[spectrum_offset + 7]), 4.0);
+    assert!((f32::from_bits(spectrum_words[8]) - 0.864_664_73).abs() < 1.0e-7);
+    assert_eq!(f32::from_bits(spectrum_words[135]), 0.0);
 }
 
 #[test]
@@ -1051,13 +1076,50 @@ fn software_renderer_interpolates_trilinear_mipmap_levels() {
 }
 
 #[test]
+fn software_renderer_applies_ewa_anisotropy_limit() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let isotropic_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Ewa {
+            max_anisotropy: 1.0,
+        }))
+        .unwrap();
+    let anisotropic_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Ewa {
+            max_anisotropy: 8.0,
+        }))
+        .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let isotropic = renderer.render(&isotropic_scene, &request).unwrap().rgb[0];
+    let anisotropic = renderer.render(&anisotropic_scene, &request).unwrap().rgb[0];
+
+    assert!(
+        isotropic[0] > anisotropic[0] + 0.02,
+        "{isotropic:?} {anisotropic:?}"
+    );
+}
+
+#[test]
 fn software_renderer_rounds_point_sample_coordinates() {
     let mut renderer = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
     })
     .unwrap();
-    let executable = renderer.prepare(&point_rounding_scene()).unwrap();
+    let executable = renderer
+        .prepare(&two_texel_scene(
+            GpuTextureMapping::Uv {
+                su: 0.1,
+                sv: 0.1,
+                du: 0.575,
+                dv: 0.45,
+            },
+            GpuImageFilter::Point,
+        ))
+        .unwrap();
     let output = renderer
         .render(
             &executable,
@@ -1066,6 +1128,42 @@ fn software_renderer_rounds_point_sample_coordinates() {
         .unwrap();
     assert!(output.rgb[0][1] > output.rgb[0][0], "{:?}", output.rgb[0]);
     assert!(output.rgb[0][1] > output.rgb[0][2], "{:?}", output.rgb[0]);
+}
+
+#[test]
+fn software_renderer_uses_bilinear_for_zero_ewa_differentials() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let mapping = GpuTextureMapping::Uv {
+        su: 0.0,
+        sv: 0.0,
+        du: 0.5,
+        dv: 0.5,
+    };
+    let ewa_scene = renderer
+        .prepare(&two_texel_scene(
+            mapping,
+            GpuImageFilter::Ewa {
+                max_anisotropy: 8.0,
+            },
+        ))
+        .unwrap();
+    let bilinear_scene = renderer
+        .prepare(&two_texel_scene(mapping, GpuImageFilter::Bilinear))
+        .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let ewa = renderer.render(&ewa_scene, &request).unwrap().rgb[0];
+    let bilinear = renderer.render(&bilinear_scene, &request).unwrap().rgb[0];
+    for (ewa_channel, bilinear_channel) in ewa.iter().zip(bilinear) {
+        assert!(
+            (ewa_channel - bilinear_channel).abs() < 1.0e-5,
+            "{ewa:?} {bilinear:?}"
+        );
+    }
+    assert!(ewa[0] > ewa[2] && ewa[1] > ewa[2], "{ewa:?}");
 }
 
 #[test]
@@ -1082,6 +1180,9 @@ fn hardware_and_software_mipmap_lod_results_match() {
     for scene in [
         mipmap_lod_scene(GpuImageFilter::Bilinear),
         trilinear_lod_scene(GpuImageFilter::Trilinear),
+        trilinear_lod_scene(GpuImageFilter::Ewa {
+            max_anisotropy: 4.0,
+        }),
     ] {
         let hardware_scene = hardware.prepare(&scene).unwrap();
         let software_scene = software.prepare(&scene).unwrap();
