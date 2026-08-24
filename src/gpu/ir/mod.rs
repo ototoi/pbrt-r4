@@ -4,10 +4,10 @@
 //! raw pointers, shader bindings, or CPU trait objects. Geometry, materials,
 //! and textures will be added in later IR phases.
 
-pub mod geometry;
-pub mod math;
-pub mod render;
-pub mod texture;
+mod geometry;
+mod math;
+mod render;
+mod texture;
 
 pub use geometry::*;
 pub use math::*;

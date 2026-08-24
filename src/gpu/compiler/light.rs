@@ -1,7 +1,8 @@
 use super::{
     compile_rgb_spectrum, compile_transform, finite_parameter, light_source_location,
-    GpuCompileError, GpuDiffuseAreaLight, GpuLight, GpuSourceLocation, GpuSpectrumResource,
-    GpuSpectrumTexture, GpuTransform, LightSceneEntity, SceneBuilder,
+    GpuCompileError, GpuDiffuseAreaLight, GpuIndex, GpuLight, GpuPointLight, GpuSourceLocation,
+    GpuSpectrumResource, GpuSpectrumTexture, GpuTransform, GpuUniformInfiniteLight,
+    LightSceneEntity, SceneBuilder, TransformId,
 };
 use crate::gpu::ir::{LightId, SpectrumTextureId};
 use crate::parser::scene_builder::AreaLightSceneEntity;
@@ -14,7 +15,7 @@ pub fn compile_light(
     lights: &mut Vec<GpuLight>,
 ) -> Result<(), GpuCompileError> {
     let source = light_source_location(light);
-    let transform_id = super::TransformId(transforms.len() as super::GpuIndex);
+    let transform_id = TransformId(transforms.len() as GpuIndex);
     transforms.push(compile_transform(&light.base.render_from_object, &source)?);
     let (spectrum_name, default_scale) = match light.base.base.name.as_str() {
         "point" => ("I", 1.0),
@@ -35,12 +36,12 @@ pub fn compile_light(
     )?;
     let scale = finite_parameter(&light.base.base.params, "scale", default_scale, &source)?;
     match light.base.base.name.as_str() {
-        "point" => lights.push(GpuLight::Point(super::GpuPointLight {
+        "point" => lights.push(GpuLight::Point(GpuPointLight {
             render_from_light: transform_id,
             intensity: spectrum,
             scale,
         })),
-        "infinite" => lights.push(GpuLight::UniformInfinite(super::GpuUniformInfiniteLight {
+        "infinite" => lights.push(GpuLight::UniformInfinite(GpuUniformInfiniteLight {
             radiance: spectrum,
             scale,
         })),
@@ -75,10 +76,10 @@ pub fn compile_area_light(
         });
     }
     let emission = compile_rgb_spectrum(&area.base.params, "L", [1.0, 1.0, 1.0], source, spectra)?;
-    let emission_texture = SpectrumTextureId(spectrum_textures.len() as super::GpuIndex);
+    let emission_texture = SpectrumTextureId(spectrum_textures.len() as GpuIndex);
     spectrum_textures.push(GpuSpectrumTexture::Constant { value: emission });
     let scale = finite_parameter(&area.base.params, "scale", 1.0, source)?;
-    let light_id = LightId(lights.len() as super::GpuIndex);
+    let light_id = LightId(lights.len() as GpuIndex);
     lights.push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
         emission: emission_texture,
         scale,
