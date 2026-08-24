@@ -2,7 +2,7 @@
 
 use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
-    GeometryId, GpuBounds2i, GpuBounds3, GpuColorEncoding, GpuDiffuseMaterial,
+    FloatTextureId, GeometryId, GpuBounds2i, GpuBounds3, GpuColorEncoding, GpuDiffuseMaterial,
     GpuFloatImageChannel, GpuFloatTexture, GpuGeometry, GpuImageChannels, GpuImageFilter,
     GpuImageResource, GpuImageWrapMode, GpuInstance, GpuInstanceDefinition, GpuIrValidationError,
     GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4, GpuMipLevel, GpuPoint3, GpuPointLight,
@@ -235,6 +235,13 @@ fn uniform_infinite_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn alpha_scene(alpha: f32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.float_textures = vec![GpuFloatTexture::Constant { value: alpha }];
+    draft.data.primitives[0].alpha = Some(FloatTextureId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn instance_scene() -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft
@@ -374,7 +381,7 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
             .flat_map(u32::to_le_bytes)
             .collect::<Vec<_>>()
     );
-    assert_eq!(primitives.len(), 16);
+    assert_eq!(primitives.len(), 32);
     assert_eq!(materials.len(), 32);
     assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
     assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
@@ -576,6 +583,37 @@ fn software_renderer_evaluates_uniform_infinite_light() {
     assert!((output.rgb[0][0] - 0.25).abs() < 1.0e-4);
     assert!((output.rgb[0][1] - 0.25).abs() < 1.0e-4);
     assert!((output.rgb[0][2] - 0.25).abs() < 1.0e-4);
+}
+
+#[test]
+fn software_renderer_rejects_zero_alpha_intersections() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&alpha_scene(0.0)).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(output.rgb[0], [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn scene_plan_rejects_unimplemented_shadow_alpha() {
+    let mut draft = minimal_scene_draft();
+    draft.data.float_textures = vec![GpuFloatTexture::Constant { value: 0.0 }];
+    draft.data.primitives[0].shadow_alpha = Some(FloatTextureId(0));
+    let scene = GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default());
+    assert_eq!(
+        ScenePlan::from_scene(scene.view()),
+        Err(pbrt_r4::gpu::webgpu::BackendError::Plan(
+            PlanError::UnsupportedAlpha { primitive: 0 }
+        ))
+    );
 }
 
 #[test]

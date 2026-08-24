@@ -119,6 +119,8 @@ pub struct PrimitivePlan {
     pub first_index: u32,
     pub triangle_count: u32,
     pub material: u32,
+    pub alpha: Option<u32>,
+    pub shadow_alpha: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -342,7 +344,7 @@ impl ScenePlan {
                     geometry: primitive.geometry,
                 }));
             }
-            if primitive.alpha.is_some() || primitive.shadow_alpha.is_some() {
+            if primitive.shadow_alpha.is_some() {
                 return Err(BackendError::Plan(PlanError::UnsupportedAlpha {
                     primitive: primitive_id.0,
                 }));
@@ -368,7 +370,11 @@ impl ScenePlan {
                 &mut image_to_plan,
             )?;
 
-            if material.requires_uv()
+            let alpha_requires_uv = primitive
+                .alpha
+                .and_then(|texture| scene.float_textures.get(texture.0 as usize))
+                .is_some_and(|texture| matches!(texture, GpuFloatTexture::Image { .. }));
+            if (material.requires_uv() || alpha_requires_uv)
                 && (triangle_mesh.uvs.is_none() || triangle_mesh.face_indices.is_some())
             {
                 return Err(BackendError::Plan(PlanError::UnsupportedTexture {
@@ -443,11 +449,43 @@ impl ScenePlan {
 
             let custom_data = checked_len(tlas_instances.len(), "TLAS custom data")?;
             Self::validate_custom_data(custom_data).map_err(BackendError::Plan)?;
+            let alpha = primitive.alpha.map(|texture| {
+                if usize::try_from(texture.0)
+                    .ok()
+                    .and_then(|index| float_textures.get(index))
+                    .is_none()
+                {
+                    Err(BackendError::Plan(PlanError::InvalidReference {
+                        resource: "alpha texture",
+                        index: texture.0,
+                    }))
+                } else {
+                    Ok(texture.0)
+                }
+            });
+            let alpha = alpha.transpose()?;
+            let shadow_alpha = primitive.shadow_alpha.map(|texture| {
+                if usize::try_from(texture.0)
+                    .ok()
+                    .and_then(|index| float_textures.get(index))
+                    .is_none()
+                {
+                    Err(BackendError::Plan(PlanError::InvalidReference {
+                        resource: "shadow alpha texture",
+                        index: texture.0,
+                    }))
+                } else {
+                    Ok(texture.0)
+                }
+            });
+            let shadow_alpha = shadow_alpha.transpose()?;
             primitives.push(PrimitivePlan {
                 first_vertex: blases[blas].first_vertex,
                 first_index: blases[blas].first_index,
                 triangle_count: blases[blas].index_count / 3,
                 material: custom_data,
+                alpha,
+                shadow_alpha,
             });
             materials.push(material);
             transforms.push(TransformPlan {
@@ -925,6 +963,10 @@ pub fn primitive_bytes(plan: &ScenePlan) -> Vec<u8> {
                 primitive.first_vertex,
                 primitive.first_index,
                 primitive.material,
+                primitive.alpha.unwrap_or(u32::MAX),
+                primitive.shadow_alpha.unwrap_or(u32::MAX),
+                0,
+                0,
                 0,
             ]
             .into_iter()
@@ -1182,7 +1224,9 @@ impl HardwareAcceleration {
                 vertex_count: blas.vertex_count,
                 index_format: Some(IndexFormat::Uint32),
                 index_count: Some(blas.index_count),
-                flags: AccelerationStructureGeometryFlags::OPAQUE,
+                // Keep triangle candidates visible to the shader.  Alpha-masked
+                // primitives must be rejected or confirmed per candidate.
+                flags: AccelerationStructureGeometryFlags::empty(),
             })
             .collect();
         let blases: Vec<_> = sizes
