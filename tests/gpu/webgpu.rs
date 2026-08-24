@@ -3,22 +3,26 @@
 use glam::Vec3;
 use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
-    FloatTextureId, GeometryId, GpuBounds2i, GpuBounds3, GpuColorEncoding, GpuDiffuseMaterial,
-    GpuFloatImageChannel, GpuFloatTexture, GpuGeometry, GpuImageChannels, GpuImageFilter,
-    GpuImageResource, GpuImageWrapMode, GpuInstance, GpuInstanceDefinition, GpuIrValidationError,
-    GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4, GpuMipLevel, GpuNormal3, GpuPoint3,
-    GpuPointLight, GpuPrimitive, GpuRenderConfig, GpuRenderOutput, GpuRenderRequest, GpuSceneData,
-    GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType, GpuStaticTransform,
-    GpuTexelStorage, GpuTextureMapping, GpuTransform, GpuTriangleMesh, ImageId,
-    InstanceDefinitionId, InstanceId, MaterialId, PrimitiveId, SpectrumId, SpectrumTextureId,
-    TextureMappingId, TransformId, CURRENT_IR_VERSION,
+    FloatTextureId, GeometryId, GpuAreaLightBinding, GpuBounds2i, GpuBounds3, GpuColorEncoding,
+    GpuDiffuseAreaLight, GpuDiffuseMaterial, GpuFloatImageChannel, GpuFloatTexture, GpuGeometry,
+    GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuInstance,
+    GpuInstanceDefinition, GpuIrValidationError, GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4,
+    GpuMipLevel, GpuNormal3, GpuPoint3, GpuPointLight, GpuPrimitive, GpuRenderConfig,
+    GpuRenderOutput, GpuRenderRequest, GpuSceneData, GpuSceneDraft, GpuSpectrumResource,
+    GpuSpectrumTexture, GpuSpectrumType, GpuStaticTransform, GpuTexelStorage, GpuTextureMapping,
+    GpuTransform, GpuTriangleMesh, ImageId, InstanceDefinitionId, InstanceId, LightId, MaterialId,
+    PrimitiveId, SpectrumId, SpectrumTextureId, TextureMappingId, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{
     index_bytes, light_bytes, material_bytes, primitive_bytes, texture_bytes, tlas_transform,
     transform_bytes, vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan,
     PlanError, PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
 };
-use pbrt_r4::prelude::{concentric_sample_disk, IndependentSampler, Point2i};
+use pbrt_r4::prelude::{
+    bilinear_pdf, concentric_sample_disk, invert_spherical_triangle_sample, sample_bilinear,
+    sample_spherical_triangle, spherical_triangle_area, IndependentSampler, Point2i, Point3f,
+    Vector3f,
+};
 
 fn minimal_scene_draft() -> GpuSceneDraft {
     let identity = GpuMatrix4x4([
@@ -157,6 +161,192 @@ fn reverse_orientation_scene() -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn area_light_scene(two_sided: bool) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!();
+    };
+    mesh.positions.push(GpuPoint3([1.0, 1.0, 0.0]));
+    mesh.indices = vec![[0, 1, 2], [1, 3, 2]];
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided,
+        }));
+    draft.data.primitives[0].area_light = GpuAreaLightBinding::Uniform(LightId(1));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn per_element_area_light_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!();
+    };
+    mesh.positions.push(GpuPoint3([1.0, 1.0, 0.0]));
+    mesh.indices = vec![[0, 1, 2], [1, 3, 2]];
+    for scale in [2.0, 4.0] {
+        draft
+            .data
+            .lights
+            .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+                emission: SpectrumTextureId(0),
+                scale,
+                two_sided: false,
+            }));
+    }
+    draft.data.primitives[0].area_light =
+        GpuAreaLightBinding::PerElement(vec![LightId(1), LightId(2)]);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn instanced_area_light_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided: false,
+        }));
+    draft.data.primitives[0].area_light = GpuAreaLightBinding::Uniform(LightId(1));
+    draft.data.instance_definitions = vec![GpuInstanceDefinition {
+        primitives: vec![PrimitiveId(0)],
+        instances: Vec::new(),
+        local_bounds: GpuBounds3 {
+            min: GpuPoint3([0.0, 0.0, 0.0]),
+            max: GpuPoint3([1.0, 1.0, 0.0]),
+        },
+    }];
+    draft.data.instances = vec![
+        GpuInstance {
+            definition: InstanceDefinitionId(0),
+            transform: TransformId(0),
+        },
+        GpuInstance {
+            definition: InstanceDefinitionId(0),
+            transform: TransformId(0),
+        },
+    ];
+    draft.data.world_primitives = Vec::new().into_boxed_slice();
+    draft.data.world_instances = vec![InstanceId(0), InstanceId(1)].into_boxed_slice();
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn emissive_triangle_scene(reverse_orientation: bool, two_sided: bool) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.clear();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided,
+        }));
+    draft.data.primitives[0].area_light = GpuAreaLightBinding::Uniform(LightId(0));
+    draft.data.primitives[0].reverse_orientation = reverse_orientation;
+    draft.data.render.integrator.max_depth = 0;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn direct_area_light_scene() -> GpuCompiledScene {
+    direct_area_light_scene_with_positions([
+        GpuPoint3([0.75, -0.25, 1.0]),
+        GpuPoint3([1.0, 0.5, 1.0]),
+        GpuPoint3([1.25, -0.25, 1.0]),
+    ])
+}
+
+fn direct_area_light_scene_with_positions(positions: [GpuPoint3; 3]) -> GpuCompiledScene {
+    let draft = direct_area_light_scene_draft(positions);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn direct_area_light_scene_draft(positions: [GpuPoint3; 3]) -> GpuSceneDraft {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.clear();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided: false,
+        }));
+    draft
+        .data
+        .geometry
+        .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+            positions: positions.into(),
+            indices: vec![[0, 1, 2]],
+            normals: None,
+            tangents: None,
+            uvs: None,
+            face_indices: None,
+        }));
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(1),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::Uniform(LightId(0)),
+        reverse_orientation: false,
+    });
+    draft.data.world_primitives = vec![PrimitiveId(0), PrimitiveId(1)].into_boxed_slice();
+    draft.data.render.integrator.max_depth = 1;
+    draft
+}
+
+fn alpha_masked_direct_area_light_scene(alpha: f32) -> GpuCompiledScene {
+    let mut draft = direct_area_light_scene_draft([
+        GpuPoint3([0.75, -0.25, 1.0]),
+        GpuPoint3([1.0, 0.5, 1.0]),
+        GpuPoint3([1.25, -0.25, 1.0]),
+    ]);
+    draft.data.float_textures = vec![GpuFloatTexture::Constant { value: alpha }];
+    draft.data.primitives[1].alpha = Some(FloatTextureId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn occluded_direct_area_light_scene() -> GpuCompiledScene {
+    let mut draft = direct_area_light_scene_draft([
+        GpuPoint3([0.75, -0.25, 1.0]),
+        GpuPoint3([1.0, 0.5, 1.0]),
+        GpuPoint3([1.25, -0.25, 1.0]),
+    ]);
+    draft
+        .data
+        .geometry
+        .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+            positions: vec![
+                GpuPoint3([0.6, -1.0, -0.2]),
+                GpuPoint3([0.6, 1.0, -0.2]),
+                GpuPoint3([0.6, 1.0, 1.2]),
+                GpuPoint3([0.6, -1.0, 1.2]),
+            ],
+            indices: vec![[0, 1, 2], [0, 2, 3]],
+            normals: None,
+            tangents: None,
+            uvs: None,
+            face_indices: None,
+        }));
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(2),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::None,
+        reverse_orientation: false,
+    });
+    draft.data.world_primitives =
+        vec![PrimitiveId(0), PrimitiveId(1), PrimitiveId(2)].into_boxed_slice();
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn sampled_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
@@ -270,6 +460,171 @@ fn diffuse_sample(seed: u32, depth: u32, normal: Vec3) -> (Vec3, f32) {
     let frame_y = normal.cross(frame_x);
     let wi = (frame_x * local_wi.x + frame_y * local_wi.y + normal * local_wi.z).normalize();
     (wi, roulette)
+}
+
+fn expected_direct_area_light_radiance() -> f32 {
+    let mut sampler = IndependentSampler::new(1, 0);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6);
+    let _light_selection = sampler.get_1d();
+    let u = sampler.get_2d();
+    let context = Point3f::new(0.25, 0.25, 0.0);
+    let triangle = [
+        Point3f::new(0.75, -0.25, 1.0),
+        Point3f::new(1.0, 0.5, 1.0),
+        Point3f::new(1.25, -0.25, 1.0),
+    ];
+    let directions = triangle.map(|point| (point - context).normalize());
+    let shading_normal = Vector3f::new(0.0, 0.0, 1.0);
+    let weights = [
+        0.01f32.max(shading_normal.abs_dot(&directions[1])),
+        0.01f32.max(shading_normal.abs_dot(&directions[1])),
+        0.01f32.max(shading_normal.abs_dot(&directions[0])),
+        0.01f32.max(shading_normal.abs_dot(&directions[2])),
+    ];
+    let warped = sample_bilinear(u, &weights);
+    let (barycentrics, triangle_pdf) = sample_spherical_triangle(&triangle, context, warped);
+    let barycentrics = barycentrics.unwrap();
+    let sampled_position = triangle[0] * barycentrics[0]
+        + triangle[1] * barycentrics[1]
+        + triangle[2] * barycentrics[2];
+    let wi = (sampled_position - context).normalize();
+    let cosine = shading_normal.abs_dot(&wi);
+    let light_pdf = triangle_pdf * bilinear_pdf(warped, &weights);
+    let bsdf_pdf = cosine / std::f32::consts::PI;
+    0.5 * cosine / (std::f32::consts::PI * (bsdf_pdf + light_pdf))
+}
+
+fn expected_uniform_area_light_radiance() -> f32 {
+    let mut sampler = IndependentSampler::new(1, 0);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6);
+    let _light_selection = sampler.get_1d();
+    let u = sampler.get_2d();
+    let (b0, b1) = if u.x < u.y {
+        (0.5 * u.x, u.y - 0.5 * u.x)
+    } else {
+        (u.x - 0.5 * u.y, 0.5 * u.y)
+    };
+    let barycentrics = [b0, b1, 1.0 - b0 - b1];
+    let context = Point3f::new(0.25, 0.25, 0.0);
+    let triangle = [
+        Point3f::new(0.995, -0.005, 1.0),
+        Point3f::new(1.0, 0.005, 1.0),
+        Point3f::new(1.005, -0.005, 1.0),
+    ];
+    let sampled_position = triangle[0] * barycentrics[0]
+        + triangle[1] * barycentrics[1]
+        + triangle[2] * barycentrics[2];
+    let to_light = sampled_position - context;
+    let distance_squared = to_light.length_squared();
+    let wi = to_light.normalize();
+    let receiver_cosine = wi.z.abs();
+    let light_cosine = wi.z.abs();
+    let area =
+        0.5 * Vector3f::cross(&(triangle[1] - triangle[0]), &(triangle[2] - triangle[0])).length();
+    let light_pdf = distance_squared / (light_cosine * area);
+    let bsdf_pdf = receiver_cosine / std::f32::consts::PI;
+    0.5 * receiver_cosine / (std::f32::consts::PI * (bsdf_pdf + light_pdf))
+}
+
+fn indirect_area_light_scene() -> (GpuCompiledScene, f32) {
+    const SEED: u32 = 17;
+    let first_hit = Vec3::new(0.25, 0.25, 0.0);
+    let (wi, _) = diffuse_sample(SEED, 0, Vec3::Z);
+    let second_hit = first_hit + 2.0 * wi;
+    let emitter = triangle_at(second_hit, -wi, 0.5);
+
+    let mut sampler = IndependentSampler::new(1, SEED);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6);
+    let _light_selection = sampler.get_1d();
+    let u = sampler.get_2d();
+    let triangle = emitter.map(|point| Point3f::from(point.0));
+    let directions =
+        triangle.map(|point| (point - Point3f::from(first_hit.to_array())).normalize());
+    let weights = [
+        0.01f32.max(directions[1].z.abs()),
+        0.01f32.max(directions[1].z.abs()),
+        0.01f32.max(directions[0].z.abs()),
+        0.01f32.max(directions[2].z.abs()),
+    ];
+    let warped = sample_bilinear(u, &weights);
+    let (sample_barycentrics, _) =
+        sample_spherical_triangle(&triangle, Point3f::from(first_hit.to_array()), warped);
+    let sample_barycentrics = sample_barycentrics.unwrap();
+    let sampled_position = triangle[0] * sample_barycentrics[0]
+        + triangle[1] * sample_barycentrics[1]
+        + triangle[2] * sample_barycentrics[2];
+    let direct_direction = (sampled_position - Point3f::from(first_hit.to_array())).normalize();
+    let direct_direction = Vec3::new(direct_direction.x, direct_direction.y, direct_direction.z);
+    let blocker_center = first_hit + 0.5 * direct_direction;
+    let blocker_normal = -direct_direction;
+    let blocker_x = coordinate_tangent(blocker_normal);
+    let blocker_y = blocker_normal.cross(blocker_x);
+    let blocker = [
+        GpuPoint3((blocker_center - 0.025 * blocker_x - 0.025 * blocker_y).to_array()),
+        GpuPoint3((blocker_center + 0.025 * blocker_x - 0.025 * blocker_y).to_array()),
+        GpuPoint3((blocker_center + 0.05 * blocker_y).to_array()),
+    ];
+
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.clear();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided: false,
+        }));
+    for positions in [emitter.to_vec(), blocker.to_vec()] {
+        draft
+            .data
+            .geometry
+            .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions,
+                indices: vec![[0, 1, 2]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            }));
+    }
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(1),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::Uniform(LightId(0)),
+        reverse_orientation: false,
+    });
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(2),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::None,
+        reverse_orientation: false,
+    });
+    draft.data.world_primitives =
+        vec![PrimitiveId(0), PrimitiveId(1), PrimitiveId(2)].into_boxed_slice();
+    draft.data.render.integrator.max_depth = 1;
+    draft.data.render.sampler.seed = u64::from(SEED);
+
+    let solid_angle = spherical_triangle_area(&directions[0], &directions[1], &directions[2]);
+    let inverted = invert_spherical_triangle_sample(
+        &triangle,
+        Point3f::from(first_hit.to_array()),
+        Vector3f::from(wi.to_array()),
+    );
+    let light_pdf = bilinear_pdf(inverted, &weights) / solid_angle;
+    let bsdf_pdf = wi.z.abs() / std::f32::consts::PI;
+    let expected = 0.5 * bsdf_pdf / (bsdf_pdf + light_pdf);
+    (
+        GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default()),
+        expected,
+    )
 }
 
 fn triangle_at(center: Vec3, normal: Vec3, radius: f32) -> [GpuPoint3; 3] {
@@ -896,6 +1251,44 @@ fn scene_plan_lowers_reverse_orientation_to_the_primitive_record() {
 }
 
 #[test]
+fn scene_plan_expands_uniform_area_lights_per_triangle() {
+    let plan = ScenePlan::from_scene(area_light_scene(true).view()).unwrap();
+    assert_eq!(plan.lights.len(), 3);
+    assert_eq!(plan.lights[1].kind, 2);
+    assert_eq!(plan.lights[1].primitive, Some(0));
+    assert_eq!(plan.lights[1].triangle, 0);
+    assert_eq!(plan.lights[1].flags, 1);
+    assert_eq!(plan.lights[1].intensity, [1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(plan.lights[2].primitive, Some(0));
+    assert_eq!(plan.lights[2].triangle, 1);
+
+    let bytes = light_bytes(&plan);
+    assert_eq!(u32::from_le_bytes(bytes[80..84].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(bytes[84..88].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(bytes[88..92].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(bytes[92..96].try_into().unwrap()), 1);
+}
+
+#[test]
+fn scene_plan_preserves_per_element_area_light_bindings() {
+    let plan = ScenePlan::from_scene(per_element_area_light_scene().view()).unwrap();
+    assert_eq!(plan.lights.len(), 3);
+    assert_eq!(plan.lights[1].triangle, 0);
+    assert_eq!(plan.lights[1].intensity[0], 1.0);
+    assert_eq!(plan.lights[2].triangle, 1);
+    assert_eq!(plan.lights[2].intensity[0], 2.0);
+}
+
+#[test]
+fn scene_plan_expands_area_lights_for_each_instance() {
+    let plan = ScenePlan::from_scene(instanced_area_light_scene().view()).unwrap();
+    assert_eq!(plan.primitives.len(), 2);
+    assert_eq!(plan.lights.len(), 3);
+    assert_eq!(plan.lights[1].primitive, Some(0));
+    assert_eq!(plan.lights[2].primitive, Some(1));
+}
+
+#[test]
 fn scene_plan_flattens_static_instances_with_composed_transform() {
     let plan = ScenePlan::from_scene(instance_scene().view()).unwrap();
     assert_eq!(plan.primitives.len(), 1);
@@ -1012,6 +1405,148 @@ fn software_renderer_accepts_reverse_oriented_triangles() {
     let output = renderer.render(&scene, &request).unwrap();
     assert!(output.rgb[0].iter().all(|value| value.is_finite()));
     assert!(output.rgb[0][0] > 0.01, "{:?}", output.rgb[0]);
+}
+
+#[test]
+fn software_renderer_evaluates_one_and_two_sided_area_emission() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let front = renderer
+        .prepare(&emissive_triangle_scene(false, false))
+        .unwrap();
+    let back = renderer
+        .prepare(&emissive_triangle_scene(true, false))
+        .unwrap();
+    let two_sided = renderer
+        .prepare(&emissive_triangle_scene(true, true))
+        .unwrap();
+    let front = renderer.render(&front, &request).unwrap();
+    let back = renderer.render(&back, &request).unwrap();
+    let two_sided = renderer.render(&two_sided, &request).unwrap();
+    assert!((front.rgb[0][0] - 1.0).abs() < 1.0e-5, "{:?}", front.rgb[0]);
+    assert!(back.rgb[0].iter().all(|value| value.abs() < 1.0e-6));
+    assert!(
+        (two_sided.rgb[0][0] - 1.0).abs() < 1.0e-5,
+        "{:?}",
+        two_sided.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_samples_diffuse_area_lights() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer.prepare(&direct_area_light_scene()).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    let expected = expected_direct_area_light_radiance();
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 2.0e-4,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_uses_uniform_area_sampling_for_small_solid_angles() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = direct_area_light_scene_with_positions([
+        GpuPoint3([0.995, -0.005, 1.0]),
+        GpuPoint3([1.0, 0.005, 1.0]),
+        GpuPoint3([1.005, -0.005, 1.0]),
+    ]);
+    let scene = renderer.prepare(&scene).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    let expected = expected_uniform_area_light_radiance();
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 1.0e-7,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_rejects_alpha_masked_area_light_samples() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer
+        .prepare(&alpha_masked_direct_area_light_scene(0.0))
+        .unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-7));
+}
+
+#[test]
+fn software_renderer_tests_area_light_visibility() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer
+        .prepare(&occluded_direct_area_light_scene())
+        .unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-7));
+}
+
+#[test]
+fn hardware_and_software_diffuse_area_lights_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = direct_area_light_scene();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .into_iter()
+        .zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_weights_indirect_area_light_hits_with_mis() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let (scene, expected) = indirect_area_light_scene();
+    let scene = renderer.prepare(&scene).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 2.0e-4,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
 }
 
 #[test]

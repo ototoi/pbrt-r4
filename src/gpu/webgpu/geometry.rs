@@ -2,7 +2,7 @@ use super::super::ir::{
     GeometryId, GpuAreaLightBinding, GpuColorEncoding, GpuFloatImageChannel, GpuFloatTexture,
     GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuLight,
     GpuMaterial, GpuSceneView, GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType,
-    GpuTexelStorage, GpuTextureMapping, GpuTransform, InstanceId, PrimitiveId,
+    GpuTexelStorage, GpuTextureMapping, GpuTransform, InstanceId, LightId, PrimitiveId,
 };
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
@@ -145,6 +145,16 @@ pub struct LightPlan {
     pub position: [f32; 4],
     pub intensity: [f32; 4],
     pub kind: u32,
+    pub primitive: Option<u32>,
+    pub triangle: u32,
+    pub flags: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AreaLightOccurrence {
+    light: LightId,
+    primitive: u32,
+    triangle: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -347,6 +357,7 @@ impl ScenePlan {
         let mut float_textures = Vec::with_capacity(scene.float_textures.len());
         let mut spectrum_textures = Vec::new();
         let mut image_to_plan = vec![None; scene.images.len()];
+        let mut area_light_occurrences = Vec::new();
 
         for texture in scene.float_textures {
             float_textures.push(lower_float_texture(
@@ -385,11 +396,6 @@ impl ScenePlan {
             if triangle_mesh.positions.is_empty() || triangle_mesh.indices.is_empty() {
                 return Err(BackendError::Plan(PlanError::EmptyGeometry {
                     geometry: primitive.geometry,
-                }));
-            }
-            if !matches!(primitive.area_light, GpuAreaLightBinding::None) {
-                return Err(BackendError::Plan(PlanError::UnsupportedAreaLight {
-                    primitive: primitive_id.0,
                 }));
             }
             let material = lower_material(
@@ -507,10 +513,41 @@ impl ScenePlan {
                 }
             });
             let alpha = alpha.transpose()?;
+            let triangle_count = blases[blas].index_count / 3;
+            match &primitive.area_light {
+                GpuAreaLightBinding::None => {}
+                GpuAreaLightBinding::Uniform(light) => {
+                    validate_area_light(scene, *light, primitive_id.0)?;
+                    area_light_occurrences.extend((0..triangle_count).map(|triangle| {
+                        AreaLightOccurrence {
+                            light: *light,
+                            primitive: custom_data,
+                            triangle,
+                        }
+                    }));
+                }
+                GpuAreaLightBinding::PerElement(lights) => {
+                    if lights.len() != triangle_count as usize {
+                        return Err(BackendError::Plan(PlanError::InvalidAreaLightBinding {
+                            primitive: primitive_id.0,
+                            expected: triangle_count,
+                            actual: checked_len(lights.len(), "area light binding")?,
+                        }));
+                    }
+                    for (triangle, light) in lights.iter().copied().enumerate() {
+                        validate_area_light(scene, light, primitive_id.0)?;
+                        area_light_occurrences.push(AreaLightOccurrence {
+                            light,
+                            primitive: custom_data,
+                            triangle: triangle as u32,
+                        });
+                    }
+                }
+            }
             primitives.push(PrimitivePlan {
                 first_vertex: blases[blas].first_vertex,
                 first_index: blases[blas].first_index,
-                triangle_count: blases[blas].index_count / 3,
+                triangle_count,
                 material: custom_data,
                 alpha,
                 reverse_orientation: primitive.reverse_orientation,
@@ -528,7 +565,7 @@ impl ScenePlan {
             });
         }
 
-        let lights = lower_lights(scene)?;
+        let lights = lower_lights(scene, &area_light_occurrences)?;
         Ok(Self {
             vertices,
             indices,
@@ -949,8 +986,51 @@ fn spectrum_rgb(
     }
 }
 
-fn lower_lights(scene: GpuSceneView<'_>) -> Result<Vec<LightPlan>, BackendError> {
-    let mut lights = Vec::with_capacity(scene.lights.len().max(1));
+fn validate_area_light(
+    scene: GpuSceneView<'_>,
+    light: LightId,
+    primitive: u32,
+) -> Result<(), BackendError> {
+    match scene.lights.get(light.0 as usize) {
+        Some(GpuLight::DiffuseArea(_)) => Ok(()),
+        _ => Err(BackendError::Plan(PlanError::UnsupportedAreaLight {
+            primitive,
+        })),
+    }
+}
+
+fn area_emission_rgb(scene: GpuSceneView<'_>, light_id: LightId) -> Result<[f32; 3], BackendError> {
+    let Some(GpuLight::DiffuseArea(area)) = scene.lights.get(light_id.0 as usize) else {
+        return Err(BackendError::Plan(PlanError::UnsupportedLight {
+            light: light_id.0,
+        }));
+    };
+    let texture = scene
+        .spectrum_textures
+        .get(area.emission.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "area light emission texture",
+            index: area.emission.0,
+        }))?;
+    let GpuSpectrumTexture::Constant { value } = texture else {
+        return Err(BackendError::Plan(PlanError::UnsupportedLight {
+            light: light_id.0,
+        }));
+    };
+    spectrum_rgb(scene, *value, light_id.0)
+}
+
+fn lower_lights(
+    scene: GpuSceneView<'_>,
+    area_light_occurrences: &[AreaLightOccurrence],
+) -> Result<Vec<LightPlan>, BackendError> {
+    let mut lights = Vec::with_capacity(
+        scene
+            .lights
+            .len()
+            .saturating_add(area_light_occurrences.len())
+            .max(1),
+    );
     for (index, light) in scene.lights.iter().enumerate() {
         match light {
             GpuLight::Point(point) => {
@@ -978,6 +1058,9 @@ fn lower_lights(scene: GpuSceneView<'_>) -> Result<Vec<LightPlan>, BackendError>
                         1.0,
                     ],
                     kind: 0,
+                    primitive: None,
+                    triangle: 0,
+                    flags: 0,
                 });
             }
             GpuLight::UniformInfinite(infinite) => {
@@ -991,12 +1074,32 @@ fn lower_lights(scene: GpuSceneView<'_>) -> Result<Vec<LightPlan>, BackendError>
                         1.0,
                     ],
                     kind: 1,
+                    primitive: None,
+                    triangle: 0,
+                    flags: 0,
                 });
             }
-            _ => {
-                return Err(BackendError::Plan(PlanError::UnsupportedLight {
-                    light: index as u32,
-                }))
+            GpuLight::DiffuseArea(area) => {
+                let light_id = LightId(index as u32);
+                let rgb = area_emission_rgb(scene, light_id)?;
+                for occurrence in area_light_occurrences
+                    .iter()
+                    .filter(|occurrence| occurrence.light == light_id)
+                {
+                    lights.push(LightPlan {
+                        position: [0.0; 4],
+                        intensity: [
+                            rgb[0] * area.scale,
+                            rgb[1] * area.scale,
+                            rgb[2] * area.scale,
+                            1.0,
+                        ],
+                        kind: 2,
+                        primitive: Some(occurrence.primitive),
+                        triangle: occurrence.triangle,
+                        flags: u32::from(area.two_sided),
+                    });
+                }
             }
         }
     }
@@ -1005,6 +1108,9 @@ fn lower_lights(scene: GpuSceneView<'_>) -> Result<Vec<LightPlan>, BackendError>
             position: [0.0; 4],
             intensity: [0.0; 4],
             kind: 0,
+            primitive: None,
+            triangle: 0,
+            flags: 0,
         });
     }
     Ok(lights)
@@ -1282,7 +1388,9 @@ pub fn light_bytes(plan: &ScenePlan) -> Vec<u8> {
                 .chain(light.intensity)
                 .flat_map(f32::to_le_bytes)
                 .chain(light.kind.to_le_bytes())
-                .chain([0u32, 0, 0].into_iter().flat_map(u32::to_le_bytes))
+                .chain(light.primitive.unwrap_or(u32::MAX).to_le_bytes())
+                .chain(light.triangle.to_le_bytes())
+                .chain(light.flags.to_le_bytes())
         })
         .collect()
 }

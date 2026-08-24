@@ -36,6 +36,11 @@ pub enum PlanError {
     UnsupportedAreaLight {
         primitive: u32,
     },
+    InvalidAreaLightBinding {
+        primitive: u32,
+        expected: u32,
+        actual: u32,
+    },
     InvalidReference {
         resource: &'static str,
         index: u32,
@@ -119,6 +124,14 @@ impl std::fmt::Display for PlanError {
                     "area lights are unsupported for primitive {primitive}"
                 )
             }
+            Self::InvalidAreaLightBinding {
+                primitive,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "primitive {primitive} has {actual} area lights for {expected} elements"
+            ),
             Self::InvalidReference { resource, index } => {
                 write!(formatter, "invalid {resource} reference: {index}")
             }
