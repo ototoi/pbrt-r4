@@ -36,9 +36,6 @@ pub enum PlanError {
     UnsupportedAreaLight {
         primitive: u32,
     },
-    UnsupportedReverseOrientation {
-        primitive: u32,
-    },
     InvalidReference {
         resource: &'static str,
         index: u32,
@@ -120,12 +117,6 @@ impl std::fmt::Display for PlanError {
                 write!(
                     formatter,
                     "area lights are unsupported for primitive {primitive}"
-                )
-            }
-            Self::UnsupportedReverseOrientation { primitive } => {
-                write!(
-                    formatter,
-                    "reverseorientation is unsupported for primitive {primitive}"
                 )
             }
             Self::InvalidReference { resource, index } => {

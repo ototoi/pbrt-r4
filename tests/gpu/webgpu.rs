@@ -6,12 +6,12 @@ use pbrt_r4::gpu::ir::{
     FloatTextureId, GeometryId, GpuBounds2i, GpuBounds3, GpuColorEncoding, GpuDiffuseMaterial,
     GpuFloatImageChannel, GpuFloatTexture, GpuGeometry, GpuImageChannels, GpuImageFilter,
     GpuImageResource, GpuImageWrapMode, GpuInstance, GpuInstanceDefinition, GpuIrValidationError,
-    GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4, GpuMipLevel, GpuPoint3, GpuPointLight,
-    GpuPrimitive, GpuRenderConfig, GpuRenderOutput, GpuRenderRequest, GpuSceneData, GpuSceneDraft,
-    GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType, GpuStaticTransform, GpuTexelStorage,
-    GpuTextureMapping, GpuTransform, GpuTriangleMesh, ImageId, InstanceDefinitionId, InstanceId,
-    MaterialId, PrimitiveId, SpectrumId, SpectrumTextureId, TextureMappingId, TransformId,
-    CURRENT_IR_VERSION,
+    GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4, GpuMipLevel, GpuNormal3, GpuPoint3,
+    GpuPointLight, GpuPrimitive, GpuRenderConfig, GpuRenderOutput, GpuRenderRequest, GpuSceneData,
+    GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType, GpuStaticTransform,
+    GpuTexelStorage, GpuTextureMapping, GpuTransform, GpuTriangleMesh, ImageId,
+    InstanceDefinitionId, InstanceId, MaterialId, PrimitiveId, SpectrumId, SpectrumTextureId,
+    TextureMappingId, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{
     index_bytes, light_bytes, material_bytes, primitive_bytes, texture_bytes, tlas_transform,
@@ -134,6 +134,27 @@ fn minimal_scene() -> GpuCompiledScene {
         minimal_scene_draft().finish().unwrap(),
         GpuSourceMap::default(),
     )
+}
+
+fn reverse_orientation_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.primitives[0].reverse_orientation = true;
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!();
+    };
+    mesh.normals = Some(vec![GpuNormal3([0.0, 0.0, 1.0]); 3]);
+    let reflected = GpuMatrix4x4([
+        [-1.0, 0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    draft.data.transforms[0] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: reflected,
+        object_from_render: reflected,
+        swaps_handedness: true,
+    });
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
 fn sampled_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
@@ -866,6 +887,15 @@ fn scene_plan_lowers_triangle_geometry_and_transform() {
 }
 
 #[test]
+fn scene_plan_lowers_reverse_orientation_to_the_primitive_record() {
+    let plan = ScenePlan::from_scene(reverse_orientation_scene().view()).unwrap();
+    assert!(plan.primitives[0].reverse_orientation);
+
+    let bytes = primitive_bytes(&plan);
+    assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 1);
+}
+
+#[test]
 fn scene_plan_flattens_static_instances_with_composed_transform() {
     let plan = ScenePlan::from_scene(instance_scene().view()).unwrap();
     assert_eq!(plan.primitives.len(), 1);
@@ -924,6 +954,7 @@ fn image_texture_lowering_preserves_channels_mips_and_encoding() {
 #[test]
 fn gpu_buffer_serialization_matches_wgsl_layout() {
     let mut plan = ScenePlan::from_scene(minimal_scene().view()).unwrap();
+    plan.primitives[0].reverse_orientation = true;
     plan.transforms[0].render_from_object = [
         [1.0, 2.0, 3.0, 4.0],
         [5.0, 6.0, 7.0, 8.0],
@@ -949,6 +980,10 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
             .collect::<Vec<_>>()
     );
     assert_eq!(primitives.len(), 32);
+    assert_eq!(
+        u32::from_le_bytes(primitives[20..24].try_into().unwrap()),
+        1
+    );
     assert_eq!(materials.len(), 32);
     assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
     assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
@@ -963,6 +998,20 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     );
     assert_eq!(lights.len(), 48);
     assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
+}
+
+#[test]
+fn software_renderer_accepts_reverse_oriented_triangles() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer.prepare(&reverse_orientation_scene()).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|value| value.is_finite()));
+    assert!(output.rgb[0][0] > 0.01, "{:?}", output.rgb[0]);
 }
 
 #[test]
@@ -2017,6 +2066,30 @@ fn hardware_and_software_modes_match_the_cpu_reference_scene() {
     })
     .unwrap();
     let scene = minimal_scene();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn hardware_and_software_reverse_orientation_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = reverse_orientation_scene();
     let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
     let hardware_scene = hardware.prepare(&scene).unwrap();
     let software_scene = software.prepare(&scene).unwrap();

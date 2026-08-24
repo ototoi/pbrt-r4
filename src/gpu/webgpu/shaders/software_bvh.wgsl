@@ -14,7 +14,7 @@ struct Primitive {
     material: u32,
     alpha: u32,
     _reserved_alpha: u32,
-    _flags: u32,
+    flags: u32,
     _padding: vec2<u32>,
 };
 
@@ -501,13 +501,11 @@ fn apply_bump_map(
 fn apply_normal_map(
     image_id: u32,
     uv: vec2<f32>,
-    object_normal: vec3<f32>,
+    normal: vec3<f32>,
     object_dpdu: vec3<f32>,
     object_tangent: vec3<f32>,
     render_from_object: mat4x4<f32>,
-    normal_from_object: mat4x4<f32>,
 ) -> vec3<f32> {
-    let normal = normalize(transform(normal_from_object, vec4<f32>(object_normal, 0.0)).xyz);
     let tangent_source = select(object_dpdu, object_tangent, dot(object_tangent, object_tangent) > 1.0e-20);
     let transformed_tangent = transform(render_from_object, vec4<f32>(tangent_source, 0.0)).xyz;
     let tangent = normalize(transformed_tangent - normal * dot(normal, transformed_tangent));
@@ -1174,7 +1172,10 @@ fn render_sample(
             object_position,
             object_position_error,
         );
-        let geometric_render_normal = normalize(cross(wp1 - wp0, wp2 - wp0));
+        var geometric_render_normal = normalize(cross(wp1 - wp0, wp2 - wp0));
+        if ((primitive.flags & 1u) != 0u) {
+            geometric_render_normal = -geometric_render_normal;
+        }
         let material = materials[primitive.material];
         let v0 = primitive.first_vertex + indices[index_offset];
         let v1 = primitive.first_vertex + indices[index_offset + 1u];
@@ -1182,17 +1183,20 @@ fn render_sample(
         let interpolated_normal = vertices[v0].normal.xyz * barycentrics.x
             + vertices[v1].normal.xyz * barycentrics.y
             + vertices[v2].normal.xyz * barycentrics.z;
+        let orientation_sign = select(1.0, -1.0, (primitive.flags & 1u) != 0u);
+        let has_vertex_normal = dot(interpolated_normal, interpolated_normal) > 1.0e-20;
         var object_normal = geometric_normal;
-        if (dot(interpolated_normal, interpolated_normal) > 1.0e-20) {
+        if (has_vertex_normal) {
             object_normal = normalize(interpolated_normal);
         }
+        object_normal *= orientation_sign;
         let uv0 = vertices[v0].uv.xy;
         let uv1 = vertices[v1].uv.xy;
         let uv2 = vertices[v2].uv.xy;
         let uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
         let object_dpdu = triangle_dpdu(p0, p1, p2, uv0, uv1, uv2, object_normal);
         let object_dpdv = triangle_dpdv(p0, p1, p2, uv0, uv1, uv2, object_normal);
-        let object_dndu = normal_derivative_u(
+        let object_dndu = orientation_sign * normal_derivative_u(
             vertices[v0].normal.xyz,
             vertices[v1].normal.xyz,
             vertices[v2].normal.xyz,
@@ -1200,7 +1204,7 @@ fn render_sample(
             uv1,
             uv2,
         );
-        let object_dndv = normal_derivative_v(
+        let object_dndv = orientation_sign * normal_derivative_v(
             vertices[v0].normal.xyz,
             vertices[v1].normal.xyz,
             vertices[v2].normal.xyz,
@@ -1211,7 +1215,15 @@ fn render_sample(
         let object_tangent = vertices[v0].tangent.xyz * barycentrics.x
             + vertices[v1].tangent.xyz * barycentrics.y
             + vertices[v2].tangent.xyz * barycentrics.z;
-        var normal = normalize(transform(transform_table.normal_from_object, vec4<f32>(object_normal, 0.0)).xyz);
+        var normal = geometric_render_normal;
+        if (has_vertex_normal) {
+            normal = normalize(transform(transform_table.normal_from_object, vec4<f32>(object_normal, 0.0)).xyz);
+            geometric_render_normal = select(
+                -geometric_render_normal,
+                geometric_render_normal,
+                dot(geometric_render_normal, normal) >= 0.0,
+            );
+        }
         let dpdu = transform(transform_table.render_from_object, vec4<f32>(object_dpdu, 0.0)).xyz;
         let dpdv = transform(transform_table.render_from_object, vec4<f32>(object_dpdv, 0.0)).xyz;
         let dndu = transform(transform_table.normal_from_object, vec4<f32>(object_dndu, 0.0)).xyz;
@@ -1230,11 +1242,10 @@ fn render_sample(
             normal = apply_normal_map(
                 material.normal_map,
                 uv,
-                object_normal,
+                normal,
                 object_dpdu,
                 object_tangent,
                 transform_table.render_from_object,
-                transform_table.normal_from_object,
             );
         } else if ((material.flags & 4u) != 0u) {
             normal = apply_bump_map(

@@ -124,6 +124,7 @@ pub struct PrimitivePlan {
     pub triangle_count: u32,
     pub material: u32,
     pub alpha: Option<u32>,
+    pub reverse_orientation: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -391,13 +392,6 @@ impl ScenePlan {
                     primitive: primitive_id.0,
                 }));
             }
-            if primitive.reverse_orientation {
-                return Err(BackendError::Plan(
-                    PlanError::UnsupportedReverseOrientation {
-                        primitive: primitive_id.0,
-                    },
-                ));
-            }
             let material = lower_material(
                 scene,
                 primitive.material,
@@ -519,6 +513,7 @@ impl ScenePlan {
                 triangle_count: blases[blas].index_count / 3,
                 material: custom_data,
                 alpha,
+                reverse_orientation: primitive.reverse_orientation,
             });
             materials.push(material);
             transforms.push(TransformPlan {
@@ -1061,7 +1056,7 @@ pub fn primitive_bytes(plan: &ScenePlan) -> Vec<u8> {
                 primitive.material,
                 primitive.alpha.unwrap_or(u32::MAX),
                 u32::MAX,
-                0,
+                u32::from(primitive.reverse_orientation),
                 0,
                 0,
             ]
