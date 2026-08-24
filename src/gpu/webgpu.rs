@@ -6,7 +6,7 @@
 //! software-BVH and shader/resource lowering design is implemented.
 
 use super::compiler::GpuCompiledScene;
-use super::ir::{GpuRenderConfig, GpuSceneView};
+use super::ir::{GpuRenderOutput, GpuRenderRequest, GpuRenderRequestError, GpuSceneView};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WebGpuPrepareOptions;
@@ -24,6 +24,7 @@ impl WebGpuExecutableScene {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebGpuBackendError {
+    InvalidRenderRequest(GpuRenderRequestError),
     RenderNotImplemented,
 }
 
@@ -43,9 +44,15 @@ impl WebGpuRenderer {
 
     pub fn render(
         &mut self,
-        _scene: &WebGpuExecutableScene,
-        _config: &GpuRenderConfig,
-    ) -> Result<(), WebGpuBackendError> {
+        scene: &WebGpuExecutableScene,
+        request: &GpuRenderRequest,
+    ) -> Result<GpuRenderOutput, WebGpuBackendError> {
+        GpuRenderRequest::new(
+            &scene.scene().render,
+            request.sample_start,
+            request.sample_count,
+        )
+        .map_err(WebGpuBackendError::InvalidRenderRequest)?;
         Err(WebGpuBackendError::RenderNotImplemented)
     }
 }

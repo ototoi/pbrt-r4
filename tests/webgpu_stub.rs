@@ -2,9 +2,10 @@
 
 use pbrt_r4::gpu::compiler::GpuCompiledScene;
 use pbrt_r4::gpu::ir::{
-    GeometryId, GpuGeometry, GpuIrValidationError, GpuIrVersion, GpuMatrix4x4, GpuPoint3,
-    GpuPrimitive, GpuRenderConfig, GpuSceneData, GpuSceneDraft, GpuStaticTransform, GpuTransform,
-    GpuTriangleMesh, TransformId, CURRENT_IR_VERSION,
+    GeometryId, GpuDiffuseMaterial, GpuGeometry, GpuIrValidationError, GpuIrVersion, GpuMaterial,
+    GpuMatrix4x4, GpuPoint3, GpuPrimitive, GpuRenderConfig, GpuRenderRequest, GpuSceneData,
+    GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture, GpuStaticTransform, GpuTransform,
+    GpuTriangleMesh, MaterialId, SpectrumId, SpectrumTextureId, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{WebGpuPrepareOptions, WebGpuRenderer};
 
@@ -27,6 +28,13 @@ fn minimal_scene() -> GpuCompiledScene {
                 ]),
                 swaps_handedness: false,
             })],
+            spectra: vec![GpuSpectrumResource::Constant { value: 0.5 }],
+            float_textures: Vec::new(),
+            spectrum_textures: vec![GpuSpectrumTexture::Constant {
+                value: SpectrumId(0),
+            }],
+            texture_mappings: Vec::new(),
+            images: Vec::new(),
             geometry: vec![GpuGeometry::TriangleMesh(GpuTriangleMesh {
                 positions: vec![
                     GpuPoint3([0.0, 0.0, 0.0]),
@@ -39,11 +47,25 @@ fn minimal_scene() -> GpuCompiledScene {
                 uvs: None,
                 face_indices: None,
             })],
+            materials: vec![GpuMaterial::Diffuse(GpuDiffuseMaterial {
+                reflectance: SpectrumTextureId(0),
+                displacement: None,
+                normal_map: None,
+            })],
+            lights: Vec::new(),
             primitives: vec![GpuPrimitive {
                 geometry: GeometryId(0),
                 transform: TransformId(0),
+                material: Some(MaterialId(0)),
+                alpha: None,
+                shadow_alpha: None,
+                area_light: pbrt_r4::gpu::ir::GpuAreaLightBinding::None,
                 reverse_orientation: false,
             }],
+            instance_definitions: Vec::new(),
+            instances: Vec::new(),
+            world_primitives: vec![].into_boxed_slice(),
+            world_instances: vec![].into_boxed_slice(),
             render: GpuRenderConfig::default(),
         },
     };
@@ -65,8 +87,28 @@ fn webgpu_render_is_explicitly_unimplemented() {
     let scene = minimal_scene();
     let executable = renderer.prepare(&scene, &WebGpuPrepareOptions).unwrap();
     assert!(matches!(
-        renderer.render(&executable, &GpuRenderConfig::default()),
+        renderer.render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap()
+        ),
         Err(pbrt_r4::gpu::webgpu::WebGpuBackendError::RenderNotImplemented)
+    ));
+}
+
+#[test]
+fn webgpu_render_rejects_invalid_sample_range() {
+    let mut renderer = WebGpuRenderer;
+    let scene = minimal_scene();
+    let executable = renderer.prepare(&scene, &WebGpuPrepareOptions).unwrap();
+    assert!(matches!(
+        renderer.render(
+            &executable,
+            &GpuRenderRequest {
+                sample_start: 1,
+                sample_count: 1,
+            }
+        ),
+        Err(pbrt_r4::gpu::webgpu::WebGpuBackendError::InvalidRenderRequest(_))
     ));
 }
 
@@ -79,8 +121,19 @@ fn incompatible_ir_version_is_rejected_before_prepare() {
         },
         data: GpuSceneData {
             transforms: Vec::new(),
+            spectra: vec![GpuSpectrumResource::Constant { value: 0.5 }],
+            float_textures: Vec::new(),
+            spectrum_textures: Vec::new(),
+            texture_mappings: Vec::new(),
+            images: Vec::new(),
             geometry: Vec::new(),
+            materials: Vec::new(),
+            lights: Vec::new(),
             primitives: Vec::new(),
+            instance_definitions: Vec::new(),
+            instances: Vec::new(),
+            world_primitives: Box::new([]),
+            world_instances: Box::new([]),
             render: GpuRenderConfig::default(),
         },
     };
@@ -93,6 +146,11 @@ fn invalid_triangle_index_is_rejected() {
         version: CURRENT_IR_VERSION,
         data: GpuSceneData {
             transforms: Vec::new(),
+            spectra: Vec::new(),
+            float_textures: Vec::new(),
+            spectrum_textures: Vec::new(),
+            texture_mappings: Vec::new(),
+            images: Vec::new(),
             geometry: vec![GpuGeometry::TriangleMesh(GpuTriangleMesh {
                 positions: vec![GpuPoint3([0.0, 0.0, 0.0])],
                 indices: vec![[0, 1, 0]],
@@ -101,7 +159,17 @@ fn invalid_triangle_index_is_rejected() {
                 uvs: None,
                 face_indices: None,
             })],
+            materials: vec![GpuMaterial::Diffuse(GpuDiffuseMaterial {
+                reflectance: SpectrumTextureId(0),
+                displacement: None,
+                normal_map: None,
+            })],
+            lights: Vec::new(),
             primitives: Vec::new(),
+            instance_definitions: Vec::new(),
+            instances: Vec::new(),
+            world_primitives: Box::new([]),
+            world_instances: Box::new([]),
             render: GpuRenderConfig::default(),
         },
     };
