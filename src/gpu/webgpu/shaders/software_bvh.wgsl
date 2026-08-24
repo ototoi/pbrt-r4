@@ -14,6 +14,14 @@ struct Primitive {
 
 struct Material {
     reflectance: vec4<f32>,
+    texture: u32,
+    flags: u32,
+    _padding: vec2<u32>,
+};
+
+struct Vertex {
+    position: vec4<f32>,
+    uv: vec4<f32>,
 };
 
 struct Transform {
@@ -30,7 +38,7 @@ var<uniform> camera: Camera;
 @group(0) @binding(1)
 var<storage, read_write> output: array<vec4<f32>>;
 @group(0) @binding(3)
-var<storage, read> vertices: array<vec4<f32>>;
+var<storage, read> vertices: array<Vertex>;
 @group(0) @binding(4)
 var<storage, read> indices: array<u32>;
 @group(0) @binding(5)
@@ -42,7 +50,7 @@ var<storage, read> materials: array<Material>;
 @group(0) @binding(8)
 var<storage, read> lights: array<Light>;
 @group(0) @binding(9)
-var<storage, read> bvh_data: array<u32>;
+var<storage, read> scene_data: array<u32>;
 
 fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
@@ -51,6 +59,45 @@ fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
         dot(rows[2], value),
         dot(rows[3], value),
     );
+}
+
+fn sample_texture(texture_id: u32, uv: vec2<f32>) -> vec3<f32> {
+    let texture_base = scene_data[2u] + texture_id * 8u;
+    let image_id = scene_data[texture_base];
+    let su = bitcast<f32>(scene_data[texture_base + 1u]);
+    let sv = bitcast<f32>(scene_data[texture_base + 2u]);
+    let du = bitcast<f32>(scene_data[texture_base + 3u]);
+    let dv = bitcast<f32>(scene_data[texture_base + 4u]);
+    let scale = bitcast<f32>(scene_data[texture_base + 5u]);
+    let flags = scene_data[texture_base + 6u];
+    var st = uv * vec2<f32>(su, sv) + vec2<f32>(du, dv);
+    let swrap = (flags >> 1u) & 3u;
+    let twrap = (flags >> 3u) & 3u;
+    if ((swrap == 0u && (st.x < 0.0 || st.x > 1.0)) ||
+        (twrap == 0u && (st.y < 0.0 || st.y > 1.0))) {
+        return vec3<f32>(0.0);
+    }
+    st.x = select(fract(st.x), clamp(st.x, 0.0, 1.0), swrap == 1u);
+    st.y = select(fract(st.y), clamp(st.y, 0.0, 1.0), twrap == 1u);
+    let image_base = scene_data[0u] + image_id * 8u;
+    let width = scene_data[image_base];
+    let height = scene_data[image_base + 1u];
+    let channels = scene_data[image_base + 2u];
+    let texel_base = scene_data[image_base + 3u];
+    let x = min(u32(st.x * f32(width)), width - 1u);
+    let y = min(u32(st.y * f32(height)), height - 1u);
+    let base = texel_base + (y * width + x) * channels;
+    let r = bitcast<f32>(scene_data[base]);
+    let g = select(r, bitcast<f32>(scene_data[base + 1u]), channels > 1u);
+    let b = select(r, bitcast<f32>(scene_data[base + 2u]), channels > 2u);
+    var value = vec3<f32>(r, g, b);
+    if ((flags & 1u) != 0u) {
+        value = vec3<f32>(1.0) - value;
+    }
+    if (((flags >> 6u) & 3u) == 0u) {
+        value = clamp(value, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    return value * scale;
 }
 
 fn ray_hits_box(origin: vec3<f32>, inverse_direction: vec3<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>, closest: f32) -> bool {
@@ -115,36 +162,36 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             break;
         }
         stack_size -= 1u;
-        let node_base = stack[stack_size] * 12u;
+        let node_base = camera.bvh_info.y + stack[stack_size] * 12u;
         let node_bounds_min = vec3<f32>(
-            bitcast<f32>(bvh_data[node_base]),
-            bitcast<f32>(bvh_data[node_base + 1u]),
-            bitcast<f32>(bvh_data[node_base + 2u]),
+            bitcast<f32>(scene_data[node_base]),
+            bitcast<f32>(scene_data[node_base + 1u]),
+            bitcast<f32>(scene_data[node_base + 2u]),
         );
         let node_bounds_max = vec3<f32>(
-            bitcast<f32>(bvh_data[node_base + 4u]),
-            bitcast<f32>(bvh_data[node_base + 5u]),
-            bitcast<f32>(bvh_data[node_base + 6u]),
+            bitcast<f32>(scene_data[node_base + 4u]),
+            bitcast<f32>(scene_data[node_base + 5u]),
+            bitcast<f32>(scene_data[node_base + 6u]),
         );
-        let node_first = bvh_data[node_base + 8u];
-        let node_count = bvh_data[node_base + 9u];
-        let node_flags = bvh_data[node_base + 10u];
+        let node_first = scene_data[node_base + 8u];
+        let node_count = scene_data[node_base + 9u];
+        let node_flags = scene_data[node_base + 10u];
         if (!ray_hits_box(origin, inverse_direction, node_bounds_min, node_bounds_max, closest)) {
             continue;
         }
         if (node_flags == 1u) {
             for (var offset = 0u; offset < node_count; offset += 1u) {
                 let reference_base = camera.bvh_info.x + (node_first + offset) * 2u;
-                let primitive_index = bvh_data[reference_base];
-                let triangle_index = bvh_data[reference_base + 1u];
+                let primitive_index = scene_data[reference_base];
+                let triangle_index = scene_data[reference_base + 1u];
                 let primitive = primitives[primitive_index];
                 let index_offset = primitive.first_index + triangle_index * 3u;
                 let i0 = primitive.first_vertex + indices[index_offset];
                 let i1 = primitive.first_vertex + indices[index_offset + 1u];
                 let i2 = primitive.first_vertex + indices[index_offset + 2u];
-                let object_p0 = vertices[i0].xyz;
-                let object_p1 = vertices[i1].xyz;
-                let object_p2 = vertices[i2].xyz;
+                let object_p0 = vertices[i0].position.xyz;
+                let object_p1 = vertices[i1].position.xyz;
+                let object_p2 = vertices[i2].position.xyz;
                 let transform_table = transforms[primitive_index];
                 let p0 = transform(transform_table.rows, vec4<f32>(object_p0, 1.0)).xyz;
                 let p1 = transform(transform_table.rows, vec4<f32>(object_p1, 1.0)).xyz;
@@ -168,13 +215,30 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (closest < 1.0e30) {
         let primitive = primitives[hit_primitive];
         let index_offset = primitive.first_index + hit_triangle * 3u;
-        let p0 = vertices[primitive.first_vertex + indices[index_offset]].xyz;
-        let p1 = vertices[primitive.first_vertex + indices[index_offset + 1u]].xyz;
-        let p2 = vertices[primitive.first_vertex + indices[index_offset + 2u]].xyz;
+        let p0 = vertices[primitive.first_vertex + indices[index_offset]].position.xyz;
+        let p1 = vertices[primitive.first_vertex + indices[index_offset + 1u]].position.xyz;
+        let p2 = vertices[primitive.first_vertex + indices[index_offset + 2u]].position.xyz;
         let transform_table = transforms[hit_primitive];
         let position = hit_position;
         let normal = normalize(transform(transform_table.rows, vec4<f32>(cross(p1 - p0, p2 - p0), 0.0)).xyz);
-        let reflectance = materials[primitive.material].reflectance.xyz;
+        let material = materials[primitive.material];
+        var reflectance = material.reflectance.xyz;
+        if ((material.flags & 1u) != 0u) {
+            let wp0 = transform(transform_table.rows, vec4<f32>(p0, 1.0)).xyz;
+            let wp1 = transform(transform_table.rows, vec4<f32>(p1, 1.0)).xyz;
+            let wp2 = transform(transform_table.rows, vec4<f32>(p2, 1.0)).xyz;
+            let edge1 = wp1 - wp0;
+            let edge2 = wp2 - wp0;
+            let d = dot(edge1, edge1) * dot(edge2, edge2) - dot(edge1, edge2) * dot(edge1, edge2);
+            let rel = hit_position - wp0;
+            let beta = (dot(rel, edge2) * dot(edge1, edge1) - dot(rel, edge1) * dot(edge1, edge2)) / d;
+            let gamma = (dot(rel, edge1) * dot(edge2, edge2) - dot(rel, edge2) * dot(edge1, edge2)) / d;
+            let alpha = 1.0 - beta - gamma;
+            let uv = vertices[primitive.first_vertex + indices[index_offset]].uv.xy * alpha
+                + vertices[primitive.first_vertex + indices[index_offset + 1u]].uv.xy * beta
+                + vertices[primitive.first_vertex + indices[index_offset + 2u]].uv.xy * gamma;
+            reflectance = sample_texture(material.texture, uv);
+        }
         for (var light_index = 0u; light_index < arrayLength(&lights); light_index += 1u) {
             let light = lights[light_index];
             let to_light = light.position.xyz - position;

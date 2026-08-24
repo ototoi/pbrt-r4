@@ -1,8 +1,8 @@
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
 use super::geometry::{
-    index_bytes, light_bytes, material_bytes, primitive_bytes, transform_bytes, vertex_bytes,
-    ScenePlan,
+    index_bytes, light_bytes, material_bytes, primitive_bytes, texture_bytes, transform_bytes,
+    vertex_bytes, ScenePlan,
 };
 use glam::Vec3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
@@ -84,7 +84,7 @@ impl SoftwareBvhPlan {
                     .collect::<Result<Vec<_>, _>>()?;
                 let positions = positions
                     .into_iter()
-                    .map(|position| transform_point(transform.render_from_object, position))
+                    .map(|vertex| transform_point(transform.render_from_object, vertex.position))
                     .collect::<Vec<_>>();
                 let mut bounds_min = positions[0];
                 let mut bounds_max = positions[0];
@@ -283,12 +283,21 @@ pub struct SoftwareAcceleration {
     pub light_buffer: wgpu::Buffer,
     pub bvh_buffer: wgpu::Buffer,
     pub bvh_primitive_offset: u32,
+    pub bvh_node_offset: u32,
 }
 
 impl SoftwareAcceleration {
     pub fn create(context: &DeviceContext, plan: &ScenePlan) -> Result<Self, BackendError> {
         let bvh = SoftwareBvhPlan::from_scene(plan)?;
-        let mut bvh_bytes = node_bytes(&bvh);
+        let mut bvh_bytes = texture_bytes(plan);
+        let bvh_node_offset = u32::try_from(bvh_bytes.len() / 4).map_err(|_| {
+            BackendError::Plan(PlanError::LimitExceeded {
+                resource: "software BVH buffer",
+                value: u32::MAX,
+                maximum: u32::MAX,
+            })
+        })?;
+        bvh_bytes.extend(node_bytes(&bvh));
         let bvh_primitive_offset = u32::try_from(bvh_bytes.len() / 4).map_err(|_| {
             BackendError::Plan(PlanError::LimitExceeded {
                 resource: "software BVH buffer",
@@ -322,6 +331,7 @@ impl SoftwareAcceleration {
             light_buffer: storage("pbrt-r4 WebGPU software light table", &light_bytes(plan)),
             bvh_buffer: storage("pbrt-r4 WebGPU software BVH", &bvh_bytes),
             bvh_primitive_offset,
+            bvh_node_offset,
         })
     }
 }

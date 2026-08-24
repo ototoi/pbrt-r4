@@ -1,6 +1,8 @@
 use super::super::ir::{
-    GeometryId, GpuAreaLightBinding, GpuGeometry, GpuLight, GpuMaterial, GpuSceneView,
-    GpuSpectrumResource, GpuSpectrumTexture, GpuTransform, PrimitiveId,
+    GeometryId, GpuAreaLightBinding, GpuColorEncoding, GpuGeometry, GpuImageChannels,
+    GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuLight, GpuMaterial, GpuSceneView,
+    GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType, GpuTexelStorage, GpuTextureMapping,
+    GpuTransform, PrimitiveId,
 };
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
@@ -31,6 +33,54 @@ pub fn tlas_transform(matrix: [[f32; 4]; 4]) -> [f32; 12] {
     ]
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VertexPlan {
+    pub position: [f32; 3],
+    pub uv: [f32; 2],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageMipPlan {
+    pub resolution: [u32; 2],
+    pub texel_offset: u32,
+    pub texel_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImagePlan {
+    pub resolution: [u32; 2],
+    pub channels: GpuImageChannels,
+    pub mip_levels: Vec<ImageMipPlan>,
+    pub texels: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpectrumTexturePlan {
+    pub image: u32,
+    pub mapping: GpuTextureMapping,
+    pub scale: f32,
+    pub invert: bool,
+    pub swrap: GpuImageWrapMode,
+    pub twrap: GpuImageWrapMode,
+    pub filter: GpuImageFilter,
+    pub spectrum_type: GpuSpectrumType,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MaterialReflectancePlan {
+    Constant([f32; 4]),
+    SpectrumTexture(u32),
+}
+
+impl MaterialPlan {
+    fn requires_uv(&self) -> bool {
+        matches!(
+            self.reflectance,
+            MaterialReflectancePlan::SpectrumTexture(_)
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlasPlan {
     pub geometry: GeometryId,
@@ -58,7 +108,7 @@ pub struct PrimitivePlan {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialPlan {
-    pub reflectance: [f32; 4],
+    pub reflectance: MaterialReflectancePlan,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,7 +124,7 @@ pub struct LightPlan {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScenePlan {
-    pub vertices: Vec<[f32; 3]>,
+    pub vertices: Vec<VertexPlan>,
     pub indices: Vec<u32>,
     pub blases: Vec<BlasPlan>,
     pub tlas_instances: Vec<TlasInstancePlan>,
@@ -82,6 +132,8 @@ pub struct ScenePlan {
     pub materials: Vec<MaterialPlan>,
     pub transforms: Vec<TransformPlan>,
     pub lights: Vec<LightPlan>,
+    pub images: Vec<ImagePlan>,
+    pub spectrum_textures: Vec<SpectrumTexturePlan>,
 }
 
 impl ScenePlan {
@@ -115,6 +167,9 @@ impl ScenePlan {
         let mut primitives = Vec::with_capacity(scene.world_primitives.len());
         let mut materials = Vec::with_capacity(scene.world_primitives.len());
         let mut transforms = Vec::with_capacity(scene.world_primitives.len());
+        let mut images = Vec::new();
+        let mut spectrum_textures = Vec::new();
+        let mut image_to_plan = vec![None; scene.images.len()];
 
         for primitive_id in scene.world_primitives {
             let primitive =
@@ -179,7 +234,22 @@ impl ScenePlan {
                     }))
                 }
             };
-            let material = lower_material(scene, primitive.material, *primitive_id)?;
+            let material = lower_material(
+                scene,
+                primitive.material,
+                *primitive_id,
+                &mut images,
+                &mut spectrum_textures,
+                &mut image_to_plan,
+            )?;
+
+            if material.requires_uv()
+                && (triangle_mesh.uvs.is_none() || triangle_mesh.face_indices.is_some())
+            {
+                return Err(BackendError::Plan(PlanError::UnsupportedTexture {
+                    texture: primitive.material.map_or(0, |material| material.0),
+                }));
+            }
 
             let blas = match geometry_to_blas[primitive.geometry.0 as usize] {
                 Some(index) => index,
@@ -196,7 +266,25 @@ impl ScenePlan {
                             index: primitive.geometry.0,
                         }));
                     }
-                    vertices.extend(triangle_mesh.positions.iter().map(|position| position.0));
+                    let uvs = triangle_mesh.uvs.as_deref();
+                    if let Some(uvs) = uvs {
+                        if uvs.len() != triangle_mesh.positions.len() {
+                            return Err(BackendError::Plan(PlanError::InvalidReference {
+                                resource: "triangle mesh UV",
+                                index: uvs.len() as u32,
+                            }));
+                        }
+                    }
+                    vertices.extend(triangle_mesh.positions.iter().enumerate().map(
+                        |(index, position)| {
+                            VertexPlan {
+                                position: position.0,
+                                uv: uvs
+                                    .and_then(|uvs| uvs.get(index).map(|uv| uv.0))
+                                    .unwrap_or([0.0, 0.0]),
+                            }
+                        },
+                    ));
                     indices.extend(
                         triangle_mesh
                             .indices
@@ -258,6 +346,8 @@ impl ScenePlan {
             materials,
             transforms,
             lights,
+            images,
+            spectrum_textures,
         })
     }
 }
@@ -266,6 +356,9 @@ fn lower_material(
     scene: GpuSceneView<'_>,
     material_id: Option<super::super::ir::MaterialId>,
     primitive: PrimitiveId,
+    images: &mut Vec<ImagePlan>,
+    spectrum_textures: &mut Vec<SpectrumTexturePlan>,
+    image_to_plan: &mut [Option<u32>],
 ) -> Result<MaterialPlan, BackendError> {
     let material_id = material_id.ok_or(BackendError::Plan(PlanError::UnsupportedMaterial {
         primitive: primitive.0,
@@ -290,18 +383,217 @@ fn lower_material(
             resource: "spectrum texture",
             index: diffuse.reflectance.0,
         }))?;
-    let spectrum_id = match texture {
-        GpuSpectrumTexture::Constant { value } => *value,
-        _ => {
-            return Err(BackendError::Plan(PlanError::UnsupportedMaterial {
-                primitive: primitive.0,
-            }))
+    let reflectance = match texture {
+        GpuSpectrumTexture::Constant { value } => {
+            MaterialReflectancePlan::Constant(match spectrum_rgb(scene, *value, primitive.0)? {
+                [red, green, blue] => [red, green, blue, 1.0],
+            })
+        }
+        GpuSpectrumTexture::Image {
+            image,
+            mapping,
+            scale,
+            invert,
+            swrap,
+            twrap,
+            filter,
+            spectrum_type,
+        } => {
+            let texture_index = lower_spectrum_texture(
+                scene,
+                *image,
+                *mapping,
+                *scale,
+                *invert,
+                *swrap,
+                *twrap,
+                *filter,
+                *spectrum_type,
+                images,
+                spectrum_textures,
+                image_to_plan,
+                primitive,
+            )?;
+            MaterialReflectancePlan::SpectrumTexture(texture_index)
         }
     };
-    let reflectance = match spectrum_rgb(scene, spectrum_id, primitive.0)? {
-        [red, green, blue] => [red, green, blue, 1.0],
-    };
     Ok(MaterialPlan { reflectance })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_spectrum_texture(
+    scene: GpuSceneView<'_>,
+    image: super::super::ir::ImageId,
+    mapping: super::super::ir::TextureMappingId,
+    scale: f32,
+    invert: bool,
+    swrap: GpuImageWrapMode,
+    twrap: GpuImageWrapMode,
+    filter: GpuImageFilter,
+    spectrum_type: GpuSpectrumType,
+    images: &mut Vec<ImagePlan>,
+    spectrum_textures: &mut Vec<SpectrumTexturePlan>,
+    image_to_plan: &mut [Option<u32>],
+    primitive: PrimitiveId,
+) -> Result<u32, BackendError> {
+    let image_resource = scene
+        .images
+        .get(image.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "image",
+            index: image.0,
+        }))?;
+    let mapping = scene
+        .texture_mappings
+        .get(mapping.0 as usize)
+        .ok_or(BackendError::Plan(PlanError::InvalidReference {
+            resource: "texture mapping",
+            index: mapping.0,
+        }))?;
+    if !matches!(mapping, GpuTextureMapping::Uv { .. })
+        || !matches!(filter, GpuImageFilter::Point | GpuImageFilter::Bilinear)
+        || !supported_wrap(swrap)
+        || !supported_wrap(twrap)
+    {
+        return Err(BackendError::Plan(PlanError::UnsupportedTexture {
+            texture: primitive.0,
+        }));
+    }
+    let image_index =
+        if let Some(index) = image_to_plan.get(image.0 as usize).and_then(|index| *index) {
+            index
+        } else {
+            let index = u32::try_from(images.len()).map_err(|_| {
+                BackendError::Plan(PlanError::LimitExceeded {
+                    resource: "image table",
+                    value: u32::MAX,
+                    maximum: u32::MAX,
+                })
+            })?;
+            images.push(lower_image(image_resource)?);
+            // This map is keyed by the image ID. A spectrum texture can share an image
+            // with another spectrum texture while retaining different lookup parameters.
+            if let Some(slot) = image_to_plan.get_mut(image.0 as usize) {
+                *slot = Some(index);
+            }
+            index
+        };
+    let texture_index = u32::try_from(spectrum_textures.len()).map_err(|_| {
+        BackendError::Plan(PlanError::LimitExceeded {
+            resource: "spectrum texture table",
+            value: u32::MAX,
+            maximum: u32::MAX,
+        })
+    })?;
+    spectrum_textures.push(SpectrumTexturePlan {
+        image: image_index,
+        mapping: *mapping,
+        scale,
+        invert,
+        swrap,
+        twrap,
+        filter,
+        spectrum_type,
+    });
+    Ok(texture_index)
+}
+
+fn supported_wrap(wrap: GpuImageWrapMode) -> bool {
+    matches!(
+        wrap,
+        GpuImageWrapMode::Black | GpuImageWrapMode::Clamp | GpuImageWrapMode::Repeat
+    )
+}
+
+fn lower_image(image: &GpuImageResource) -> Result<ImagePlan, BackendError> {
+    let channel_count = image.channels.count();
+    let texels = image_scalar_values(image, channel_count)?;
+    let mip_levels = image
+        .mip_levels
+        .iter()
+        .map(|level| {
+            let offset = u32::try_from(level.texel_offset).map_err(|_| {
+                BackendError::Plan(PlanError::LimitExceeded {
+                    resource: "image mip texel offset",
+                    value: u32::MAX,
+                    maximum: u32::MAX,
+                })
+            })?;
+            let count = u32::try_from(level.texel_count).map_err(|_| {
+                BackendError::Plan(PlanError::LimitExceeded {
+                    resource: "image mip texel count",
+                    value: u32::MAX,
+                    maximum: u32::MAX,
+                })
+            })?;
+            let end = usize::try_from(level.texel_offset)
+                .ok()
+                .and_then(|offset| {
+                    usize::try_from(level.texel_count)
+                        .ok()
+                        .and_then(|count| offset.checked_add(count))
+                })
+                .ok_or(BackendError::Plan(PlanError::InvalidReference {
+                    resource: "image mip texels",
+                    index: offset,
+                }))?;
+            if end > texels.len() {
+                return Err(BackendError::Plan(PlanError::InvalidReference {
+                    resource: "image mip texels",
+                    index: end as u32,
+                }));
+            }
+            Ok(ImageMipPlan {
+                resolution: level.resolution,
+                texel_offset: offset,
+                texel_count: count,
+            })
+        })
+        .collect::<Result<Vec<_>, BackendError>>()?;
+    Ok(ImagePlan {
+        resolution: image.resolution,
+        channels: image.channels,
+        mip_levels,
+        texels,
+    })
+}
+
+fn image_scalar_values(
+    image: &GpuImageResource,
+    channel_count: usize,
+) -> Result<Vec<f32>, BackendError> {
+    let mut values = Vec::new();
+    match &image.storage {
+        GpuTexelStorage::F32(data) => values.extend(data.iter().copied()),
+        GpuTexelStorage::F16(data) => values.extend(
+            data.iter()
+                .map(|value| half::f16::from_bits(*value).to_f32()),
+        ),
+        GpuTexelStorage::U8(data) => {
+            values.extend(data.iter().enumerate().map(|(index, value)| {
+                let normalized = f32::from(*value) / 255.0;
+                let channel = index % channel_count;
+                if channel + 1 == channel_count && (channel_count == 2 || channel_count == 4) {
+                    normalized
+                } else {
+                    match image.color_encoding {
+                        GpuColorEncoding::Linear => normalized,
+                        GpuColorEncoding::Srgb => {
+                            crate::util::imageio::ColorEncoding::SRgb.to_linear(normalized)
+                        }
+                        GpuColorEncoding::Gamma { exponent } => normalized.powf(exponent),
+                    }
+                }
+            }));
+        }
+    }
+    if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
+        return Err(BackendError::Plan(PlanError::InvalidReference {
+            resource: "image texel data",
+            index: values.len() as u32,
+        }));
+    }
+    Ok(values)
 }
 
 fn spectrum_rgb(
@@ -386,8 +678,11 @@ pub fn vertex_bytes(plan: &ScenePlan) -> Vec<u8> {
         .iter()
         .flat_map(|vertex| {
             vertex
-                .iter()
-                .chain(std::iter::once(&0.0))
+                .position
+                .into_iter()
+                .chain(std::iter::once(0.0))
+                .chain(vertex.uv)
+                .chain([0.0, 0.0])
                 .flat_map(|value| value.to_le_bytes())
         })
         .collect()
@@ -419,8 +714,96 @@ pub fn primitive_bytes(plan: &ScenePlan) -> Vec<u8> {
 pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
     plan.materials
         .iter()
-        .flat_map(|material| material.reflectance.into_iter().flat_map(f32::to_le_bytes))
+        .flat_map(|material| {
+            let (reflectance, texture, flags): ([f32; 4], u32, u32) = match material.reflectance {
+                MaterialReflectancePlan::Constant(value) => (value, 0, 0),
+                MaterialReflectancePlan::SpectrumTexture(texture) => ([0.0; 4], texture, 1),
+            };
+            reflectance
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .chain(texture.to_le_bytes())
+                .chain(flags.to_le_bytes())
+                .chain(0u32.to_le_bytes())
+                .chain(0u32.to_le_bytes())
+        })
         .collect()
+}
+
+/// Serializes the initial image-texture ABI. All offsets are u32 word offsets
+/// relative to this buffer; the first mip level is sufficient for the initial
+/// point/bilinear lowering and later levels remain available in `ImagePlan`.
+pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
+    let image_offset = 4u32;
+    let texture_offset = image_offset + plan.images.len() as u32 * 8;
+    let texel_offset = texture_offset + plan.spectrum_textures.len() as u32 * 8;
+    let mut words = vec![
+        image_offset,
+        plan.images.len() as u32,
+        texture_offset,
+        plan.spectrum_textures.len() as u32,
+    ];
+    let mut image_data_offset = texel_offset;
+    for image in &plan.images {
+        let level = image.mip_levels.first();
+        let resolution = level.map_or(image.resolution, |level| level.resolution);
+        let texel_count = level.map_or(image.texels.len() as u32, |level| level.texel_count);
+        let level_offset = level.map_or(0, |level| level.texel_offset);
+        words.extend([
+            resolution[0],
+            resolution[1],
+            image.channels.count() as u32,
+            image_data_offset + level_offset,
+            texel_count,
+            0,
+            0,
+            0,
+        ]);
+        image_data_offset += image.texels.len() as u32;
+    }
+    for texture in &plan.spectrum_textures {
+        let mapping = match texture.mapping {
+            GpuTextureMapping::Uv { su, sv, du, dv } => [su, sv, du, dv],
+            _ => [1.0, 1.0, 0.0, 0.0],
+        };
+        let flags = u32::from(texture.invert)
+            | wrap_bits(texture.swrap, 1)
+            | wrap_bits(texture.twrap, 3)
+            | (u32::from(matches!(texture.filter, GpuImageFilter::Bilinear)) << 5)
+            | (spectrum_bits(texture.spectrum_type) << 6);
+        words.extend([
+            texture.image,
+            mapping[0].to_bits(),
+            mapping[1].to_bits(),
+            mapping[2].to_bits(),
+            mapping[3].to_bits(),
+            texture.scale.to_bits(),
+            flags,
+            0,
+        ]);
+    }
+    for image in &plan.images {
+        words.extend(image.texels.iter().copied().map(f32::to_bits));
+    }
+    words.into_iter().flat_map(u32::to_le_bytes).collect()
+}
+
+fn wrap_bits(wrap: GpuImageWrapMode, shift: u32) -> u32 {
+    let value = match wrap {
+        GpuImageWrapMode::Black => 0,
+        GpuImageWrapMode::Clamp => 1,
+        GpuImageWrapMode::Repeat => 2,
+        GpuImageWrapMode::OctahedralSphere => 3,
+    };
+    value << shift
+}
+
+fn spectrum_bits(spectrum: GpuSpectrumType) -> u32 {
+    match spectrum {
+        GpuSpectrumType::Albedo => 0,
+        GpuSpectrumType::Unbounded => 1,
+        GpuSpectrumType::Illuminant => 2,
+    }
 }
 
 pub fn transform_bytes(plan: &ScenePlan) -> Vec<u8> {
@@ -457,6 +840,7 @@ pub struct HardwareAcceleration {
     pub material_buffer: wgpu::Buffer,
     pub transform_buffer: wgpu::Buffer,
     pub light_buffer: wgpu::Buffer,
+    pub texture_buffer: wgpu::Buffer,
     pub blases: Vec<wgpu::Blas>,
     pub tlas: Tlas,
 }
@@ -491,6 +875,11 @@ impl HardwareAcceleration {
         let light_buffer = context.device.create_buffer_init(&BufferInitDescriptor {
             label: Some("pbrt-r4 WebGPU light table"),
             contents: &light_bytes(plan),
+            usage: BufferUsages::STORAGE,
+        });
+        let texture_buffer = context.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("pbrt-r4 WebGPU texture buffer"),
+            contents: &texture_bytes(plan),
             usage: BufferUsages::STORAGE,
         });
 
@@ -564,7 +953,7 @@ impl HardwareAcceleration {
                     size,
                     vertex_buffer: &vertex_buffer,
                     first_vertex: blas.first_vertex,
-                    vertex_stride: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    vertex_stride: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
                     index_buffer: Some(&index_buffer),
                     first_index: Some(blas.first_index),
                     transform_buffer: None,
@@ -582,6 +971,7 @@ impl HardwareAcceleration {
             material_buffer,
             transform_buffer,
             light_buffer,
+            texture_buffer,
             blases,
             tlas,
         })

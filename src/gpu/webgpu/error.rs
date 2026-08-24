@@ -48,6 +48,9 @@ pub enum PlanError {
     UnsupportedMaterial {
         primitive: u32,
     },
+    UnsupportedTexture {
+        texture: u32,
+    },
     UnsupportedLight {
         light: u32,
     },
@@ -135,6 +138,9 @@ impl std::fmt::Display for PlanError {
             ),
             Self::UnsupportedMaterial { primitive } => {
                 write!(formatter, "unsupported material for primitive {primitive}")
+            }
+            Self::UnsupportedTexture { texture } => {
+                write!(formatter, "unsupported texture {texture}")
             }
             Self::UnsupportedLight { light } => {
                 write!(formatter, "unsupported light {light}")

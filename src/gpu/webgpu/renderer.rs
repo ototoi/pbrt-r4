@@ -102,16 +102,19 @@ impl Renderer {
         )
         .map_err(|_| BackendError::Readback("output size overflow".to_string()))?;
 
-        let bvh_primitive_offset = match &scene.resources {
-            SceneResources::Hardware(_) => 0,
-            SceneResources::Software(acceleration) => acceleration.bvh_primitive_offset,
+        let (bvh_primitive_offset, bvh_node_offset) = match &scene.resources {
+            SceneResources::Hardware(_) => (0, 0),
+            SceneResources::Software(acceleration) => (
+                acceleration.bvh_primitive_offset,
+                acceleration.bvh_node_offset,
+            ),
         };
         let uniform_buffer = self
             .device_context
             .device
             .create_buffer_init(&BufferInitDescriptor {
                 label: Some("pbrt-r4 WebGPU camera uniforms"),
-                contents: &camera_uniform_bytes(scene_view, bvh_primitive_offset),
+                contents: &camera_uniform_bytes(scene_view, bvh_primitive_offset, bvh_node_offset),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let output_buffer = self
@@ -155,6 +158,7 @@ impl Renderer {
                             buffer_entry(6, acceleration.transform_buffer.as_entire_binding()),
                             buffer_entry(7, acceleration.material_buffer.as_entire_binding()),
                             buffer_entry(8, acceleration.light_buffer.as_entire_binding()),
+                            buffer_entry(9, acceleration.texture_buffer.as_entire_binding()),
                         ],
                     }),
                 SceneResources::Software(acceleration) => self
@@ -283,7 +287,7 @@ fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline 
 }
 
 fn create_hardware_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let mut entries = common_bind_group_entries(false);
+    let mut entries = common_bind_group_entries();
     entries.insert(
         2,
         wgpu::BindGroupLayoutEntry {
@@ -302,14 +306,14 @@ fn create_hardware_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
 }
 
 fn create_software_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let entries = common_bind_group_entries(true);
+    let entries = common_bind_group_entries();
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("pbrt-r4 WebGPU software BVH bind group layout"),
         entries: &entries,
     })
 }
 
-fn common_bind_group_entries(include_bvh: bool) -> Vec<wgpu::BindGroupLayoutEntry> {
+fn common_bind_group_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
     let storage_read_only = |binding| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
@@ -348,13 +352,17 @@ fn common_bind_group_entries(include_bvh: bool) -> Vec<wgpu::BindGroupLayoutEntr
         storage_read_only(7),
         storage_read_only(8),
     ];
-    if include_bvh {
-        entries.push(storage_read_only(9));
-    }
+    // Binding 9 is the texture table for hardware mode and the texture table
+    // plus BVH data for software mode.
+    entries.push(storage_read_only(9));
     entries
 }
 
-fn camera_uniform_bytes(scene: GpuSceneView<'_>, bvh_primitive_offset: u32) -> Vec<u8> {
+fn camera_uniform_bytes(
+    scene: GpuSceneView<'_>,
+    bvh_primitive_offset: u32,
+    bvh_node_offset: u32,
+) -> Vec<u8> {
     let camera_transform = match scene
         .transforms
         .get(scene.render.camera.render_from_camera.0 as usize)
@@ -382,7 +390,7 @@ fn camera_uniform_bytes(scene: GpuSceneView<'_>, bvh_primitive_offset: u32) -> V
         .flat_map(f32::to_ne_bytes),
     );
     values.extend(
-        [bvh_primitive_offset, 0, 0, 0]
+        [bvh_primitive_offset, bvh_node_offset, 0, 0]
             .into_iter()
             .flat_map(u32::to_ne_bytes),
     );

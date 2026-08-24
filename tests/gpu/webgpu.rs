@@ -10,8 +10,8 @@ use pbrt_r4::gpu::ir::{
 };
 use pbrt_r4::gpu::webgpu::{
     index_bytes, light_bytes, material_bytes, primitive_bytes, tlas_transform, transform_bytes,
-    vertex_bytes, AccelerationMode, BackendPreference, PlanError, PrepareOptions, Renderer,
-    ScenePlan, SoftwareBvhPlan,
+    vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan, PlanError,
+    PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
 };
 
 fn minimal_scene() -> GpuCompiledScene {
@@ -139,7 +139,10 @@ fn scene_plan_lowers_triangle_geometry_and_transform() {
         [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
     );
     assert_eq!(plan.primitives[0].material, 0);
-    assert_eq!(plan.materials[0].reflectance, [0.5, 0.5, 0.5, 1.0]);
+    assert_eq!(
+        plan.materials[0].reflectance,
+        MaterialReflectancePlan::Constant([0.5, 0.5, 0.5, 1.0])
+    );
     assert_eq!(plan.lights[0].position, [0.0, 0.0, 2.0, 1.0]);
     assert_eq!(plan.lights[0].intensity, [0.5, 0.5, 0.5, 1.0]);
 }
@@ -154,9 +157,10 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
     let transforms = transform_bytes(&plan);
     let lights = light_bytes(&plan);
 
-    assert_eq!(vertices.len(), 3 * 16);
+    assert_eq!(vertices.len(), 3 * 32);
     assert_eq!(&vertices[0..4], &0.0f32.to_le_bytes());
     assert_eq!(&vertices[12..16], &0.0f32.to_le_bytes());
+    assert_eq!(&vertices[20..24], &0.0f32.to_le_bytes());
     assert_eq!(
         indices,
         [0u32, 1, 2]
@@ -165,7 +169,7 @@ fn gpu_buffer_serialization_matches_wgsl_layout() {
             .collect::<Vec<_>>()
     );
     assert_eq!(primitives.len(), 16);
-    assert_eq!(materials.len(), 16);
+    assert_eq!(materials.len(), 32);
     assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
     assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
     assert_eq!(transforms.len(), 64);

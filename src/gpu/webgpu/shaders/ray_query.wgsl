@@ -16,6 +16,14 @@ struct Primitive {
 
 struct Material {
     reflectance: vec4<f32>,
+    texture: u32,
+    flags: u32,
+    _padding: vec2<u32>,
+};
+
+struct Vertex {
+    position: vec4<f32>,
+    uv: vec4<f32>,
 };
 
 struct Transform {
@@ -34,7 +42,7 @@ var<storage, read_write> output: array<vec4<f32>>;
 @group(0) @binding(2)
 var acceleration: acceleration_structure;
 @group(0) @binding(3)
-var<storage, read> vertices: array<vec4<f32>>;
+var<storage, read> vertices: array<Vertex>;
 @group(0) @binding(4)
 var<storage, read> indices: array<u32>;
 @group(0) @binding(5)
@@ -45,6 +53,8 @@ var<storage, read> transforms: array<Transform>;
 var<storage, read> materials: array<Material>;
 @group(0) @binding(8)
 var<storage, read> lights: array<Light>;
+@group(0) @binding(9)
+var<storage, read> scene_data: array<u32>;
 
 fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
@@ -53,6 +63,45 @@ fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
         dot(rows[2], value),
         dot(rows[3], value),
     );
+}
+
+fn sample_texture(texture_id: u32, uv: vec2<f32>) -> vec3<f32> {
+    let texture_base = scene_data[2u] + texture_id * 8u;
+    let image_id = scene_data[texture_base];
+    let su = bitcast<f32>(scene_data[texture_base + 1u]);
+    let sv = bitcast<f32>(scene_data[texture_base + 2u]);
+    let du = bitcast<f32>(scene_data[texture_base + 3u]);
+    let dv = bitcast<f32>(scene_data[texture_base + 4u]);
+    let scale = bitcast<f32>(scene_data[texture_base + 5u]);
+    let flags = scene_data[texture_base + 6u];
+    var st = uv * vec2<f32>(su, sv) + vec2<f32>(du, dv);
+    let swrap = (flags >> 1u) & 3u;
+    let twrap = (flags >> 3u) & 3u;
+    if ((swrap == 0u && (st.x < 0.0 || st.x > 1.0)) ||
+        (twrap == 0u && (st.y < 0.0 || st.y > 1.0))) {
+        return vec3<f32>(0.0);
+    }
+    st.x = select(fract(st.x), clamp(st.x, 0.0, 1.0), swrap == 1u);
+    st.y = select(fract(st.y), clamp(st.y, 0.0, 1.0), twrap == 1u);
+    let image_base = scene_data[0u] + image_id * 8u;
+    let width = scene_data[image_base];
+    let height = scene_data[image_base + 1u];
+    let channels = scene_data[image_base + 2u];
+    let texel_base = scene_data[image_base + 3u];
+    let x = min(u32(st.x * f32(width)), width - 1u);
+    let y = min(u32(st.y * f32(height)), height - 1u);
+    let base = texel_base + (y * width + x) * channels;
+    let r = bitcast<f32>(scene_data[base]);
+    let g = select(r, bitcast<f32>(scene_data[base + 1u]), channels > 1u);
+    let b = select(r, bitcast<f32>(scene_data[base + 2u]), channels > 2u);
+    var value = vec3<f32>(r, g, b);
+    if ((flags & 1u) != 0u) {
+        value = vec3<f32>(1.0) - value;
+    }
+    if (((flags >> 6u) & 3u) == 0u) {
+        value = clamp(value, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    return value * scale;
 }
 
 @compute @workgroup_size(8, 8)
@@ -95,17 +144,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             intersection.barycentrics.x,
             intersection.barycentrics.y,
         );
-        let object_position = vertices[i0].xyz * barycentrics.x
-            + vertices[i1].xyz * barycentrics.y
-            + vertices[i2].xyz * barycentrics.z;
+        let object_position = vertices[i0].position.xyz * barycentrics.x
+            + vertices[i1].position.xyz * barycentrics.y
+            + vertices[i2].position.xyz * barycentrics.z;
         let object_normal = normalize(cross(
-            vertices[i1].xyz - vertices[i0].xyz,
-            vertices[i2].xyz - vertices[i0].xyz,
+            vertices[i1].position.xyz - vertices[i0].position.xyz,
+            vertices[i2].position.xyz - vertices[i0].position.xyz,
         ));
         let transform_table = transforms[intersection.instance_custom_data];
         let position = transform(transform_table.rows, vec4<f32>(object_position, 1.0)).xyz;
         let normal = normalize(transform(transform_table.rows, vec4<f32>(object_normal, 0.0)).xyz);
-        let reflectance = materials[primitive.material].reflectance.xyz;
+        let material = materials[primitive.material];
+        var reflectance = material.reflectance.xyz;
+        if ((material.flags & 1u) != 0u) {
+            let uv = vertices[i0].uv.xy * barycentrics.x
+                + vertices[i1].uv.xy * barycentrics.y
+                + vertices[i2].uv.xy * barycentrics.z;
+            reflectance = sample_texture(material.texture, uv);
+        }
         var radiance = vec3<f32>(0.0, 0.0, 0.0);
         for (var light_index = 0u; light_index < arrayLength(&lights); light_index++) {
             let light = lights[light_index];
