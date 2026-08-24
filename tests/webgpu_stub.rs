@@ -2,10 +2,11 @@
 
 use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
-    GeometryId, GpuDiffuseMaterial, GpuGeometry, GpuIrValidationError, GpuIrVersion, GpuMaterial,
-    GpuMatrix4x4, GpuPoint3, GpuPrimitive, GpuRenderConfig, GpuRenderRequest, GpuSceneData,
-    GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture, GpuStaticTransform, GpuTransform,
-    GpuTriangleMesh, MaterialId, SpectrumId, SpectrumTextureId, TransformId, CURRENT_IR_VERSION,
+    GeometryId, GpuBounds2i, GpuDiffuseMaterial, GpuGeometry, GpuIrValidationError, GpuIrVersion,
+    GpuMaterial, GpuMatrix4x4, GpuPoint3, GpuPrimitive, GpuRenderConfig, GpuRenderOutput,
+    GpuRenderRequest, GpuSceneData, GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture,
+    GpuStaticTransform, GpuTransform, GpuTriangleMesh, MaterialId, SpectrumId, SpectrumTextureId,
+    TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{WebGpuPrepareOptions, WebGpuRenderer};
 
@@ -110,6 +111,30 @@ fn webgpu_render_rejects_invalid_sample_range() {
         ),
         Err(pbrt_r4::gpu::webgpu::WebGpuBackendError::InvalidRenderRequest(_))
     ));
+}
+
+#[test]
+fn render_output_requires_one_rgb_value_per_pixel() {
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 1,
+    };
+    let error = GpuRenderOutput::new(
+        GpuBounds2i {
+            min: [0, 0],
+            max: [2, 1],
+        },
+        vec![[0.0, 0.0, 0.0]].into_boxed_slice(),
+        request,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        pbrt_r4::gpu::ir::GpuRenderOutputError::PixelCountMismatch {
+            expected: 2,
+            actual: 1,
+        }
+    );
 }
 
 #[test]

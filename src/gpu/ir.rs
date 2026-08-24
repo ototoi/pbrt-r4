@@ -311,6 +311,37 @@ pub struct GpuRenderOutput {
     pub sample_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GpuRenderOutputError {
+    InvalidPixelBounds,
+    PixelCountMismatch { expected: usize, actual: usize },
+}
+
+impl GpuRenderOutput {
+    pub fn new(
+        pixel_bounds: GpuBounds2i,
+        rgb: Box<[[f32; 3]]>,
+        request: GpuRenderRequest,
+    ) -> Result<Self, GpuRenderOutputError> {
+        let expected = pixel_bounds
+            .pixel_count()
+            .filter(|count| *count > 0)
+            .ok_or(GpuRenderOutputError::InvalidPixelBounds)?;
+        if rgb.len() != expected {
+            return Err(GpuRenderOutputError::PixelCountMismatch {
+                expected,
+                actual: rgb.len(),
+            });
+        }
+        Ok(Self {
+            pixel_bounds,
+            rgb,
+            sample_start: request.sample_start,
+            sample_count: request.sample_count,
+        })
+    }
+}
+
 impl GpuBounds2i {
     pub fn area(self) -> Option<u64> {
         let width = u64::from(self.max[0]).checked_sub(u64::from(self.min[0]))?;
