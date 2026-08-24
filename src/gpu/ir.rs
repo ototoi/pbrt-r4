@@ -27,6 +27,7 @@ typed_id!(ImageId);
 typed_id!(InstanceDefinitionId);
 typed_id!(InstanceId);
 typed_id!(MinMaxNodeId);
+typed_id!(SourceId);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GpuPoint2(pub [GpuFloat; 2]);
@@ -215,7 +216,7 @@ pub enum GpuFeature {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpuRequiredFeature {
     pub feature: GpuFeature,
-    pub sources: Box<[u32]>,
+    pub sources: Box<[SourceId]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

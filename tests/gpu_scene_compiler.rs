@@ -1,5 +1,6 @@
 #![cfg(any(feature = "cuda", feature = "webgpu"))]
 
+use pbrt_r4::gpu::compiler::{GpuResourceKind, GpuSourceEntry};
 use pbrt_r4::gpu::ir::{GpuGeometry, GpuImageFilter, GpuMaterial, GpuSpectrumResource};
 use pbrt_r4::parser::{parse_string, SceneBuilder};
 
@@ -32,11 +33,28 @@ fn scene_builder_compiles_a_default_trianglemesh() {
     assert!(matches!(view.geometry[0], GpuGeometry::TriangleMesh(_)));
     let requirements = compiled.requirements();
     assert_eq!(compiled.source_map().locations.len(), 1);
+    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
+        kind: GpuResourceKind::Geometry,
+        index: 0,
+        source: pbrt_r4::gpu::ir::SourceId(0),
+    }));
+    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
+        kind: GpuResourceKind::Primitive,
+        index: 0,
+        source: pbrt_r4::gpu::ir::SourceId(0),
+    }));
+    assert!(compiled.source_map().resources.windows(2).all(|entries| (
+        entries[0].kind,
+        entries[0].index
+    ) < (
+        entries[1].kind,
+        entries[1].index
+    )));
     assert_eq!(requirements.resource_counts.primitives, 1);
     assert_eq!(requirements.maxima.vertices_per_geometry, 3);
     assert!(requirements.features.iter().any(|required| {
         required.feature == pbrt_r4::gpu::ir::GpuFeature::TriangleMesh
-            && required.sources.as_ref() == [0]
+            && required.sources.as_ref() == [pbrt_r4::gpu::ir::SourceId(0)]
     }));
     assert!(requirements
         .features

@@ -11,7 +11,7 @@ use super::ir::{
     GpuRenderConfig, GpuRgbFilm, GpuSceneData, GpuSceneDraft, GpuSceneIr, GpuSceneView,
     GpuSpectrumResource, GpuSpectrumTexture, GpuStaticTransform, GpuTextureMapping, GpuTransform,
     GpuTriangleMesh, GpuUniformInfiniteLight, GpuVector2, GpuVector3, GpuWavefrontVolPath,
-    InstanceDefinitionId, InstanceId, MaterialId, MinMaxNodeId, SpectrumId, TransformId,
+    InstanceDefinitionId, InstanceId, MaterialId, MinMaxNodeId, SourceId, SpectrumId, TransformId,
     CURRENT_IR_VERSION,
 };
 use crate::paramdict::ParameterDictionary;
@@ -83,6 +83,30 @@ pub struct GpuCompiledScene {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuSourceMap {
     pub locations: Box<[GpuSourceLocation]>,
+    pub resources: Box<[GpuSourceEntry]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum GpuResourceKind {
+    Transform,
+    Spectrum,
+    Image,
+    TextureMapping,
+    FloatTexture,
+    SpectrumTexture,
+    Material,
+    Light,
+    Geometry,
+    Primitive,
+    InstanceDefinition,
+    Instance,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GpuSourceEntry {
+    pub kind: GpuResourceKind,
+    pub index: GpuIndex,
+    pub source: SourceId,
 }
 
 impl GpuCompiledScene {
@@ -275,7 +299,7 @@ impl SceneBuilder {
             },
         };
         let ir = draft.finish()?;
-        let (source_map, source_groups) = source_map(self);
+        let (source_map, source_groups) = source_map(self, &ir);
         let mut requirements = ir.requirements();
         attach_requirement_sources(&mut requirements, &source_groups);
         Ok(GpuCompiledScene::with_source_map(
@@ -2354,14 +2378,14 @@ fn empty_source() -> GpuSourceLocation {
 
 #[derive(Default)]
 struct GpuSourceGroups {
-    shapes: Vec<u32>,
-    float_textures: Vec<u32>,
-    spectrum_textures: Vec<u32>,
-    materials: Vec<u32>,
-    lights: Vec<u32>,
+    shapes: Vec<SourceId>,
+    float_textures: Vec<SourceId>,
+    spectrum_textures: Vec<SourceId>,
+    materials: Vec<SourceId>,
+    lights: Vec<SourceId>,
 }
 
-fn source_map(builder: &SceneBuilder) -> (GpuSourceMap, GpuSourceGroups) {
+fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSourceGroups) {
     let mut locations = Vec::new();
     let mut groups = GpuSourceGroups::default();
     for shape in &builder.shapes {
@@ -2387,7 +2411,7 @@ fn source_map(builder: &SceneBuilder) -> (GpuSourceMap, GpuSourceGroups) {
         );
     }
     for material in &builder.materials {
-        groups.materials.push(locations.len() as u32);
+        groups.materials.push(SourceId(locations.len() as GpuIndex));
         locations.push(GpuSourceLocation {
             filename: material.base.loc.filename.clone(),
             line: material.base.loc.line,
@@ -2401,9 +2425,111 @@ fn source_map(builder: &SceneBuilder) -> (GpuSourceMap, GpuSourceGroups) {
             light_source_location(light),
         );
     }
+    let mut resources = Vec::new();
+    for (index, primitive) in ir.view().primitives.iter().enumerate() {
+        let Some(&source) = groups.shapes.get(index) else {
+            continue;
+        };
+        add_resource(
+            &mut resources,
+            GpuResourceKind::Primitive,
+            index as GpuIndex,
+            source,
+        );
+        add_resource(
+            &mut resources,
+            GpuResourceKind::Geometry,
+            primitive.geometry.0,
+            source,
+        );
+        if let Some(super::ir::GpuGeometry::DisplacedTriangleMesh(mesh)) =
+            ir.view().geometry.get(primitive.geometry.0 as usize)
+        {
+            add_resource(
+                &mut resources,
+                GpuResourceKind::Geometry,
+                mesh.base_mesh.0,
+                source,
+            );
+        }
+        add_resource(
+            &mut resources,
+            GpuResourceKind::Transform,
+            primitive.transform.0,
+            source,
+        );
+        if let Some(material) = primitive.material {
+            add_resource(
+                &mut resources,
+                GpuResourceKind::Material,
+                material.0,
+                source,
+            );
+        }
+    }
+    for (index, texture) in ir.view().float_textures.iter().enumerate() {
+        let Some(&source) = groups.float_textures.get(index) else {
+            continue;
+        };
+        add_resource(
+            &mut resources,
+            GpuResourceKind::FloatTexture,
+            index as GpuIndex,
+            source,
+        );
+        if let super::ir::GpuFloatTexture::Image { image, mapping, .. } = texture {
+            add_resource(&mut resources, GpuResourceKind::Image, image.0, source);
+            add_resource(
+                &mut resources,
+                GpuResourceKind::TextureMapping,
+                mapping.0,
+                source,
+            );
+        }
+    }
+    for (index, texture) in ir.view().spectrum_textures.iter().enumerate().skip(1) {
+        let Some(&source) = groups.spectrum_textures.get(index - 1) else {
+            continue;
+        };
+        add_resource(
+            &mut resources,
+            GpuResourceKind::SpectrumTexture,
+            index as GpuIndex,
+            source,
+        );
+        if let super::ir::GpuSpectrumTexture::Image { image, mapping, .. } = texture {
+            add_resource(&mut resources, GpuResourceKind::Image, image.0, source);
+            add_resource(
+                &mut resources,
+                GpuResourceKind::TextureMapping,
+                mapping.0,
+                source,
+            );
+        }
+    }
+    for (index, light) in ir.view().lights.iter().enumerate() {
+        if let Some(&source) = groups.lights.get(index) {
+            add_resource(
+                &mut resources,
+                GpuResourceKind::Light,
+                index as GpuIndex,
+                source,
+            );
+            if let super::ir::GpuLight::Point(point) = light {
+                add_resource(
+                    &mut resources,
+                    GpuResourceKind::Transform,
+                    point.render_from_light.0,
+                    source,
+                );
+            }
+        }
+    }
+    resources.sort_by_key(|entry| (entry.kind, entry.index));
     (
         GpuSourceMap {
             locations: locations.into_boxed_slice(),
+            resources: resources.into_boxed_slice(),
         },
         groups,
     )
@@ -2411,12 +2537,31 @@ fn source_map(builder: &SceneBuilder) -> (GpuSourceMap, GpuSourceGroups) {
 
 fn add_source(
     locations: &mut Vec<GpuSourceLocation>,
-    group: &mut Vec<u32>,
+    group: &mut Vec<SourceId>,
     location: GpuSourceLocation,
 ) {
-    let id = locations.len() as u32;
+    let id = SourceId(locations.len() as GpuIndex);
     locations.push(location);
     group.push(id);
+}
+
+fn add_resource(
+    resources: &mut Vec<GpuSourceEntry>,
+    kind: GpuResourceKind,
+    index: GpuIndex,
+    source: SourceId,
+) {
+    if resources
+        .iter()
+        .any(|entry| entry.kind == kind && entry.index == index)
+    {
+        return;
+    }
+    resources.push(GpuSourceEntry {
+        kind,
+        index,
+        source,
+    });
 }
 
 fn attach_requirement_sources(
