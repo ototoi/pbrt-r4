@@ -65,8 +65,28 @@ fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
     );
 }
 
+fn image_texel(image_base: u32, x: i32, y: i32) -> vec3<f32> {
+    let width = scene_data[image_base];
+    let height = scene_data[image_base + 1u];
+    let channels = scene_data[image_base + 2u];
+    let texel_base = scene_data[image_base + 5u];
+    let ix = u32(clamp(x, 0, i32(width) - 1));
+    let iy = u32(clamp(y, 0, i32(height) - 1));
+    let base = texel_base + (iy * width + ix) * channels;
+    let r = bitcast<f32>(scene_data[base]);
+    var g = r;
+    var b = r;
+    if (channels > 1u) {
+        g = bitcast<f32>(scene_data[base + 1u]);
+    }
+    if (channels > 2u) {
+        b = bitcast<f32>(scene_data[base + 2u]);
+    }
+    return vec3<f32>(r, g, b);
+}
+
 fn sample_texture(texture_id: u32, uv: vec2<f32>) -> vec3<f32> {
-    let texture_base = scene_data[2u] + texture_id * 8u;
+    let texture_base = scene_data[6u] + texture_id * 8u;
     let image_id = scene_data[texture_base];
     let su = bitcast<f32>(scene_data[texture_base + 1u]);
     let sv = bitcast<f32>(scene_data[texture_base + 2u]);
@@ -86,15 +106,22 @@ fn sample_texture(texture_id: u32, uv: vec2<f32>) -> vec3<f32> {
     let image_base = scene_data[0u] + image_id * 8u;
     let width = scene_data[image_base];
     let height = scene_data[image_base + 1u];
-    let channels = scene_data[image_base + 2u];
-    let texel_base = scene_data[image_base + 3u];
-    let x = min(u32(st.x * f32(width)), width - 1u);
-    let y = min(u32(st.y * f32(height)), height - 1u);
-    let base = texel_base + (y * width + x) * channels;
-    let r = bitcast<f32>(scene_data[base]);
-    let g = select(r, bitcast<f32>(scene_data[base + 1u]), channels > 1u);
-    let b = select(r, bitcast<f32>(scene_data[base + 2u]), channels > 2u);
-    var value = vec3<f32>(r, g, b);
+    let coordinate = st * vec2<f32>(f32(width), f32(height)) - vec2<f32>(0.5);
+    let x0 = i32(floor(coordinate.x));
+    let y0 = i32(floor(coordinate.y));
+    let tx = fract(coordinate.x);
+    let ty = fract(coordinate.y);
+    let p00 = image_texel(image_base, x0, y0);
+    var value = p00;
+    if (((flags >> 5u) & 1u) != 0u) {
+        let p10 = image_texel(image_base, x0 + 1, y0);
+        let p01 = image_texel(image_base, x0, y0 + 1);
+        let p11 = image_texel(image_base, x0 + 1, y0 + 1);
+        value = p00 * (1.0 - tx) * (1.0 - ty)
+            + p10 * tx * (1.0 - ty)
+            + p01 * (1.0 - tx) * ty
+            + p11 * tx * ty;
+    }
     if ((flags & 1u) != 0u) {
         value = vec3<f32>(1.0) - value;
     }

@@ -2,19 +2,22 @@
 
 use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
 use pbrt_r4::gpu::ir::{
-    GeometryId, GpuBounds2i, GpuDiffuseMaterial, GpuGeometry, GpuIrValidationError, GpuIrVersion,
-    GpuLight, GpuMaterial, GpuMatrix4x4, GpuPoint3, GpuPointLight, GpuPrimitive, GpuRenderConfig,
-    GpuRenderOutput, GpuRenderRequest, GpuSceneData, GpuSceneDraft, GpuSpectrumResource,
-    GpuSpectrumTexture, GpuStaticTransform, GpuTransform, GpuTriangleMesh, MaterialId, PrimitiveId,
-    SpectrumId, SpectrumTextureId, TransformId, CURRENT_IR_VERSION,
+    GeometryId, GpuBounds2i, GpuColorEncoding, GpuDiffuseMaterial, GpuFloatImageChannel,
+    GpuFloatTexture, GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource,
+    GpuImageWrapMode, GpuIrValidationError, GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4,
+    GpuMipLevel, GpuPoint3, GpuPointLight, GpuPrimitive, GpuRenderConfig, GpuRenderOutput,
+    GpuRenderRequest, GpuSceneData, GpuSceneDraft, GpuSpectrumResource, GpuSpectrumTexture,
+    GpuSpectrumType, GpuStaticTransform, GpuTexelStorage, GpuTextureMapping, GpuTransform,
+    GpuTriangleMesh, ImageId, MaterialId, PrimitiveId, SpectrumId, SpectrumTextureId,
+    TextureMappingId, TransformId, CURRENT_IR_VERSION,
 };
 use pbrt_r4::gpu::webgpu::{
-    index_bytes, light_bytes, material_bytes, primitive_bytes, tlas_transform, transform_bytes,
-    vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan, PlanError,
-    PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
+    index_bytes, light_bytes, material_bytes, primitive_bytes, texture_bytes, tlas_transform,
+    transform_bytes, vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan,
+    PlanError, PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
 };
 
-fn minimal_scene() -> GpuCompiledScene {
+fn minimal_scene_draft() -> GpuSceneDraft {
     let identity = GpuMatrix4x4([
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
@@ -119,6 +122,104 @@ fn minimal_scene() -> GpuCompiledScene {
             },
         },
     };
+    draft
+}
+
+fn minimal_scene() -> GpuCompiledScene {
+    GpuCompiledScene::new(
+        minimal_scene_draft().finish().unwrap(),
+        GpuSourceMap::default(),
+    )
+}
+
+fn image_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 1.0,
+        sv: 1.0,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    let mip = |count| {
+        vec![GpuMipLevel {
+            resolution: [1, 1],
+            texel_offset: 0,
+            texel_count: count,
+        }]
+        .into_boxed_slice()
+    };
+    draft.data.images = vec![
+        GpuImageResource {
+            resolution: [1, 1],
+            channels: GpuImageChannels::Rgba,
+            storage: GpuTexelStorage::U8(vec![255, 128, 0, 64].into_boxed_slice()),
+            mip_levels: mip(4),
+            color_encoding: GpuColorEncoding::Srgb,
+        },
+        GpuImageResource {
+            resolution: [1, 1],
+            channels: GpuImageChannels::R,
+            storage: GpuTexelStorage::F16(vec![0x3800].into_boxed_slice()),
+            mip_levels: mip(1),
+            color_encoding: GpuColorEncoding::Linear,
+        },
+        GpuImageResource {
+            resolution: [1, 1],
+            channels: GpuImageChannels::R,
+            storage: GpuTexelStorage::F32(vec![0.25].into_boxed_slice()),
+            mip_levels: mip(1),
+            color_encoding: GpuColorEncoding::Linear,
+        },
+    ];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 2.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Clamp,
+        twrap: GpuImageWrapMode::Clamp,
+        filter: GpuImageFilter::Bilinear,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    draft.data.float_textures = vec![
+        GpuFloatTexture::Image {
+            image: ImageId(0),
+            mapping: TextureMappingId(0),
+            scale: 1.0,
+            invert: false,
+            swrap: GpuImageWrapMode::Repeat,
+            twrap: GpuImageWrapMode::Repeat,
+            filter: GpuImageFilter::Point,
+            channel: GpuFloatImageChannel::Alpha,
+        },
+        GpuFloatTexture::Image {
+            image: ImageId(1),
+            mapping: TextureMappingId(0),
+            scale: 1.0,
+            invert: false,
+            swrap: GpuImageWrapMode::Repeat,
+            twrap: GpuImageWrapMode::Repeat,
+            filter: GpuImageFilter::Point,
+            channel: GpuFloatImageChannel::Channel0,
+        },
+        GpuFloatTexture::Image {
+            image: ImageId(2),
+            mapping: TextureMappingId(0),
+            scale: 1.0,
+            invert: false,
+            swrap: GpuImageWrapMode::Repeat,
+            twrap: GpuImageWrapMode::Repeat,
+            filter: GpuImageFilter::Point,
+            channel: GpuFloatImageChannel::Channel0,
+        },
+    ];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
@@ -145,6 +246,26 @@ fn scene_plan_lowers_triangle_geometry_and_transform() {
     );
     assert_eq!(plan.lights[0].position, [0.0, 0.0, 2.0, 1.0]);
     assert_eq!(plan.lights[0].intensity, [0.5, 0.5, 0.5, 1.0]);
+}
+
+#[test]
+fn image_texture_lowering_preserves_channels_mips_and_encoding() {
+    let plan = ScenePlan::from_scene(image_scene().view()).unwrap();
+    assert_eq!(plan.images.len(), 3);
+    assert_eq!(plan.images[0].channels, GpuImageChannels::Rgba);
+    assert_eq!(plan.images[0].mip_levels.len(), 1);
+    assert_eq!(plan.images[0].texels.len(), 4);
+    assert!(plan.images[0].texels[0] > 0.99);
+    assert!(plan.images[0].texels[1] > 0.2 && plan.images[0].texels[1] < 0.3);
+    assert!((plan.images[1].texels[0] - 0.5).abs() < 1.0e-6);
+    assert!((plan.images[2].texels[0] - 0.25).abs() < 1.0e-6);
+    assert_eq!(plan.float_textures.len(), 3);
+    assert_eq!(plan.spectrum_textures.len(), 1);
+    assert!(texture_bytes(&plan).len() >= 8 * 4);
+    assert!(matches!(
+        plan.materials[0].reflectance,
+        MaterialReflectancePlan::SpectrumTexture(0)
+    ));
 }
 
 #[test]
@@ -351,6 +472,24 @@ fn software_bvh_renderer_returns_a_pixel_buffer() {
     assert_eq!(output.rgb.len(), 1);
     let expected = 0.25 * (2.0 / (4.125_f32).sqrt()) / 4.125;
     assert!((output.rgb[0][0] - expected).abs() < 1.0e-4);
+}
+
+#[test]
+fn software_renderer_evaluates_spectrum_image_texture() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&image_scene()).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert!(output.rgb[0][0] > output.rgb[0][1]);
+    assert!(output.rgb[0][1] > output.rgb[0][2]);
 }
 
 #[test]

@@ -1,8 +1,8 @@
 use super::super::ir::{
-    GeometryId, GpuAreaLightBinding, GpuColorEncoding, GpuGeometry, GpuImageChannels,
-    GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuLight, GpuMaterial, GpuSceneView,
-    GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType, GpuTexelStorage, GpuTextureMapping,
-    GpuTransform, PrimitiveId,
+    GeometryId, GpuAreaLightBinding, GpuColorEncoding, GpuFloatImageChannel, GpuFloatTexture,
+    GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuLight,
+    GpuMaterial, GpuSceneView, GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType,
+    GpuTexelStorage, GpuTextureMapping, GpuTransform, PrimitiveId,
 };
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
@@ -64,6 +64,21 @@ pub struct SpectrumTexturePlan {
     pub twrap: GpuImageWrapMode,
     pub filter: GpuImageFilter,
     pub spectrum_type: GpuSpectrumType,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FloatTexturePlan {
+    Constant(f32),
+    Image {
+        image: u32,
+        mapping: GpuTextureMapping,
+        scale: f32,
+        invert: bool,
+        swrap: GpuImageWrapMode,
+        twrap: GpuImageWrapMode,
+        filter: GpuImageFilter,
+        channel: GpuFloatImageChannel,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -133,6 +148,7 @@ pub struct ScenePlan {
     pub transforms: Vec<TransformPlan>,
     pub lights: Vec<LightPlan>,
     pub images: Vec<ImagePlan>,
+    pub float_textures: Vec<FloatTexturePlan>,
     pub spectrum_textures: Vec<SpectrumTexturePlan>,
 }
 
@@ -168,8 +184,18 @@ impl ScenePlan {
         let mut materials = Vec::with_capacity(scene.world_primitives.len());
         let mut transforms = Vec::with_capacity(scene.world_primitives.len());
         let mut images = Vec::new();
+        let mut float_textures = Vec::with_capacity(scene.float_textures.len());
         let mut spectrum_textures = Vec::new();
         let mut image_to_plan = vec![None; scene.images.len()];
+
+        for texture in scene.float_textures {
+            float_textures.push(lower_float_texture(
+                scene,
+                *texture,
+                &mut images,
+                &mut image_to_plan,
+            )?);
+        }
 
         for primitive_id in scene.world_primitives {
             let primitive =
@@ -347,6 +373,7 @@ impl ScenePlan {
             transforms,
             lights,
             images,
+            float_textures,
             spectrum_textures,
         })
     }
@@ -503,6 +530,83 @@ fn supported_wrap(wrap: GpuImageWrapMode) -> bool {
         wrap,
         GpuImageWrapMode::Black | GpuImageWrapMode::Clamp | GpuImageWrapMode::Repeat
     )
+}
+
+fn lower_float_texture(
+    scene: GpuSceneView<'_>,
+    texture: GpuFloatTexture,
+    images: &mut Vec<ImagePlan>,
+    image_to_plan: &mut [Option<u32>],
+) -> Result<FloatTexturePlan, BackendError> {
+    match texture {
+        GpuFloatTexture::Constant { value } => Ok(FloatTexturePlan::Constant(value)),
+        GpuFloatTexture::Image {
+            image,
+            mapping,
+            scale,
+            invert,
+            swrap,
+            twrap,
+            filter,
+            channel,
+        } => {
+            let mapping =
+                scene
+                    .texture_mappings
+                    .get(mapping.0 as usize)
+                    .ok_or(BackendError::Plan(PlanError::InvalidReference {
+                        resource: "texture mapping",
+                        index: mapping.0,
+                    }))?;
+            let image_resource = scene
+                .images
+                .get(image.0 as usize)
+                .ok_or(BackendError::Plan(PlanError::InvalidReference {
+                    resource: "image",
+                    index: image.0,
+                }))?;
+            if !matches!(mapping, GpuTextureMapping::Uv { .. })
+                || !matches!(filter, GpuImageFilter::Point | GpuImageFilter::Bilinear)
+                || !supported_wrap(swrap)
+                || !supported_wrap(twrap)
+            {
+                return Err(BackendError::Plan(PlanError::UnsupportedTexture {
+                    texture: image.0,
+                }));
+            }
+            if matches!(channel, GpuFloatImageChannel::Alpha)
+                && !matches!(
+                    image_resource.channels,
+                    GpuImageChannels::Rg | GpuImageChannels::Rgba
+                )
+            {
+                return Err(BackendError::Plan(PlanError::UnsupportedTexture {
+                    texture: image.0,
+                }));
+            }
+            let image =
+                if let Some(index) = image_to_plan.get(image.0 as usize).and_then(|index| *index) {
+                    index
+                } else {
+                    let index = checked_len(images.len(), "image table")?;
+                    images.push(lower_image(image_resource)?);
+                    if let Some(slot) = image_to_plan.get_mut(image.0 as usize) {
+                        *slot = Some(index);
+                    }
+                    index
+                };
+            Ok(FloatTexturePlan::Image {
+                image,
+                mapping: *mapping,
+                scale,
+                invert,
+                swrap,
+                twrap,
+                filter,
+                channel,
+            })
+        }
+    }
 }
 
 fn lower_image(image: &GpuImageResource) -> Result<ImagePlan, BackendError> {
@@ -730,42 +834,92 @@ pub fn material_bytes(plan: &ScenePlan) -> Vec<u8> {
         .collect()
 }
 
-/// Serializes the initial image-texture ABI. All offsets are u32 word offsets
-/// relative to this buffer; the first mip level is sufficient for the initial
-/// point/bilinear lowering and later levels remain available in `ImagePlan`.
+/// Serializes the image-texture ABI. All offsets are u32 word offsets relative
+/// to this buffer. The descriptor tables retain every mip level even though
+/// the initial shader samples level zero.
 pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
-    let image_offset = 4u32;
-    let texture_offset = image_offset + plan.images.len() as u32 * 8;
-    let texel_offset = texture_offset + plan.spectrum_textures.len() as u32 * 8;
+    let image_offset = 8u32;
+    let mip_count: u32 = plan
+        .images
+        .iter()
+        .map(|image| image.mip_levels.len() as u32)
+        .sum();
+    let mip_offset = image_offset + plan.images.len() as u32 * 8;
+    let float_offset = mip_offset + mip_count * 4;
+    let spectrum_offset = float_offset + plan.float_textures.len() as u32 * 8;
+    let scalar_offset = spectrum_offset + plan.spectrum_textures.len() as u32 * 8;
     let mut words = vec![
         image_offset,
         plan.images.len() as u32,
-        texture_offset,
+        mip_offset,
+        mip_count,
+        float_offset,
+        plan.float_textures.len() as u32,
+        spectrum_offset,
         plan.spectrum_textures.len() as u32,
     ];
-    let mut image_data_offset = texel_offset;
+    let mut image_data_offset = scalar_offset;
+    let mut next_mip_offset = mip_offset;
     for image in &plan.images {
         let level = image.mip_levels.first();
         let resolution = level.map_or(image.resolution, |level| level.resolution);
-        let texel_count = level.map_or(image.texels.len() as u32, |level| level.texel_count);
-        let level_offset = level.map_or(0, |level| level.texel_offset);
         words.extend([
             resolution[0],
             resolution[1],
             image.channels.count() as u32,
-            image_data_offset + level_offset,
-            texel_count,
-            0,
-            0,
-            0,
+            next_mip_offset,
+            image.mip_levels.len() as u32,
+            image_data_offset,
+            image.texels.len() as u32,
+            0u32,
         ]);
+        for level in &image.mip_levels {
+            words.extend([
+                level.resolution[0],
+                level.resolution[1],
+                image_data_offset + level.texel_offset,
+                level.texel_count,
+            ]);
+        }
+        next_mip_offset += image.mip_levels.len() as u32 * 4;
         image_data_offset += image.texels.len() as u32;
     }
+    for texture in &plan.float_textures {
+        match texture {
+            FloatTexturePlan::Constant(value) => {
+                words.extend([0, 0, 0, 0, 0, 0, 1u32 << 7, value.to_bits()])
+            }
+            FloatTexturePlan::Image {
+                image,
+                mapping,
+                scale,
+                invert,
+                swrap,
+                twrap,
+                filter,
+                channel,
+            } => {
+                let mapping = uv_mapping_words(*mapping);
+                let flags = u32::from(*invert)
+                    | wrap_bits(*swrap, 1)
+                    | wrap_bits(*twrap, 3)
+                    | (u32::from(matches!(filter, GpuImageFilter::Bilinear)) << 5)
+                    | (float_channel_bits(*channel) << 8);
+                words.extend([
+                    *image,
+                    mapping[0],
+                    mapping[1],
+                    mapping[2],
+                    mapping[3],
+                    scale.to_bits(),
+                    flags,
+                    0,
+                ]);
+            }
+        }
+    }
     for texture in &plan.spectrum_textures {
-        let mapping = match texture.mapping {
-            GpuTextureMapping::Uv { su, sv, du, dv } => [su, sv, du, dv],
-            _ => [1.0, 1.0, 0.0, 0.0],
-        };
+        let mapping = uv_mapping_words(texture.mapping);
         let flags = u32::from(texture.invert)
             | wrap_bits(texture.swrap, 1)
             | wrap_bits(texture.twrap, 3)
@@ -773,10 +927,10 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
             | (spectrum_bits(texture.spectrum_type) << 6);
         words.extend([
             texture.image,
-            mapping[0].to_bits(),
-            mapping[1].to_bits(),
-            mapping[2].to_bits(),
-            mapping[3].to_bits(),
+            mapping[0],
+            mapping[1],
+            mapping[2],
+            mapping[3],
             texture.scale.to_bits(),
             flags,
             0,
@@ -786,6 +940,23 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
         words.extend(image.texels.iter().copied().map(f32::to_bits));
     }
     words.into_iter().flat_map(u32::to_le_bytes).collect()
+}
+
+fn uv_mapping_words(mapping: GpuTextureMapping) -> [u32; 4] {
+    match mapping {
+        GpuTextureMapping::Uv { su, sv, du, dv } => {
+            [su.to_bits(), sv.to_bits(), du.to_bits(), dv.to_bits()]
+        }
+        _ => [1.0f32.to_bits(), 1.0f32.to_bits(), 0, 0],
+    }
+}
+
+fn float_channel_bits(channel: GpuFloatImageChannel) -> u32 {
+    match channel {
+        GpuFloatImageChannel::Channel0 => 0,
+        GpuFloatImageChannel::Alpha => 1,
+        GpuFloatImageChannel::RgbAverage => 2,
+    }
 }
 
 fn wrap_bits(wrap: GpuImageWrapMode, shift: u32) -> u32 {
