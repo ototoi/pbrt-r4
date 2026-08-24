@@ -65,14 +65,32 @@ fn transform(rows: array<vec4<f32>, 4>, value: vec4<f32>) -> vec4<f32> {
     );
 }
 
-fn image_texel(image_base: u32, x: i32, y: i32) -> vec3<f32> {
+fn image_texel(image_base: u32, x: i32, y: i32, swrap: u32, twrap: u32) -> vec3<f32> {
     let width = scene_data[image_base];
     let height = scene_data[image_base + 1u];
     let channels = scene_data[image_base + 2u];
     let texel_base = scene_data[image_base + 5u];
-    let ix = u32(clamp(x, 0, i32(width) - 1));
-    let iy = u32(clamp(y, 0, i32(height) - 1));
-    let base = texel_base + (iy * width + ix) * channels;
+    var ix = x;
+    var iy = y;
+    if (swrap == 0u && (ix < 0 || ix >= i32(width))) {
+        return vec3<f32>(0.0);
+    }
+    if (twrap == 0u && (iy < 0 || iy >= i32(height))) {
+        return vec3<f32>(0.0);
+    }
+    if (swrap == 1u) {
+        ix = clamp(ix, 0, i32(width) - 1);
+    } else {
+        ix = ((ix % i32(width)) + i32(width)) % i32(width);
+    }
+    if (twrap == 1u) {
+        iy = clamp(iy, 0, i32(height) - 1);
+    } else {
+        iy = ((iy % i32(height)) + i32(height)) % i32(height);
+    }
+    let ix_u = u32(ix);
+    let iy_u = u32(iy);
+    let base = texel_base + (iy_u * width + ix_u) * channels;
     let r = bitcast<f32>(scene_data[base]);
     var g = r;
     var b = r;
@@ -111,12 +129,12 @@ fn sample_texture(texture_id: u32, uv: vec2<f32>) -> vec3<f32> {
     let y0 = i32(floor(coordinate.y));
     let tx = fract(coordinate.x);
     let ty = fract(coordinate.y);
-    let p00 = image_texel(image_base, x0, y0);
+    let p00 = image_texel(image_base, x0, y0, swrap, twrap);
     var value = p00;
     if (((flags >> 5u) & 1u) != 0u) {
-        let p10 = image_texel(image_base, x0 + 1, y0);
-        let p01 = image_texel(image_base, x0, y0 + 1);
-        let p11 = image_texel(image_base, x0 + 1, y0 + 1);
+        let p10 = image_texel(image_base, x0 + 1, y0, swrap, twrap);
+        let p01 = image_texel(image_base, x0, y0 + 1, swrap, twrap);
+        let p11 = image_texel(image_base, x0 + 1, y0 + 1, swrap, twrap);
         value = p00 * (1.0 - tx) * (1.0 - ty)
             + p10 * tx * (1.0 - ty)
             + p01 * (1.0 - tx) * ty
