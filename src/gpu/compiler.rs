@@ -299,9 +299,9 @@ impl SceneBuilder {
             },
         };
         let ir = draft.finish()?;
-        let (source_map, source_groups) = source_map(self, &ir);
+        let source_map = source_map(self, &ir);
         let mut requirements = ir.requirements();
-        attach_requirement_sources(&mut requirements, &source_groups);
+        attach_requirement_sources(&mut requirements, ir.view(), &source_map);
         Ok(GpuCompiledScene::with_source_map(
             ir,
             source_map,
@@ -2387,7 +2387,7 @@ struct GpuSourceGroups {
     instances: Vec<SourceId>,
 }
 
-fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSourceGroups) {
+fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
     let mut locations = Vec::new();
     let mut groups = GpuSourceGroups::default();
     for shape in &builder.shapes {
@@ -2624,13 +2624,10 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSour
         );
     }
     resources.sort_by_key(|entry| (entry.kind, entry.index));
-    (
-        GpuSourceMap {
-            locations: locations.into_boxed_slice(),
-            resources: resources.into_boxed_slice(),
-        },
-        groups,
-    )
+    GpuSourceMap {
+        locations: locations.into_boxed_slice(),
+        resources: resources.into_boxed_slice(),
+    }
 }
 
 fn add_source(
@@ -2713,36 +2710,140 @@ fn add_spectrum_texture_resources(
 
 fn attach_requirement_sources(
     requirements: &mut super::ir::GpuRequirements,
-    groups: &GpuSourceGroups,
+    view: super::ir::GpuSceneView<'_>,
+    source_map: &GpuSourceMap,
 ) {
     for required in requirements.features.iter_mut() {
-        let sources = match required.feature {
-            GpuFeature::TriangleMesh
-            | GpuFeature::BilinearPatch
-            | GpuFeature::Curve
-            | GpuFeature::Quadric
-            | GpuFeature::DisplacedTriangle => groups.shapes.as_slice(),
-            GpuFeature::FloatConstantTexture | GpuFeature::FloatImageTexture => {
-                groups.float_textures.as_slice()
-            }
-            GpuFeature::SpectrumConstantTexture | GpuFeature::SpectrumImageTexture => {
-                groups.spectrum_textures.as_slice()
-            }
-            GpuFeature::DiffuseMaterial => groups.materials.as_slice(),
-            GpuFeature::PointLight | GpuFeature::UniformInfiniteLight => groups.lights.as_slice(),
-            GpuFeature::DiffuseAreaLight => groups.shapes.as_slice(),
-            GpuFeature::StaticTransform | GpuFeature::AnimatedTransform => groups.shapes.as_slice(),
-            GpuFeature::PerspectiveCamera
-            | GpuFeature::IndependentSampler
-            | GpuFeature::RgbFilm
-            | GpuFeature::BoxFilter
-            | GpuFeature::WavefrontVolPath
-            | GpuFeature::UniformLightSampler => &[],
-        };
-        let mut sources = sources.to_vec();
+        let mut sources = source_map
+            .resources
+            .iter()
+            .filter_map(|entry| {
+                requirement_resource_matches(required.feature, entry, view).then_some(entry.source)
+            })
+            .collect::<Vec<_>>();
         sources.sort_unstable();
         sources.dedup();
         required.sources = sources.into_boxed_slice();
+    }
+}
+
+fn requirement_resource_matches(
+    feature: GpuFeature,
+    entry: &GpuSourceEntry,
+    view: super::ir::GpuSceneView<'_>,
+) -> bool {
+    match feature {
+        GpuFeature::TriangleMesh => {
+            entry.kind == GpuResourceKind::Geometry
+                && matches!(
+                    view.geometry.get(entry.index as usize),
+                    Some(super::ir::GpuGeometry::TriangleMesh(_))
+                )
+        }
+        GpuFeature::BilinearPatch => {
+            entry.kind == GpuResourceKind::Geometry
+                && matches!(
+                    view.geometry.get(entry.index as usize),
+                    Some(super::ir::GpuGeometry::BilinearPatchMesh(_))
+                )
+        }
+        GpuFeature::Curve => {
+            entry.kind == GpuResourceKind::Geometry
+                && matches!(
+                    view.geometry.get(entry.index as usize),
+                    Some(super::ir::GpuGeometry::CurveMesh(_))
+                )
+        }
+        GpuFeature::Quadric => {
+            entry.kind == GpuResourceKind::Geometry
+                && matches!(
+                    view.geometry.get(entry.index as usize),
+                    Some(super::ir::GpuGeometry::Quadric(_))
+                )
+        }
+        GpuFeature::DisplacedTriangle => {
+            entry.kind == GpuResourceKind::Geometry
+                && matches!(
+                    view.geometry.get(entry.index as usize),
+                    Some(super::ir::GpuGeometry::DisplacedTriangleMesh(_))
+                )
+        }
+        GpuFeature::FloatConstantTexture => {
+            entry.kind == GpuResourceKind::FloatTexture
+                && matches!(
+                    view.float_textures.get(entry.index as usize),
+                    Some(super::ir::GpuFloatTexture::Constant { .. })
+                )
+        }
+        GpuFeature::FloatImageTexture => {
+            entry.kind == GpuResourceKind::FloatTexture
+                && matches!(
+                    view.float_textures.get(entry.index as usize),
+                    Some(super::ir::GpuFloatTexture::Image { .. })
+                )
+        }
+        GpuFeature::SpectrumConstantTexture => {
+            entry.kind == GpuResourceKind::SpectrumTexture
+                && matches!(
+                    view.spectrum_textures.get(entry.index as usize),
+                    Some(super::ir::GpuSpectrumTexture::Constant { .. })
+                )
+        }
+        GpuFeature::SpectrumImageTexture => {
+            entry.kind == GpuResourceKind::SpectrumTexture
+                && matches!(
+                    view.spectrum_textures.get(entry.index as usize),
+                    Some(super::ir::GpuSpectrumTexture::Image { .. })
+                )
+        }
+        GpuFeature::DiffuseMaterial => {
+            entry.kind == GpuResourceKind::Material
+                && matches!(
+                    view.materials.get(entry.index as usize),
+                    Some(super::ir::GpuMaterial::Diffuse(_))
+                )
+        }
+        GpuFeature::PointLight => {
+            entry.kind == GpuResourceKind::Light
+                && matches!(
+                    view.lights.get(entry.index as usize),
+                    Some(super::ir::GpuLight::Point(_))
+                )
+        }
+        GpuFeature::DiffuseAreaLight => {
+            entry.kind == GpuResourceKind::Light
+                && matches!(
+                    view.lights.get(entry.index as usize),
+                    Some(super::ir::GpuLight::DiffuseArea(_))
+                )
+        }
+        GpuFeature::UniformInfiniteLight => {
+            entry.kind == GpuResourceKind::Light
+                && matches!(
+                    view.lights.get(entry.index as usize),
+                    Some(super::ir::GpuLight::UniformInfinite(_))
+                )
+        }
+        GpuFeature::StaticTransform => {
+            entry.kind == GpuResourceKind::Transform
+                && matches!(
+                    view.transforms.get(entry.index as usize),
+                    Some(super::ir::GpuTransform::Static(_))
+                )
+        }
+        GpuFeature::AnimatedTransform => {
+            entry.kind == GpuResourceKind::Transform
+                && matches!(
+                    view.transforms.get(entry.index as usize),
+                    Some(super::ir::GpuTransform::Animated(_))
+                )
+        }
+        GpuFeature::PerspectiveCamera
+        | GpuFeature::IndependentSampler
+        | GpuFeature::RgbFilm
+        | GpuFeature::BoxFilter
+        | GpuFeature::WavefrontVolPath
+        | GpuFeature::UniformLightSampler => false,
     }
 }
 
