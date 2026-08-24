@@ -155,6 +155,7 @@ struct AreaLightOccurrence {
     light: LightId,
     primitive: u32,
     triangle: u32,
+    constant_zero_alpha: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -514,6 +515,12 @@ impl ScenePlan {
             });
             let alpha = alpha.transpose()?;
             let triangle_count = blases[blas].index_count / 3;
+            let constant_zero_alpha = primitive
+                .alpha
+                .and_then(|texture| scene.float_textures.get(texture.0 as usize))
+                .is_some_and(|texture| {
+                    matches!(texture, GpuFloatTexture::Constant { value } if *value == 0.0)
+                });
             match &primitive.area_light {
                 GpuAreaLightBinding::None => {}
                 GpuAreaLightBinding::Uniform(light) => {
@@ -523,6 +530,7 @@ impl ScenePlan {
                             light: *light,
                             primitive: custom_data,
                             triangle,
+                            constant_zero_alpha,
                         }
                     }));
                 }
@@ -540,6 +548,7 @@ impl ScenePlan {
                             light,
                             primitive: custom_data,
                             triangle: triangle as u32,
+                            constant_zero_alpha,
                         });
                     }
                 }
@@ -1097,7 +1106,8 @@ fn lower_lights(
                         kind: 2,
                         primitive: Some(occurrence.primitive),
                         triangle: occurrence.triangle,
-                        flags: u32::from(area.two_sided),
+                        flags: u32::from(area.two_sided)
+                            | (u32::from(occurrence.constant_zero_alpha) << 1),
                     });
                 }
             }

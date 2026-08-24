@@ -1390,6 +1390,9 @@ fn murmur_hash_float_position(position: vec3<f32>) -> f32 {
 }
 
 fn area_light_alpha_accept(light: Light, uv: vec2<f32>, position: vec3<f32>) -> bool {
+    if ((light.flags & 2u) != 0u) {
+        return true;
+    }
     let primitive = primitives[light.primitive];
     if (primitive.alpha == 0xffffffffu) {
         return true;
@@ -1747,7 +1750,11 @@ fn render_sample(
                 let wi = normalize(to_light);
                 let cosine = abs(dot(normal, wi));
                 let same_hemisphere = dot(normal, -direction) * dot(normal, wi) > 0.0;
-                let bsdf_pdf = cosine / 3.141592653589793;
+                let bsdf_pdf = select(
+                    cosine / 3.141592653589793,
+                    0.0,
+                    (light.flags & 2u) != 0u,
+                );
                 let light_pdf = light_sample.pdf / f32(light_count);
                 let shadow_origin = offset_ray_origin(
                     position,

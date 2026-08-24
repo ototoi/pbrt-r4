@@ -463,6 +463,10 @@ fn diffuse_sample(seed: u32, depth: u32, normal: Vec3) -> (Vec3, f32) {
 }
 
 fn expected_direct_area_light_radiance() -> f32 {
+    expected_direct_area_light_radiance_with_delta(false)
+}
+
+fn expected_direct_area_light_radiance_with_delta(delta_position: bool) -> f32 {
     let mut sampler = IndependentSampler::new(1, 0);
     sampler.start_pixel(&Point2i::new(0, 0));
     sampler.start_pixel_sample(0, 6);
@@ -491,7 +495,11 @@ fn expected_direct_area_light_radiance() -> f32 {
     let wi = (sampled_position - context).normalize();
     let cosine = shading_normal.abs_dot(&wi);
     let light_pdf = triangle_pdf * bilinear_pdf(warped, &weights);
-    let bsdf_pdf = cosine / std::f32::consts::PI;
+    let bsdf_pdf = if delta_position {
+        0.0
+    } else {
+        cosine / std::f32::consts::PI
+    };
     0.5 * cosine / (std::f32::consts::PI * (bsdf_pdf + light_pdf))
 }
 
@@ -1289,6 +1297,14 @@ fn scene_plan_expands_area_lights_for_each_instance() {
 }
 
 #[test]
+fn scene_plan_marks_constant_zero_alpha_area_lights_as_delta_position() {
+    let scene = alpha_masked_direct_area_light_scene(0.0);
+    let plan = ScenePlan::from_scene(scene.view()).unwrap();
+    assert_eq!(plan.lights.len(), 1);
+    assert_eq!(plan.lights[0].flags, 2);
+}
+
+#[test]
 fn scene_plan_flattens_static_instances_with_composed_transform() {
     let plan = ScenePlan::from_scene(instance_scene().view()).unwrap();
     assert_eq!(plan.primitives.len(), 1);
@@ -1478,7 +1494,7 @@ fn software_renderer_uses_uniform_area_sampling_for_small_solid_angles() {
 }
 
 #[test]
-fn software_renderer_rejects_alpha_masked_area_light_samples() {
+fn software_renderer_samples_invisible_constant_zero_alpha_area_lights() {
     let mut renderer = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -1489,7 +1505,12 @@ fn software_renderer_rejects_alpha_masked_area_light_samples() {
         .prepare(&alpha_masked_direct_area_light_scene(0.0))
         .unwrap();
     let output = renderer.render(&scene, &request).unwrap();
-    assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-7));
+    let expected = expected_direct_area_light_radiance_with_delta(true);
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 2.0e-4,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
 }
 
 #[test]
