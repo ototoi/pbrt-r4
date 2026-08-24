@@ -991,6 +991,17 @@ fn shadow_visible(
     return true;
 }
 
+fn infinite_emission() -> vec3<f32> {
+    var emission = vec3<f32>(0.0);
+    for (var light_index = 0u; light_index < arrayLength(&lights); light_index += 1u) {
+        let light = lights[light_index];
+        if (light.kind == 1u) {
+            emission += light.intensity.xyz;
+        }
+    }
+    return emission;
+}
+
 fn render_sample(
     pixel: vec2<f32>,
     lens_sample: vec2<f32>,
@@ -1246,25 +1257,27 @@ fn render_sample(
         let light_count = arrayLength(&lights);
         let light_index = min(u32(direct_sample.light_selection * f32(light_count)), light_count - 1u);
         let light = lights[light_index];
-        let to_light = light.position.xyz - position;
-        let distance_squared = max(dot(to_light, to_light), 1.0e-8);
-        let wi = normalize(to_light);
-        let cosine = abs(dot(normal, wi));
-        let same_hemisphere = dot(normal, -direction) * dot(normal, wi) > 0.0;
-        let shadow_origin = offset_ray_origin(
-            position,
-            position_error,
-            geometric_render_normal,
-            to_light,
-        );
-        if (same_hemisphere && cosine > 0.0 && shadow_visible(
-            shadow_origin,
-            to_light,
-            hit_primitive,
-            hit_triangle,
-        )) {
-            color += throughput * reflectance * light.intensity.xyz * cosine
-                * f32(light_count) / (3.141592653589793 * distance_squared);
+        if (light.kind == 0u) {
+            let to_light = light.position.xyz - position;
+            let distance_squared = max(dot(to_light, to_light), 1.0e-8);
+            let wi = normalize(to_light);
+            let cosine = abs(dot(normal, wi));
+            let same_hemisphere = dot(normal, -direction) * dot(normal, wi) > 0.0;
+            let shadow_origin = offset_ray_origin(
+                position,
+                position_error,
+                geometric_render_normal,
+                to_light,
+            );
+            if (same_hemisphere && cosine > 0.0 && shadow_visible(
+                shadow_origin,
+                to_light,
+                hit_primitive,
+                hit_triangle,
+            )) {
+                color += throughput * reflectance * light.intensity.xyz * cosine
+                    * f32(light_count) / (3.141592653589793 * distance_squared);
+            }
         }
         let disk = sample_uniform_disk_concentric(ray_sample.indirect.direction);
         var local_wi = vec3<f32>(disk, sqrt(max(0.0, 1.0 - dot(disk, disk))));
@@ -1304,6 +1317,7 @@ fn render_sample(
         ray_rx_direction = ray_direction;
         ray_ry_direction = ray_direction;
     } else {
+        color += throughput * infinite_emission();
         break;
     }
     }

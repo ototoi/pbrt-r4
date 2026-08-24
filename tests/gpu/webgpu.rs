@@ -668,7 +668,7 @@ fn two_texel_scene(mapping: GpuTextureMapping, filter: GpuImageFilter) -> GpuCom
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
-fn uniform_infinite_scene() -> GpuCompiledScene {
+fn uniform_infinite_scene(max_depth: u32) -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
         pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
@@ -676,6 +676,48 @@ fn uniform_infinite_scene() -> GpuCompiledScene {
             scale: 1.0,
         },
     )];
+    draft.data.render.integrator.max_depth = max_depth;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn uniform_infinite_miss_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
+        pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
+            radiance: SpectrumId(0),
+            scale: 1.0,
+        },
+    )];
+    draft.data.transforms[0] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 100.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, -100.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn mixed_point_infinite_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.push(GpuLight::UniformInfinite(
+        pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
+            radiance: SpectrumId(0),
+            scale: 1.0,
+        },
+    ));
+    draft.data.render.integrator.max_depth = 1;
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
@@ -1549,18 +1591,104 @@ fn hardware_and_software_uniform_point_light_selection_match() {
 }
 
 #[test]
-fn scene_plan_rejects_uniform_infinite_until_indirect_miss_is_supported() {
+fn software_renderer_evaluates_uniform_infinite_only_on_miss() {
     let mut renderer = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
     })
     .unwrap();
-    assert!(matches!(
-        renderer.prepare(&uniform_infinite_scene()),
-        Err(pbrt_r4::gpu::webgpu::BackendError::Plan(
-            PlanError::UnsupportedLight { light: 0 }
-        ))
-    ));
+    let hit_scene = renderer.prepare(&uniform_infinite_scene(0)).unwrap();
+    let miss_scene = renderer.prepare(&uniform_infinite_miss_scene()).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hit = renderer.render(&hit_scene, &request).unwrap().rgb[0];
+    let miss = renderer.render(&miss_scene, &request).unwrap().rgb[0];
+    assert!(hit.iter().all(|channel| *channel == 0.0));
+    for channel in miss {
+        assert!((channel - 0.5).abs() < 1.0e-5, "{miss:?}");
+    }
+}
+
+#[test]
+fn software_renderer_evaluates_uniform_infinite_after_diffuse_bounce() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer.prepare(&uniform_infinite_scene(1)).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let output = renderer.render(&scene, &request).unwrap().rgb[0];
+    for channel in output {
+        assert!((channel - 0.25).abs() < 1.0e-5, "{output:?}");
+    }
+}
+
+#[test]
+fn software_renderer_preserves_uniform_sampler_pmf_with_infinite_light() {
+    const SAMPLE_COUNT: u32 = 8;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer
+        .prepare(&mixed_point_infinite_scene(SAMPLE_COUNT, SEED))
+        .unwrap();
+    for sample_index in 0..SAMPLE_COUNT {
+        let output = renderer
+            .render(
+                &scene,
+                &GpuRenderRequest {
+                    sample_start: u64::from(sample_index),
+                    sample_count: 1,
+                },
+            )
+            .unwrap()
+            .rgb[0];
+        let mut sampler = IndependentSampler::new(SAMPLE_COUNT, SEED);
+        sampler.start_pixel(&Point2i::new(0, 0));
+        assert!(sampler.set_sample_number(sample_index));
+        let _film_sample = sampler.get_pixel_2d();
+        sampler.start_pixel_sample(sample_index, 6);
+        let point_selected = sampler.get_1d() < 0.5;
+        let expected = 0.25
+            + if point_selected {
+                2.0 * expected_independent_sample_radiance(SAMPLE_COUNT, SEED, sample_index)
+            } else {
+                0.0
+            };
+        for channel in output {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample={sample_index}, output={output:?}, expected={expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_uniform_infinite_miss_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = uniform_infinite_miss_scene();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .into_iter()
+        .zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
 }
 
 #[test]
