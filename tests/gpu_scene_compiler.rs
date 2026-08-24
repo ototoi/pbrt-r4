@@ -187,6 +187,16 @@ fn scene_builder_compiles_instances_without_flattening() {
     assert_eq!(view.world_primitives.len(), 0);
     assert_eq!(view.world_instances.len(), 1);
     assert_eq!(view.instance_definitions[0].primitives.len(), 1);
+    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
+        kind: GpuResourceKind::InstanceDefinition,
+        index: 0,
+        source: pbrt_r4::gpu::ir::SourceId(1),
+    }));
+    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
+        kind: GpuResourceKind::Instance,
+        index: 0,
+        source: pbrt_r4::gpu::ir::SourceId(2),
+    }));
 }
 
 #[test]

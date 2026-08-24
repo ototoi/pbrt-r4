@@ -2383,6 +2383,8 @@ struct GpuSourceGroups {
     spectrum_textures: Vec<SourceId>,
     materials: Vec<SourceId>,
     lights: Vec<SourceId>,
+    instance_definitions: Vec<SourceId>,
+    instances: Vec<SourceId>,
 }
 
 fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSourceGroups) {
@@ -2391,9 +2393,37 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSour
     for shape in &builder.shapes {
         add_source(&mut locations, &mut groups.shapes, source_location(shape));
     }
-    for definition in builder.instance_definitions.values() {
+    let mut definitions: Vec<_> = builder.instance_definitions.iter().collect();
+    definitions.sort_by(|(left, _), (right, _)| left.cmp(right));
+    for (_, definition) in &definitions {
         for shape in &definition.shapes {
             add_source(&mut locations, &mut groups.shapes, source_location(shape));
+        }
+        add_source(
+            &mut locations,
+            &mut groups.instance_definitions,
+            GpuSourceLocation {
+                filename: definition.loc.filename.clone(),
+                line: definition.loc.line,
+                column: definition.loc.column,
+            },
+        );
+    }
+    for (name, _) in definitions {
+        for instance in builder
+            .instance_uses
+            .iter()
+            .filter(|instance| instance.name == *name)
+        {
+            add_source(
+                &mut locations,
+                &mut groups.instances,
+                GpuSourceLocation {
+                    filename: instance.loc.filename.clone(),
+                    line: instance.loc.line,
+                    column: instance.loc.column,
+                },
+            );
         }
     }
     for texture in &builder.float_textures {
@@ -2465,6 +2495,49 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSour
                 material.0,
                 source,
             );
+            if let Some(super::ir::GpuMaterial::Diffuse(material)) =
+                ir.view().materials.get(material.0 as usize)
+            {
+                add_spectrum_texture_resources(
+                    &mut resources,
+                    ir.view(),
+                    material.reflectance,
+                    source,
+                );
+                if let Some(texture) = material.displacement {
+                    add_float_texture_resources(&mut resources, ir.view(), texture, source);
+                }
+                if let Some(image) = material.normal_map {
+                    add_resource(&mut resources, GpuResourceKind::Image, image.0, source);
+                }
+            }
+        }
+        if let Some(texture) = primitive.alpha {
+            add_float_texture_resources(&mut resources, ir.view(), texture, source);
+        }
+        if let Some(texture) = primitive.shadow_alpha {
+            add_float_texture_resources(&mut resources, ir.view(), texture, source);
+        }
+        match &primitive.area_light {
+            super::ir::GpuAreaLightBinding::None => {}
+            super::ir::GpuAreaLightBinding::Uniform(light) => {
+                add_resource(&mut resources, GpuResourceKind::Light, light.0, source);
+                if let Some(super::ir::GpuLight::DiffuseArea(light)) =
+                    ir.view().lights.get(light.0 as usize)
+                {
+                    add_spectrum_texture_resources(
+                        &mut resources,
+                        ir.view(),
+                        light.emission,
+                        source,
+                    );
+                }
+            }
+            super::ir::GpuAreaLightBinding::PerElement(lights) => {
+                for light in lights {
+                    add_resource(&mut resources, GpuResourceKind::Light, light.0, source);
+                }
+            }
         }
     }
     for (index, texture) in ir.view().float_textures.iter().enumerate() {
@@ -2525,6 +2598,31 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> (GpuSourceMap, GpuSour
             }
         }
     }
+    for (index, source) in groups.instance_definitions.iter().copied().enumerate() {
+        add_resource(
+            &mut resources,
+            GpuResourceKind::InstanceDefinition,
+            index as GpuIndex,
+            source,
+        );
+    }
+    for (index, instance) in ir.view().instances.iter().enumerate() {
+        let Some(&source) = groups.instances.get(index) else {
+            continue;
+        };
+        add_resource(
+            &mut resources,
+            GpuResourceKind::Instance,
+            index as GpuIndex,
+            source,
+        );
+        add_resource(
+            &mut resources,
+            GpuResourceKind::Transform,
+            instance.transform.0,
+            source,
+        );
+    }
     resources.sort_by_key(|entry| (entry.kind, entry.index));
     (
         GpuSourceMap {
@@ -2562,6 +2660,55 @@ fn add_resource(
         index,
         source,
     });
+}
+
+fn add_float_texture_resources(
+    resources: &mut Vec<GpuSourceEntry>,
+    view: super::ir::GpuSceneView<'_>,
+    texture: super::ir::FloatTextureId,
+    source: SourceId,
+) {
+    add_resource(resources, GpuResourceKind::FloatTexture, texture.0, source);
+    if let Some(super::ir::GpuFloatTexture::Image { image, mapping, .. }) =
+        view.float_textures.get(texture.0 as usize)
+    {
+        add_resource(resources, GpuResourceKind::Image, image.0, source);
+        add_resource(
+            resources,
+            GpuResourceKind::TextureMapping,
+            mapping.0,
+            source,
+        );
+    }
+}
+
+fn add_spectrum_texture_resources(
+    resources: &mut Vec<GpuSourceEntry>,
+    view: super::ir::GpuSceneView<'_>,
+    texture: super::ir::SpectrumTextureId,
+    source: SourceId,
+) {
+    add_resource(
+        resources,
+        GpuResourceKind::SpectrumTexture,
+        texture.0,
+        source,
+    );
+    match view.spectrum_textures.get(texture.0 as usize) {
+        Some(super::ir::GpuSpectrumTexture::Constant { value }) => {
+            add_resource(resources, GpuResourceKind::Spectrum, value.0, source);
+        }
+        Some(super::ir::GpuSpectrumTexture::Image { image, mapping, .. }) => {
+            add_resource(resources, GpuResourceKind::Image, image.0, source);
+            add_resource(
+                resources,
+                GpuResourceKind::TextureMapping,
+                mapping.0,
+                source,
+            );
+        }
+        None => {}
+    }
 }
 
 fn attach_requirement_sources(
