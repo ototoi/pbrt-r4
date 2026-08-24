@@ -373,7 +373,7 @@ fn camera_uniform_bytes(
     let pixel_bounds = scene.render.film.pixel_bounds;
     let width = (pixel_bounds.max[0] - pixel_bounds.min[0]) as f32;
     let height = (pixel_bounds.max[1] - pixel_bounds.min[1]) as f32;
-    let mut values = Vec::with_capacity(12 * 16);
+    let mut values = Vec::with_capacity(13 * 16);
     for matrix in [scene.render.camera.camera_from_raster, camera_transform] {
         super::geometry::append_wgsl_matrix(&mut values, matrix.0);
     }
@@ -409,6 +409,16 @@ fn camera_uniform_bytes(
             scene.render.filter.radius.0[1],
             0.0,
             0.0,
+        ]
+        .into_iter()
+        .flat_map(f32::to_ne_bytes),
+    );
+    values.extend(
+        [
+            scene.render.camera.lens_radius,
+            scene.render.camera.focal_distance,
+            scene.render.camera.shutter_open,
+            scene.render.camera.shutter_close,
         ]
         .into_iter()
         .flat_map(f32::to_ne_bytes),

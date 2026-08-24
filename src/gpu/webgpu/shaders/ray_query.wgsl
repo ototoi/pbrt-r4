@@ -7,6 +7,7 @@ struct Camera {
     bvh_info: vec4<u32>,
     sampler_info: vec4<u32>,
     filter_info: vec4<f32>,
+    camera_info: vec4<f32>,
 };
 
 struct Primitive {
@@ -669,18 +670,45 @@ fn rng_advance(rng: ptr<function, IndependentRng>, sample_index: u32) {
     );
 }
 
-fn independent_pixel_sample(pixel: vec2<i32>, sample_index: u32) -> vec2<f32> {
+struct IndependentCameraSample {
+    filter_sample: vec2<f32>,
+    time: f32,
+    lens: vec2<f32>,
+};
+
+fn uniform_float(rng: ptr<function, IndependentRng>) -> f32 {
+    return min(0.9999999403953552, f32(rng_uniform_u32(rng)) * 2.3283064365386963e-10);
+}
+
+fn independent_camera_sample(pixel: vec2<i32>, sample_index: u32) -> IndependentCameraSample {
     let sequence = hash_pixel_seed(pixel, camera.sampler_info.x);
     var rng = IndependentRng(vec2<u32>(0u), u64_shift_left_one(sequence) | vec2<u32>(1u, 0u));
     _ = rng_uniform_u32(&rng);
     rng.state = u64_add(rng.state, mix_bits(sequence));
     _ = rng_uniform_u32(&rng);
     rng_advance(&rng, sample_index);
-    let scale = 2.3283064365386963e-10;
-    return min(
-        vec2<f32>(0.9999999403953552),
-        vec2<f32>(f32(rng_uniform_u32(&rng)), f32(rng_uniform_u32(&rng))) * scale,
+    return IndependentCameraSample(
+        vec2<f32>(uniform_float(&rng), uniform_float(&rng)),
+        uniform_float(&rng),
+        vec2<f32>(uniform_float(&rng), uniform_float(&rng)),
     );
+}
+
+fn sample_uniform_disk_concentric(u: vec2<f32>) -> vec2<f32> {
+    let offset = 2.0 * u - vec2<f32>(1.0);
+    if (offset.x == 0.0 && offset.y == 0.0) {
+        return vec2<f32>(0.0);
+    }
+    var radius: f32;
+    var theta: f32;
+    if (abs(offset.x) > abs(offset.y)) {
+        radius = offset.x;
+        theta = 0.7853981633974483 * offset.y / offset.x;
+    } else {
+        radius = offset.y;
+        theta = 1.5707963267948966 - 0.7853981633974483 * offset.x / offset.y;
+    }
+    return radius * vec2<f32>(cos(theta), sin(theta));
 }
 
 fn u64_shift_right_47(value: vec2<u32>) -> vec2<u32> {
@@ -717,17 +745,22 @@ fn alpha_accept(alpha: f32, origin: vec3<f32>, direction: vec3<f32>) -> bool {
     return murmur_hash_float_ray(origin, direction) <= alpha;
 }
 
-fn render_sample(pixel: vec2<f32>) -> vec3<f32> {
+fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
     let camera_target = transform(
         camera.camera_from_raster,
         vec4<f32>(pixel, 0.0, 1.0),
     );
-    let origin = transform(
-        camera.render_from_camera,
-        vec4<f32>(0.0, 0.0, 0.0, 1.0),
-    ).xyz;
-    let ray_target = transform(camera.render_from_camera, camera_target).xyz;
-    let direction = normalize(ray_target - origin);
+    var camera_origin = vec3<f32>(0.0);
+    var camera_direction = normalize(camera_target.xyz);
+    if (camera.camera_info.x > 0.0) {
+        let lens = camera.camera_info.x * sample_uniform_disk_concentric(lens_sample);
+        let focus_t = camera.camera_info.y / camera_direction.z;
+        let focus = focus_t * camera_direction;
+        camera_origin = vec3<f32>(lens, 0.0);
+        camera_direction = normalize(focus - camera_origin);
+    }
+    let origin = transform(camera.render_from_camera, vec4<f32>(camera_origin, 1.0)).xyz;
+    let direction = normalize(transform(camera.render_from_camera, vec4<f32>(camera_direction, 0.0)).xyz);
     let x_target = transform(
         camera.camera_from_raster,
         vec4<f32>(pixel + vec2<f32>(1.0, 0.0), 0.0, 1.0),
@@ -736,14 +769,23 @@ fn render_sample(pixel: vec2<f32>) -> vec3<f32> {
         camera.camera_from_raster,
         vec4<f32>(pixel + vec2<f32>(0.0, 1.0), 0.0, 1.0),
     );
-    let rx_origin = origin;
-    let ry_origin = origin;
-    let rx_direction = normalize(
-        transform(camera.render_from_camera, x_target).xyz - rx_origin,
-    );
-    let ry_direction = normalize(
-        transform(camera.render_from_camera, y_target).xyz - ry_origin,
-    );
+    var rx_camera_origin = vec3<f32>(0.0);
+    var ry_camera_origin = vec3<f32>(0.0);
+    var rx_camera_direction = normalize(x_target.xyz);
+    var ry_camera_direction = normalize(y_target.xyz);
+    if (camera.camera_info.x > 0.0) {
+        let lens = camera.camera_info.x * sample_uniform_disk_concentric(lens_sample);
+        rx_camera_origin = vec3<f32>(lens, 0.0);
+        ry_camera_origin = rx_camera_origin;
+        let rx_focus = (camera.camera_info.y / rx_camera_direction.z) * rx_camera_direction;
+        let ry_focus = (camera.camera_info.y / ry_camera_direction.z) * ry_camera_direction;
+        rx_camera_direction = normalize(rx_focus - rx_camera_origin);
+        ry_camera_direction = normalize(ry_focus - ry_camera_origin);
+    }
+    let rx_origin = transform(camera.render_from_camera, vec4<f32>(rx_camera_origin, 1.0)).xyz;
+    let ry_origin = transform(camera.render_from_camera, vec4<f32>(ry_camera_origin, 1.0)).xyz;
+    let rx_direction = normalize(transform(camera.render_from_camera, vec4<f32>(rx_camera_direction, 0.0)).xyz);
+    let ry_direction = normalize(transform(camera.render_from_camera, vec4<f32>(ry_camera_direction, 0.0)).xyz);
 
     var color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     var query: ray_query;
@@ -916,10 +958,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var accumulated = vec3<f32>(0.0);
     for (var local_sample = 0u; local_sample < camera.sampler_info.w; local_sample++) {
         let sample_index = camera.sampler_info.z + local_sample;
-        let u = independent_pixel_sample(pixel, sample_index);
-        let filter_offset = mix(-camera.filter_info.xy, camera.filter_info.xy, u);
+        let camera_sample = independent_camera_sample(pixel, sample_index);
+        let filter_offset = mix(-camera.filter_info.xy, camera.filter_info.xy, camera_sample.filter_sample);
         let film_position = vec2<f32>(pixel) + filter_offset + vec2<f32>(0.5);
-        accumulated += render_sample(film_position);
+        let sample_time = mix(camera.camera_info.z, camera.camera_info.w, camera_sample.time);
+        _ = sample_time;
+        accumulated += render_sample(film_position, camera_sample.lens);
     }
     output[global_id.y * width + global_id.x] = vec4<f32>(
         accumulated / f32(camera.sampler_info.w),

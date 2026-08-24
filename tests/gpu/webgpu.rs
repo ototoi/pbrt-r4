@@ -17,7 +17,7 @@ use pbrt_r4::gpu::webgpu::{
     transform_bytes, vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan,
     PlanError, PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
 };
-use pbrt_r4::prelude::{IndependentSampler, Point2i};
+use pbrt_r4::prelude::{concentric_sample_disk, IndependentSampler, Point2i};
 
 fn minimal_scene_draft() -> GpuSceneDraft {
     let identity = GpuMatrix4x4([
@@ -144,6 +144,38 @@ fn sampled_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn depth_of_field_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    let camera_from_raster = GpuMatrix4x4([
+        [0.5, 0.0, 0.0, 0.0],
+        [0.0, 0.5, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 2.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    draft.data.transforms[1] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    draft.data.render.camera.camera_from_raster = camera_from_raster;
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    draft.data.render.camera.lens_radius = 0.1;
+    draft.data.render.camera.focal_distance = 4.0;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn expected_independent_sample_radiance(
     samples_per_pixel: u32,
     seed: u32,
@@ -156,6 +188,19 @@ fn expected_independent_sample_radiance(
     let x = 0.5 * sample.x as f32;
     let y = 0.5 * sample.y as f32;
     let distance_squared = x * x + y * y + 4.0;
+    0.5 / (distance_squared * distance_squared.sqrt())
+}
+
+fn expected_depth_of_field_radiance(samples_per_pixel: u32, seed: u32, sample_index: u32) -> f32 {
+    let mut sampler = IndependentSampler::new(samples_per_pixel, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    assert!(sampler.set_sample_number(sample_index));
+    let film_sample = sampler.get_pixel_2d();
+    let _time = sampler.get_1d();
+    let lens_sample = concentric_sample_disk(&sampler.get_2d()) * 0.1;
+    let x = 0.5 * (film_sample.x + lens_sample.x);
+    let y = 0.5 * (film_sample.y + lens_sample.y);
+    let distance_squared = (x * x + y * y + 4.0) as f32;
     0.5 / (distance_squared * distance_squared.sqrt())
 }
 
@@ -253,7 +298,9 @@ fn image_scene() -> GpuCompiledScene {
 fn mipmap_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
-        su: 1.0,
+        // Keep the footprint away from an exact MIP-level boundary so the
+        // test checks level selection rather than floating-point tie-breaking.
+        su: 1.25,
         sv: 1.0,
         du: 0.0,
         dv: 0.0,
@@ -938,6 +985,39 @@ fn software_renderer_averages_requested_sample_range() {
 }
 
 #[test]
+fn software_renderer_matches_perspective_depth_of_field() {
+    const SAMPLE_COUNT: u32 = 4;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = depth_of_field_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+
+    for sample_index in 0..SAMPLE_COUNT {
+        let output = renderer
+            .render(
+                &executable,
+                &GpuRenderRequest {
+                    sample_start: u64::from(sample_index),
+                    sample_count: 1,
+                },
+            )
+            .unwrap();
+        let expected = expected_depth_of_field_radiance(SAMPLE_COUNT, SEED, sample_index);
+        for channel in output.rgb[0] {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample {sample_index}: actual={:?}, expected={expected}",
+                output.rgb[0]
+            );
+        }
+    }
+}
+
+#[test]
 fn hardware_and_software_independent_sample_ranges_match() {
     let Some(mut hardware) = renderer_or_skip() else {
         return;
@@ -948,6 +1028,32 @@ fn hardware_and_software_independent_sample_ranges_match() {
     })
     .unwrap();
     let scene = sampled_scene(4, 17);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 4,
+    };
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in
+        hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn hardware_and_software_depth_of_field_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = depth_of_field_scene(4, 17);
     let hardware_scene = hardware.prepare(&scene).unwrap();
     let software_scene = software.prepare(&scene).unwrap();
     let request = GpuRenderRequest {
