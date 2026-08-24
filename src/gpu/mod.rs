@@ -4,9 +4,9 @@
 //! backend. Backend-independent IR and the compile-only WebGPU adapter are
 //! enabled by the `webgpu` feature.
 
-#[cfg(feature = "webgpu")]
+#[cfg(any(feature = "cuda", feature = "webgpu"))]
 pub mod compiler;
-#[cfg(feature = "webgpu")]
+#[cfg(any(feature = "cuda", feature = "webgpu"))]
 pub mod ir;
 #[cfg(feature = "webgpu")]
 pub mod webgpu;
