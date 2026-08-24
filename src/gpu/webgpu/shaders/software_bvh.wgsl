@@ -645,12 +645,15 @@ fn rng_uniform_u32(rng: ptr<function, IndependentRng>) -> u32 {
     return (xorshifted >> rotation) | (xorshifted << ((0u - rotation) & 31u));
 }
 
-fn rng_advance(rng: ptr<function, IndependentRng>, sample_index: u32) {
+fn rng_advance(rng: ptr<function, IndependentRng>, sample_index: u32, dimension: u32) {
     var current_multiplier = vec2<u32>(0x4c957f2du, 0x5851f42du);
     var current_plus = (*rng).increment;
     var accumulated_multiplier = vec2<u32>(1u, 0u);
     var accumulated_plus = vec2<u32>(0u);
-    var delta = vec2<u32>(sample_index << 16u, sample_index >> 16u);
+    var delta = u64_add(
+        vec2<u32>(sample_index << 16u, sample_index >> 16u),
+        vec2<u32>(dimension, 0u),
+    );
     while (delta.x != 0u || delta.y != 0u) {
         if ((delta.x & 1u) != 0u) {
             accumulated_multiplier = u64_mul(accumulated_multiplier, current_multiplier);
@@ -672,19 +675,37 @@ struct IndependentCameraSample {
     lens: vec2<f32>,
 };
 
+struct IndependentDirectSample {
+    light_selection: f32,
+    light_sample: vec2<f32>,
+};
+
 fn uniform_float(rng: ptr<function, IndependentRng>) -> f32 {
     return min(0.9999999403953552, f32(rng_uniform_u32(rng)) * 2.3283064365386963e-10);
 }
 
-fn independent_camera_sample(pixel: vec2<i32>, sample_index: u32) -> IndependentCameraSample {
+fn independent_rng(pixel: vec2<i32>, sample_index: u32, dimension: u32) -> IndependentRng {
     let sequence = hash_pixel_seed(pixel, camera.sampler_info.x);
     var rng = IndependentRng(vec2<u32>(0u), u64_shift_left_one(sequence) | vec2<u32>(1u, 0u));
     _ = rng_uniform_u32(&rng);
     rng.state = u64_add(rng.state, mix_bits(sequence));
     _ = rng_uniform_u32(&rng);
-    rng_advance(&rng, sample_index);
+    rng_advance(&rng, sample_index, dimension);
+    return rng;
+}
+
+fn independent_camera_sample(pixel: vec2<i32>, sample_index: u32) -> IndependentCameraSample {
+    var rng = independent_rng(pixel, sample_index, 0u);
     return IndependentCameraSample(
         vec2<f32>(uniform_float(&rng), uniform_float(&rng)),
+        uniform_float(&rng),
+        vec2<f32>(uniform_float(&rng), uniform_float(&rng)),
+    );
+}
+
+fn independent_direct_sample(pixel: vec2<i32>, sample_index: u32) -> IndependentDirectSample {
+    var rng = independent_rng(pixel, sample_index, 6u);
+    return IndependentDirectSample(
         uniform_float(&rng),
         vec2<f32>(uniform_float(&rng), uniform_float(&rng)),
     );
@@ -945,7 +966,11 @@ fn shadow_visible(
     return true;
 }
 
-fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
+fn render_sample(
+    pixel: vec2<f32>,
+    lens_sample: vec2<f32>,
+    direct_sample: IndependentDirectSample,
+) -> vec3<f32> {
     let camera_target = transform(camera.camera_from_raster, vec4<f32>(pixel, 0.0, 1.0));
     var camera_origin = vec3<f32>(0.0);
     var camera_direction = normalize(camera_target.xyz);
@@ -1178,29 +1203,28 @@ fn render_sample(pixel: vec2<f32>, lens_sample: vec2<f32>) -> vec3<f32> {
         if ((material.flags & 1u) != 0u) {
             reflectance = sample_texture(material.texture, uv, differentials);
         }
-        for (var light_index = 0u; light_index < arrayLength(&lights); light_index += 1u) {
-            let light = lights[light_index];
-            if (light.kind == 1u) {
-                color += reflectance * light.intensity.xyz;
-            } else {
-                let to_light = light.position.xyz - position;
-                let distance_squared = max(dot(to_light, to_light), 1.0e-8);
-                let cosine = max(dot(normal, normalize(to_light)), 0.0);
-                let shadow_origin = offset_ray_origin(
-                    position,
-                    position_error,
-                    geometric_render_normal,
-                    to_light,
-                );
-                if (cosine > 0.0 && shadow_visible(
-                    shadow_origin,
-                    to_light,
-                    hit_primitive,
-                    hit_triangle,
-                )) {
-                    color += reflectance * light.intensity.xyz * cosine / distance_squared;
-                }
-            }
+        let light_count = arrayLength(&lights);
+        let light_index = min(u32(direct_sample.light_selection * f32(light_count)), light_count - 1u);
+        let light = lights[light_index];
+        let to_light = light.position.xyz - position;
+        let distance_squared = max(dot(to_light, to_light), 1.0e-8);
+        let wi = normalize(to_light);
+        let cosine = abs(dot(normal, wi));
+        let same_hemisphere = dot(normal, -direction) * dot(normal, wi) > 0.0;
+        let shadow_origin = offset_ray_origin(
+            position,
+            position_error,
+            geometric_render_normal,
+            to_light,
+        );
+        if (same_hemisphere && cosine > 0.0 && shadow_visible(
+            shadow_origin,
+            to_light,
+            hit_primitive,
+            hit_triangle,
+        )) {
+            color = reflectance * light.intensity.xyz * cosine
+                * f32(light_count) / (3.141592653589793 * distance_squared);
         }
     }
     return color;
@@ -1222,7 +1246,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let film_position = vec2<f32>(pixel) + filter_offset + vec2<f32>(0.5);
         let sample_time = mix(camera.camera_info.z, camera.camera_info.w, camera_sample.time);
         _ = sample_time;
-        accumulated += render_sample(film_position, camera_sample.lens);
+        let direct_sample = independent_direct_sample(pixel, sample_index);
+        accumulated += render_sample(film_position, camera_sample.lens, direct_sample);
     }
     output[global_id.y * width + global_id.x] = vec4<f32>(
         accumulated / f32(camera.sampler_info.w),

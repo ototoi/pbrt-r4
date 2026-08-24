@@ -985,18 +985,10 @@ fn lower_lights(scene: GpuSceneView<'_>) -> Result<Vec<LightPlan>, BackendError>
                     kind: 0,
                 });
             }
-            GpuLight::UniformInfinite(infinite) => {
-                let rgb = spectrum_rgb(scene, infinite.radiance, index as u32)?;
-                lights.push(LightPlan {
-                    position: [0.0; 4],
-                    intensity: [
-                        rgb[0] * infinite.scale,
-                        rgb[1] * infinite.scale,
-                        rgb[2] * infinite.scale,
-                        1.0,
-                    ],
-                    kind: 1,
-                });
+            GpuLight::UniformInfinite(_) => {
+                return Err(BackendError::Plan(PlanError::UnsupportedLight {
+                    light: index as u32,
+                }))
             }
             _ => {
                 return Err(BackendError::Plan(PlanError::UnsupportedLight {

@@ -143,6 +143,37 @@ fn sampled_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
     GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
 }
 
+fn two_point_light_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    draft
+        .data
+        .transforms
+        .push(GpuTransform::Static(GpuStaticTransform {
+            render_from_object: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 2.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            object_from_render: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, -2.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            swaps_handedness: false,
+        }));
+    draft.data.lights.push(GpuLight::Point(GpuPointLight {
+        render_from_light: TransformId(3),
+        intensity: SpectrumId(0),
+        scale: 2.0,
+    }));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
 fn depth_of_field_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
     let mut draft = minimal_scene_draft();
     let camera_from_raster = GpuMatrix4x4([
@@ -152,6 +183,21 @@ fn depth_of_field_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
         [0.0, 0.0, 0.0, 1.0],
     ]);
     draft.data.transforms[1] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    draft.data.transforms[2] = GpuTransform::Static(GpuStaticTransform {
         render_from_object: GpuMatrix4x4([
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -242,7 +288,7 @@ fn expected_independent_sample_radiance(
     let x = 0.5 * sample.x as f32;
     let y = 0.5 * sample.y as f32;
     let distance_squared = x * x + y * y + 4.0;
-    0.5 / (distance_squared * distance_squared.sqrt())
+    0.5 / (std::f32::consts::PI * distance_squared * distance_squared.sqrt())
 }
 
 fn expected_depth_of_field_radiance(samples_per_pixel: u32, seed: u32, sample_index: u32) -> f32 {
@@ -255,7 +301,27 @@ fn expected_depth_of_field_radiance(samples_per_pixel: u32, seed: u32, sample_in
     let x = 0.5 * (film_sample.x + lens_sample.x);
     let y = 0.5 * (film_sample.y + lens_sample.y);
     let distance_squared = (x * x + y * y + 4.0) as f32;
-    0.5 / (distance_squared * distance_squared.sqrt())
+    0.5 / (std::f32::consts::PI * distance_squared * distance_squared.sqrt())
+}
+
+fn expected_two_point_light_radiance(samples_per_pixel: u32, seed: u32, sample_index: u32) -> f32 {
+    let mut sampler = IndependentSampler::new(samples_per_pixel, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    assert!(sampler.set_sample_number(sample_index));
+    let film_sample = sampler.get_pixel_2d();
+    sampler.start_pixel_sample(sample_index, 6);
+    let light_selection = sampler.get_1d();
+    let (light_x, intensity) = if light_selection < 0.5 {
+        (0.0, 0.5)
+    } else {
+        (1.0, 1.0)
+    };
+    let x = 0.5 * film_sample.x as f32;
+    let y = 0.5 * film_sample.y as f32;
+    let dx = light_x - x;
+    let distance_squared = dx * dx + y * y + 4.0;
+    let cosine = 2.0 / distance_squared.sqrt();
+    intensity * cosine / (std::f32::consts::PI * distance_squared)
 }
 
 fn image_scene() -> GpuCompiledScene {
@@ -977,7 +1043,7 @@ fn software_bvh_renderer_returns_a_pixel_buffer() {
         )
         .unwrap();
     assert_eq!(output.rgb.len(), 1);
-    let expected = 0.25 * (2.0 / (4.125_f32).sqrt()) / 4.125;
+    let expected = 0.25 * (2.0 / (4.125_f32).sqrt()) / (std::f32::consts::PI * 4.125);
     assert!((output.rgb[0][0] - expected).abs() < 1.0e-4);
 }
 
@@ -1035,6 +1101,38 @@ fn software_renderer_averages_requested_sample_range() {
             "{:?} {expected}",
             output.rgb[0]
         );
+    }
+}
+
+#[test]
+fn software_renderer_matches_uniform_point_light_selection() {
+    const SAMPLE_COUNT: u32 = 8;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = two_point_light_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+    for sample_index in 0..SAMPLE_COUNT {
+        let output = renderer
+            .render(
+                &executable,
+                &GpuRenderRequest {
+                    sample_start: u64::from(sample_index),
+                    sample_count: 1,
+                },
+            )
+            .unwrap();
+        let expected = expected_two_point_light_radiance(SAMPLE_COUNT, SEED, sample_index);
+        for channel in output.rgb[0] {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample {sample_index}: actual={:?}, expected={expected}",
+                output.rgb[0]
+            );
+        }
     }
 }
 
@@ -1185,22 +1283,44 @@ fn hardware_and_software_point_light_shadows_match() {
 }
 
 #[test]
-fn software_renderer_evaluates_uniform_infinite_light() {
+fn hardware_and_software_uniform_point_light_selection_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = two_point_light_scene(8, 17);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 8,
+    };
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in
+        hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn scene_plan_rejects_uniform_infinite_until_indirect_miss_is_supported() {
     let mut renderer = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
     })
     .unwrap();
-    let executable = renderer.prepare(&uniform_infinite_scene()).unwrap();
-    let output = renderer
-        .render(
-            &executable,
-            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
-        )
-        .unwrap();
-    assert!((output.rgb[0][0] - 0.25).abs() < 1.0e-4);
-    assert!((output.rgb[0][1] - 0.25).abs() < 1.0e-4);
-    assert!((output.rgb[0][2] - 0.25).abs() < 1.0e-4);
+    assert!(matches!(
+        renderer.prepare(&uniform_infinite_scene()),
+        Err(pbrt_r4::gpu::webgpu::BackendError::Plan(
+            PlanError::UnsupportedLight { light: 0 }
+        ))
+    ));
 }
 
 #[test]
@@ -1234,7 +1354,12 @@ fn software_renderer_evaluates_normal_map() {
             &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
         )
         .unwrap();
-    assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-5));
+    let distance_squared = 4.125_f32;
+    let expected =
+        0.25 * (0.25 / distance_squared.sqrt()) / (std::f32::consts::PI * distance_squared);
+    for channel in output.rgb[0] {
+        assert!((channel - expected).abs() < 1.0e-5, "{:?}", output.rgb[0]);
+    }
 }
 
 #[test]
@@ -1386,7 +1511,7 @@ fn software_renderer_interpolates_trilinear_mipmap_levels() {
     assert!(trilinear[0] > trilinear[2], "{trilinear:?}");
     assert!(trilinear[1] > trilinear[2], "{trilinear:?}");
     assert!(
-        trilinear[1] > bilinear[1] + 0.05,
+        trilinear[1] > bilinear[1] + bilinear[0] * 0.25,
         "{bilinear:?} {trilinear:?}"
     );
 }
@@ -1413,7 +1538,7 @@ fn software_renderer_applies_ewa_anisotropy_limit() {
     let anisotropic = renderer.render(&anisotropic_scene, &request).unwrap().rgb[0];
 
     assert!(
-        isotropic[0] > anisotropic[0] + 0.02,
+        isotropic[0] > anisotropic[0] * 2.0 + 1.0e-6,
         "{isotropic:?} {anisotropic:?}"
     );
 }
