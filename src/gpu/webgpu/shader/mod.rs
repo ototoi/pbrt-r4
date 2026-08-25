@@ -3,10 +3,27 @@ mod fragment;
 use super::device::AccelerationMode;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShaderStageId {
+    LegacyRender,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShaderStage {
+    pub id: ShaderStageId,
+    pub entry_point: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShaderSet {
     pub source: String,
     pub label: &'static str,
-    pub entry_point: &'static str,
+    pub stages: Vec<ShaderStage>,
+}
+
+impl ShaderSet {
+    pub fn stage(&self, id: ShaderStageId) -> Option<&ShaderStage> {
+        self.stages.iter().find(|stage| stage.id == id)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +147,9 @@ pub fn build_shader_set(mode: AccelerationMode) -> Result<ShaderSet, ShaderBuild
     Ok(ShaderSet {
         source,
         label,
-        entry_point: "main",
+        stages: vec![ShaderStage {
+            id: ShaderStageId::LegacyRender,
+            entry_point: "main",
+        }],
     })
 }

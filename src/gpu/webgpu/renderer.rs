@@ -3,7 +3,7 @@ use super::super::ir::{GpuMatrix4x4, GpuRenderOutput, GpuRenderRequest, GpuScene
 use super::device::{AccelerationMode, DeviceContext, PrepareOptions};
 use super::error::BackendError;
 use super::geometry::{HardwareAcceleration, ScenePlan};
-use super::shader::build_shader_set;
+use super::shader::{build_shader_set, ShaderStageId};
 use super::software::SoftwareAcceleration;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
@@ -243,6 +243,10 @@ fn buffer_entry(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::Bind
 
 fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline {
     let shader_set = build_shader_set(mode).expect("built-in WebGPU shader recipe is valid");
+    let entry_point = shader_set
+        .stage(ShaderStageId::LegacyRender)
+        .expect("legacy WebGPU render stage is registered")
+        .entry_point;
     let bind_group_layout = match mode {
         AccelerationMode::HardwareRayQuery => create_hardware_bind_group_layout(&context.device),
         AccelerationMode::SoftwareBvh => create_software_bind_group_layout(&context.device),
@@ -266,7 +270,7 @@ fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline 
             label: Some("pbrt-r4 WebGPU compute pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: Some(shader_set.entry_point),
+            entry_point: Some(entry_point),
             compilation_options: Default::default(),
             cache: None,
         });
