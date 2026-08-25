@@ -440,10 +440,7 @@ impl GpuSceneDraft {
                     });
                 }
             }
-            for texture in [primitive.alpha, primitive.shadow_alpha]
-                .into_iter()
-                .flatten()
-            {
+            if let Some(texture) = primitive.alpha {
                 if usize::try_from(texture.0)
                     .ok()
                     .and_then(|index| self.data.float_textures.get(index))

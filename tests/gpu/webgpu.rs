@@ -1,0 +1,2766 @@
+#![cfg(feature = "webgpu")]
+
+use glam::Vec3;
+use pbrt_r4::gpu::compiler::{GpuCompiledScene, GpuSourceMap};
+use pbrt_r4::gpu::ir::{
+    FloatTextureId, GeometryId, GpuAreaLightBinding, GpuBounds2i, GpuBounds3, GpuColorEncoding,
+    GpuDiffuseAreaLight, GpuDiffuseMaterial, GpuFloatImageChannel, GpuFloatTexture, GpuGeometry,
+    GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuInstance,
+    GpuInstanceDefinition, GpuIrValidationError, GpuIrVersion, GpuLight, GpuMaterial, GpuMatrix4x4,
+    GpuMipLevel, GpuNormal3, GpuPoint3, GpuPointLight, GpuPrimitive, GpuRenderConfig,
+    GpuRenderOutput, GpuRenderRequest, GpuSceneData, GpuSceneDraft, GpuSpectrumResource,
+    GpuSpectrumTexture, GpuSpectrumType, GpuStaticTransform, GpuTexelStorage, GpuTextureMapping,
+    GpuTransform, GpuTriangleMesh, ImageId, InstanceDefinitionId, InstanceId, LightId, MaterialId,
+    PrimitiveId, SpectrumId, SpectrumTextureId, TextureMappingId, TransformId, CURRENT_IR_VERSION,
+};
+use pbrt_r4::gpu::webgpu::{
+    index_bytes, light_bytes, material_bytes, primitive_bytes, texture_bytes, tlas_transform,
+    transform_bytes, vertex_bytes, AccelerationMode, BackendPreference, MaterialReflectancePlan,
+    PlanError, PrepareOptions, Renderer, ScenePlan, SoftwareBvhPlan,
+};
+use pbrt_r4::prelude::{
+    bilinear_pdf, concentric_sample_disk, invert_spherical_triangle_sample, sample_bilinear,
+    sample_spherical_triangle, spherical_triangle_area, IndependentSampler, Point2i, Point3f,
+    Vector3f,
+};
+
+fn minimal_scene_draft() -> GpuSceneDraft {
+    let identity = GpuMatrix4x4([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let camera_from_camera = GpuMatrix4x4([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 2.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let camera_from_raster = GpuMatrix4x4([
+        [0.5, 0.0, 0.0, 0.0],
+        [0.0, 0.5, 0.0, 0.0],
+        [0.0, 0.0, 0.0, -2.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let static_transform = |render_from_object, object_from_render| {
+        GpuTransform::Static(GpuStaticTransform {
+            render_from_object,
+            object_from_render,
+            swaps_handedness: false,
+        })
+    };
+    let draft = GpuSceneDraft {
+        version: CURRENT_IR_VERSION,
+        data: GpuSceneData {
+            transforms: vec![
+                static_transform(identity, identity),
+                static_transform(
+                    camera_from_camera,
+                    GpuMatrix4x4([
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, -2.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]),
+                ),
+                static_transform(
+                    camera_from_camera,
+                    GpuMatrix4x4([
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, -2.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]),
+                ),
+            ],
+            spectra: vec![GpuSpectrumResource::Constant { value: 0.5 }],
+            float_textures: Vec::new(),
+            spectrum_textures: vec![GpuSpectrumTexture::Constant {
+                value: SpectrumId(0),
+            }],
+            texture_mappings: Vec::new(),
+            images: Vec::new(),
+            geometry: vec![GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions: vec![
+                    GpuPoint3([0.0, 0.0, 0.0]),
+                    GpuPoint3([1.0, 0.0, 0.0]),
+                    GpuPoint3([0.0, 1.0, 0.0]),
+                ],
+                indices: vec![[0, 1, 2]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            })],
+            materials: vec![GpuMaterial::Diffuse(GpuDiffuseMaterial {
+                reflectance: SpectrumTextureId(0),
+                displacement: None,
+                normal_map: None,
+            })],
+            lights: vec![GpuLight::Point(GpuPointLight {
+                render_from_light: TransformId(2),
+                intensity: SpectrumId(0),
+                scale: 1.0,
+            })],
+            primitives: vec![GpuPrimitive {
+                geometry: GeometryId(0),
+                transform: TransformId(0),
+                material: Some(MaterialId(0)),
+                alpha: None,
+                area_light: pbrt_r4::gpu::ir::GpuAreaLightBinding::None,
+                reverse_orientation: false,
+            }],
+            instance_definitions: Vec::new(),
+            instances: Vec::new(),
+            world_primitives: vec![PrimitiveId(0)].into_boxed_slice(),
+            world_instances: vec![].into_boxed_slice(),
+            render: GpuRenderConfig {
+                camera: pbrt_r4::gpu::ir::GpuPerspectiveCamera {
+                    render_from_camera: TransformId(1),
+                    camera_from_raster,
+                    lens_radius: 0.0,
+                    focal_distance: 1.0,
+                    shutter_open: 0.0,
+                    shutter_close: 1.0,
+                },
+                ..Default::default()
+            },
+        },
+    };
+    let mut draft = draft;
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.0, 0.0]);
+    draft
+}
+
+fn minimal_scene() -> GpuCompiledScene {
+    GpuCompiledScene::new(
+        minimal_scene_draft().finish().unwrap(),
+        GpuSourceMap::default(),
+    )
+}
+
+fn reverse_orientation_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.primitives[0].reverse_orientation = true;
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!();
+    };
+    mesh.normals = Some(vec![GpuNormal3([0.0, 0.0, 1.0]); 3]);
+    let reflected = GpuMatrix4x4([
+        [-1.0, 0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    draft.data.transforms[0] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: reflected,
+        object_from_render: reflected,
+        swaps_handedness: true,
+    });
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn area_light_scene(two_sided: bool) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!();
+    };
+    mesh.positions.push(GpuPoint3([1.0, 1.0, 0.0]));
+    mesh.indices = vec![[0, 1, 2], [1, 3, 2]];
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided,
+        }));
+    draft.data.primitives[0].area_light = GpuAreaLightBinding::Uniform(LightId(1));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn per_element_area_light_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!();
+    };
+    mesh.positions.push(GpuPoint3([1.0, 1.0, 0.0]));
+    mesh.indices = vec![[0, 1, 2], [1, 3, 2]];
+    for scale in [2.0, 4.0] {
+        draft
+            .data
+            .lights
+            .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+                emission: SpectrumTextureId(0),
+                scale,
+                two_sided: false,
+            }));
+    }
+    draft.data.primitives[0].area_light =
+        GpuAreaLightBinding::PerElement(vec![LightId(1), LightId(2)]);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn instanced_area_light_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided: false,
+        }));
+    draft.data.primitives[0].area_light = GpuAreaLightBinding::Uniform(LightId(1));
+    draft.data.instance_definitions = vec![GpuInstanceDefinition {
+        primitives: vec![PrimitiveId(0)],
+        instances: Vec::new(),
+        local_bounds: GpuBounds3 {
+            min: GpuPoint3([0.0, 0.0, 0.0]),
+            max: GpuPoint3([1.0, 1.0, 0.0]),
+        },
+    }];
+    draft.data.instances = vec![
+        GpuInstance {
+            definition: InstanceDefinitionId(0),
+            transform: TransformId(0),
+        },
+        GpuInstance {
+            definition: InstanceDefinitionId(0),
+            transform: TransformId(0),
+        },
+    ];
+    draft.data.world_primitives = Vec::new().into_boxed_slice();
+    draft.data.world_instances = vec![InstanceId(0), InstanceId(1)].into_boxed_slice();
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn emissive_triangle_scene(reverse_orientation: bool, two_sided: bool) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.clear();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided,
+        }));
+    draft.data.primitives[0].area_light = GpuAreaLightBinding::Uniform(LightId(0));
+    draft.data.primitives[0].reverse_orientation = reverse_orientation;
+    draft.data.render.integrator.max_depth = 0;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn direct_area_light_scene() -> GpuCompiledScene {
+    direct_area_light_scene_with_positions([
+        GpuPoint3([0.75, -0.25, 1.0]),
+        GpuPoint3([1.0, 0.5, 1.0]),
+        GpuPoint3([1.25, -0.25, 1.0]),
+    ])
+}
+
+fn direct_area_light_scene_with_positions(positions: [GpuPoint3; 3]) -> GpuCompiledScene {
+    let draft = direct_area_light_scene_draft(positions);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn direct_area_light_scene_draft(positions: [GpuPoint3; 3]) -> GpuSceneDraft {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.clear();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided: false,
+        }));
+    draft
+        .data
+        .geometry
+        .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+            positions: positions.into(),
+            indices: vec![[0, 1, 2]],
+            normals: None,
+            tangents: None,
+            uvs: None,
+            face_indices: None,
+        }));
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(1),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::Uniform(LightId(0)),
+        reverse_orientation: false,
+    });
+    draft.data.world_primitives = vec![PrimitiveId(0), PrimitiveId(1)].into_boxed_slice();
+    draft.data.render.integrator.max_depth = 1;
+    draft
+}
+
+fn alpha_masked_direct_area_light_scene(alpha: f32) -> GpuCompiledScene {
+    let mut draft = direct_area_light_scene_draft([
+        GpuPoint3([0.75, -0.25, 1.0]),
+        GpuPoint3([1.0, 0.5, 1.0]),
+        GpuPoint3([1.25, -0.25, 1.0]),
+    ]);
+    draft.data.float_textures = vec![GpuFloatTexture::Constant { value: alpha }];
+    draft.data.primitives[1].alpha = Some(FloatTextureId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn occluded_direct_area_light_scene() -> GpuCompiledScene {
+    let mut draft = direct_area_light_scene_draft([
+        GpuPoint3([0.75, -0.25, 1.0]),
+        GpuPoint3([1.0, 0.5, 1.0]),
+        GpuPoint3([1.25, -0.25, 1.0]),
+    ]);
+    draft
+        .data
+        .geometry
+        .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+            positions: vec![
+                GpuPoint3([0.6, -1.0, -0.2]),
+                GpuPoint3([0.6, 1.0, -0.2]),
+                GpuPoint3([0.6, 1.0, 1.2]),
+                GpuPoint3([0.6, -1.0, 1.2]),
+            ],
+            indices: vec![[0, 1, 2], [0, 2, 3]],
+            normals: None,
+            tangents: None,
+            uvs: None,
+            face_indices: None,
+        }));
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(2),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::None,
+        reverse_orientation: false,
+    });
+    draft.data.world_primitives =
+        vec![PrimitiveId(0), PrimitiveId(1), PrimitiveId(2)].into_boxed_slice();
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn sampled_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn two_point_light_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    draft
+        .data
+        .transforms
+        .push(GpuTransform::Static(GpuStaticTransform {
+            render_from_object: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 2.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            object_from_render: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, -2.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            swaps_handedness: false,
+        }));
+    draft.data.lights.push(GpuLight::Point(GpuPointLight {
+        render_from_light: TransformId(3),
+        intensity: SpectrumId(0),
+        scale: 2.0,
+    }));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn depth_of_field_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    let camera_from_raster = GpuMatrix4x4([
+        [0.5, 0.0, 0.0, 0.0],
+        [0.0, 0.5, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 2.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    draft.data.transforms[1] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    draft.data.transforms[2] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    draft.data.render.camera.camera_from_raster = camera_from_raster;
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    draft.data.render.camera.lens_radius = 0.1;
+    draft.data.render.camera.focal_distance = 4.0;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn coordinate_tangent(normal: Vec3) -> Vec3 {
+    if normal.x.abs() > normal.y.abs() {
+        Vec3::new(-normal.z, 0.0, normal.x).normalize()
+    } else {
+        Vec3::new(0.0, normal.z, -normal.y).normalize()
+    }
+}
+
+fn diffuse_sample(seed: u32, depth: u32, normal: Vec3) -> (Vec3, f32) {
+    let mut sampler = IndependentSampler::new(1, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6 + 7 * depth);
+    let _direct_selection = sampler.get_1d();
+    let _direct_light_sample = sampler.get_2d();
+    let _component = sampler.get_1d();
+    let indirect_sample = sampler.get_2d();
+    let roulette = sampler.get_1d() as f32;
+    let disk = concentric_sample_disk(&indirect_sample);
+    let local_wi = Vec3::new(
+        disk.x as f32,
+        disk.y as f32,
+        (1.0 - disk.x as f32 * disk.x as f32 - disk.y as f32 * disk.y as f32).sqrt(),
+    );
+    let frame_x = coordinate_tangent(normal);
+    let frame_y = normal.cross(frame_x);
+    let wi = (frame_x * local_wi.x + frame_y * local_wi.y + normal * local_wi.z).normalize();
+    (wi, roulette)
+}
+
+fn expected_direct_area_light_radiance() -> f32 {
+    expected_direct_area_light_radiance_with_delta(false)
+}
+
+fn expected_direct_area_light_radiance_with_delta(delta_position: bool) -> f32 {
+    let mut sampler = IndependentSampler::new(1, 0);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6);
+    let _light_selection = sampler.get_1d();
+    let u = sampler.get_2d();
+    let context = Point3f::new(0.25, 0.25, 0.0);
+    let triangle = [
+        Point3f::new(0.75, -0.25, 1.0),
+        Point3f::new(1.0, 0.5, 1.0),
+        Point3f::new(1.25, -0.25, 1.0),
+    ];
+    let directions = triangle.map(|point| (point - context).normalize());
+    let shading_normal = Vector3f::new(0.0, 0.0, 1.0);
+    let weights = [
+        0.01f32.max(shading_normal.abs_dot(&directions[1])),
+        0.01f32.max(shading_normal.abs_dot(&directions[1])),
+        0.01f32.max(shading_normal.abs_dot(&directions[0])),
+        0.01f32.max(shading_normal.abs_dot(&directions[2])),
+    ];
+    let warped = sample_bilinear(u, &weights);
+    let (barycentrics, triangle_pdf) = sample_spherical_triangle(&triangle, context, warped);
+    let barycentrics = barycentrics.unwrap();
+    let sampled_position = triangle[0] * barycentrics[0]
+        + triangle[1] * barycentrics[1]
+        + triangle[2] * barycentrics[2];
+    let wi = (sampled_position - context).normalize();
+    let cosine = shading_normal.abs_dot(&wi);
+    let light_pdf = triangle_pdf * bilinear_pdf(warped, &weights);
+    let bsdf_pdf = if delta_position {
+        0.0
+    } else {
+        cosine / std::f32::consts::PI
+    };
+    0.5 * cosine / (std::f32::consts::PI * (bsdf_pdf + light_pdf))
+}
+
+fn expected_uniform_area_light_radiance() -> f32 {
+    let mut sampler = IndependentSampler::new(1, 0);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6);
+    let _light_selection = sampler.get_1d();
+    let u = sampler.get_2d();
+    let (b0, b1) = if u.x < u.y {
+        (0.5 * u.x, u.y - 0.5 * u.x)
+    } else {
+        (u.x - 0.5 * u.y, 0.5 * u.y)
+    };
+    let barycentrics = [b0, b1, 1.0 - b0 - b1];
+    let context = Point3f::new(0.25, 0.25, 0.0);
+    let triangle = [
+        Point3f::new(0.995, -0.005, 1.0),
+        Point3f::new(1.0, 0.005, 1.0),
+        Point3f::new(1.005, -0.005, 1.0),
+    ];
+    let sampled_position = triangle[0] * barycentrics[0]
+        + triangle[1] * barycentrics[1]
+        + triangle[2] * barycentrics[2];
+    let to_light = sampled_position - context;
+    let distance_squared = to_light.length_squared();
+    let wi = to_light.normalize();
+    let receiver_cosine = wi.z.abs();
+    let light_cosine = wi.z.abs();
+    let area =
+        0.5 * Vector3f::cross(&(triangle[1] - triangle[0]), &(triangle[2] - triangle[0])).length();
+    let light_pdf = distance_squared / (light_cosine * area);
+    let bsdf_pdf = receiver_cosine / std::f32::consts::PI;
+    0.5 * receiver_cosine / (std::f32::consts::PI * (bsdf_pdf + light_pdf))
+}
+
+fn indirect_area_light_scene() -> (GpuCompiledScene, f32) {
+    const SEED: u32 = 17;
+    let first_hit = Vec3::new(0.25, 0.25, 0.0);
+    let (wi, _) = diffuse_sample(SEED, 0, Vec3::Z);
+    let second_hit = first_hit + 2.0 * wi;
+    let emitter = triangle_at(second_hit, -wi, 0.5);
+
+    let mut sampler = IndependentSampler::new(1, SEED);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    sampler.start_pixel_sample(0, 6);
+    let _light_selection = sampler.get_1d();
+    let u = sampler.get_2d();
+    let triangle = emitter.map(|point| Point3f::from(point.0));
+    let directions =
+        triangle.map(|point| (point - Point3f::from(first_hit.to_array())).normalize());
+    let weights = [
+        0.01f32.max(directions[1].z.abs()),
+        0.01f32.max(directions[1].z.abs()),
+        0.01f32.max(directions[0].z.abs()),
+        0.01f32.max(directions[2].z.abs()),
+    ];
+    let warped = sample_bilinear(u, &weights);
+    let (sample_barycentrics, _) =
+        sample_spherical_triangle(&triangle, Point3f::from(first_hit.to_array()), warped);
+    let sample_barycentrics = sample_barycentrics.unwrap();
+    let sampled_position = triangle[0] * sample_barycentrics[0]
+        + triangle[1] * sample_barycentrics[1]
+        + triangle[2] * sample_barycentrics[2];
+    let direct_direction = (sampled_position - Point3f::from(first_hit.to_array())).normalize();
+    let direct_direction = Vec3::new(direct_direction.x, direct_direction.y, direct_direction.z);
+    let blocker_center = first_hit + 0.5 * direct_direction;
+    let blocker_normal = -direct_direction;
+    let blocker_x = coordinate_tangent(blocker_normal);
+    let blocker_y = blocker_normal.cross(blocker_x);
+    let blocker = [
+        GpuPoint3((blocker_center - 0.025 * blocker_x - 0.025 * blocker_y).to_array()),
+        GpuPoint3((blocker_center + 0.025 * blocker_x - 0.025 * blocker_y).to_array()),
+        GpuPoint3((blocker_center + 0.05 * blocker_y).to_array()),
+    ];
+
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.clear();
+    draft
+        .data
+        .lights
+        .push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+            emission: SpectrumTextureId(0),
+            scale: 2.0,
+            two_sided: false,
+        }));
+    for positions in [emitter.to_vec(), blocker.to_vec()] {
+        draft
+            .data
+            .geometry
+            .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions,
+                indices: vec![[0, 1, 2]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            }));
+    }
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(1),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::Uniform(LightId(0)),
+        reverse_orientation: false,
+    });
+    draft.data.primitives.push(GpuPrimitive {
+        geometry: GeometryId(2),
+        transform: TransformId(0),
+        material: Some(MaterialId(0)),
+        alpha: None,
+        area_light: GpuAreaLightBinding::None,
+        reverse_orientation: false,
+    });
+    draft.data.world_primitives =
+        vec![PrimitiveId(0), PrimitiveId(1), PrimitiveId(2)].into_boxed_slice();
+    draft.data.render.integrator.max_depth = 1;
+    draft.data.render.sampler.seed = u64::from(SEED);
+
+    let solid_angle = spherical_triangle_area(&directions[0], &directions[1], &directions[2]);
+    let inverted = invert_spherical_triangle_sample(
+        &triangle,
+        Point3f::from(first_hit.to_array()),
+        Vector3f::from(wi.to_array()),
+    );
+    let light_pdf = bilinear_pdf(inverted, &weights) / solid_angle;
+    let bsdf_pdf = wi.z.abs() / std::f32::consts::PI;
+    let expected = 0.5 * bsdf_pdf / (bsdf_pdf + light_pdf);
+    (
+        GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default()),
+        expected,
+    )
+}
+
+fn triangle_at(center: Vec3, normal: Vec3, radius: f32) -> [GpuPoint3; 3] {
+    let x = coordinate_tangent(normal);
+    let y = normal.cross(x);
+    [
+        GpuPoint3((center - radius * x - radius * y).to_array()),
+        GpuPoint3((center + radius * x - radius * y).to_array()),
+        GpuPoint3((center - radius * x + radius * y).to_array()),
+    ]
+}
+
+fn set_point_light_position(draft: &mut GpuSceneDraft, position: Vec3) {
+    draft.data.transforms[2] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, position.x],
+            [0.0, 1.0, 0.0, position.y],
+            [0.0, 0.0, 1.0, position.z],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, -position.x],
+            [0.0, 1.0, 0.0, -position.y],
+            [0.0, 0.0, 1.0, -position.z],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+}
+
+fn indirect_bounce_scene(max_depth: u32) -> GpuCompiledScene {
+    let (wi, _) = diffuse_sample(17, 0, Vec3::Z);
+    let first_hit = Vec3::new(0.25, 0.25, 0.0);
+    let second_hit = first_hit + 2.0 * wi;
+    let second_normal = -wi;
+    let light_position = second_hit + 0.5 * second_normal;
+
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!()
+    };
+    mesh.positions
+        .extend(triangle_at(second_hit, second_normal, 0.5));
+    mesh.indices.push([3, 4, 5]);
+    set_point_light_position(&mut draft, light_position);
+    draft.data.render.integrator.max_depth = max_depth;
+    draft.data.render.sampler.seed = 17;
+    draft.data.render.sampler.samples_per_pixel = 2;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn roulette_bounce_scene(max_depth: u32, seed: u32) -> GpuCompiledScene {
+    let first_hit = Vec3::new(0.25, 0.25, 0.0);
+    let (first_wi, _) = diffuse_sample(seed, 0, Vec3::Z);
+    let second_hit = first_hit + 2.0 * first_wi;
+    let second_normal = -first_wi;
+    let (second_wi, _) = diffuse_sample(seed, 1, second_normal);
+    let third_hit = second_hit + 2.0 * second_wi;
+    let third_normal = -second_wi;
+
+    let mut draft = minimal_scene_draft();
+    let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] else {
+        unreachable!()
+    };
+    mesh.positions
+        .extend(triangle_at(second_hit, second_normal, 0.8));
+    mesh.positions
+        .extend(triangle_at(third_hit, third_normal, 0.8));
+    mesh.indices.extend([[3, 4, 5], [6, 7, 8]]);
+    set_point_light_position(&mut draft, third_hit + 0.5 * third_normal);
+    draft.data.render.integrator.max_depth = max_depth;
+    draft.data.render.sampler.seed = u64::from(seed);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn shadow_scene(with_occluder: bool, transparent_occluder: bool) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.transforms[2] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    if with_occluder {
+        draft
+            .data
+            .geometry
+            .push(GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions: vec![
+                    GpuPoint3([0.35, -0.25, 1.0]),
+                    GpuPoint3([0.9, -0.25, 1.0]),
+                    GpuPoint3([0.6, 0.55, 1.0]),
+                ],
+                indices: vec![[0, 1, 2]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            }));
+        let alpha = if transparent_occluder {
+            draft
+                .data
+                .float_textures
+                .push(GpuFloatTexture::Constant { value: 0.0 });
+            Some(FloatTextureId(0))
+        } else {
+            None
+        };
+        draft.data.primitives.push(GpuPrimitive {
+            geometry: GeometryId(1),
+            transform: TransformId(0),
+            material: Some(MaterialId(0)),
+            alpha,
+            area_light: pbrt_r4::gpu::ir::GpuAreaLightBinding::None,
+            reverse_orientation: false,
+        });
+        draft.data.world_primitives = vec![PrimitiveId(0), PrimitiveId(1)].into_boxed_slice();
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn expected_independent_sample_radiance(
+    samples_per_pixel: u32,
+    seed: u32,
+    sample_index: u32,
+) -> f32 {
+    let mut sampler = IndependentSampler::new(samples_per_pixel, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    assert!(sampler.set_sample_number(sample_index));
+    let sample = sampler.get_pixel_2d();
+    let x = 0.5 * sample.x as f32;
+    let y = 0.5 * sample.y as f32;
+    let distance_squared = x * x + y * y + 4.0;
+    0.5 / (std::f32::consts::PI * distance_squared * distance_squared.sqrt())
+}
+
+fn expected_depth_of_field_radiance(samples_per_pixel: u32, seed: u32, sample_index: u32) -> f32 {
+    let mut sampler = IndependentSampler::new(samples_per_pixel, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    assert!(sampler.set_sample_number(sample_index));
+    let film_sample = sampler.get_pixel_2d();
+    let _time = sampler.get_1d();
+    let lens_sample = concentric_sample_disk(&sampler.get_2d()) * 0.1;
+    let x = 0.5 * (film_sample.x + lens_sample.x);
+    let y = 0.5 * (film_sample.y + lens_sample.y);
+    let distance_squared = (x * x + y * y + 4.0) as f32;
+    0.5 / (std::f32::consts::PI * distance_squared * distance_squared.sqrt())
+}
+
+fn expected_two_point_light_radiance(samples_per_pixel: u32, seed: u32, sample_index: u32) -> f32 {
+    let mut sampler = IndependentSampler::new(samples_per_pixel, seed);
+    sampler.start_pixel(&Point2i::new(0, 0));
+    assert!(sampler.set_sample_number(sample_index));
+    let film_sample = sampler.get_pixel_2d();
+    sampler.start_pixel_sample(sample_index, 6);
+    let light_selection = sampler.get_1d();
+    let (light_x, intensity) = if light_selection < 0.5 {
+        (0.0, 0.5)
+    } else {
+        (1.0, 1.0)
+    };
+    let x = 0.5 * film_sample.x as f32;
+    let y = 0.5 * film_sample.y as f32;
+    let dx = light_x - x;
+    let distance_squared = dx * dx + y * y + 4.0;
+    let cosine = 2.0 / distance_squared.sqrt();
+    intensity * cosine / (std::f32::consts::PI * distance_squared)
+}
+
+fn image_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 1.0,
+        sv: 1.0,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    let mip = |count| {
+        vec![GpuMipLevel {
+            resolution: [1, 1],
+            texel_offset: 0,
+            texel_count: count,
+        }]
+        .into_boxed_slice()
+    };
+    draft.data.images = vec![
+        GpuImageResource {
+            resolution: [1, 1],
+            channels: GpuImageChannels::Rgba,
+            storage: GpuTexelStorage::U8(vec![255, 128, 0, 64].into_boxed_slice()),
+            mip_levels: mip(4),
+            color_encoding: GpuColorEncoding::Srgb,
+        },
+        GpuImageResource {
+            resolution: [1, 1],
+            channels: GpuImageChannels::R,
+            storage: GpuTexelStorage::F16(vec![0x3800].into_boxed_slice()),
+            mip_levels: mip(1),
+            color_encoding: GpuColorEncoding::Linear,
+        },
+        GpuImageResource {
+            resolution: [1, 1],
+            channels: GpuImageChannels::R,
+            storage: GpuTexelStorage::F32(vec![0.25].into_boxed_slice()),
+            mip_levels: mip(1),
+            color_encoding: GpuColorEncoding::Linear,
+        },
+    ];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 2.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Clamp,
+        twrap: GpuImageWrapMode::Clamp,
+        filter: GpuImageFilter::Bilinear,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    draft.data.float_textures = vec![
+        GpuFloatTexture::Image {
+            image: ImageId(0),
+            mapping: TextureMappingId(0),
+            scale: 1.0,
+            invert: false,
+            swrap: GpuImageWrapMode::Repeat,
+            twrap: GpuImageWrapMode::Repeat,
+            filter: GpuImageFilter::Point,
+            channel: GpuFloatImageChannel::Alpha,
+        },
+        GpuFloatTexture::Image {
+            image: ImageId(1),
+            mapping: TextureMappingId(0),
+            scale: 1.0,
+            invert: false,
+            swrap: GpuImageWrapMode::Repeat,
+            twrap: GpuImageWrapMode::Repeat,
+            filter: GpuImageFilter::Point,
+            channel: GpuFloatImageChannel::Channel0,
+        },
+        GpuFloatTexture::Image {
+            image: ImageId(2),
+            mapping: TextureMappingId(0),
+            scale: 1.0,
+            invert: false,
+            swrap: GpuImageWrapMode::Repeat,
+            twrap: GpuImageWrapMode::Repeat,
+            filter: GpuImageFilter::Point,
+            channel: GpuFloatImageChannel::Channel0,
+        },
+    ];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn mipmap_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        // Keep the footprint away from an exact MIP-level boundary so the
+        // test checks level selection rather than floating-point tie-breaking.
+        su: 1.25,
+        sv: 1.0,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    draft.data.images = vec![GpuImageResource {
+        resolution: [2, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(
+            vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0].into_boxed_slice(),
+        ),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 0,
+                texel_count: 6,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 6,
+                texel_count: 3,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Repeat,
+        twrap: GpuImageWrapMode::Repeat,
+        filter,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn trilinear_lod_scene(filter: GpuImageFilter) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 0.707_106_77,
+        sv: 0.1,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    let mut texels = vec![0.0; 12];
+    texels.extend([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    texels.extend([0.0, 1.0, 0.0]);
+    draft.data.images = vec![GpuImageResource {
+        resolution: [4, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(texels.into_boxed_slice()),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [4, 1],
+                texel_offset: 0,
+                texel_count: 12,
+            },
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 12,
+                texel_count: 6,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 18,
+                texel_count: 3,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Repeat,
+        twrap: GpuImageWrapMode::Repeat,
+        filter,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn two_texel_scene(mapping: GpuTextureMapping, filter: GpuImageFilter) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![mapping];
+    draft.data.images = vec![GpuImageResource {
+        resolution: [2, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(
+            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0].into_boxed_slice(),
+        ),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 0,
+                texel_count: 6,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 6,
+                texel_count: 3,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.spectrum_textures = vec![GpuSpectrumTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Clamp,
+        twrap: GpuImageWrapMode::Clamp,
+        filter,
+        spectrum_type: GpuSpectrumType::Unbounded,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn uniform_infinite_scene(max_depth: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
+        pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
+            radiance: SpectrumId(0),
+            scale: 1.0,
+        },
+    )];
+    draft.data.render.integrator.max_depth = max_depth;
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn uniform_infinite_miss_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights = vec![pbrt_r4::gpu::ir::GpuLight::UniformInfinite(
+        pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
+            radiance: SpectrumId(0),
+            scale: 1.0,
+        },
+    )];
+    draft.data.transforms[0] = GpuTransform::Static(GpuStaticTransform {
+        render_from_object: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, 100.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        object_from_render: GpuMatrix4x4([
+            [1.0, 0.0, 0.0, -100.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]),
+        swaps_handedness: false,
+    });
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn mixed_point_infinite_scene(samples_per_pixel: u32, seed: u32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.lights.push(GpuLight::UniformInfinite(
+        pbrt_r4::gpu::ir::GpuUniformInfiniteLight {
+            radiance: SpectrumId(0),
+            scale: 1.0,
+        },
+    ));
+    draft.data.render.integrator.max_depth = 1;
+    draft.data.render.sampler.samples_per_pixel = samples_per_pixel;
+    draft.data.render.sampler.seed = u64::from(seed);
+    draft.data.render.filter.radius = pbrt_r4::gpu::ir::GpuVector2([0.5, 0.5]);
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn alpha_scene(alpha: f32) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.float_textures = vec![GpuFloatTexture::Constant { value: alpha }];
+    draft.data.primitives[0].alpha = Some(FloatTextureId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn normal_map_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.images = vec![GpuImageResource {
+        resolution: [1, 1],
+        channels: GpuImageChannels::Rgb,
+        storage: GpuTexelStorage::F32(vec![1.0, 0.5, 0.5].into_boxed_slice()),
+        mip_levels: vec![GpuMipLevel {
+            resolution: [1, 1],
+            texel_offset: 0,
+            texel_count: 3,
+        }]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    let GpuMaterial::Diffuse(material) = &mut draft.data.materials[0];
+    material.normal_map = Some(ImageId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn bump_map_scene(filter: GpuImageFilter) -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft.data.texture_mappings = vec![GpuTextureMapping::Uv {
+        su: 0.1,
+        sv: 0.1,
+        du: 0.0,
+        dv: 0.0,
+    }];
+    draft.data.images = vec![GpuImageResource {
+        resolution: [2, 1],
+        channels: GpuImageChannels::R,
+        storage: GpuTexelStorage::F32(vec![0.0, 1.0, 0.5].into_boxed_slice()),
+        mip_levels: vec![
+            GpuMipLevel {
+                resolution: [2, 1],
+                texel_offset: 0,
+                texel_count: 2,
+            },
+            GpuMipLevel {
+                resolution: [1, 1],
+                texel_offset: 2,
+                texel_count: 1,
+            },
+        ]
+        .into_boxed_slice(),
+        color_encoding: GpuColorEncoding::Linear,
+    }];
+    draft.data.float_textures = vec![GpuFloatTexture::Image {
+        image: ImageId(0),
+        mapping: TextureMappingId(0),
+        scale: 1.0,
+        invert: false,
+        swrap: GpuImageWrapMode::Repeat,
+        twrap: GpuImageWrapMode::Repeat,
+        filter,
+        channel: GpuFloatImageChannel::Channel0,
+    }];
+    if let GpuGeometry::TriangleMesh(mesh) = &mut draft.data.geometry[0] {
+        mesh.uvs = Some(vec![
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([1.0, 0.0]),
+            pbrt_r4::gpu::ir::GpuPoint2([0.0, 1.0]),
+        ]);
+    }
+    let GpuMaterial::Diffuse(material) = &mut draft.data.materials[0];
+    material.displacement = Some(FloatTextureId(0));
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+fn instance_scene() -> GpuCompiledScene {
+    let mut draft = minimal_scene_draft();
+    draft
+        .data
+        .transforms
+        .push(GpuTransform::Static(GpuStaticTransform {
+            render_from_object: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            object_from_render: GpuMatrix4x4([
+                [1.0, 0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]),
+            swaps_handedness: false,
+        }));
+    draft.data.instance_definitions = vec![GpuInstanceDefinition {
+        primitives: vec![PrimitiveId(0)],
+        instances: Vec::new(),
+        local_bounds: GpuBounds3 {
+            min: GpuPoint3([0.0, 0.0, 0.0]),
+            max: GpuPoint3([1.0, 1.0, 0.0]),
+        },
+    }];
+    draft.data.instances = vec![GpuInstance {
+        definition: InstanceDefinitionId(0),
+        transform: TransformId(3),
+    }];
+    draft.data.world_primitives = Vec::new().into_boxed_slice();
+    draft.data.world_instances = vec![InstanceId(0)].into_boxed_slice();
+    GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default())
+}
+
+#[test]
+fn scene_plan_lowers_triangle_geometry_and_transform() {
+    let scene = minimal_scene();
+    let plan = ScenePlan::from_scene(scene.view()).unwrap();
+    assert_eq!(plan.vertices.len(), 3);
+    assert_eq!(plan.indices, vec![0, 1, 2]);
+    assert_eq!(plan.blases[0].first_vertex, 0);
+    assert_eq!(plan.blases[0].vertex_count, 3);
+    assert_eq!(plan.blases[0].first_index, 0);
+    assert_eq!(plan.blases[0].index_count, 3);
+    assert_eq!(plan.tlas_instances[0].blas, 0);
+    assert_eq!(plan.tlas_instances[0].custom_data, 0);
+    assert_eq!(
+        plan.tlas_instances[0].transform,
+        [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    );
+    assert_eq!(plan.primitives[0].material, 0);
+    assert_eq!(
+        plan.materials[0].reflectance,
+        MaterialReflectancePlan::Constant([0.5, 0.5, 0.5, 1.0])
+    );
+    assert_eq!(plan.lights[0].position, [0.0, 0.0, 2.0, 1.0]);
+    assert_eq!(plan.lights[0].intensity, [0.5, 0.5, 0.5, 1.0]);
+}
+
+#[test]
+fn scene_plan_lowers_reverse_orientation_to_the_primitive_record() {
+    let plan = ScenePlan::from_scene(reverse_orientation_scene().view()).unwrap();
+    assert!(plan.primitives[0].reverse_orientation);
+
+    let bytes = primitive_bytes(&plan);
+    assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 1);
+}
+
+#[test]
+fn scene_plan_expands_uniform_area_lights_per_triangle() {
+    let plan = ScenePlan::from_scene(area_light_scene(true).view()).unwrap();
+    assert_eq!(plan.lights.len(), 3);
+    assert_eq!(plan.lights[1].kind, 2);
+    assert_eq!(plan.lights[1].primitive, Some(0));
+    assert_eq!(plan.lights[1].triangle, 0);
+    assert_eq!(plan.lights[1].flags, 1);
+    assert_eq!(plan.lights[1].intensity, [1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(plan.lights[2].primitive, Some(0));
+    assert_eq!(plan.lights[2].triangle, 1);
+
+    let bytes = light_bytes(&plan);
+    assert_eq!(u32::from_le_bytes(bytes[80..84].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(bytes[84..88].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(bytes[88..92].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(bytes[92..96].try_into().unwrap()), 1);
+}
+
+#[test]
+fn scene_plan_preserves_per_element_area_light_bindings() {
+    let plan = ScenePlan::from_scene(per_element_area_light_scene().view()).unwrap();
+    assert_eq!(plan.lights.len(), 3);
+    assert_eq!(plan.lights[1].triangle, 0);
+    assert_eq!(plan.lights[1].intensity[0], 1.0);
+    assert_eq!(plan.lights[2].triangle, 1);
+    assert_eq!(plan.lights[2].intensity[0], 2.0);
+}
+
+#[test]
+fn scene_plan_expands_area_lights_for_each_instance() {
+    let plan = ScenePlan::from_scene(instanced_area_light_scene().view()).unwrap();
+    assert_eq!(plan.primitives.len(), 2);
+    assert_eq!(plan.lights.len(), 3);
+    assert_eq!(plan.lights[1].primitive, Some(0));
+    assert_eq!(plan.lights[2].primitive, Some(1));
+}
+
+#[test]
+fn scene_plan_marks_constant_zero_alpha_area_lights_as_delta_position() {
+    let scene = alpha_masked_direct_area_light_scene(0.0);
+    let plan = ScenePlan::from_scene(scene.view()).unwrap();
+    assert_eq!(plan.lights.len(), 1);
+    assert_eq!(plan.lights[0].flags, 2);
+}
+
+#[test]
+fn scene_plan_flattens_static_instances_with_composed_transform() {
+    let plan = ScenePlan::from_scene(instance_scene().view()).unwrap();
+    assert_eq!(plan.primitives.len(), 1);
+    assert_eq!(plan.tlas_instances.len(), 1);
+    assert_eq!(plan.transforms[0].render_from_object[0][3], 1.0);
+    assert_eq!(plan.tlas_instances[0].transform[3], 1.0);
+}
+
+#[test]
+fn scene_plan_rejects_static_instance_cycles() {
+    let mut draft = minimal_scene_draft();
+    draft.data.instance_definitions = vec![GpuInstanceDefinition {
+        primitives: Vec::new(),
+        instances: vec![InstanceId(0)],
+        local_bounds: GpuBounds3 {
+            min: GpuPoint3([0.0, 0.0, 0.0]),
+            max: GpuPoint3([1.0, 1.0, 1.0]),
+        },
+    }];
+    draft.data.instances = vec![GpuInstance {
+        definition: InstanceDefinitionId(0),
+        transform: TransformId(0),
+    }];
+    draft.data.world_primitives = Vec::new().into_boxed_slice();
+    draft.data.world_instances = vec![InstanceId(0)].into_boxed_slice();
+    let scene = GpuCompiledScene::new(draft.finish().unwrap(), GpuSourceMap::default());
+
+    assert_eq!(
+        ScenePlan::from_scene(scene.view()),
+        Err(pbrt_r4::gpu::webgpu::BackendError::Plan(
+            PlanError::InstanceCycle { instance: 0 }
+        ))
+    );
+}
+
+#[test]
+fn image_texture_lowering_preserves_channels_mips_and_encoding() {
+    let plan = ScenePlan::from_scene(image_scene().view()).unwrap();
+    assert_eq!(plan.images.len(), 3);
+    assert_eq!(plan.images[0].channels, GpuImageChannels::Rgba);
+    assert_eq!(plan.images[0].mip_levels.len(), 1);
+    assert_eq!(plan.images[0].texels.len(), 4);
+    assert!(plan.images[0].texels[0] > 0.99);
+    assert!(plan.images[0].texels[1] > 0.2 && plan.images[0].texels[1] < 0.3);
+    assert!((plan.images[1].texels[0] - 0.5).abs() < 1.0e-6);
+    assert!((plan.images[2].texels[0] - 0.25).abs() < 1.0e-6);
+    assert_eq!(plan.float_textures.len(), 3);
+    assert_eq!(plan.spectrum_textures.len(), 1);
+    assert!(texture_bytes(&plan).len() >= 136 * 4);
+    assert!(matches!(
+        plan.materials[0].reflectance,
+        MaterialReflectancePlan::SpectrumTexture(0)
+    ));
+}
+
+#[test]
+fn gpu_buffer_serialization_matches_wgsl_layout() {
+    let mut plan = ScenePlan::from_scene(minimal_scene().view()).unwrap();
+    plan.primitives[0].reverse_orientation = true;
+    plan.transforms[0].render_from_object = [
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
+        [9.0, 10.0, 11.0, 12.0],
+        [13.0, 14.0, 15.0, 16.0],
+    ];
+    let vertices = vertex_bytes(&plan);
+    let indices = index_bytes(&plan);
+    let primitives = primitive_bytes(&plan);
+    let materials = material_bytes(&plan);
+    let transforms = transform_bytes(&plan);
+    let lights = light_bytes(&plan);
+
+    assert_eq!(vertices.len(), 3 * 64);
+    assert_eq!(&vertices[0..4], &0.0f32.to_le_bytes());
+    assert_eq!(&vertices[12..16], &0.0f32.to_le_bytes());
+    assert_eq!(&vertices[20..24], &0.0f32.to_le_bytes());
+    assert_eq!(
+        indices,
+        [0u32, 1, 2]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(primitives.len(), 32);
+    assert_eq!(
+        u32::from_le_bytes(primitives[20..24].try_into().unwrap()),
+        1
+    );
+    assert_eq!(materials.len(), 32);
+    assert_eq!(&materials[0..4], &0.5f32.to_le_bytes());
+    assert_eq!(&materials[12..16], &1.0f32.to_le_bytes());
+    assert_eq!(transforms.len(), 128);
+    let matrix_values = transforms[..64]
+        .chunks_exact(4)
+        .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matrix_values,
+        [1.0, 5.0, 9.0, 13.0, 2.0, 6.0, 10.0, 14.0, 3.0, 7.0, 11.0, 15.0, 4.0, 8.0, 12.0, 16.0,]
+    );
+    assert_eq!(lights.len(), 48);
+    assert_eq!(&lights[8..12], &2.0f32.to_le_bytes());
+}
+
+#[test]
+fn software_renderer_accepts_reverse_oriented_triangles() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer.prepare(&reverse_orientation_scene()).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|value| value.is_finite()));
+    assert!(output.rgb[0][0] > 0.01, "{:?}", output.rgb[0]);
+}
+
+#[test]
+fn software_renderer_evaluates_one_and_two_sided_area_emission() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let front = renderer
+        .prepare(&emissive_triangle_scene(false, false))
+        .unwrap();
+    let back = renderer
+        .prepare(&emissive_triangle_scene(true, false))
+        .unwrap();
+    let two_sided = renderer
+        .prepare(&emissive_triangle_scene(true, true))
+        .unwrap();
+    let front = renderer.render(&front, &request).unwrap();
+    let back = renderer.render(&back, &request).unwrap();
+    let two_sided = renderer.render(&two_sided, &request).unwrap();
+    assert!((front.rgb[0][0] - 1.0).abs() < 1.0e-5, "{:?}", front.rgb[0]);
+    assert!(back.rgb[0].iter().all(|value| value.abs() < 1.0e-6));
+    assert!(
+        (two_sided.rgb[0][0] - 1.0).abs() < 1.0e-5,
+        "{:?}",
+        two_sided.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_samples_diffuse_area_lights() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer.prepare(&direct_area_light_scene()).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    let expected = expected_direct_area_light_radiance();
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 2.0e-4,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_uses_uniform_area_sampling_for_small_solid_angles() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = direct_area_light_scene_with_positions([
+        GpuPoint3([0.995, -0.005, 1.0]),
+        GpuPoint3([1.0, 0.005, 1.0]),
+        GpuPoint3([1.005, -0.005, 1.0]),
+    ]);
+    let scene = renderer.prepare(&scene).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    let expected = expected_uniform_area_light_radiance();
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 1.0e-7,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_samples_invisible_constant_zero_alpha_area_lights() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer
+        .prepare(&alpha_masked_direct_area_light_scene(0.0))
+        .unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    let expected = expected_direct_area_light_radiance_with_delta(true);
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 2.0e-4,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
+}
+
+#[test]
+fn software_renderer_tests_area_light_visibility() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let scene = renderer
+        .prepare(&occluded_direct_area_light_scene())
+        .unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|value| value.abs() < 1.0e-7));
+}
+
+#[test]
+fn hardware_and_software_diffuse_area_lights_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = direct_area_light_scene();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .into_iter()
+        .zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_weights_indirect_area_light_hits_with_mis() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let (scene, expected) = indirect_area_light_scene();
+    let scene = renderer.prepare(&scene).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(
+        (output.rgb[0][0] - expected).abs() < 2.0e-4,
+        "actual {:?}, expected {expected}",
+        output.rgb[0]
+    );
+}
+
+#[test]
+fn texture_serialization_preserves_trilinear_filter_modes() {
+    let float_scene = bump_map_scene(GpuImageFilter::Trilinear);
+    let float_plan = ScenePlan::from_scene(float_scene.view()).unwrap();
+    let float_words = texture_bytes(&float_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let float_offset = float_words[4] as usize;
+    assert_eq!((float_words[float_offset + 6] >> 5) & 3, 2);
+
+    let spectrum_scene = trilinear_lod_scene(GpuImageFilter::Trilinear);
+    let spectrum_plan = ScenePlan::from_scene(spectrum_scene.view()).unwrap();
+    let spectrum_words = texture_bytes(&spectrum_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let spectrum_offset = spectrum_words[6] as usize;
+    assert_eq!((spectrum_words[spectrum_offset + 6] >> 5) & 3, 2);
+}
+
+#[test]
+fn texture_serialization_preserves_ewa_filter_parameters() {
+    let float_scene = bump_map_scene(GpuImageFilter::Ewa {
+        max_anisotropy: 3.0,
+    });
+    let float_plan = ScenePlan::from_scene(float_scene.view()).unwrap();
+    let float_words = texture_bytes(&float_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(float_words[0], 136);
+    let float_offset = float_words[4] as usize;
+    assert_eq!((float_words[float_offset + 6] >> 5) & 3, 3);
+    assert_eq!(f32::from_bits(float_words[float_offset + 7]), 3.0);
+
+    let spectrum_scene = trilinear_lod_scene(GpuImageFilter::Ewa {
+        max_anisotropy: 4.0,
+    });
+    let spectrum_plan = ScenePlan::from_scene(spectrum_scene.view()).unwrap();
+    let spectrum_words = texture_bytes(&spectrum_plan)
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let spectrum_offset = spectrum_words[6] as usize;
+    assert_eq!((spectrum_words[spectrum_offset + 6] >> 5) & 3, 3);
+    assert_eq!(f32::from_bits(spectrum_words[spectrum_offset + 7]), 4.0);
+    assert!((f32::from_bits(spectrum_words[8]) - 0.864_664_73).abs() < 1.0e-7);
+    assert_eq!(f32::from_bits(spectrum_words[135]), 0.0);
+}
+
+#[test]
+fn scene_plan_rejects_custom_data_above_24_bits() {
+    assert_eq!(ScenePlan::validate_custom_data(0x00ff_ffff), Ok(()));
+    assert_eq!(
+        ScenePlan::validate_custom_data(0x0100_0000),
+        Err(PlanError::LimitExceeded {
+            resource: "tlas_instance_custom_data",
+            value: 0x0100_0000,
+            maximum: 0x00ff_ffff,
+        })
+    );
+}
+
+#[test]
+fn tlas_transform_preserves_the_required_three_by_four_rows() {
+    assert_eq!(
+        tlas_transform([
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 16.0],
+        ]),
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    );
+}
+
+#[test]
+fn software_bvh_plan_has_leaf_ranges_for_triangle_scene() {
+    let plan = ScenePlan::from_scene(minimal_scene().view()).unwrap();
+    let bvh = SoftwareBvhPlan::from_scene(&plan).unwrap();
+    assert_eq!(bvh.nodes.len(), 1);
+    assert_eq!(bvh.nodes[0].first, 0);
+    assert_eq!(bvh.nodes[0].count, 1);
+    assert_eq!(bvh.nodes[0].flags & 1, 1);
+    assert_eq!(bvh.primitives[0].primitive, 0);
+    assert_eq!(bvh.primitives[0].triangle, 0);
+}
+
+#[test]
+fn prepare_rejects_zero_texture_limit_before_device_creation() {
+    assert!(matches!(
+        Renderer::new(&PrepareOptions {
+            max_texture_dimension_2d: Some(0),
+            ..Default::default()
+        }),
+        Err(pbrt_r4::gpu::webgpu::BackendError::InvalidPrepareOptions { .. })
+    ));
+}
+
+#[test]
+fn adapter_name_mismatch_does_not_fallback_to_another_adapter() {
+    let result = Renderer::new(&PrepareOptions {
+        adapter_name: Some("pbrt-r4 adapter that does not exist".to_string()),
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    });
+    assert!(matches!(
+        result,
+        Err(pbrt_r4::gpu::webgpu::BackendError::AdapterRequest(_))
+    ));
+}
+
+#[test]
+fn selected_adapter_info_is_exposed() {
+    let renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let info = renderer.adapter_info();
+    assert!(!info.name.is_empty());
+    assert_eq!(renderer.acceleration_mode(), AccelerationMode::SoftwareBvh);
+    assert!(renderer.max_texture_dimension_2d() > 0);
+}
+
+#[test]
+fn explicit_backend_preference_does_not_fallback() {
+    let result = Renderer::new(&PrepareOptions {
+        backend: BackendPreference::Metal,
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    });
+    if cfg!(target_os = "macos") {
+        assert!(result.is_ok());
+    } else {
+        assert!(matches!(
+            result,
+            Err(pbrt_r4::gpu::webgpu::BackendError::AdapterRequest(_))
+        ));
+    }
+}
+
+#[test]
+fn webgpu_prepare_accepts_validated_ir() {
+    let Some(mut renderer) = renderer_or_skip() else {
+        return;
+    };
+    let executable = renderer.prepare(&minimal_scene()).unwrap();
+    assert_eq!(executable.scene().version, &CURRENT_IR_VERSION);
+}
+
+#[test]
+fn webgpu_render_returns_a_pixel_buffer() {
+    let Some(mut renderer) = renderer_or_skip() else {
+        return;
+    };
+    let scene = minimal_scene();
+    let executable = renderer.prepare(&scene).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(output.rgb.len(), 1);
+    assert!(output.rgb[0][0] > 0.0);
+}
+
+#[test]
+fn webgpu_render_rejects_invalid_sample_range() {
+    let Some(mut renderer) = renderer_or_skip() else {
+        return;
+    };
+    let scene = minimal_scene();
+    let executable = renderer.prepare(&scene).unwrap();
+    assert!(matches!(
+        renderer.render(
+            &executable,
+            &GpuRenderRequest {
+                sample_start: 1,
+                sample_count: 1,
+            }
+        ),
+        Err(pbrt_r4::gpu::webgpu::BackendError::InvalidRenderRequest(_))
+    ));
+}
+
+fn renderer_or_skip() -> Option<Renderer> {
+    match Renderer::new(&PrepareOptions::default()) {
+        Ok(renderer) => Some(renderer),
+        Err(pbrt_r4::gpu::webgpu::BackendError::MissingRayQueryFeature) => {
+            eprintln!("skipping hardware WebGPU test: adapter has no ray-query capability");
+            None
+        }
+        Err(error) => panic!("unexpected WebGPU initialization error: {error}"),
+    }
+}
+
+#[test]
+fn webgpu_does_not_fallback_when_ray_query_is_unavailable() {
+    match Renderer::new(&PrepareOptions::default()) {
+        Ok(_) | Err(pbrt_r4::gpu::webgpu::BackendError::MissingRayQueryFeature) => {}
+        Err(error) => panic!("unexpected WebGPU initialization error: {error}"),
+    }
+}
+
+#[test]
+fn software_bvh_renderer_returns_a_pixel_buffer() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = minimal_scene();
+    let executable = renderer.prepare(&scene).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(output.rgb.len(), 1);
+    let expected = 0.25 * (2.0 / (4.125_f32).sqrt()) / (std::f32::consts::PI * 4.125);
+    assert!((output.rgb[0][0] - expected).abs() < 1.0e-4);
+}
+
+#[test]
+fn software_renderer_matches_independent_sampler_sequence() {
+    const SAMPLE_COUNT: u32 = 4;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = sampled_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+
+    for sample_index in 0..SAMPLE_COUNT {
+        let request = GpuRenderRequest {
+            sample_start: u64::from(sample_index),
+            sample_count: 1,
+        };
+        let output = renderer.render(&executable, &request).unwrap();
+        let expected = expected_independent_sample_radiance(SAMPLE_COUNT, SEED, sample_index);
+        for channel in output.rgb[0] {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample {sample_index}: actual={:?}, expected={expected}",
+                output.rgb[0]
+            );
+        }
+    }
+}
+
+#[test]
+fn software_renderer_averages_requested_sample_range() {
+    const SAMPLE_COUNT: u32 = 4;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = sampled_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 1,
+        sample_count: 2,
+    };
+    let output = renderer.render(&executable, &request).unwrap();
+    let expected = (expected_independent_sample_radiance(SAMPLE_COUNT, SEED, 1)
+        + expected_independent_sample_radiance(SAMPLE_COUNT, SEED, 2))
+        * 0.5;
+    for channel in output.rgb[0] {
+        assert!(
+            (channel - expected).abs() < 1.0e-5,
+            "{:?} {expected}",
+            output.rgb[0]
+        );
+    }
+}
+
+#[test]
+fn software_renderer_matches_uniform_point_light_selection() {
+    const SAMPLE_COUNT: u32 = 8;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = two_point_light_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+    for sample_index in 0..SAMPLE_COUNT {
+        let output = renderer
+            .render(
+                &executable,
+                &GpuRenderRequest {
+                    sample_start: u64::from(sample_index),
+                    sample_count: 1,
+                },
+            )
+            .unwrap();
+        let expected = expected_two_point_light_radiance(SAMPLE_COUNT, SEED, sample_index);
+        for channel in output.rgb[0] {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample {sample_index}: actual={:?}, expected={expected}",
+                output.rgb[0]
+            );
+        }
+    }
+}
+
+#[test]
+fn software_renderer_matches_perspective_depth_of_field() {
+    const SAMPLE_COUNT: u32 = 4;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = depth_of_field_scene(SAMPLE_COUNT, SEED);
+    let executable = renderer.prepare(&scene).unwrap();
+
+    for sample_index in 0..SAMPLE_COUNT {
+        let output = renderer
+            .render(
+                &executable,
+                &GpuRenderRequest {
+                    sample_start: u64::from(sample_index),
+                    sample_count: 1,
+                },
+            )
+            .unwrap();
+        let expected = expected_depth_of_field_radiance(SAMPLE_COUNT, SEED, sample_index);
+        for channel in output.rgb[0] {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample {sample_index}: actual={:?}, expected={expected}",
+                output.rgb[0]
+            );
+        }
+    }
+}
+
+#[test]
+fn software_renderer_traces_diffuse_indirect_bounce() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let one_bounce = renderer.prepare(&indirect_bounce_scene(1)).unwrap();
+    let two_bounces = renderer.prepare(&indirect_bounce_scene(2)).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let one_bounce = renderer.render(&one_bounce, &request).unwrap().rgb[0];
+    let two_bounces = renderer.render(&two_bounces, &request).unwrap().rgb[0];
+    let expected_indirect = 0.5 / std::f32::consts::PI;
+    for (one, two) in one_bounce.into_iter().zip(two_bounces) {
+        assert!(
+            ((two - one) - expected_indirect).abs() < 1.0e-4,
+            "one={one_bounce:?}, two={two_bounces:?}, expected indirect={expected_indirect}"
+        );
+    }
+}
+
+#[test]
+fn software_renderer_honors_zero_max_depth() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer.prepare(&indirect_bounce_scene(0)).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let output = renderer.render(&scene, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|channel| *channel == 0.0));
+}
+
+#[test]
+fn software_renderer_averages_indirect_sample_range() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer.prepare(&indirect_bounce_scene(2)).unwrap();
+    let first = renderer
+        .render(
+            &scene,
+            &GpuRenderRequest {
+                sample_start: 0,
+                sample_count: 1,
+            },
+        )
+        .unwrap()
+        .rgb[0];
+    let second = renderer
+        .render(
+            &scene,
+            &GpuRenderRequest {
+                sample_start: 1,
+                sample_count: 1,
+            },
+        )
+        .unwrap()
+        .rgb[0];
+    let combined = renderer
+        .render(
+            &scene,
+            &GpuRenderRequest {
+                sample_start: 0,
+                sample_count: 2,
+            },
+        )
+        .unwrap()
+        .rgb[0];
+    for ((first, second), combined) in first.into_iter().zip(second).zip(combined) {
+        assert!((combined - 0.5 * (first + second)).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_applies_v4_russian_roulette() {
+    let continuing_seed = (0..1024)
+        .find(|seed| {
+            let (first_wi, _) = diffuse_sample(*seed, 0, Vec3::Z);
+            let (second_wi, roulette) = diffuse_sample(*seed, 1, -first_wi);
+            roulette >= 0.75 && second_wi.z > 0.0
+        })
+        .unwrap();
+    let terminating_seed = (0..1024)
+        .find(|seed| diffuse_sample(*seed, 1, Vec3::Z).1 < 0.75)
+        .unwrap();
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+
+    for (seed, expected_indirect) in [
+        (continuing_seed, 1.0 / std::f32::consts::PI),
+        (terminating_seed, 0.0),
+    ] {
+        let two_bounces = renderer.prepare(&roulette_bounce_scene(2, seed)).unwrap();
+        let three_bounces = renderer.prepare(&roulette_bounce_scene(3, seed)).unwrap();
+        let two_bounces = renderer.render(&two_bounces, &request).unwrap().rgb[0];
+        let three_bounces = renderer.render(&three_bounces, &request).unwrap().rgb[0];
+        for (two, three) in two_bounces.into_iter().zip(three_bounces) {
+            assert!(
+                ((three - two) - expected_indirect).abs() < 1.0e-4,
+                "seed={seed}, two={two_bounces:?}, three={three_bounces:?}, expected={expected_indirect}"
+            );
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_diffuse_indirect_bounce_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = indirect_bounce_scene(2);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .into_iter()
+        .zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_traces_opaque_point_light_shadows() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let visible_scene = shadow_scene(false, false);
+    let occluded_scene = shadow_scene(true, false);
+    let visible_scene = renderer.prepare(&visible_scene).unwrap();
+    let occluded_scene = renderer.prepare(&occluded_scene).unwrap();
+    let visible = renderer.render(&visible_scene, &request).unwrap();
+    let occluded = renderer.render(&occluded_scene, &request).unwrap();
+    assert!(visible.rgb[0][0] > 0.01, "{:?}", visible.rgb[0]);
+    assert!(occluded.rgb[0].iter().all(|channel| channel.abs() < 1.0e-6));
+}
+
+#[test]
+fn software_renderer_rejects_zero_alpha_shadow_occluders() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let visible_scene = shadow_scene(false, false);
+    let transparent_scene = shadow_scene(true, true);
+    let visible_scene = renderer.prepare(&visible_scene).unwrap();
+    let transparent_scene = renderer.prepare(&transparent_scene).unwrap();
+    let visible = renderer.render(&visible_scene, &request).unwrap();
+    let transparent = renderer.render(&transparent_scene, &request).unwrap();
+    for (visible_channel, transparent_channel) in visible.rgb[0].iter().zip(transparent.rgb[0]) {
+        assert!((visible_channel - transparent_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn hardware_and_software_independent_sample_ranges_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = sampled_scene(4, 17);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 4,
+    };
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in
+        hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn hardware_and_software_depth_of_field_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = depth_of_field_scene(4, 17);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 4,
+    };
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in
+        hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn hardware_and_software_point_light_shadows_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    for scene in [shadow_scene(true, false), shadow_scene(true, true)] {
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in
+            hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_uniform_point_light_selection_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = two_point_light_scene(8, 17);
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 8,
+    };
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in
+        hardware_output.rgb[0].iter().zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_evaluates_uniform_infinite_only_on_miss() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let hit_scene = renderer.prepare(&uniform_infinite_scene(0)).unwrap();
+    let miss_scene = renderer.prepare(&uniform_infinite_miss_scene()).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hit = renderer.render(&hit_scene, &request).unwrap().rgb[0];
+    let miss = renderer.render(&miss_scene, &request).unwrap().rgb[0];
+    assert!(hit.iter().all(|channel| *channel == 0.0));
+    for channel in miss {
+        assert!((channel - 0.5).abs() < 1.0e-5, "{miss:?}");
+    }
+}
+
+#[test]
+fn software_renderer_evaluates_uniform_infinite_after_diffuse_bounce() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer.prepare(&uniform_infinite_scene(1)).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let output = renderer.render(&scene, &request).unwrap().rgb[0];
+    for channel in output {
+        assert!((channel - 0.25).abs() < 1.0e-5, "{output:?}");
+    }
+}
+
+#[test]
+fn software_renderer_preserves_uniform_sampler_pmf_with_infinite_light() {
+    const SAMPLE_COUNT: u32 = 8;
+    const SEED: u32 = 17;
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = renderer
+        .prepare(&mixed_point_infinite_scene(SAMPLE_COUNT, SEED))
+        .unwrap();
+    for sample_index in 0..SAMPLE_COUNT {
+        let output = renderer
+            .render(
+                &scene,
+                &GpuRenderRequest {
+                    sample_start: u64::from(sample_index),
+                    sample_count: 1,
+                },
+            )
+            .unwrap()
+            .rgb[0];
+        let mut sampler = IndependentSampler::new(SAMPLE_COUNT, SEED);
+        sampler.start_pixel(&Point2i::new(0, 0));
+        assert!(sampler.set_sample_number(sample_index));
+        let _film_sample = sampler.get_pixel_2d();
+        sampler.start_pixel_sample(sample_index, 6);
+        let point_selected = sampler.get_1d() < 0.5;
+        let expected = 0.25
+            + if point_selected {
+                2.0 * expected_independent_sample_radiance(SAMPLE_COUNT, SEED, sample_index)
+            } else {
+                0.0
+            };
+        for channel in output {
+            assert!(
+                (channel - expected).abs() < 1.0e-5,
+                "sample={sample_index}, output={output:?}, expected={expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_uniform_infinite_miss_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = uniform_infinite_miss_scene();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .into_iter()
+        .zip(software_output.rgb[0])
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn software_renderer_rejects_zero_alpha_intersections() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&alpha_scene(0.0)).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(output.rgb[0], [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn software_renderer_evaluates_normal_map() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&normal_map_scene()).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    let distance_squared = 4.125_f32;
+    let expected =
+        0.25 * (0.25 / distance_squared.sqrt()) / (std::f32::consts::PI * distance_squared);
+    for channel in output.rgb[0] {
+        assert!((channel - expected).abs() < 1.0e-5, "{:?}", output.rgb[0]);
+    }
+}
+
+#[test]
+fn software_renderer_evaluates_bump_map() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let base = renderer
+        .prepare(&minimal_scene())
+        .and_then(|executable| {
+            renderer.render(
+                &executable,
+                &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+            )
+        })
+        .unwrap();
+    let bumped = renderer
+        .prepare(&bump_map_scene(GpuImageFilter::Bilinear))
+        .and_then(|executable| {
+            renderer.render(
+                &executable,
+                &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+            )
+        })
+        .unwrap();
+    assert!(
+        bumped.rgb[0]
+            .iter()
+            .zip(base.rgb[0].iter())
+            .any(|(bumped, base)| (bumped - base).abs() > 1.0e-5),
+        "bump map did not change the shading result: base={:?}, bumped={:?}",
+        base.rgb[0],
+        bumped.rgb[0]
+    );
+}
+
+#[test]
+fn hardware_and_software_bump_map_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    for filter in [GpuImageFilter::Bilinear, GpuImageFilter::Trilinear] {
+        let scene = bump_map_scene(filter);
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in hardware_output.rgb[0]
+            .iter()
+            .zip(software_output.rgb[0].iter())
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_normal_map_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = normal_map_scene();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn software_renderer_evaluates_spectrum_image_texture() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer.prepare(&image_scene()).unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert!(output.rgb[0][0] > output.rgb[0][1]);
+    assert!(output.rgb[0][1] > output.rgb[0][2]);
+}
+
+#[test]
+fn software_renderer_selects_mipmap_level_for_point_and_bilinear() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    for filter in [GpuImageFilter::Point, GpuImageFilter::Bilinear] {
+        let executable = renderer.prepare(&mipmap_lod_scene(filter)).unwrap();
+        let output = renderer
+            .render(
+                &executable,
+                &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            output.rgb[0][1] > output.rgb[0][0],
+            "selected the base mip level for {filter:?}: {:?}",
+            output.rgb[0]
+        );
+        assert!(output.rgb[0][1] > output.rgb[0][2]);
+    }
+}
+
+#[test]
+fn software_renderer_interpolates_trilinear_mipmap_levels() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let bilinear_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Bilinear))
+        .unwrap();
+    let trilinear_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Trilinear))
+        .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let bilinear = renderer.render(&bilinear_scene, &request).unwrap().rgb[0];
+    let trilinear = renderer.render(&trilinear_scene, &request).unwrap().rgb[0];
+
+    assert!(bilinear[0] > bilinear[1] * 4.0, "{bilinear:?}");
+    assert!(trilinear[0] > trilinear[2], "{trilinear:?}");
+    assert!(trilinear[1] > trilinear[2], "{trilinear:?}");
+    assert!(
+        trilinear[1] > bilinear[1] + bilinear[0] * 0.25,
+        "{bilinear:?} {trilinear:?}"
+    );
+}
+
+#[test]
+fn software_renderer_applies_ewa_anisotropy_limit() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let isotropic_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Ewa {
+            max_anisotropy: 1.0,
+        }))
+        .unwrap();
+    let anisotropic_scene = renderer
+        .prepare(&trilinear_lod_scene(GpuImageFilter::Ewa {
+            max_anisotropy: 8.0,
+        }))
+        .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let isotropic = renderer.render(&isotropic_scene, &request).unwrap().rgb[0];
+    let anisotropic = renderer.render(&anisotropic_scene, &request).unwrap().rgb[0];
+
+    assert!(
+        isotropic[0] > anisotropic[0] * 2.0 + 1.0e-6,
+        "{isotropic:?} {anisotropic:?}"
+    );
+}
+
+#[test]
+fn software_renderer_rounds_point_sample_coordinates() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let executable = renderer
+        .prepare(&two_texel_scene(
+            GpuTextureMapping::Uv {
+                su: 0.1,
+                sv: 0.1,
+                du: 0.575,
+                dv: 0.45,
+            },
+            GpuImageFilter::Point,
+        ))
+        .unwrap();
+    let output = renderer
+        .render(
+            &executable,
+            &GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap(),
+        )
+        .unwrap();
+    assert!(output.rgb[0][1] > output.rgb[0][0], "{:?}", output.rgb[0]);
+    assert!(output.rgb[0][1] > output.rgb[0][2], "{:?}", output.rgb[0]);
+}
+
+#[test]
+fn software_renderer_uses_bilinear_for_zero_ewa_differentials() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let mapping = GpuTextureMapping::Uv {
+        su: 0.0,
+        sv: 0.0,
+        du: 0.5,
+        dv: 0.5,
+    };
+    let ewa_scene = renderer
+        .prepare(&two_texel_scene(
+            mapping,
+            GpuImageFilter::Ewa {
+                max_anisotropy: 8.0,
+            },
+        ))
+        .unwrap();
+    let bilinear_scene = renderer
+        .prepare(&two_texel_scene(mapping, GpuImageFilter::Bilinear))
+        .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let ewa = renderer.render(&ewa_scene, &request).unwrap().rgb[0];
+    let bilinear = renderer.render(&bilinear_scene, &request).unwrap().rgb[0];
+    for (ewa_channel, bilinear_channel) in ewa.iter().zip(bilinear) {
+        assert!(
+            (ewa_channel - bilinear_channel).abs() < 1.0e-5,
+            "{ewa:?} {bilinear:?}"
+        );
+    }
+    assert!(ewa[0] > ewa[2] && ewa[1] > ewa[2], "{ewa:?}");
+}
+
+#[test]
+fn hardware_and_software_mipmap_lod_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    for scene in [
+        mipmap_lod_scene(GpuImageFilter::Bilinear),
+        trilinear_lod_scene(GpuImageFilter::Trilinear),
+        trilinear_lod_scene(GpuImageFilter::Ewa {
+            max_anisotropy: 4.0,
+        }),
+    ] {
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in hardware_output.rgb[0]
+            .iter()
+            .zip(software_output.rgb[0].iter())
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+        }
+    }
+}
+
+#[test]
+fn hardware_and_software_modes_match_the_cpu_reference_scene() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = minimal_scene();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn hardware_and_software_reverse_orientation_results_match() {
+    let Some(mut hardware) = renderer_or_skip() else {
+        return;
+    };
+    let mut software = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let scene = reverse_orientation_scene();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let hardware_scene = hardware.prepare(&scene).unwrap();
+    let software_scene = software.prepare(&scene).unwrap();
+    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+    let software_output = software.render(&software_scene, &request).unwrap();
+    for (hardware_channel, software_channel) in hardware_output.rgb[0]
+        .iter()
+        .zip(software_output.rgb[0].iter())
+    {
+        assert!((hardware_channel - software_channel).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn software_renderer_keeps_previous_scene_resources_alive() {
+    let mut renderer = Renderer::new(&PrepareOptions {
+        acceleration_mode: AccelerationMode::SoftwareBvh,
+        ..Default::default()
+    })
+    .unwrap();
+    let first = renderer.prepare(&minimal_scene()).unwrap();
+    let second = renderer.prepare(&minimal_scene()).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    assert_eq!(renderer.render(&first, &request).unwrap().rgb.len(), 1);
+    assert_eq!(renderer.render(&second, &request).unwrap().rgb.len(), 1);
+}
+
+#[test]
+fn render_output_requires_one_rgb_value_per_pixel() {
+    let request = GpuRenderRequest {
+        sample_start: 0,
+        sample_count: 1,
+    };
+    let error = GpuRenderOutput::new(
+        GpuBounds2i {
+            min: [0, 0],
+            max: [2, 1],
+        },
+        vec![[0.0, 0.0, 0.0]].into_boxed_slice(),
+        request,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        pbrt_r4::gpu::ir::GpuRenderOutputError::PixelCountMismatch {
+            expected: 2,
+            actual: 1,
+        }
+    );
+}
+
+#[test]
+fn incompatible_ir_version_is_rejected_before_prepare() {
+    let draft = GpuSceneDraft {
+        version: GpuIrVersion {
+            major: CURRENT_IR_VERSION.major + 1,
+            minor: 0,
+        },
+        data: GpuSceneData {
+            transforms: Vec::new(),
+            spectra: vec![GpuSpectrumResource::Constant { value: 0.5 }],
+            float_textures: Vec::new(),
+            spectrum_textures: Vec::new(),
+            texture_mappings: Vec::new(),
+            images: Vec::new(),
+            geometry: Vec::new(),
+            materials: Vec::new(),
+            lights: Vec::new(),
+            primitives: Vec::new(),
+            instance_definitions: Vec::new(),
+            instances: Vec::new(),
+            world_primitives: Box::new([]),
+            world_instances: Box::new([]),
+            render: GpuRenderConfig::default(),
+        },
+    };
+    assert!(draft.finish().is_err());
+}
+
+#[test]
+fn invalid_triangle_index_is_rejected() {
+    let draft = GpuSceneDraft {
+        version: CURRENT_IR_VERSION,
+        data: GpuSceneData {
+            transforms: Vec::new(),
+            spectra: Vec::new(),
+            float_textures: Vec::new(),
+            spectrum_textures: Vec::new(),
+            texture_mappings: Vec::new(),
+            images: Vec::new(),
+            geometry: vec![GpuGeometry::TriangleMesh(GpuTriangleMesh {
+                positions: vec![GpuPoint3([0.0, 0.0, 0.0])],
+                indices: vec![[0, 1, 0]],
+                normals: None,
+                tangents: None,
+                uvs: None,
+                face_indices: None,
+            })],
+            materials: vec![GpuMaterial::Diffuse(GpuDiffuseMaterial {
+                reflectance: SpectrumTextureId(0),
+                displacement: None,
+                normal_map: None,
+            })],
+            lights: Vec::new(),
+            primitives: Vec::new(),
+            instance_definitions: Vec::new(),
+            instances: Vec::new(),
+            world_primitives: Box::new([]),
+            world_instances: Box::new([]),
+            render: GpuRenderConfig::default(),
+        },
+    };
+    let errors = draft.finish().unwrap_err();
+    assert!(errors
+        .issues()
+        .iter()
+        .any(|issue| matches!(issue, GpuIrValidationError::TriangleIndexOutOfBounds { .. })));
+}

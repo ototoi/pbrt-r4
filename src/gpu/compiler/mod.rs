@@ -801,18 +801,6 @@ fn compile_shape(
         "alpha",
         &source,
     )?;
-    let shadow_alpha = material_texture_id(
-        builder,
-        shape
-            .base
-            .params
-            .get_textures_ref("shadowalpha")
-            .as_deref()
-            .map(|names| &**names),
-        float_texture_ids,
-        "shadowalpha",
-        &source,
-    )?;
     let geometry_id = if shape.base.name == "plymesh" {
         let base_mesh = ply_mesh(builder, &shape.base.params, &source)?;
         if shape.base.params.get_textures_ref("displacement").is_some() {
@@ -864,7 +852,6 @@ fn compile_shape(
         transform: transform_id,
         material: Some(material),
         alpha,
-        shadow_alpha,
         area_light: area_light.map_or(
             super::ir::GpuAreaLightBinding::None,
             super::ir::GpuAreaLightBinding::Uniform,
@@ -2384,9 +2371,6 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
             }
         }
         if let Some(texture) = primitive.alpha {
-            add_float_texture_resources(&mut resources, ir.view(), texture, source);
-        }
-        if let Some(texture) = primitive.shadow_alpha {
             add_float_texture_resources(&mut resources, ir.view(), texture, source);
         }
         match &primitive.area_light {
