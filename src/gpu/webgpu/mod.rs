@@ -6,6 +6,7 @@ mod geometry;
 mod renderer;
 pub mod shader;
 mod software;
+pub mod wavefront;
 
 pub use device::{AccelerationMode, BackendPreference, PowerPreference, PrepareOptions};
 pub use error::{BackendError, PlanError};
