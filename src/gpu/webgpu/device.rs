@@ -114,7 +114,7 @@ impl DeviceContext {
             });
             candidates.retain(|adapter| {
                 adapter.features().contains(required_features)
-                    && adapter.limits().check_limits(&required_limits)
+                    && required_limits.check_limits(&adapter.limits())
             });
             if candidates.is_empty() && had_feature_candidate {
                 return Err(BackendError::AdapterRequest(format!(
