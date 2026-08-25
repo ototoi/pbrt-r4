@@ -1,7 +1,7 @@
 use super::super::super::error::BackendError;
+use super::super::super::shader::ShaderStageId;
 use super::super::Renderer;
 use super::{dispatch_control_stage, dispatch_stage};
-use crate::gpu::webgpu::shader::ShaderStageId;
 
 pub fn finish_bounce<'a>(
     renderer: &'a Renderer,
@@ -15,7 +15,7 @@ pub fn prepare_next_bounce<'a>(renderer: &'a Renderer, pass: &mut wgpu::ComputeP
     dispatch_control_stage(renderer, pass, ShaderStageId::PrepareNextBounce);
 }
 
-pub fn update<'a>(renderer: &'a Renderer, pass: &mut wgpu::ComputePass<'a>, workgroups: u32) {
+pub fn update_film<'a>(renderer: &'a Renderer, pass: &mut wgpu::ComputePass<'a>, workgroups: u32) {
     dispatch_stage(renderer, pass, ShaderStageId::UpdateFilm, workgroups);
 }
 
@@ -23,7 +23,7 @@ pub fn advance_sample<'a>(renderer: &'a Renderer, pass: &mut wgpu::ComputePass<'
     dispatch_control_stage(renderer, pass, ShaderStageId::AdvanceSample);
 }
 
-pub fn readback(
+pub fn readback_film(
     renderer: &Renderer,
     readback_buffer: &wgpu::Buffer,
     control_readback_buffer: &wgpu::Buffer,

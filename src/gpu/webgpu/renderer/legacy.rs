@@ -1,7 +1,7 @@
+use super::super::super::ir::{GpuRenderOutput, GpuRenderRequest};
+use super::super::error::BackendError;
 use super::resources::{RenderBuffers, RenderDimensions};
 use super::Renderer;
-use crate::gpu::ir::{GpuRenderOutput, GpuRenderRequest};
-use crate::gpu::webgpu::error::BackendError;
 
 pub fn render(
     renderer: &Renderer,

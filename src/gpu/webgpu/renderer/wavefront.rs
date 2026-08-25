@@ -4,11 +4,11 @@ mod film;
 mod intersection;
 mod lighting;
 
+use super::super::super::ir::{GpuRenderOutput, GpuRenderRequest};
+use super::super::error::BackendError;
 use super::super::shader::ShaderStageId;
 use super::resources::{RenderBuffers, RenderDimensions};
 use super::{ExecutableScene, Renderer};
-use crate::gpu::ir::{GpuRenderOutput, GpuRenderRequest};
-use crate::gpu::webgpu::error::BackendError;
 use std::time::{Duration, Instant};
 
 const READBACK_SPP_INTERVAL: u32 = 8;
@@ -75,10 +75,10 @@ pub fn render(
             0,
             &buffers.control_readback,
             0,
-            u64::from(crate::gpu::webgpu::wavefront::WAVEFRONT_CONTROL_SIZE),
+            u64::from(super::super::wavefront::WAVEFRONT_CONTROL_SIZE),
         );
         renderer.device_context.queue.submit(Some(encoder.finish()));
-        latest_rgb = Some(film::readback(
+        latest_rgb = Some(film::readback_film(
             renderer,
             &buffers.readback,
             &buffers.control_readback,
@@ -102,15 +102,25 @@ fn dispatch_sample<'a>(
     max_depth: u32,
     advance_sample: bool,
 ) {
-    camera::dispatch(renderer, pass, workgroups);
+    camera::prepare_camera_rays(renderer, pass);
+    camera::generate_camera_rays(renderer, pass, workgroups);
     for _ in 0..=max_depth {
-        intersection::dispatch(renderer, pass, workgroups);
-        bxdf::dispatch(renderer, pass, workgroups);
-        lighting::dispatch(renderer, pass, workgroups);
+        intersection::intersect_closest(renderer, pass, workgroups);
+        intersection::classify_intersection(renderer, pass, workgroups);
+        intersection::evaluate_surface_interaction(renderer, pass, workgroups);
+        bxdf::evaluate_material(renderer, pass, workgroups);
+        bxdf::register_bxdf(renderer, pass, workgroups);
+        bxdf::count_bxdf(renderer, pass, workgroups);
+        bxdf::partition_bxdf(renderer, pass, workgroups);
+        lighting::sample_direct_lighting(renderer, pass, workgroups);
+        lighting::generate_indirect_rays(renderer, pass, workgroups);
+        lighting::handle_escaped_rays(renderer, pass, workgroups);
+        lighting::handle_emissive_intersection(renderer, pass, workgroups);
+        lighting::intersect_shadow(renderer, pass, workgroups);
         film::finish_bounce(renderer, pass, workgroups);
         film::prepare_next_bounce(renderer, pass);
     }
-    film::update(renderer, pass, workgroups);
+    film::update_film(renderer, pass, workgroups);
     if advance_sample {
         film::advance_sample(renderer, pass);
     }

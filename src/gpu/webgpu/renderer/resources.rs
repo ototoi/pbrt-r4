@@ -1,7 +1,7 @@
+use super::super::super::ir::{GpuBounds2i, GpuSceneView};
+use super::super::error::BackendError;
+use super::super::wavefront::WavefrontLayout;
 use super::{Pipeline, SceneResources};
-use crate::gpu::ir::{GpuBounds2i, GpuSceneView};
-use crate::gpu::webgpu::error::BackendError;
-use crate::gpu::webgpu::wavefront::WavefrontLayout;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 pub struct RenderDimensions {
@@ -107,7 +107,7 @@ impl RenderBuffers {
 pub fn create_uniform_buffer(
     device: &wgpu::Device,
     scene: GpuSceneView<'_>,
-    request: crate::gpu::ir::GpuRenderRequest,
+    request: super::super::super::ir::GpuRenderRequest,
     bvh_primitive_offset: u32,
     bvh_node_offset: u32,
 ) -> wgpu::Buffer {
