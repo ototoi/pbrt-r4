@@ -312,9 +312,11 @@ fn normal_transform(
 
 impl ScenePlan {
     pub fn supports_wavefront_min(&self, scene: GpuSceneView<'_>) -> bool {
-        matches!(scene.lights, [GpuLight::Point(_)])
-            && self.lights.len() == 1
-            && self.lights[0].kind == 0
+        matches!(
+            scene.lights,
+            [GpuLight::Point(_)] | [GpuLight::UniformInfinite(_)] | [GpuLight::DiffuseArea(_)]
+        ) && self.lights.len() == 1
+            && self.lights[0].kind <= 2
             && self
                 .primitives
                 .iter()

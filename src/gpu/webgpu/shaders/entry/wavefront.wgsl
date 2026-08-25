@@ -95,7 +95,14 @@ fn shade_diffuse_point(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     if (wavefront.slots[index].intersection_ids.x != WAVEFRONT_STATE_HIT) {
-        wavefront.slots[index].contribution = vec4<f32>(0.0);
+        if (wavefront.slots[index].intersection_ids.x == WAVEFRONT_STATE_MISS) {
+            wavefront.slots[index].contribution = vec4<f32>(
+                wavefront.slots[index].throughput.xyz * infinite_emission(),
+                1.0,
+            );
+        } else {
+            wavefront.slots[index].contribution = vec4<f32>(0.0);
+        }
         wavefront.slots[index].shadow_origin = vec4<f32>(0.0);
         wavefront.slots[index].path_info.y = 0u;
         return;
@@ -142,6 +149,12 @@ fn shade_diffuse_point(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let wo = -wavefront.slots[index].ray_direction.xyz;
+    let width = u32(camera.viewport.z);
+    let local_pixel = vec2<u32>(index % width, index / width);
+    let pixel = vec2<i32>(local_pixel) + vec2<i32>(camera.viewport.xy);
+    let sample_index = camera.sampler_info.z + wavefront.control.x;
+    let depth = wavefront.slots[index].path_info.x;
+    let ray_sample = independent_ray_sample(pixel, sample_index, depth);
     let object_position_error = 4.172327e-7 * (
         abs(barycentrics.x * vertices[i0].position.xyz)
         + abs(barycentrics.y * vertices[i1].position.xyz)
@@ -154,37 +167,66 @@ fn shade_diffuse_point(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
     let reflectance = materials[primitive.material].reflectance.xyz;
     let light = lights[0];
-    let to_light = light.position.xyz - position;
-    let distance_squared = max(dot(to_light, to_light), 1.0e-8);
-    let wi = normalize(to_light);
-    let cosine = abs(dot(normal, wi));
-    let same_hemisphere = dot(normal, wo) * dot(normal, wi) > 0.0;
-    if (same_hemisphere && cosine > 0.0) {
-        let shadow_origin = offset_ray_origin(
+    wavefront.slots[index].shadow_origin = vec4<f32>(0.0);
+    wavefront.slots[index].contribution = vec4<f32>(0.0);
+    if (light.kind == 0u) {
+        let to_light = light.position.xyz - position;
+        let distance_squared = max(dot(to_light, to_light), 1.0e-8);
+        let wi = normalize(to_light);
+        let cosine = abs(dot(normal, wi));
+        let same_hemisphere = dot(normal, wo) * dot(normal, wi) > 0.0;
+        if (same_hemisphere && cosine > 0.0) {
+            let shadow_origin = offset_ray_origin(
+                position,
+                position_error,
+                geometric_normal,
+                to_light,
+            );
+            wavefront.slots[index].shadow_origin = vec4<f32>(shadow_origin, 1.0);
+            wavefront.slots[index].shadow_direction = vec4<f32>(to_light, 0.0);
+            wavefront.slots[index].contribution = vec4<f32>(
+                wavefront.slots[index].throughput.xyz * reflectance
+                    * light.intensity.xyz * cosine
+                    / (3.141592653589793 * distance_squared),
+                1.0,
+            );
+        }
+    } else if (light.kind == 2u) {
+        let context_position = offset_ray_origin(
             position,
             position_error,
             geometric_normal,
-            to_light,
+            -wo,
         );
-        wavefront.slots[index].shadow_origin = vec4<f32>(shadow_origin, 1.0);
-        wavefront.slots[index].shadow_direction = vec4<f32>(to_light, 0.0);
-        wavefront.slots[index].contribution = vec4<f32>(
-            wavefront.slots[index].throughput.xyz * reflectance
-                * light.intensity.xyz * cosine
-                / (3.141592653589793 * distance_squared),
-            1.0,
+        let light_sample = sample_area_light(
+            light,
+            context_position,
+            normal,
+            ray_sample.direct.light_sample,
         );
-    } else {
-        wavefront.slots[index].shadow_origin = vec4<f32>(0.0);
-        wavefront.slots[index].contribution = vec4<f32>(0.0);
+        if (light_sample.valid) {
+            let to_light = light_sample.position - context_position;
+            let wi = normalize(to_light);
+            let cosine = abs(dot(normal, wi));
+            let same_hemisphere = dot(normal, wo) * dot(normal, wi) > 0.0;
+            let bsdf_pdf = select(
+                cosine / 3.141592653589793,
+                0.0,
+                (light.flags & 1u) != 0u,
+            );
+            let light_pdf = light_sample.pdf;
+            if (same_hemisphere && cosine > 0.0 && light_pdf > 0.0) {
+                wavefront.slots[index].shadow_origin = vec4<f32>(context_position, 1.0);
+                wavefront.slots[index].shadow_direction = vec4<f32>(to_light, 0.0);
+                wavefront.slots[index].contribution = vec4<f32>(
+                    wavefront.slots[index].throughput.xyz * reflectance
+                        * light.intensity.xyz * cosine
+                        / (3.141592653589793 * (bsdf_pdf + light_pdf)),
+                    1.0,
+                );
+            }
+        }
     }
-
-    let width = u32(camera.viewport.z);
-    let local_pixel = vec2<u32>(index % width, index / width);
-    let pixel = vec2<i32>(local_pixel) + vec2<i32>(camera.viewport.xy);
-    let sample_index = camera.sampler_info.z + wavefront.control.x;
-    let depth = wavefront.slots[index].path_info.x;
-    let ray_sample = independent_ray_sample(pixel, sample_index, depth);
     let disk = sample_uniform_disk_concentric(ray_sample.indirect.direction);
     var local_wi = vec3<f32>(disk, sqrt(max(0.0, 1.0 - dot(disk, disk))));
     if (dot(normal, wo) < 0.0) {
