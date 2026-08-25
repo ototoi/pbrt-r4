@@ -2,11 +2,35 @@ mod fragment;
 
 use super::device::AccelerationMode;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShaderStageId {
+    LegacyRender,
+    GenerateCamera,
+    IntersectClosest,
+    ShadeDiffusePoint,
+    IntersectShadow,
+    FinishBounce,
+    UpdateFilm,
+    AdvanceSample,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShaderStage {
+    pub id: ShaderStageId,
+    pub entry_point: &'static str,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShaderSet {
     pub source: String,
     pub label: &'static str,
-    pub entry_point: &'static str,
+    pub stages: Vec<ShaderStage>,
+}
+
+impl ShaderSet {
+    pub fn stage(&self, id: ShaderStageId) -> Option<&ShaderStage> {
+        self.stages.iter().find(|stage| stage.id == id)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,10 +121,20 @@ pub fn build_shader_set(mode: AccelerationMode) -> Result<ShaderSet, ShaderBuild
             dependencies: vec![fragment::FragmentId::AreaSampling],
         },
         fragment::Fragment {
+            id: fragment::FragmentId::WavefrontAbi,
+            path: "shaders/common/wavefront.wgsl",
+            source: include_str!("../shaders/common/wavefront.wgsl"),
+            dependencies: vec![fragment::FragmentId::Abi],
+        },
+        fragment::Fragment {
             id: fragment::FragmentId::HardwareBindings,
             path: "shaders/intersection/ray_query.wgsl:bindings",
             source: "@group(0) @binding(2)\nvar acceleration: acceleration_structure;\n",
-            dependencies: common_ids.clone(),
+            dependencies: {
+                let mut dependencies = common_ids.clone();
+                dependencies.push(fragment::FragmentId::WavefrontAbi);
+                dependencies
+            },
         },
         fragment::Fragment {
             id: fragment::FragmentId::RayQueryTraversal,
@@ -120,8 +154,21 @@ pub fn build_shader_set(mode: AccelerationMode) -> Result<ShaderSet, ShaderBuild
             source: include_str!("../shaders/entry/main.wgsl"),
             dependencies: vec![traversal],
         },
+        fragment::Fragment {
+            id: fragment::FragmentId::EntryWavefront,
+            path: "shaders/entry/wavefront.wgsl",
+            source: include_str!("../shaders/entry/wavefront.wgsl"),
+            dependencies: vec![fragment::FragmentId::RayQueryTraversal],
+        },
     ];
-    let composed = fragment::compose(&fragments, &[fragment::FragmentId::EntryMain])
+    let roots = match mode {
+        AccelerationMode::HardwareRayQuery => vec![
+            fragment::FragmentId::EntryMain,
+            fragment::FragmentId::EntryWavefront,
+        ],
+        AccelerationMode::SoftwareBvh => vec![fragment::FragmentId::EntryMain],
+    };
+    let composed = fragment::compose(&fragments, &roots)
         .map_err(|error| ShaderBuildError::Fragment(format!("{error:?}")))?;
     let source = match mode {
         AccelerationMode::HardwareRayQuery => format!("enable wgpu_ray_query;\n\n{composed}"),
@@ -130,6 +177,45 @@ pub fn build_shader_set(mode: AccelerationMode) -> Result<ShaderSet, ShaderBuild
     Ok(ShaderSet {
         source,
         label,
-        entry_point: "main",
+        stages: match mode {
+            AccelerationMode::HardwareRayQuery => vec![
+                ShaderStage {
+                    id: ShaderStageId::LegacyRender,
+                    entry_point: "main",
+                },
+                ShaderStage {
+                    id: ShaderStageId::GenerateCamera,
+                    entry_point: "generate_camera",
+                },
+                ShaderStage {
+                    id: ShaderStageId::IntersectClosest,
+                    entry_point: "intersect_closest",
+                },
+                ShaderStage {
+                    id: ShaderStageId::ShadeDiffusePoint,
+                    entry_point: "shade_diffuse_point",
+                },
+                ShaderStage {
+                    id: ShaderStageId::IntersectShadow,
+                    entry_point: "intersect_shadow",
+                },
+                ShaderStage {
+                    id: ShaderStageId::FinishBounce,
+                    entry_point: "finish_bounce",
+                },
+                ShaderStage {
+                    id: ShaderStageId::UpdateFilm,
+                    entry_point: "update_film",
+                },
+                ShaderStage {
+                    id: ShaderStageId::AdvanceSample,
+                    entry_point: "advance_sample",
+                },
+            ],
+            AccelerationMode::SoftwareBvh => vec![ShaderStage {
+                id: ShaderStageId::LegacyRender,
+                entry_point: "main",
+            }],
+        },
     })
 }

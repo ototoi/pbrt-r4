@@ -15,6 +15,7 @@ struct Primitive {
     alpha: u32,
     _reserved_alpha: u32,
     flags: u32,
+    // Explicit trailing padding keeps the storage-array stride at 32 bytes.
     _padding: vec2<u32>,
 };
 

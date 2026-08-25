@@ -311,6 +311,21 @@ fn normal_transform(
 }
 
 impl ScenePlan {
+    pub fn supports_wavefront_min(&self, scene: GpuSceneView<'_>) -> bool {
+        matches!(scene.lights, [GpuLight::Point(_)])
+            && self.lights.len() == 1
+            && self.lights[0].kind == 0
+            && self
+                .primitives
+                .iter()
+                .all(|primitive| primitive.alpha.is_none())
+            && self.materials.iter().all(|material| {
+                matches!(material.reflectance, MaterialReflectancePlan::Constant(_))
+                    && material.normal_map.is_none()
+                    && material.displacement.is_none()
+            })
+    }
+
     pub fn validate_custom_data(custom_data: u32) -> Result<(), PlanError> {
         if custom_data > MAX_TLAS_CUSTOM_DATA {
             return Err(PlanError::LimitExceeded {

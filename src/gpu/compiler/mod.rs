@@ -148,6 +148,7 @@ impl SceneBuilder {
                 &float_texture_ids,
                 &spectrum_texture_ids,
                 &mut images,
+                &mut texture_mappings,
                 &mut materials,
                 &mut primitives,
                 &mut lights,
@@ -166,6 +167,7 @@ impl SceneBuilder {
                 &float_texture_ids,
                 &spectrum_texture_ids,
                 &mut images,
+                &mut texture_mappings,
                 &mut materials,
                 &mut primitives,
                 &mut lights,
@@ -190,6 +192,7 @@ impl SceneBuilder {
                     &float_texture_ids,
                     &spectrum_texture_ids,
                     &mut images,
+                    &mut texture_mappings,
                     &mut materials,
                     &mut primitives,
                     &mut lights,
@@ -723,6 +726,7 @@ fn compile_shape(
     float_texture_ids: &[Option<super::ir::FloatTextureId>],
     spectrum_texture_ids: &[Option<super::ir::SpectrumTextureId>],
     images: &mut Vec<GpuImageResource>,
+    texture_mappings: &mut Vec<GpuTextureMapping>,
     materials: &mut Vec<GpuMaterial>,
     primitives: &mut Vec<GpuPrimitive>,
     lights: &mut Vec<GpuLight>,
@@ -786,7 +790,16 @@ fn compile_shape(
                     &source,
                 )
             })?;
-            light::compile_area_light(area, spectra, spectrum_textures, lights, &source)
+            light::compile_area_light(
+                builder,
+                area,
+                spectra,
+                spectrum_textures,
+                images,
+                texture_mappings,
+                lights,
+                &source,
+            )
         })
         .transpose()?;
     let alpha = material_texture_id(

@@ -1530,9 +1530,7 @@ fn software_renderer_tests_area_light_visibility() {
 
 #[test]
 fn hardware_and_software_diffuse_area_lights_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -1715,18 +1713,14 @@ fn explicit_backend_preference_does_not_fallback() {
 
 #[test]
 fn webgpu_prepare_accepts_validated_ir() {
-    let Some(mut renderer) = renderer_or_skip() else {
-        return;
-    };
+    let mut renderer = hardware_renderer();
     let executable = renderer.prepare(&minimal_scene()).unwrap();
     assert_eq!(executable.scene().version, &CURRENT_IR_VERSION);
 }
 
 #[test]
 fn webgpu_render_returns_a_pixel_buffer() {
-    let Some(mut renderer) = renderer_or_skip() else {
-        return;
-    };
+    let mut renderer = hardware_renderer();
     let scene = minimal_scene();
     let executable = renderer.prepare(&scene).unwrap();
     let output = renderer
@@ -1741,9 +1735,7 @@ fn webgpu_render_returns_a_pixel_buffer() {
 
 #[test]
 fn webgpu_render_rejects_invalid_sample_range() {
-    let Some(mut renderer) = renderer_or_skip() else {
-        return;
-    };
+    let mut renderer = hardware_renderer();
     let scene = minimal_scene();
     let executable = renderer.prepare(&scene).unwrap();
     assert!(matches!(
@@ -1758,15 +1750,10 @@ fn webgpu_render_rejects_invalid_sample_range() {
     ));
 }
 
-fn renderer_or_skip() -> Option<Renderer> {
-    match Renderer::new(&PrepareOptions::default()) {
-        Ok(renderer) => Some(renderer),
-        Err(pbrt_r4::gpu::webgpu::BackendError::MissingRayQueryFeature) => {
-            eprintln!("skipping hardware WebGPU test: adapter has no ray-query capability");
-            None
-        }
-        Err(error) => panic!("unexpected WebGPU initialization error: {error}"),
-    }
+fn hardware_renderer() -> Renderer {
+    Renderer::new(&PrepareOptions::default()).unwrap_or_else(|error| {
+        panic!("Hardware Ray Query is required for this WebGPU test: {error}")
+    })
 }
 
 #[test]
@@ -2034,25 +2021,24 @@ fn software_renderer_applies_v4_russian_roulette() {
 
 #[test]
 fn hardware_and_software_diffuse_indirect_bounce_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
     })
     .unwrap();
-    let scene = indirect_bounce_scene(2);
-    let hardware_scene = hardware.prepare(&scene).unwrap();
-    let software_scene = software.prepare(&scene).unwrap();
     let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
-    let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
-    let software_output = software.render(&software_scene, &request).unwrap();
-    for (hardware_channel, software_channel) in hardware_output.rgb[0]
-        .into_iter()
-        .zip(software_output.rgb[0])
-    {
-        assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+    for scene in [indirect_bounce_scene(2), roulette_bounce_scene(3, 17)] {
+        let hardware_scene = hardware.prepare(&scene).unwrap();
+        let software_scene = software.prepare(&scene).unwrap();
+        let hardware_output = hardware.render(&hardware_scene, &request).unwrap();
+        let software_output = software.render(&software_scene, &request).unwrap();
+        for (hardware_channel, software_channel) in hardware_output.rgb[0]
+            .into_iter()
+            .zip(software_output.rgb[0])
+        {
+            assert!((hardware_channel - software_channel).abs() < 1.0e-5);
+        }
     }
 }
 
@@ -2095,9 +2081,7 @@ fn software_renderer_rejects_zero_alpha_shadow_occluders() {
 
 #[test]
 fn hardware_and_software_independent_sample_ranges_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2121,9 +2105,7 @@ fn hardware_and_software_independent_sample_ranges_match() {
 
 #[test]
 fn hardware_and_software_depth_of_field_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2147,9 +2129,7 @@ fn hardware_and_software_depth_of_field_match() {
 
 #[test]
 fn hardware_and_software_point_light_shadows_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2171,9 +2151,7 @@ fn hardware_and_software_point_light_shadows_match() {
 
 #[test]
 fn hardware_and_software_uniform_point_light_selection_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2274,9 +2252,7 @@ fn software_renderer_preserves_uniform_sampler_pmf_with_infinite_light() {
 
 #[test]
 fn hardware_and_software_uniform_infinite_miss_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2373,9 +2349,7 @@ fn software_renderer_evaluates_bump_map() {
 
 #[test]
 fn hardware_and_software_bump_map_results_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2399,9 +2373,7 @@ fn hardware_and_software_bump_map_results_match() {
 
 #[test]
 fn hardware_and_software_normal_map_results_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2582,9 +2554,7 @@ fn software_renderer_uses_bilinear_for_zero_ewa_differentials() {
 
 #[test]
 fn hardware_and_software_mipmap_lod_results_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2613,9 +2583,7 @@ fn hardware_and_software_mipmap_lod_results_match() {
 
 #[test]
 fn hardware_and_software_modes_match_the_cpu_reference_scene() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
@@ -2637,9 +2605,7 @@ fn hardware_and_software_modes_match_the_cpu_reference_scene() {
 
 #[test]
 fn hardware_and_software_reverse_orientation_results_match() {
-    let Some(mut hardware) = renderer_or_skip() else {
-        return;
-    };
+    let mut hardware = hardware_renderer();
     let mut software = Renderer::new(&PrepareOptions {
         acceleration_mode: AccelerationMode::SoftwareBvh,
         ..Default::default()
