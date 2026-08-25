@@ -44,6 +44,7 @@ fn shadow_visible(
     direction: vec3<f32>,
     source_primitive: u32,
     source_triangle: u32,
+    infinite: bool,
 ) -> bool {
     let inverse_direction = 1.0 / direction;
     var stack: array<u32, 64>;
@@ -68,7 +69,13 @@ fn shadow_visible(
         let node_first = scene_data[node_base + 8u];
         let node_count = scene_data[node_base + 9u];
         let node_flags = scene_data[node_base + 10u];
-        if (!ray_hits_box(origin, inverse_direction, node_bounds_min, node_bounds_max, 0.9999)) {
+        if (!ray_hits_box(
+            origin,
+            inverse_direction,
+            node_bounds_min,
+            node_bounds_max,
+            select(0.9999, 1.0e30, infinite),
+        )) {
             continue;
         }
         if (node_flags == 1u) {
@@ -392,9 +399,10 @@ fn render_sample(
         let hit_area_light_index = find_area_light(hit_primitive, hit_triangle);
         if (hit_area_light_index != 0xffffffffu) {
             let hit_area_light = lights[hit_area_light_index];
+            let hit_area_light_geometry = area_light_geometry_for_triangle(hit_area_light, hit_triangle);
             let emits_toward_ray = (hit_area_light.flags & 1u) != 0u
                 || dot(geometric_render_normal, -direction) >= 0.0;
-            if (emits_toward_ray && area_light_alpha_accept(hit_area_light, uv, position)) {
+            if (emits_toward_ray && area_light_alpha_accept(hit_area_light_geometry, uv, position)) {
                 var emission_weight = 1.0;
                 if (depth > 0u) {
                     let light_pdf = area_light_pdf(
@@ -403,7 +411,8 @@ fn render_sample(
                         previous_context_shading_normal,
                         position,
                         direction,
-                    ) / f32(arrayLength(&lights));
+                        hit_triangle,
+                    ) / f32(light_source_count());
                     emission_weight = previous_bsdf_pdf / (previous_bsdf_pdf + light_pdf);
                 }
                 color += throughput * hit_area_light.intensity.xyz * emission_weight;
@@ -415,7 +424,7 @@ fn render_sample(
 
         let ray_sample = independent_ray_sample(sample_pixel, sample_index, depth);
         let direct_sample = ray_sample.direct;
-        let light_count = arrayLength(&lights);
+        let light_count = light_source_count();
         let light_index = min(u32(direct_sample.light_selection * f32(light_count)), light_count - 1u);
         let light = lights[light_index];
         if (light.kind == 0u) {
@@ -435,9 +444,35 @@ fn render_sample(
                 to_light,
                 hit_primitive,
                 hit_triangle,
+                false,
             )) {
                 color += throughput * reflectance * light.intensity.xyz * cosine
                     * f32(light_count) / (3.141592653589793 * distance_squared);
+            }
+        } else if (light.kind == 1u) {
+            let z = 1.0 - 2.0 * direct_sample.light_sample.x;
+            let phi = 6.283185307179586 * direct_sample.light_sample.y;
+            let radial = sqrt(max(0.0, 1.0 - z * z));
+            let wi = vec3<f32>(radial * cos(phi), radial * sin(phi), z);
+            let cosine = abs(dot(normal, wi));
+            let same_hemisphere = dot(normal, -direction) * dot(normal, wi) > 0.0;
+            let light_pdf = 0.07957747154594767 / f32(light_count);
+            let bsdf_pdf = cosine / 3.141592653589793;
+            let shadow_origin = offset_ray_origin(
+                position,
+                position_error,
+                geometric_render_normal,
+                wi,
+            );
+            if (same_hemisphere && cosine > 0.0 && shadow_visible(
+                shadow_origin,
+                wi,
+                hit_primitive,
+                hit_triangle,
+                true,
+            )) {
+                color += throughput * reflectance * light.intensity.xyz * cosine
+                    / (3.141592653589793 * (bsdf_pdf + light_pdf));
             }
         } else if (light.kind == 2u) {
             let light_context_position = offset_ray_origin(
@@ -453,7 +488,7 @@ fn render_sample(
                 direct_sample.light_sample,
             );
             if (light_sample.valid
-                && area_light_alpha_accept(light, light_sample.uv, light_sample.position)) {
+                && area_light_alpha_accept(light_sample.geometry, light_sample.uv, light_sample.position)) {
                 let to_light = light_sample.position - light_context_position;
                 let wi = normalize(to_light);
                 let cosine = abs(dot(normal, wi));
@@ -475,6 +510,7 @@ fn render_sample(
                     light_sample.position - shadow_origin,
                     hit_primitive,
                     hit_triangle,
+                    false,
                 )) {
                     color += throughput * reflectance * light.intensity.xyz * cosine
                         / (3.141592653589793 * (bsdf_pdf + light_pdf));

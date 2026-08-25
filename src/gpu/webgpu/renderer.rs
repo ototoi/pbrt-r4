@@ -6,7 +6,11 @@ use super::geometry::{HardwareAcceleration, ScenePlan};
 use super::shader::{build_shader_set, ShaderStageId};
 use super::software::SoftwareAcceleration;
 use super::wavefront::WavefrontLayout;
+use std::time::{Duration, Instant};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+
+const WAVEFRONT_READBACK_SPP_INTERVAL: u32 = 8;
+const WAVEFRONT_READBACK_TIME_INTERVAL: Duration = Duration::from_secs(2);
 
 enum SceneResources {
     Hardware(HardwareAcceleration),
@@ -108,6 +112,16 @@ impl Renderer {
                 .ok_or(BackendError::Readback("output size overflow".to_string()))?,
         )
         .map_err(|_| BackendError::Readback("output size overflow".to_string()))?;
+        // The hardware wavefront index arena shares the film storage binding.
+        // One vec4 is reserved per index to keep concurrent writes independent.
+        // Ray A/B, classification queues, and the shadow queue each have a
+        // disjoint region in this index arena.
+        let queue_index_size = output_size
+            .checked_mul(6)
+            .ok_or_else(|| BackendError::Readback("ray queue index size overflow".to_string()))?;
+        let output_buffer_size = output_size
+            .checked_add(queue_index_size)
+            .ok_or_else(|| BackendError::Readback("film buffer size overflow".to_string()))?;
         let wavefront_layout = WavefrontLayout::for_pixel_count(
             u32::try_from(pixel_count)
                 .map_err(|_| BackendError::Readback("pixel count exceeds u32".to_string()))?,
@@ -141,7 +155,7 @@ impl Renderer {
             .device
             .create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 WebGPU film output"),
-                size: output_size,
+                size: output_buffer_size,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -156,13 +170,24 @@ impl Renderer {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
+        let control_readback_buffer =
+            self.device_context
+                .device
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("pbrt-r4 WebGPU wavefront control readback"),
+                    size: u64::from(super::wavefront::WAVEFRONT_CONTROL_SIZE),
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
         let wavefront_buffer = self
             .device_context
             .device
             .create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 WebGPU wavefront arena"),
                 size: u64::from(wavefront_layout.byte_len),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
         let bind_group =
@@ -212,51 +237,39 @@ impl Renderer {
                     }),
             };
 
+        if use_wavefront_min {
+            let wavefront_workgroups = u32::try_from(pixel_count)
+                .map_err(|_| BackendError::Readback("pixel count exceeds u32".to_string()))?
+                .div_ceil(64);
+            return self.render_wavefront(
+                scene,
+                request,
+                pixel_bounds,
+                pixel_count,
+                output_size,
+                wavefront_workgroups,
+                &output_buffer,
+                &readback_buffer,
+                &control_readback_buffer,
+                &wavefront_buffer,
+                &bind_group,
+            );
+        }
+
         let mut encoder =
             self.device_context
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pbrt-r4 WebGPU dispatch"),
                 });
-        if use_wavefront_min {
-            encoder.clear_buffer(&output_buffer, 0, None);
-            encoder.clear_buffer(&wavefront_buffer, 0, None);
-        }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("pbrt-r4 WebGPU render pass"),
                 timestamp_writes: None,
             });
-            if use_wavefront_min {
-                let wavefront_workgroups = u32::try_from(pixel_count)
-                    .map_err(|_| BackendError::Readback("pixel count exceeds u32".to_string()))?
-                    .div_ceil(64);
-                for sample_offset in 0..request.sample_count {
-                    pass.set_bind_group(0, &bind_group, &[]);
-                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::GenerateCamera));
-                    pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
-                    for _ in 0..scene_view.render.integrator.max_depth {
-                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::IntersectClosest));
-                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
-                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::ShadeDiffusePoint));
-                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
-                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::IntersectShadow));
-                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
-                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::FinishBounce));
-                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
-                    }
-                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::UpdateFilm));
-                    pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
-                    if sample_offset + 1 < request.sample_count {
-                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::AdvanceSample));
-                        pass.dispatch_workgroups(1, 1, 1);
-                    }
-                }
-            } else {
-                pass.set_bind_group(0, &bind_group, &[]);
-                pass.set_pipeline(self.pipeline.stage(ShaderStageId::LegacyRender));
-                pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
-            }
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_pipeline(self.pipeline.stage(ShaderStageId::LegacyRender));
+            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
         }
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback_buffer, 0, output_size);
         self.device_context.queue.submit(Some(encoder.finish()));
@@ -287,6 +300,179 @@ impl Renderer {
         readback_buffer.unmap();
         GpuRenderOutput::new(pixel_bounds, rgb.into_boxed_slice(), request)
             .map_err(|error| BackendError::Readback(format!("invalid render output: {error:?}")))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_wavefront(
+        &self,
+        scene: &ExecutableScene,
+        request: GpuRenderRequest,
+        pixel_bounds: super::super::ir::GpuBounds2i,
+        pixel_count: usize,
+        output_size: wgpu::BufferAddress,
+        wavefront_workgroups: u32,
+        output_buffer: &wgpu::Buffer,
+        readback_buffer: &wgpu::Buffer,
+        control_readback_buffer: &wgpu::Buffer,
+        wavefront_buffer: &wgpu::Buffer,
+        bind_group: &wgpu::BindGroup,
+    ) -> Result<GpuRenderOutput, BackendError> {
+        let mut sample_offset = 0u32;
+        let mut samples_since_readback = 0u32;
+        let mut last_readback = Instant::now();
+        let mut latest_rgb = None;
+
+        while sample_offset < request.sample_count {
+            let mut encoder = self.device_context.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("pbrt-r4 WebGPU wavefront dispatch"),
+                },
+            );
+            if sample_offset == 0 {
+                encoder.clear_buffer(output_buffer, 0, None);
+                encoder.clear_buffer(wavefront_buffer, 0, None);
+            }
+            let mut batch_count = 0u32;
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("pbrt-r4 WebGPU wavefront pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_bind_group(0, bind_group, &[]);
+                while sample_offset < request.sample_count {
+                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::PrepareCameraRays));
+                    pass.dispatch_workgroups(1, 1, 1);
+                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::GenerateCameraRays));
+                    pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                    for _ in 0..=scene.scene().render.integrator.max_depth {
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::IntersectClosest));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::ClassifyIntersection));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(
+                            self.pipeline
+                                .stage(ShaderStageId::EvaluateSurfaceInteraction),
+                        );
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::EvaluateMaterial));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::RegisterBxdf));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::CountBxdf));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::PartitionBxdf));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::SampleDirectLighting));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::GenerateIndirectRays));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::HandleEscapedRays));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(
+                            self.pipeline
+                                .stage(ShaderStageId::HandleEmissiveIntersection),
+                        );
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::IntersectShadow));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::FinishBounce));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::PrepareNextBounce));
+                        pass.dispatch_workgroups(1, 1, 1);
+                    }
+                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::UpdateFilm));
+                    pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                    if sample_offset + 1 < request.sample_count {
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::AdvanceSample));
+                        pass.dispatch_workgroups(1, 1, 1);
+                    }
+                    sample_offset += 1;
+                    batch_count += 1;
+                    samples_since_readback += 1;
+                    if sample_offset == request.sample_count
+                        || samples_since_readback >= WAVEFRONT_READBACK_SPP_INTERVAL
+                        || last_readback.elapsed() >= WAVEFRONT_READBACK_TIME_INTERVAL
+                    {
+                        break;
+                    }
+                }
+            }
+            encoder.copy_buffer_to_buffer(output_buffer, 0, readback_buffer, 0, output_size);
+            encoder.copy_buffer_to_buffer(
+                wavefront_buffer,
+                0,
+                control_readback_buffer,
+                0,
+                u64::from(super::wavefront::WAVEFRONT_CONTROL_SIZE),
+            );
+            self.device_context.queue.submit(Some(encoder.finish()));
+            latest_rgb =
+                Some(self.readback_film(readback_buffer, control_readback_buffer, pixel_count)?);
+            samples_since_readback = 0;
+            last_readback = Instant::now();
+            debug_assert!(batch_count > 0);
+        }
+
+        let rgb = latest_rgb.ok_or_else(|| {
+            BackendError::Readback("wavefront produced no film readback".to_string())
+        })?;
+        GpuRenderOutput::new(pixel_bounds, rgb.into_boxed_slice(), request)
+            .map_err(|error| BackendError::Readback(format!("invalid render output: {error:?}")))
+    }
+
+    fn readback_film(
+        &self,
+        readback_buffer: &wgpu::Buffer,
+        control_readback_buffer: &wgpu::Buffer,
+        pixel_count: usize,
+    ) -> Result<Vec<[f32; 3]>, BackendError> {
+        let mapped = readback_buffer.slice(..);
+        let control_mapped = control_readback_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(2);
+        let output_sender = sender.clone();
+        mapped.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = output_sender.send((0u8, result.map_err(|error| error.to_string())));
+        });
+        control_mapped.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send((1u8, result.map_err(|error| error.to_string())));
+        });
+        self.device_context
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| BackendError::Readback(error.to_string()))?;
+        for _ in 0..2 {
+            let (_, result) = receiver
+                .recv()
+                .map_err(|error| BackendError::Readback(error.to_string()))?;
+            result.map_err(BackendError::Readback)?;
+        }
+        let control_bytes = control_mapped
+            .get_mapped_range()
+            .map_err(|error| BackendError::Readback(error.to_string()))?;
+        let control = bytemuck::try_cast_slice::<u8, u32>(&control_bytes)
+            .map_err(|error| BackendError::Readback(error.to_string()))?;
+        let overflow = control.get(3).copied().unwrap_or_default() != 0;
+        drop(control_bytes);
+        control_readback_buffer.unmap();
+        if overflow {
+            readback_buffer.unmap();
+            return Err(BackendError::Readback(
+                "WebGPU wavefront queue overflow".to_string(),
+            ));
+        }
+        let bytes = mapped
+            .get_mapped_range()
+            .map_err(|error| BackendError::Readback(error.to_string()))?;
+        let pixels = bytemuck::try_cast_slice::<u8, [f32; 4]>(&bytes)
+            .map_err(|error| BackendError::Readback(error.to_string()))?;
+        let rgb = pixels
+            .iter()
+            .take(pixel_count)
+            .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect();
+        drop(bytes);
+        readback_buffer.unmap();
+        Ok(rgb)
     }
 
     pub fn adapter_info(&self) -> wgpu::AdapterInfo {

@@ -5,9 +5,20 @@ use super::device::AccelerationMode;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShaderStageId {
     LegacyRender,
-    GenerateCamera,
+    PrepareCameraRays,
+    GenerateCameraRays,
     IntersectClosest,
-    ShadeDiffusePoint,
+    ClassifyIntersection,
+    EvaluateSurfaceInteraction,
+    EvaluateMaterial,
+    RegisterBxdf,
+    CountBxdf,
+    PartitionBxdf,
+    SampleDirectLighting,
+    GenerateIndirectRays,
+    HandleEscapedRays,
+    HandleEmissiveIntersection,
+    PrepareNextBounce,
     IntersectShadow,
     FinishBounce,
     UpdateFilm,
@@ -184,16 +195,60 @@ pub fn build_shader_set(mode: AccelerationMode) -> Result<ShaderSet, ShaderBuild
                     entry_point: "main",
                 },
                 ShaderStage {
-                    id: ShaderStageId::GenerateCamera,
-                    entry_point: "generate_camera",
+                    id: ShaderStageId::PrepareCameraRays,
+                    entry_point: "prepare_camera_rays",
+                },
+                ShaderStage {
+                    id: ShaderStageId::GenerateCameraRays,
+                    entry_point: "generate_camera_rays",
                 },
                 ShaderStage {
                     id: ShaderStageId::IntersectClosest,
                     entry_point: "intersect_closest",
                 },
                 ShaderStage {
-                    id: ShaderStageId::ShadeDiffusePoint,
-                    entry_point: "shade_diffuse_point",
+                    id: ShaderStageId::ClassifyIntersection,
+                    entry_point: "classify_intersection",
+                },
+                ShaderStage {
+                    id: ShaderStageId::EvaluateSurfaceInteraction,
+                    entry_point: "evaluate_surface_interaction",
+                },
+                ShaderStage {
+                    id: ShaderStageId::EvaluateMaterial,
+                    entry_point: "evaluate_material",
+                },
+                ShaderStage {
+                    id: ShaderStageId::RegisterBxdf,
+                    entry_point: "register_bxdf",
+                },
+                ShaderStage {
+                    id: ShaderStageId::CountBxdf,
+                    entry_point: "count_bxdf",
+                },
+                ShaderStage {
+                    id: ShaderStageId::PartitionBxdf,
+                    entry_point: "partition_bxdf",
+                },
+                ShaderStage {
+                    id: ShaderStageId::SampleDirectLighting,
+                    entry_point: "sample_direct_lighting",
+                },
+                ShaderStage {
+                    id: ShaderStageId::GenerateIndirectRays,
+                    entry_point: "generate_indirect_rays",
+                },
+                ShaderStage {
+                    id: ShaderStageId::HandleEscapedRays,
+                    entry_point: "handle_escaped_rays",
+                },
+                ShaderStage {
+                    id: ShaderStageId::HandleEmissiveIntersection,
+                    entry_point: "handle_emissive_intersection",
+                },
+                ShaderStage {
+                    id: ShaderStageId::PrepareNextBounce,
+                    entry_point: "prepare_next_bounce",
                 },
                 ShaderStage {
                     id: ShaderStageId::IntersectShadow,

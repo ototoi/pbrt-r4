@@ -1,8 +1,13 @@
 fn find_area_light(primitive: u32, triangle: u32) -> u32 {
-    for (var light_index = 0u; light_index < arrayLength(&lights); light_index += 1u) {
+    for (var light_index = 0u; light_index < light_source_count(); light_index += 1u) {
         let light = lights[light_index];
-        if (light.kind == 2u && light.primitive == primitive && light.triangle == triangle) {
-            return light_index;
+        if (light.kind == 2u) {
+            for (var geometry_index = 0u; geometry_index < light.triangle; geometry_index += 1u) {
+                let geometry = area_light_geometry(light, geometry_index);
+                if (geometry.primitive == primitive && geometry.triangle == triangle) {
+                    return light_index;
+                }
+            }
         }
     }
     return 0xffffffffu;
@@ -24,11 +29,11 @@ fn murmur_hash_float_position(position: vec3<f32>) -> f32 {
     return f32(hash.x) * 2.3283064365386963e-10;
 }
 
-fn area_light_alpha_accept(light: Light, uv: vec2<f32>, position: vec3<f32>) -> bool {
-    if ((light.flags & 2u) != 0u) {
+fn area_light_alpha_accept(geometry: Light, uv: vec2<f32>, position: vec3<f32>) -> bool {
+    if ((geometry.flags & 2u) != 0u) {
         return true;
     }
-    let primitive = primitives[light.primitive];
+    let primitive = primitives[geometry.primitive];
     if (primitive.alpha == 0xffffffffu) {
         return true;
     }
@@ -44,7 +49,7 @@ fn area_light_alpha_accept(light: Light, uv: vec2<f32>, position: vec3<f32>) -> 
 
 fn infinite_emission() -> vec3<f32> {
     var emission = vec3<f32>(0.0);
-    for (var light_index = 0u; light_index < arrayLength(&lights); light_index += 1u) {
+    for (var light_index = 0u; light_index < light_source_count(); light_index += 1u) {
         let light = lights[light_index];
         if (light.kind == 1u) {
             emission += light.intensity.xyz;
