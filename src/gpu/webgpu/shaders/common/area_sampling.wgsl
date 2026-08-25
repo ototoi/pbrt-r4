@@ -157,42 +157,77 @@ fn sample_uniform_triangle(u: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(b0, b1, 1.0 - b0 - b1);
 }
 
+fn area_light_total_area(source: Light) -> f32 {
+    var total = 0.0;
+    for (var index = 0u; index < source.triangle; index += 1u) {
+        let geometry = area_light_geometry(source, index);
+        let triangle = area_light_triangle(geometry);
+        total += 0.5 * length(cross(triangle[1] - triangle[0], triangle[2] - triangle[0]));
+    }
+    return total;
+}
+
+// Returns geometry index, local x coordinate, and geometry selection PDF.
+fn area_light_select_geometry(source: Light, u: f32) -> vec3<f32> {
+    let total_area = area_light_total_area(source);
+    if (source.triangle == 0u || total_area == 0.0) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+    let sample_position = min(u, 0.9999999403953552) * total_area;
+    var accumulated = 0.0;
+    for (var index = 0u; index < source.triangle; index += 1u) {
+        let geometry = area_light_geometry(source, index);
+        let triangle = area_light_triangle(geometry);
+        let area = 0.5 * length(cross(triangle[1] - triangle[0], triangle[2] - triangle[0]));
+        if (sample_position <= accumulated + area || index + 1u == source.triangle) {
+            let local_x = select(0.0, (sample_position - accumulated) / area, area > 0.0);
+            return vec3<f32>(f32(index), clamp(local_x, 0.0, 0.9999999403953552), area / total_area);
+        }
+        accumulated += area;
+    }
+    return vec3<f32>(0.0, 0.0, 0.0);
+}
+
 fn sample_area_light_uniform(light: Light, context_position: vec3<f32>, u: vec2<f32>) -> AreaLightSample {
-    let triangle = area_light_triangle(light);
-    let barycentrics = sample_uniform_triangle(u);
+    let selection = area_light_select_geometry(light, u.x);
+    let geometry = area_light_geometry(light, u32(selection.x));
+    let triangle = area_light_triangle(geometry);
+    let barycentrics = sample_uniform_triangle(vec2<f32>(selection.y, u.y));
     let position = triangle[0] * barycentrics.x + triangle[1] * barycentrics.y + triangle[2] * barycentrics.z;
-    let normal = area_light_normal(light, barycentrics, triangle);
+    let normal = area_light_normal(geometry, barycentrics, triangle);
     let to_light = position - context_position;
     let distance_squared = dot(to_light, to_light);
     let area = 0.5 * length(cross(triangle[1] - triangle[0], triangle[2] - triangle[0]));
     if (distance_squared == 0.0 || area == 0.0) {
-        return AreaLightSample(position, normal, vec2<f32>(0.0), 0.0, false);
+        return AreaLightSample(position, normal, vec2<f32>(0.0), 0.0, geometry, false);
     }
     let wi = normalize(to_light);
     let cosine = abs(dot(normal, -wi));
     if (cosine == 0.0) {
-        return AreaLightSample(position, normal, vec2<f32>(0.0), 0.0, false);
+        return AreaLightSample(position, normal, vec2<f32>(0.0), 0.0, geometry, false);
     }
-    let pdf = distance_squared / (cosine * area);
+    let pdf = distance_squared / (cosine * area) * selection.z;
     let emitted = (light.flags & 1u) != 0u || dot(normal, -wi) >= 0.0;
     return AreaLightSample(
         position,
         normal,
-        area_light_uv(light, barycentrics),
+        area_light_uv(geometry, barycentrics),
         pdf,
+        geometry,
         emitted && pdf >= 0.0 && pdf <= 3.402823466e38,
     );
 }
 
-fn area_light_uniform_pdf(light: Light, context_position: vec3<f32>, hit_position: vec3<f32>, wi: vec3<f32>) -> f32 {
-    let triangle = area_light_triangle(light);
-    let normal = area_light_normal(light, vec3<f32>(1.0 / 3.0), triangle);
+fn area_light_uniform_pdf(source: Light, geometry: Light, context_position: vec3<f32>, hit_position: vec3<f32>, wi: vec3<f32>) -> f32 {
+    let triangle = area_light_triangle(geometry);
+    let normal = area_light_normal(geometry, vec3<f32>(1.0 / 3.0), triangle);
     let area = 0.5 * length(cross(triangle[1] - triangle[0], triangle[2] - triangle[0]));
+    let total_area = area_light_total_area(source);
     let cosine = abs(dot(normal, -wi));
     if (area == 0.0 || cosine == 0.0) {
         return 0.0;
     }
-    return dot(hit_position - context_position, hit_position - context_position) / (cosine * area);
+    return dot(hit_position - context_position, hit_position - context_position) / (cosine * total_area);
 }
 fn sample_area_light(
     light: Light,
@@ -200,12 +235,15 @@ fn sample_area_light(
     context_shading_normal: vec3<f32>,
     u: vec2<f32>,
 ) -> AreaLightSample {
-    let triangle = area_light_triangle(light);
+    let selection = area_light_select_geometry(light, u.x);
+    let geometry = area_light_geometry(light, u32(selection.x));
+    let triangle = area_light_triangle(geometry);
+    let local_u = vec2<f32>(selection.y, u.y);
     let solid_angle = area_light_solid_angle(triangle, context_position);
     if (solid_angle < 3.0e-4 || solid_angle > 6.22) {
         return sample_area_light_uniform(light, context_position, u);
     }
-    var warped_u = u;
+    var warped_u = local_u;
     var warp_pdf = 1.0;
     if (dot(context_shading_normal, context_shading_normal) != 0.0) {
         let weights = area_light_warp_weights(
@@ -213,41 +251,48 @@ fn sample_area_light(
             context_position,
             context_shading_normal,
         );
-        warped_u = sample_bilinear(u, weights);
+        warped_u = sample_bilinear(local_u, weights);
         warp_pdf = bilinear_pdf(warped_u, weights);
     }
     let spherical_sample = sample_spherical_triangle(triangle, context_position, warped_u);
     if (!spherical_sample.valid || spherical_sample.pdf == 0.0) {
-        return AreaLightSample(vec3<f32>(0.0), vec3<f32>(0.0), vec2<f32>(0.0), 0.0, false);
+        return AreaLightSample(vec3<f32>(0.0), vec3<f32>(0.0), vec2<f32>(0.0), 0.0, geometry, false);
     }
     let barycentrics = spherical_sample.barycentrics;
     let position = triangle[0] * barycentrics.x
         + triangle[1] * barycentrics.y
         + triangle[2] * barycentrics.z;
-    let normal = area_light_normal(light, barycentrics, triangle);
+    let normal = area_light_normal(geometry, barycentrics, triangle);
     let wi = normalize(position - context_position);
     let emitted = (light.flags & 1u) != 0u || dot(normal, -wi) >= 0.0;
     return AreaLightSample(
         position,
         normal,
-        area_light_uv(light, barycentrics),
-        spherical_sample.pdf * warp_pdf,
+        area_light_uv(geometry, barycentrics),
+        spherical_sample.pdf * warp_pdf * selection.z,
+        geometry,
         emitted,
     );
 }
 
 fn area_light_pdf(
-    light: Light,
+    source: Light,
     context_position: vec3<f32>,
     context_shading_normal: vec3<f32>,
     hit_position: vec3<f32>,
     direction: vec3<f32>,
+    triangle_index: u32,
 ) -> f32 {
-    let triangle = area_light_triangle(light);
+    let geometry = area_light_geometry_for_triangle(source, triangle_index);
+    let triangle = area_light_triangle(geometry);
+    let total_area = area_light_total_area(source);
+    let geometry_area = 0.5 * length(cross(triangle[1] - triangle[0], triangle[2] - triangle[0]));
+    let selection_pdf = select(0.0, geometry_area / total_area, total_area > 0.0);
     let solid_angle = area_light_solid_angle(triangle, context_position);
     if (solid_angle < 3.0e-4 || solid_angle > 6.22) {
         return area_light_uniform_pdf(
-            light,
+            source,
+            geometry,
             context_position,
             hit_position,
             direction,
@@ -267,5 +312,5 @@ fn area_light_pdf(
         );
         pdf *= bilinear_pdf(u, weights);
     }
-    return pdf;
+    return pdf * selection_pdf;
 }

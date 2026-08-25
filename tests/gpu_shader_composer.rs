@@ -31,10 +31,17 @@ fn built_in_shader_sources_are_deterministic_and_mode_specific() {
     );
     assert_eq!(
         hardware
-            .stage(ShaderStageId::GenerateCamera)
+            .stage(ShaderStageId::PrepareCameraRays)
             .unwrap()
             .entry_point,
-        "generate_camera"
+        "prepare_camera_rays"
+    );
+    assert_eq!(
+        hardware
+            .stage(ShaderStageId::GenerateCameraRays)
+            .unwrap()
+            .entry_point,
+        "generate_camera_rays"
     );
     assert_eq!(
         hardware
@@ -45,11 +52,37 @@ fn built_in_shader_sources_are_deterministic_and_mode_specific() {
     );
     assert_eq!(
         hardware
-            .stage(ShaderStageId::ShadeDiffusePoint)
+            .stage(ShaderStageId::EvaluateMaterial)
             .unwrap()
             .entry_point,
-        "shade_diffuse_point"
+        "evaluate_material"
     );
+    for (stage, entry_point) in [
+        (ShaderStageId::ClassifyIntersection, "classify_intersection"),
+        (
+            ShaderStageId::EvaluateSurfaceInteraction,
+            "evaluate_surface_interaction",
+        ),
+        (ShaderStageId::RegisterBxdf, "register_bxdf"),
+        (ShaderStageId::CountBxdf, "count_bxdf"),
+        (ShaderStageId::PartitionBxdf, "partition_bxdf"),
+        (
+            ShaderStageId::SampleDirectLighting,
+            "sample_direct_lighting",
+        ),
+        (
+            ShaderStageId::GenerateIndirectRays,
+            "generate_indirect_rays",
+        ),
+        (ShaderStageId::HandleEscapedRays, "handle_escaped_rays"),
+        (
+            ShaderStageId::HandleEmissiveIntersection,
+            "handle_emissive_intersection",
+        ),
+        (ShaderStageId::PrepareNextBounce, "prepare_next_bounce"),
+    ] {
+        assert_eq!(hardware.stage(stage).unwrap().entry_point, entry_point);
+    }
     assert_eq!(
         hardware
             .stage(ShaderStageId::IntersectShadow)
@@ -78,5 +111,5 @@ fn built_in_shader_sources_are_deterministic_and_mode_specific() {
             .entry_point,
         "advance_sample"
     );
-    assert!(software.stage(ShaderStageId::GenerateCamera).is_none());
+    assert!(software.stage(ShaderStageId::GenerateCameraRays).is_none());
 }

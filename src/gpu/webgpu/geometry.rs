@@ -312,18 +312,39 @@ fn normal_transform(
 
 impl ScenePlan {
     pub fn supports_wavefront_min(&self, scene: GpuSceneView<'_>) -> bool {
-        matches!(scene.lights, [GpuLight::Point(_)])
-            && self.lights.len() == 1
-            && self.lights[0].kind == 0
+        !scene.lights.is_empty()
+            && scene
+                .geometry
+                .iter()
+                .all(|geometry| matches!(geometry, GpuGeometry::TriangleMesh(_)))
+            && scene
+                .transforms
+                .iter()
+                .all(|transform| matches!(transform, GpuTransform::Static(_)))
+            && scene.images.iter().all(|image| image.mip_levels.len() <= 1)
+            && scene.lights.iter().all(|light| {
+                matches!(
+                    light,
+                    GpuLight::Point(_) | GpuLight::UniformInfinite(_) | GpuLight::DiffuseArea(_)
+                )
+            })
+            && self
+                .lights
+                .iter()
+                .take(
+                    self.lights
+                        .first()
+                        .map_or(0, |light| (light.flags >> 16) as usize),
+                )
+                .all(|light| light.kind <= 2)
             && self
                 .primitives
                 .iter()
                 .all(|primitive| primitive.alpha.is_none())
-            && self.materials.iter().all(|material| {
-                matches!(material.reflectance, MaterialReflectancePlan::Constant(_))
-                    && material.normal_map.is_none()
-                    && material.displacement.is_none()
-            })
+            && self
+                .materials
+                .iter()
+                .all(|material| material.normal_map.is_none() && material.displacement.is_none())
     }
 
     pub fn validate_custom_data(custom_data: u32) -> Result<(), PlanError> {
@@ -1048,13 +1069,8 @@ fn lower_lights(
     scene: GpuSceneView<'_>,
     area_light_occurrences: &[AreaLightOccurrence],
 ) -> Result<Vec<LightPlan>, BackendError> {
-    let mut lights = Vec::with_capacity(
-        scene
-            .lights
-            .len()
-            .saturating_add(area_light_occurrences.len())
-            .max(1),
-    );
+    let mut lights = Vec::with_capacity(scene.lights.len().max(1));
+    let mut area_sources = Vec::new();
     for (index, light) in scene.lights.iter().enumerate() {
         match light {
             GpuLight::Point(point) => {
@@ -1106,26 +1122,49 @@ fn lower_lights(
             GpuLight::DiffuseArea(area) => {
                 let light_id = LightId(index as u32);
                 let rgb = area_emission_rgb(scene, light_id)?;
-                for occurrence in area_light_occurrences
-                    .iter()
-                    .filter(|occurrence| occurrence.light == light_id)
-                {
-                    lights.push(LightPlan {
-                        position: [0.0; 4],
-                        intensity: [
-                            rgb[0] * area.scale,
-                            rgb[1] * area.scale,
-                            rgb[2] * area.scale,
-                            1.0,
-                        ],
-                        kind: 2,
-                        primitive: Some(occurrence.primitive),
-                        triangle: occurrence.triangle,
-                        flags: u32::from(area.two_sided)
-                            | (u32::from(occurrence.constant_zero_alpha) << 1),
-                    });
-                }
+                let source_index = checked_len(lights.len(), "light source table")?;
+                lights.push(LightPlan {
+                    position: [0.0; 4],
+                    intensity: [
+                        rgb[0] * area.scale,
+                        rgb[1] * area.scale,
+                        rgb[2] * area.scale,
+                        1.0,
+                    ],
+                    kind: 2,
+                    primitive: Some(0),
+                    triangle: 0,
+                    flags: u32::from(area.two_sided),
+                });
+                area_sources.push((source_index, light_id));
             }
+        }
+    }
+
+    let source_count = checked_len(lights.len(), "light source table")?;
+    for (source_index, light_id) in area_sources {
+        let geometry_offset = checked_len(lights.len(), "area light geometry table")?;
+        let mut geometry_count = 0u32;
+        let mut all_constant_zero_alpha = true;
+        for occurrence in area_light_occurrences
+            .iter()
+            .filter(|occurrence| occurrence.light == light_id)
+        {
+            all_constant_zero_alpha &= occurrence.constant_zero_alpha;
+            lights.push(LightPlan {
+                position: [0.0; 4],
+                intensity: [0.0; 4],
+                kind: 3,
+                primitive: Some(occurrence.primitive),
+                triangle: occurrence.triangle,
+                flags: u32::from(occurrence.constant_zero_alpha) << 1,
+            });
+            geometry_count += 1;
+        }
+        lights[source_index as usize].primitive = Some(geometry_offset);
+        lights[source_index as usize].triangle = geometry_count;
+        if geometry_count != 0 && all_constant_zero_alpha {
+            lights[source_index as usize].flags |= 1 << 1;
         }
     }
     if lights.is_empty() {
@@ -1137,6 +1176,16 @@ fn lower_lights(
             triangle: 0,
             flags: 0,
         });
+    }
+    if source_count > 0 {
+        if source_count > 0xffff {
+            return Err(BackendError::Plan(PlanError::LimitExceeded {
+                resource: "light source table",
+                value: source_count,
+                maximum: 0xffff,
+            }));
+        }
+        lights[0].flags |= source_count << 16;
     }
     Ok(lights)
 }
