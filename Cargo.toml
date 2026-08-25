@@ -118,6 +118,11 @@ name = "webgpu"
 path = "tests/gpu/webgpu.rs"
 required-features = ["webgpu"]
 
+[[test]]
+name = "gpu_shader_composer"
+path = "tests/gpu_shader_composer.rs"
+required-features = ["webgpu"]
+
 # `[profile.release]` left at cargo defaults (opt-level=3, no LTO).
 # We tried `lto = "fat"` + `codegen-units = 1`: small win (~5%) on the
 # BSSRDF-heavy head.pbrt path but slightly regressed (5-10%) simple

@@ -4,6 +4,7 @@ mod device;
 mod error;
 mod geometry;
 mod renderer;
+pub mod shader;
 mod software;
 
 pub use device::{AccelerationMode, BackendPreference, PowerPreference, PrepareOptions};

@@ -3,11 +3,9 @@ use super::super::ir::{GpuMatrix4x4, GpuRenderOutput, GpuRenderRequest, GpuScene
 use super::device::{AccelerationMode, DeviceContext, PrepareOptions};
 use super::error::BackendError;
 use super::geometry::{HardwareAcceleration, ScenePlan};
+use super::shader::build_shader_set;
 use super::software::SoftwareAcceleration;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
-
-const RAY_QUERY_SHADER: &str = include_str!("shaders/ray_query.wgsl");
-const SOFTWARE_BVH_SHADER: &str = include_str!("shaders/software_bvh.wgsl");
 
 enum SceneResources {
     Hardware(HardwareAcceleration),
@@ -244,23 +242,16 @@ fn buffer_entry(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::Bind
 }
 
 fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline {
-    let (bind_group_layout, shader_source, label) = match mode {
-        AccelerationMode::HardwareRayQuery => (
-            create_hardware_bind_group_layout(&context.device),
-            RAY_QUERY_SHADER,
-            "pbrt-r4 WebGPU hardware ray query shader",
-        ),
-        AccelerationMode::SoftwareBvh => (
-            create_software_bind_group_layout(&context.device),
-            SOFTWARE_BVH_SHADER,
-            "pbrt-r4 WebGPU software BVH shader",
-        ),
+    let shader_set = build_shader_set(mode).expect("built-in WebGPU shader recipe is valid");
+    let bind_group_layout = match mode {
+        AccelerationMode::HardwareRayQuery => create_hardware_bind_group_layout(&context.device),
+        AccelerationMode::SoftwareBvh => create_software_bind_group_layout(&context.device),
     };
     let shader = context
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+            label: Some(shader_set.label),
+            source: wgpu::ShaderSource::Wgsl(shader_set.source.into()),
         });
     let pipeline_layout = context
         .device
@@ -275,7 +266,7 @@ fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline 
             label: Some("pbrt-r4 WebGPU compute pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: None,
+            entry_point: Some(shader_set.entry_point),
             compilation_options: Default::default(),
             cache: None,
         });
