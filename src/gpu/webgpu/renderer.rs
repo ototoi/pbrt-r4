@@ -5,6 +5,7 @@ use super::error::BackendError;
 use super::geometry::{HardwareAcceleration, ScenePlan};
 use super::shader::{build_shader_set, ShaderStageId};
 use super::software::SoftwareAcceleration;
+use super::wavefront::WavefrontLayout;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 enum SceneResources {
@@ -15,6 +16,7 @@ enum SceneResources {
 pub struct ExecutableScene {
     scene: GpuCompiledScene,
     resources: SceneResources,
+    supports_wavefront_min: bool,
 }
 
 impl ExecutableScene {
@@ -24,8 +26,19 @@ impl ExecutableScene {
 }
 
 struct Pipeline {
-    pipeline: wgpu::ComputePipeline,
+    stages: Vec<(ShaderStageId, wgpu::ComputePipeline)>,
     bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl Pipeline {
+    fn stage(&self, id: ShaderStageId) -> &wgpu::ComputePipeline {
+        &self
+            .stages
+            .iter()
+            .find(|(stage_id, _)| *stage_id == id)
+            .unwrap_or_else(|| panic!("WebGPU pipeline does not contain stage {id:?}"))
+            .1
+    }
 }
 
 pub struct Renderer {
@@ -45,6 +58,7 @@ impl Renderer {
 
     pub fn prepare(&mut self, scene: &GpuCompiledScene) -> Result<ExecutableScene, BackendError> {
         let plan = ScenePlan::from_scene(scene.view())?;
+        let supports_wavefront_min = plan.supports_wavefront_min(scene.view());
         let resources = match self.device_context.acceleration_mode {
             AccelerationMode::HardwareRayQuery => {
                 SceneResources::Hardware(HardwareAcceleration::create(&self.device_context, &plan)?)
@@ -56,6 +70,7 @@ impl Renderer {
         Ok(ExecutableScene {
             scene: scene.clone(),
             resources,
+            supports_wavefront_min,
         })
     }
 
@@ -93,6 +108,11 @@ impl Renderer {
                 .ok_or(BackendError::Readback("output size overflow".to_string()))?,
         )
         .map_err(|_| BackendError::Readback("output size overflow".to_string()))?;
+        let wavefront_layout = WavefrontLayout::for_pixel_count(
+            u32::try_from(pixel_count)
+                .map_err(|_| BackendError::Readback("pixel count exceeds u32".to_string()))?,
+        )
+        .ok_or_else(|| BackendError::Readback("wavefront arena size overflow".to_string()))?;
 
         let (bvh_primitive_offset, bvh_node_offset) = match &scene.resources {
             SceneResources::Hardware(_) => (0, 0),
@@ -101,6 +121,8 @@ impl Renderer {
                 acceleration.bvh_node_offset,
             ),
         };
+        let use_wavefront_min =
+            matches!(&scene.resources, SceneResources::Hardware(_)) && scene.supports_wavefront_min;
         let uniform_buffer = self
             .device_context
             .device
@@ -120,7 +142,9 @@ impl Renderer {
             .create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 WebGPU film output"),
                 size: output_size,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         let readback_buffer = self
@@ -130,6 +154,15 @@ impl Renderer {
                 label: Some("pbrt-r4 WebGPU film readback"),
                 size: output_size,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let wavefront_buffer = self
+            .device_context
+            .device
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pbrt-r4 WebGPU wavefront arena"),
+                size: u64::from(wavefront_layout.byte_len),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         let bind_group =
@@ -156,6 +189,7 @@ impl Renderer {
                             buffer_entry(7, acceleration.material_buffer.as_entire_binding()),
                             buffer_entry(8, acceleration.light_buffer.as_entire_binding()),
                             buffer_entry(9, acceleration.texture_buffer.as_entire_binding()),
+                            buffer_entry(10, wavefront_buffer.as_entire_binding()),
                         ],
                     }),
                 SceneResources::Software(acceleration) => self
@@ -184,14 +218,45 @@ impl Renderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pbrt-r4 WebGPU dispatch"),
                 });
+        if use_wavefront_min {
+            encoder.clear_buffer(&output_buffer, 0, None);
+            encoder.clear_buffer(&wavefront_buffer, 0, None);
+        }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("pbrt-r4 WebGPU render pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+            if use_wavefront_min {
+                let wavefront_workgroups = u32::try_from(pixel_count)
+                    .map_err(|_| BackendError::Readback("pixel count exceeds u32".to_string()))?
+                    .div_ceil(64);
+                for sample_offset in 0..request.sample_count {
+                    pass.set_bind_group(0, &bind_group, &[]);
+                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::GenerateCamera));
+                    pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                    for _ in 0..scene_view.render.integrator.max_depth {
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::IntersectClosest));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::ShadeDiffusePoint));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::IntersectShadow));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::FinishBounce));
+                        pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                    }
+                    pass.set_pipeline(self.pipeline.stage(ShaderStageId::UpdateFilm));
+                    pass.dispatch_workgroups(wavefront_workgroups, 1, 1);
+                    if sample_offset + 1 < request.sample_count {
+                        pass.set_pipeline(self.pipeline.stage(ShaderStageId::AdvanceSample));
+                        pass.dispatch_workgroups(1, 1, 1);
+                    }
+                }
+            } else {
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.set_pipeline(self.pipeline.stage(ShaderStageId::LegacyRender));
+                pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+            }
         }
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback_buffer, 0, output_size);
         self.device_context.queue.submit(Some(encoder.finish()));
@@ -243,10 +308,6 @@ fn buffer_entry(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::Bind
 
 fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline {
     let shader_set = build_shader_set(mode).expect("built-in WebGPU shader recipe is valid");
-    let entry_point = shader_set
-        .stage(ShaderStageId::LegacyRender)
-        .expect("legacy WebGPU render stage is registered")
-        .entry_point;
     let bind_group_layout = match mode {
         AccelerationMode::HardwareRayQuery => create_hardware_bind_group_layout(&context.device),
         AccelerationMode::SoftwareBvh => create_software_bind_group_layout(&context.device),
@@ -264,18 +325,26 @@ fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline 
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
-    let pipeline = context
-        .device
-        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("pbrt-r4 WebGPU compute pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some(entry_point),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+    let stages = shader_set
+        .stages
+        .iter()
+        .map(|stage| {
+            let pipeline =
+                context
+                    .device
+                    .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some(stage.entry_point),
+                        layout: Some(&pipeline_layout),
+                        module: &shader,
+                        entry_point: Some(stage.entry_point),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    });
+            (stage.id, pipeline)
+        })
+        .collect();
     Pipeline {
-        pipeline,
+        stages,
         bind_group_layout,
     }
 }
@@ -293,6 +362,16 @@ fn create_hardware_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
             count: None,
         },
     );
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 10,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    });
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("pbrt-r4 WebGPU hardware bind group layout"),
         entries: &entries,

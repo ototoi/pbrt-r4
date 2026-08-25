@@ -82,14 +82,19 @@ impl DeviceContext {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let (required_features, required_limits, experimental_features) =
             match options.acceleration_mode {
-                AccelerationMode::HardwareRayQuery => (
-                    wgpu::Features::EXPERIMENTAL_RAY_QUERY,
-                    wgpu::Limits::default().using_minimum_supported_acceleration_structure_values(),
-                    // SAFETY: hardware mode is only requested after the adapter capability
-                    // check above. The experimental API is explicitly part of this backend's
-                    // selected mode.
-                    unsafe { wgpu::ExperimentalFeatures::enabled() },
-                ),
+                AccelerationMode::HardwareRayQuery => {
+                    let mut limits = wgpu::Limits::default()
+                        .using_minimum_supported_acceleration_structure_values();
+                    limits.max_storage_buffers_per_shader_stage = 9;
+                    (
+                        wgpu::Features::EXPERIMENTAL_RAY_QUERY,
+                        limits,
+                        // SAFETY: hardware mode is only requested after the adapter capability
+                        // check above. The experimental API is explicitly part of this backend's
+                        // selected mode.
+                        unsafe { wgpu::ExperimentalFeatures::enabled() },
+                    )
+                }
                 AccelerationMode::SoftwareBvh => (
                     wgpu::Features::empty(),
                     wgpu::Limits::default(),
@@ -145,7 +150,7 @@ impl DeviceContext {
                     .contains(fallback.get_info().backend.into())
                 && fallback.features().contains(required_features)
                 && (options.acceleration_mode == AccelerationMode::SoftwareBvh
-                    || fallback.limits().check_limits(&required_limits))
+                    || required_limits.check_limits(&fallback.limits()))
             {
                 candidates.push(fallback);
             }

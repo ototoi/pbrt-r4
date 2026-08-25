@@ -10,10 +10,12 @@ pub enum FragmentId {
     AreaGeometry,
     AreaSampling,
     Emission,
+    WavefrontAbi,
     HardwareBindings,
     RayQueryTraversal,
     SoftwareBvhTraversal,
     EntryMain,
+    EntryWavefront,
 }
 
 #[derive(Clone)]
