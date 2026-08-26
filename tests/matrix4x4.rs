@@ -68,3 +68,15 @@ fn test_009() {
 
     assert!(Vector3f::distance_squared(&v2, &Vector3f::new(0.0, 1.0, 1.0)) < 0.01);
 }
+
+#[test]
+fn arbitrary_axis_rotation_uses_the_supplied_axis() {
+    let rotation = Matrix4x4::rotate(120.0, 1.0, 1.0, 1.0);
+
+    let rotated = rotation.transform_vector(&Vector3f::new(1.0, 0.0, 0.0));
+    assert!(Vector3f::distance_squared(&rotated, &Vector3f::new(0.0, 1.0, 0.0)) < 1e-12);
+
+    // A rotation matrix is orthogonal, so its transpose must undo it.
+    let restored = rotation.transpose().transform_vector(&rotated);
+    assert!(Vector3f::distance_squared(&restored, &Vector3f::new(1.0, 0.0, 0.0)) < 1e-12);
+}

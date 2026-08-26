@@ -89,7 +89,11 @@ pub fn bound_subtended_directions(b: &Bounds3f, p: &Point3f) -> DirectionCone {
     let (center_v, radius) = b.bounding_sphere();
     let p_center = Point3f::new(center_v.x, center_v.y, center_v.z);
     let d2 = (p_center - *p).length_squared();
-    if d2 < radius * radius {
+    // At or inside the bounding sphere there is no finite cone around the
+    // center direction that conservatively contains the box.  The equality
+    // case matters for degenerate bounds: normalizing center - p would
+    // otherwise normalize the zero vector and return a cone full of NaNs.
+    if d2 <= radius * radius {
         return DirectionCone::entire_sphere();
     }
     let w = (p_center - *p).normalize();

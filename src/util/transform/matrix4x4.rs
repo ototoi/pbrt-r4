@@ -98,12 +98,26 @@ impl Matrix4x4 {
         let a = Vector3f::new(x, y, z).normalize();
         let s = Float::sin(radians(theta));
         let c = Float::cos(radians(theta));
+        let one_minus_c = 1.0 - c;
 
-        let _m00 = a.x * a.x + (1.0 - a.x * a.x) * c;
-        let _m01 = a.x * a.y + (1.0 - a.x * a.x) * c;
         Matrix4x4 {
             m: [
-                c, -s, 0.0, 0.0, s, c, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+                a.x * a.x + (1.0 - a.x * a.x) * c,
+                a.x * a.y * one_minus_c - a.z * s,
+                a.x * a.z * one_minus_c + a.y * s,
+                0.0,
+                a.x * a.y * one_minus_c + a.z * s,
+                a.y * a.y + (1.0 - a.y * a.y) * c,
+                a.y * a.z * one_minus_c - a.x * s,
+                0.0,
+                a.x * a.z * one_minus_c - a.y * s,
+                a.y * a.z * one_minus_c + a.x * s,
+                a.z * a.z + (1.0 - a.z * a.z) * c,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
             ],
         }
     }
