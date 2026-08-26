@@ -25,6 +25,12 @@ pub fn build_wavefront() -> ShaderRecipe {
                 dependencies: vec![FragmentId::Abi],
             },
             Fragment {
+                id: FragmentId::AreaGeometry,
+                path: "shaders/common/area_geometry.wgsl",
+                source: include_str!("../../shaders/common/area_geometry.wgsl"),
+                dependencies: vec![FragmentId::Transform, FragmentId::WavefrontAbi],
+            },
+            Fragment {
                 id: FragmentId::WavefrontAbi,
                 path: "shaders/wavefront/abi.wgsl",
                 source: include_str!("../../shaders/wavefront/abi.wgsl"),
@@ -68,7 +74,11 @@ pub fn build_wavefront() -> ShaderRecipe {
                 id: FragmentId::WavefrontDirectLighting,
                 path: "shaders/wavefront/direct_lighting.wgsl",
                 source: include_str!("../../shaders/wavefront/direct_lighting.wgsl"),
-                dependencies: vec![FragmentId::Sampling, FragmentId::WavefrontAbi],
+                dependencies: vec![
+                    FragmentId::Sampling,
+                    FragmentId::AreaGeometry,
+                    FragmentId::WavefrontAbi,
+                ],
             },
             Fragment {
                 id: FragmentId::WavefrontShadow,

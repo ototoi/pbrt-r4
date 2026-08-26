@@ -165,7 +165,7 @@ impl std::fmt::Display for PlanError {
             Self::UnsupportedLightConfiguration => {
                 write!(
                     formatter,
-                    "the initial wavefront renderer supports only point and uniform infinite lights"
+                    "the wavefront renderer supports only point, diffuse area, and uniform infinite lights"
                 )
             }
         }

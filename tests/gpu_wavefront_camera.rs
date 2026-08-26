@@ -128,6 +128,49 @@ fn wavefront_adds_uniform_infinite_radiance_for_miss_rays() {
     assert!(output.rgb[0].iter().all(|component| *component > 0.0));
 }
 
+#[test]
+fn wavefront_samples_a_diffuse_area_light() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+            Film "rgb" "integer xresolution" [1] "integer yresolution" [1]
+            PixelFilter "box"
+            Sampler "independent" "integer pixelsamples" [1]
+            Integrator "volpath" "integer maxdepth" [1]
+            LookAt 0 0 1.5 0 0 0 0 1 0
+            Camera "perspective" "float fov" [45]
+            WorldBegin
+            Material "diffuse" "rgb reflectance" [0.5 0.5 0.5]
+            AttributeBegin
+                AreaLightSource "diffuse" "rgb L" [4 4 4] "bool twosided" [true]
+                Shape "trianglemesh"
+                    "point3 P" [-1 -1 2 0 1 2 1 -1 2]
+                    "integer indices" [0 1 2]
+            AttributeEnd
+            Shape "trianglemesh"
+                "point3 P" [-2 -2 0 2 -2 0 0 2 0]
+                "integer indices" [0 1 2]
+            WorldEnd
+        "#,
+        &mut builder,
+    )
+    .unwrap();
+
+    let compiled = builder.build_gpu_ir().unwrap();
+    let mut renderer = Renderer::new(&PrepareOptions::default()).unwrap_or_else(|error| {
+        panic!("Hardware Ray Query is required for this WebGPU test: {error}")
+    });
+    let executable = renderer.prepare(&compiled).unwrap();
+    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let output = renderer.render(&executable, &request).unwrap();
+    assert!(output.rgb[0].iter().all(|component| component.is_finite()));
+    assert!(
+        output.rgb[0].iter().any(|component| *component > 0.0),
+        "area-light output: {:?}",
+        output.rgb[0]
+    );
+}
+
 fn render_center_pixel(extra_geometry_or_lights: &str) -> [f32; 3] {
     render_center_pixel_with_sample_count(extra_geometry_or_lights, 1)
 }

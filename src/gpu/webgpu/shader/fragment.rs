@@ -5,6 +5,7 @@ pub enum FragmentId {
     Abi,
     Transform,
     Sampling,
+    AreaGeometry,
     WavefrontAbi,
     WavefrontCamera,
     WavefrontIntersection,

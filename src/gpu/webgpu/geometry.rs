@@ -577,7 +577,7 @@ fn validate_initial_light_scope(lights: &[LightPlan]) -> Result<(), BackendError
     if lights
         .iter()
         .take(source_count as usize)
-        .any(|light| !matches!(light.kind, 0 | 1))
+        .any(|light| !matches!(light.kind, 0 | 1 | 2))
     {
         return Err(BackendError::Plan(PlanError::UnsupportedLightConfiguration));
     }
