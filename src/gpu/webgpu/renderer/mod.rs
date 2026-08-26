@@ -1,4 +1,4 @@
-use super::super::compiler::GpuCompiledScene;
+use super::super::compiler::CompiledScene;
 use super::super::ir::{Matrix4x4, RenderOutput, RenderRequest, SceneView};
 use super::device::{AccelerationMode, DeviceContext, PrepareOptions};
 use super::error::BackendError;
@@ -16,7 +16,7 @@ enum SceneResources {
 }
 
 pub struct ExecutableScene {
-    scene: GpuCompiledScene,
+    scene: CompiledScene,
     resources: SceneResources,
 }
 
@@ -62,7 +62,7 @@ impl Renderer {
         })
     }
 
-    pub fn prepare(&mut self, scene: &GpuCompiledScene) -> Result<ExecutableScene, BackendError> {
+    pub fn prepare(&mut self, scene: &CompiledScene) -> Result<ExecutableScene, BackendError> {
         let plan = ScenePlan::from_scene(scene.view())?;
         let resources = match self.device_context.acceleration_mode {
             AccelerationMode::HardwareRayQuery => {

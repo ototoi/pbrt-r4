@@ -1,6 +1,6 @@
 #![cfg(any(feature = "cuda", feature = "webgpu"))]
 
-use pbrt_r4::gpu::compiler::{GpuResourceKind, GpuSourceEntry};
+use pbrt_r4::gpu::compiler::{ResourceKind, SourceEntry};
 use pbrt_r4::gpu::ir::{Geometry, ImageFilter, Material, SpectrumResource};
 use pbrt_r4::parser::{parse_string, SceneBuilder};
 
@@ -33,13 +33,13 @@ fn scene_builder_compiles_a_default_trianglemesh() {
     assert!(matches!(view.geometry[0], Geometry::TriangleMesh(_)));
     let requirements = compiled.requirements();
     assert_eq!(compiled.source_map().locations.len(), 1);
-    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
-        kind: GpuResourceKind::Geometry,
+    assert!(compiled.source_map().resources.contains(&SourceEntry {
+        kind: ResourceKind::Geometry,
         index: 0,
         source: pbrt_r4::gpu::ir::SourceId(0),
     }));
-    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
-        kind: GpuResourceKind::Primitive,
+    assert!(compiled.source_map().resources.contains(&SourceEntry {
+        kind: ResourceKind::Primitive,
         index: 0,
         source: pbrt_r4::gpu::ir::SourceId(0),
     }));
@@ -84,8 +84,8 @@ fn scene_builder_rejects_path_integrator_without_volpath_fallback() {
     let error = builder.build_gpu_ir().unwrap_err();
     assert!(matches!(
         error,
-        pbrt_r4::gpu::compiler::GpuSceneBuildError::Compile(
-            pbrt_r4::gpu::compiler::GpuCompileError::UnsupportedSceneFeature {
+        pbrt_r4::gpu::compiler::SceneBuildError::Compile(
+            pbrt_r4::gpu::compiler::CompileError::UnsupportedSceneFeature {
                 feature: "non-volpath integrator",
                 ..
             }
@@ -187,13 +187,13 @@ fn scene_builder_compiles_instances_without_flattening() {
     assert_eq!(view.world_primitives.len(), 0);
     assert_eq!(view.world_instances.len(), 1);
     assert_eq!(view.instance_definitions[0].primitives.len(), 1);
-    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
-        kind: GpuResourceKind::InstanceDefinition,
+    assert!(compiled.source_map().resources.contains(&SourceEntry {
+        kind: ResourceKind::InstanceDefinition,
         index: 0,
         source: pbrt_r4::gpu::ir::SourceId(1),
     }));
-    assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
-        kind: GpuResourceKind::Instance,
+    assert!(compiled.source_map().resources.contains(&SourceEntry {
+        kind: ResourceKind::Instance,
         index: 0,
         source: pbrt_r4::gpu::ir::SourceId(2),
     }));
@@ -312,8 +312,8 @@ fn scene_builder_rejects_unsupported_area_light_inputs() {
     let error = builder.build_gpu_ir().unwrap_err();
     assert!(matches!(
         error,
-        pbrt_r4::gpu::compiler::GpuSceneBuildError::Compile(
-            pbrt_r4::gpu::compiler::GpuCompileError::UnsupportedSceneFeature {
+        pbrt_r4::gpu::compiler::SceneBuildError::Compile(
+            pbrt_r4::gpu::compiler::CompileError::UnsupportedSceneFeature {
                 feature: "area light image emission",
                 ..
             },

@@ -1,9 +1,9 @@
 use super::{
     build_mip_storage, compile_rgb_spectrum, compile_transform, encode_mip_storage,
     finite_parameter, gpu_color_encoding, invalid_parameter, light_source_location, raw_encoding,
-    raw_linear_pixels, DiffuseAreaLight, GpuCompileError, GpuSourceLocation, ImageChannels,
-    ImageFilter, ImageResource, ImageWrapMode, Index, Light, LightSceneEntity, PointLight,
-    SceneBuilder, SpectrumResource, SpectrumTexture, TextureMapping, Transform, TransformId,
+    raw_linear_pixels, CompileError, DiffuseAreaLight, ImageChannels, ImageFilter, ImageResource,
+    ImageWrapMode, Index, Light, LightSceneEntity, PointLight, SceneBuilder, SourceLocation,
+    SpectrumResource, SpectrumTexture, TextureMapping, Transform, TransformId,
     UniformInfiniteLight,
 };
 use crate::gpu::ir::{ImageId, LightId, SpectrumTextureId, SpectrumType, TextureMappingId};
@@ -18,7 +18,7 @@ pub fn compile_light(
     transforms: &mut Vec<Transform>,
     spectra: &mut Vec<SpectrumResource>,
     lights: &mut Vec<Light>,
-) -> Result<(), GpuCompileError> {
+) -> Result<(), CompileError> {
     let source = light_source_location(light);
     let transform_id = TransformId(transforms.len() as Index);
     transforms.push(compile_transform(&light.base.render_from_object, &source)?);
@@ -26,7 +26,7 @@ pub fn compile_light(
         "point" => ("I", 1.0),
         "infinite" => ("L", 1.0),
         _ => {
-            return Err(GpuCompileError::UnsupportedSceneFeature {
+            return Err(CompileError::UnsupportedSceneFeature {
                 feature: "non-point/non-infinite light",
                 source,
             })
@@ -63,22 +63,22 @@ pub fn compile_area_light(
     images: &mut Vec<ImageResource>,
     texture_mappings: &mut Vec<TextureMapping>,
     lights: &mut Vec<Light>,
-    source: &GpuSourceLocation,
-) -> Result<LightId, GpuCompileError> {
+    source: &SourceLocation,
+) -> Result<LightId, CompileError> {
     if area.base.name != "diffuse" {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
+        return Err(CompileError::UnsupportedSceneFeature {
             feature: "non-diffuse area light",
             source: source.clone(),
         });
     }
     if area.base.params.get_floats_ref("power").is_some() {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
+        return Err(CompileError::UnsupportedSceneFeature {
             feature: "area light power normalization",
             source: source.clone(),
         });
     }
     if area.base.params.get_textures_ref("L").is_some() {
-        return Err(GpuCompileError::UnsupportedSceneFeature {
+        return Err(CompileError::UnsupportedSceneFeature {
             feature: "textured area light emission",
             source: source.clone(),
         });
@@ -124,8 +124,8 @@ fn compile_area_light_image(
     images: &mut Vec<ImageResource>,
     texture_mappings: &mut Vec<TextureMapping>,
     spectrum_textures: &mut Vec<SpectrumTexture>,
-    source: &GpuSourceLocation,
-) -> Result<SpectrumTextureId, GpuCompileError> {
+    source: &SourceLocation,
+) -> Result<SpectrumTextureId, CompileError> {
     let encoding = if Path::new(filename)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -135,13 +135,13 @@ fn compile_area_light_image(
     } else {
         ColorEncoding::parse("linear")
     }
-    .map_err(|error| GpuCompileError::InvalidParameter {
+    .map_err(|error| CompileError::InvalidParameter {
         parameter: "filename",
         detail: error.msg,
         source: source.clone(),
     })?;
     let raw = read_raw_image_with_encoding(filename, encoding).map_err(|error| {
-        GpuCompileError::InvalidParameter {
+        CompileError::InvalidParameter {
             parameter: "filename",
             detail: error.msg,
             source: source.clone(),

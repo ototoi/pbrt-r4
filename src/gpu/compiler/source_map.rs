@@ -1,13 +1,13 @@
 use super::super::ir::{Index, SourceId};
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct GpuSourceMap {
-    pub locations: Box<[super::GpuSourceLocation]>,
-    pub resources: Box<[GpuSourceEntry]>,
+pub struct SourceMap {
+    pub locations: Box<[super::SourceLocation]>,
+    pub resources: Box<[SourceEntry]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum GpuResourceKind {
+pub enum ResourceKind {
     Transform,
     Spectrum,
     Image,
@@ -23,8 +23,8 @@ pub enum GpuResourceKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GpuSourceEntry {
-    pub kind: GpuResourceKind,
+pub struct SourceEntry {
+    pub kind: ResourceKind,
     pub index: Index,
     pub source: SourceId,
 }
