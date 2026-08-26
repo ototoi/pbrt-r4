@@ -125,20 +125,87 @@ impl LightBounds {
         (self.bounds.min + self.bounds.max) * 0.5
     }
 
-    pub fn importance(&self, _p: Point3f, _n: Normal3f) -> Float {
-        self.phi
+    pub fn importance(&self, p: Point3f, n: Normal3f) -> Float {
+        // Return importance for light bounds at reference point
+        // Compute clamped squared distance to reference point
+        let pc = (self.bounds.min + self.bounds.max) / 2.0;
+        let mut d2 = Point3f::distance_squared(&p, &pc);
+        d2 = Float::max(d2, self.bounds.diagonal().length() / 2.0);
+
+        // Define cosine and sine clamped subtraction lambdas
+        let cos_sub_clamped =
+            |sin_theta_a: Float, cos_theta_a: Float, sin_theta_b: Float, cos_theta_b: Float| {
+                if cos_theta_a > cos_theta_b {
+                    1.0
+                } else {
+                    cos_theta_a * cos_theta_b + sin_theta_a * sin_theta_b
+                }
+            };
+        let sin_sub_clamped =
+            |sin_theta_a: Float, cos_theta_a: Float, sin_theta_b: Float, cos_theta_b: Float| {
+                if cos_theta_a > cos_theta_b {
+                    0.0
+                } else {
+                    sin_theta_a * cos_theta_b - cos_theta_a * sin_theta_b
+                }
+            };
+
+        // Compute sine and cosine of angle to vector w, theta_w
+        let wi = (p - pc).normalize();
+        let mut cos_theta_w = Vector3f::dot(&self.w, &wi);
+        if self.two_sided {
+            cos_theta_w = Float::abs(cos_theta_w);
+        }
+        let sin_theta_w = Float::sqrt(Float::max(0.0, 1.0 - cos_theta_w * cos_theta_w));
+
+        // Compute cos theta_b for reference point
+        let cos_theta_b = bound_subtended_directions(&self.bounds, &p).cos_theta;
+        let sin_theta_b = Float::sqrt(Float::max(0.0, 1.0 - cos_theta_b * cos_theta_b));
+
+        // Compute cos theta' and test against cos theta_e
+        let sin_theta_o = Float::sqrt(Float::max(0.0, 1.0 - self.cos_theta_o * self.cos_theta_o));
+        let cos_theta_x = cos_sub_clamped(sin_theta_w, cos_theta_w, sin_theta_o, self.cos_theta_o);
+        let sin_theta_x = sin_sub_clamped(sin_theta_w, cos_theta_w, sin_theta_o, self.cos_theta_o);
+        let cos_theta_p = cos_sub_clamped(sin_theta_x, cos_theta_x, sin_theta_b, cos_theta_b);
+        if cos_theta_p <= self.cos_theta_e {
+            return 0.0;
+        }
+
+        let mut importance = self.phi * cos_theta_p / d2;
+        // Account for cos theta_i in importance at surfaces
+        if n != Normal3f::zero() {
+            let cos_theta_i = Vector3f::abs_dot(&wi, &n);
+            let sin_theta_i = Float::sqrt(Float::max(0.0, 1.0 - cos_theta_i * cos_theta_i));
+            let cos_theta_p_i = cos_sub_clamped(sin_theta_i, cos_theta_i, sin_theta_b, cos_theta_b);
+            importance *= cos_theta_p_i;
+        }
+
+        Float::max(importance, 0.0)
     }
 }
 
 pub fn union_light_bounds(a: &LightBounds, b: &LightBounds) -> LightBounds {
-    LightBounds {
-        bounds: a.bounds.union(&b.bounds),
-        w: a.w,
-        phi: a.phi + b.phi,
-        cos_theta_o: a.cos_theta_o,
-        cos_theta_e: a.cos_theta_e.min(b.cos_theta_e),
-        two_sided: a.two_sided | b.two_sided,
+    // If one LightBounds has zero power, return the other
+    if a.phi == 0.0 {
+        return b.clone();
     }
+    if b.phi == 0.0 {
+        return a.clone();
+    }
+
+    // Find average direction and updated angles for LightBounds
+    let cone = union_direction_cones(
+        &DirectionCone::new(a.w, a.cos_theta_o),
+        &DirectionCone::new(b.w, b.cos_theta_o),
+    );
+    LightBounds::new(
+        a.bounds.union(&b.bounds),
+        cone.w,
+        a.phi + b.phi,
+        cone.cos_theta,
+        Float::min(a.cos_theta_e, b.cos_theta_e),
+        a.two_sided | b.two_sided,
+    )
 }
 
 pub enum Light {
