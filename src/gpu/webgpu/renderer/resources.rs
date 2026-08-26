@@ -11,6 +11,7 @@ pub struct RenderDimensions {
     pub output_buffer_size: wgpu::BufferAddress,
     pub arena_layout: ArenaLayout,
     pub workgroups: u32,
+    pub max_depth: u32,
 }
 
 impl RenderDimensions {
@@ -46,6 +47,7 @@ impl RenderDimensions {
             output_size,
             output_buffer_size,
             workgroups: pixel_count_u32.div_ceil(64),
+            max_depth: scene.render.integrator.max_depth,
             arena_layout,
         })
     }

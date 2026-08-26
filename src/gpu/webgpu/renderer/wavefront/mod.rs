@@ -58,24 +58,26 @@ pub fn render(
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::GenerateCameraRays));
             pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::IntersectClosest));
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::HandleEscapedRays));
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(
-                renderer
-                    .pipeline
-                    .stage(ShaderStageId::EvaluateSurfaceInteraction),
-            );
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::EvaluateMaterial));
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::SampleDirectLighting));
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::IntersectShadow));
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
-            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::SampleIndirectBxdf));
-            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+            for _ in 0..dimensions.max_depth.max(1) {
+                pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::IntersectClosest));
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::HandleEscapedRays));
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(
+                    renderer
+                        .pipeline
+                        .stage(ShaderStageId::EvaluateSurfaceInteraction),
+                );
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::EvaluateMaterial));
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::SampleDirectLighting));
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::IntersectShadow));
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::SampleIndirectBxdf));
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+            }
             pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::UpdateFilm));
             pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
         }
