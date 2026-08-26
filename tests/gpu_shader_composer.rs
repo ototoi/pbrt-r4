@@ -12,6 +12,7 @@ fn wavefront_shader_is_composed_from_dedicated_fragments() {
         .source
         .contains("shaders/wavefront/intersection.wgsl"));
     assert!(shader.source.contains("shaders/wavefront/escaped.wgsl"));
+    assert!(shader.source.contains("shaders/wavefront/indirect.wgsl"));
     assert!(shader.source.contains("shaders/wavefront/surface.wgsl"));
     assert!(shader.source.contains("shaders/wavefront/material.wgsl"));
     assert!(shader
