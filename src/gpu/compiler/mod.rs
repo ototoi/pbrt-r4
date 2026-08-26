@@ -1,17 +1,15 @@
 //! Host-side construction boundary for GPU IR.
 
 use super::ir::{
-    GeometryId, GpuAnimatedTransform, GpuBilinearPatchMesh, GpuBounds2, GpuBounds2i, GpuBounds3,
-    GpuBoxFilter, GpuCurveMesh, GpuCurveSegment, GpuCurveType, GpuDiffuseAreaLight,
-    GpuDiffuseMaterial, GpuDisplacedTriangleMesh, GpuFeature, GpuFloat, GpuFloatTexture,
-    GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode,
-    GpuIndependentSampler, GpuIndex, GpuInstance, GpuInstanceDefinition, GpuIrValidationErrors,
-    GpuLight, GpuLightSampler, GpuMaterial, GpuMatrix3x3, GpuMatrix4x4, GpuNormal3,
-    GpuPerspectiveCamera, GpuPoint2, GpuPoint3, GpuPointLight, GpuPrimitive, GpuQuadric,
-    GpuRenderConfig, GpuRgbFilm, GpuSceneData, GpuSceneDraft, GpuSceneIr, GpuSceneView,
-    GpuSpectrumResource, GpuSpectrumTexture, GpuStaticTransform, GpuTextureMapping, GpuTransform,
-    GpuTriangleMesh, GpuUniformInfiniteLight, GpuVector2, GpuVector3, GpuWavefrontVolPath,
-    InstanceDefinitionId, InstanceId, MaterialId, MinMaxNodeId, SourceId, SpectrumId, TransformId,
+    AnimatedTransform, BilinearPatchMesh, Bounds2, Bounds2i, Bounds3, BoxFilter, CurveMesh,
+    CurveSegment, CurveType, DiffuseAreaLight, DiffuseMaterial, DisplacedTriangleMesh, Feature,
+    Float, FloatTexture, Geometry, GeometryId, ImageChannels, ImageFilter, ImageResource,
+    ImageWrapMode, IndependentSampler, Index, Instance, InstanceDefinition, InstanceDefinitionId,
+    InstanceId, IrValidationErrors, Light, LightSampler, Material, MaterialId, Matrix3x3,
+    Matrix4x4, MinMaxNodeId, Normal3, PerspectiveCamera, Point2, Point3, PointLight, Primitive,
+    Quadric, RenderConfig, RgbFilm, SceneData, SceneDraft, SceneIr, SceneView, SourceId,
+    SpectrumId, SpectrumResource, SpectrumTexture, StaticTransform, TextureMapping, Transform,
+    TransformId, TriangleMesh, UniformInfiniteLight, Vector2, Vector3, WavefrontVolPath,
     CURRENT_IR_VERSION,
 };
 use crate::paramdict::ParameterDictionary;
@@ -19,11 +17,10 @@ use crate::parser::scene_builder::path_resolver::make_absolute_path;
 use crate::parser::scene_builder::{
     LightSceneEntity, RenderFromObject, SceneBuilder, ShapeSceneEntity,
 };
-use crate::util::base::Float;
 use crate::util::imageio::read_image::RawImageData;
 use crate::util::imageio::{read_raw_image_with_encoding, ColorEncoding};
 use crate::util::mesh::TriQuadMesh;
-use crate::util::transform::{Matrix4x4, Transform};
+use crate::util::transform::{Matrix4x4 as CpuMatrix4x4, Transform as CpuTransform};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -37,7 +34,7 @@ pub use source_map::{GpuResourceKind, GpuSourceEntry, GpuSourceMap};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GpuSceneBuildError {
     Compile(GpuCompileError),
-    Validation(GpuIrValidationErrors),
+    Validation(IrValidationErrors),
 }
 
 impl From<GpuCompileError> for GpuSceneBuildError {
@@ -46,21 +43,21 @@ impl From<GpuCompileError> for GpuSceneBuildError {
     }
 }
 
-impl From<GpuIrValidationErrors> for GpuSceneBuildError {
-    fn from(errors: GpuIrValidationErrors) -> Self {
+impl From<IrValidationErrors> for GpuSceneBuildError {
+    fn from(errors: IrValidationErrors) -> Self {
         Self::Validation(errors)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GpuCompiledScene {
-    ir: Arc<GpuSceneIr>,
+    ir: Arc<SceneIr>,
     source_map: Arc<GpuSourceMap>,
-    requirements: Arc<super::ir::GpuRequirements>,
+    requirements: Arc<super::ir::Requirements>,
 }
 
 impl GpuCompiledScene {
-    pub fn new(ir: GpuSceneIr, source_map: GpuSourceMap) -> Self {
+    pub fn new(ir: SceneIr, source_map: GpuSourceMap) -> Self {
         let requirements = ir.requirements();
         Self {
             ir: Arc::new(ir),
@@ -70,9 +67,9 @@ impl GpuCompiledScene {
     }
 
     fn with_source_map(
-        ir: GpuSceneIr,
+        ir: SceneIr,
         source_map: GpuSourceMap,
-        requirements: super::ir::GpuRequirements,
+        requirements: super::ir::Requirements,
     ) -> Self {
         Self {
             ir: Arc::new(ir),
@@ -81,11 +78,11 @@ impl GpuCompiledScene {
         }
     }
 
-    pub fn scene(&self) -> &GpuSceneIr {
+    pub fn scene(&self) -> &SceneIr {
         &self.ir
     }
 
-    pub fn view(&self) -> GpuSceneView<'_> {
+    pub fn view(&self) -> SceneView<'_> {
         self.ir.view()
     }
 
@@ -93,7 +90,7 @@ impl GpuCompiledScene {
         &self.source_map
     }
 
-    pub fn requirements(&self) -> super::ir::GpuRequirements {
+    pub fn requirements(&self) -> super::ir::Requirements {
         (*self.requirements).clone()
     }
 }
@@ -105,8 +102,8 @@ impl SceneBuilder {
     pub fn build_gpu_ir(&self) -> Result<GpuCompiledScene, GpuSceneBuildError> {
         let mut transforms = Vec::new();
         let mut geometry = Vec::new();
-        let mut spectra = vec![GpuSpectrumResource::Constant { value: 0.5 }];
-        let mut spectrum_textures = vec![GpuSpectrumTexture::Constant {
+        let mut spectra = vec![SpectrumResource::Constant { value: 0.5 }];
+        let mut spectrum_textures = vec![SpectrumTexture::Constant {
             value: SpectrumId(0),
         }];
         let mut float_textures = Vec::new();
@@ -120,7 +117,7 @@ impl SceneBuilder {
             &mut images,
             &mut texture_mappings,
         )?;
-        let mut materials = vec![GpuMaterial::Diffuse(GpuDiffuseMaterial {
+        let mut materials = vec![Material::Diffuse(DiffuseMaterial {
             reflectance: super::ir::SpectrumTextureId(0),
             displacement: None,
             normal_map: None,
@@ -178,7 +175,7 @@ impl SceneBuilder {
         let mut definitions: Vec<_> = self.instance_definitions.iter().collect();
         definitions.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (name, definition) in definitions {
-            let definition_id = InstanceDefinitionId(instance_definitions.len() as GpuIndex);
+            let definition_id = InstanceDefinitionId(instance_definitions.len() as Index);
             let mut definition_primitives = Vec::new();
             for shape in definition.shapes.iter().chain(&definition.animated_shapes) {
                 let primitive = compile_shape(
@@ -201,7 +198,7 @@ impl SceneBuilder {
             }
             let local_bounds =
                 bounds_for_primitives(&definition_primitives, &primitives, &geometry)?;
-            instance_definitions.push(GpuInstanceDefinition {
+            instance_definitions.push(InstanceDefinition {
                 primitives: definition_primitives,
                 instances: Vec::new(),
                 local_bounds,
@@ -220,8 +217,8 @@ impl SceneBuilder {
                         column: instance.loc.column,
                     },
                 )?;
-                let instance_id = InstanceId(instances.len() as GpuIndex);
-                instances.push(GpuInstance {
+                let instance_id = InstanceId(instances.len() as Index);
+                instances.push(Instance {
                     definition: definition_id,
                     transform: transform_id,
                 });
@@ -230,9 +227,9 @@ impl SceneBuilder {
         }
 
         let render = render_config(self, &mut transforms)?;
-        let draft = GpuSceneDraft {
+        let draft = SceneDraft {
             version: CURRENT_IR_VERSION,
-            data: GpuSceneData {
+            data: SceneData {
                 transforms,
                 spectra,
                 float_textures,
@@ -265,19 +262,19 @@ impl SceneBuilder {
 struct CompiledImageTexture {
     image: super::ir::ImageId,
     mapping: super::ir::TextureMappingId,
-    scale: GpuFloat,
+    scale: Float,
     invert: bool,
-    swrap: GpuImageWrapMode,
-    twrap: GpuImageWrapMode,
-    filter: GpuImageFilter,
-    channel: super::ir::GpuFloatImageChannel,
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilter,
+    channel: super::ir::FloatImageChannel,
 }
 
 fn compile_image_texture(
     builder: &SceneBuilder,
     texture: &crate::parser::scene_builder::TextureSceneEntity,
-    images: &mut Vec<GpuImageResource>,
-    texture_mappings: &mut Vec<GpuTextureMapping>,
+    images: &mut Vec<ImageResource>,
+    texture_mappings: &mut Vec<TextureMapping>,
 ) -> Result<CompiledImageTexture, GpuCompileError> {
     let source = texture_source_location(texture);
     let params = make_absolute_path(&texture.base.params, &builder.seen_work_dirs);
@@ -326,13 +323,13 @@ fn compile_image_texture(
             &source,
         ));
     }
-    let image = super::ir::ImageId(images.len() as GpuIndex);
+    let image = super::ir::ImageId(images.len() as Index);
     let pixels = raw.data_f32();
     let channels = image_channels(raw.channels, &source)?;
     let channel = float_image_channel(raw.channels, &pixels);
     let (storage, mip_levels, color_encoding) =
         build_image_storage(&raw, width, height, channels, &source)?;
-    images.push(GpuImageResource {
+    images.push(ImageResource {
         resolution: [width, height],
         channels,
         storage,
@@ -342,26 +339,26 @@ fn compile_image_texture(
     let mapping_name = params.get_one_string("mapping", "uv");
     let texture_from_render = matrix(texture.render_from_texture.m, &source)?;
     let mapping = match mapping_name.as_str() {
-        "uv" => GpuTextureMapping::Uv {
+        "uv" => TextureMapping::Uv {
             su: finite_parameter(&params, "uscale", 1.0, &source)?,
             sv: finite_parameter(&params, "vscale", 1.0, &source)?,
             du: finite_parameter(&params, "udelta", 0.0, &source)?,
             dv: finite_parameter(&params, "vdelta", 0.0, &source)?,
         },
-        "spherical" => GpuTextureMapping::Spherical {
+        "spherical" => TextureMapping::Spherical {
             texture_from_render,
         },
-        "cylindrical" => GpuTextureMapping::Cylindrical {
+        "cylindrical" => TextureMapping::Cylindrical {
             texture_from_render,
         },
-        "planar" => GpuTextureMapping::Planar {
+        "planar" => TextureMapping::Planar {
             texture_from_render,
             vs: vector3_parameter(&params, "v1", [1.0, 0.0, 0.0], &source)?,
             vt: vector3_parameter(&params, "v2", [0.0, 1.0, 0.0], &source)?,
             ds: finite_parameter(&params, "udelta", 0.0, &source)?,
             dt: finite_parameter(&params, "vdelta", 0.0, &source)?,
         },
-        "3d" | "transform3d" => GpuTextureMapping::Transform3D {
+        "3d" | "transform3d" => TextureMapping::Transform3D {
             texture_from_render,
         },
         _ => {
@@ -372,13 +369,13 @@ fn compile_image_texture(
             ))
         }
     };
-    let mapping_id = super::ir::TextureMappingId(texture_mappings.len() as GpuIndex);
+    let mapping_id = super::ir::TextureMappingId(texture_mappings.len() as Index);
     texture_mappings.push(mapping);
     let filter_name = params.get_one_string("filter", "bilinear");
     let filter = match filter_name.as_str() {
-        "point" => GpuImageFilter::Point,
-        "bilinear" => GpuImageFilter::Bilinear,
-        "trilinear" => GpuImageFilter::Trilinear,
+        "point" => ImageFilter::Point,
+        "bilinear" => ImageFilter::Bilinear,
+        "trilinear" => ImageFilter::Trilinear,
         "ewa" | "EWA" => {
             let max_anisotropy = finite_parameter(&params, "maxanisotropy", 8.0, &source)?;
             if max_anisotropy < 1.0 {
@@ -388,7 +385,7 @@ fn compile_image_texture(
                     &source,
                 ));
             }
-            GpuImageFilter::Ewa { max_anisotropy }
+            ImageFilter::Ewa { max_anisotropy }
         }
         _ => return Err(invalid_parameter("filter", "unknown image filter", &source)),
     };
@@ -396,10 +393,10 @@ fn compile_image_texture(
     let swrap_name = params.get_one_string("swrap", &wrap);
     let twrap_name = params.get_one_string("twrap", &wrap);
     let parse_wrap = |name: &str| match name {
-        "black" => Ok(GpuImageWrapMode::Black),
-        "clamp" => Ok(GpuImageWrapMode::Clamp),
-        "repeat" => Ok(GpuImageWrapMode::Repeat),
-        "octahedralsphere" => Ok(GpuImageWrapMode::OctahedralSphere),
+        "black" => Ok(ImageWrapMode::Black),
+        "clamp" => Ok(ImageWrapMode::Clamp),
+        "repeat" => Ok(ImageWrapMode::Repeat),
+        "octahedralsphere" => Ok(ImageWrapMode::OctahedralSphere),
         _ => Err(invalid_parameter(
             "wrap",
             "unknown image wrap mode",
@@ -418,25 +415,25 @@ fn compile_image_texture(
     })
 }
 
-fn float_image_channel(channels: usize, pixels: &[Float]) -> super::ir::GpuFloatImageChannel {
+fn float_image_channel(channels: usize, pixels: &[Float]) -> super::ir::FloatImageChannel {
     match channels {
-        1 | 2 => super::ir::GpuFloatImageChannel::Channel0,
+        1 | 2 => super::ir::FloatImageChannel::Channel0,
         4 if pixels.chunks_exact(4).any(|pixel| pixel[3] != 1.0) => {
-            super::ir::GpuFloatImageChannel::Alpha
+            super::ir::FloatImageChannel::Alpha
         }
-        _ => super::ir::GpuFloatImageChannel::RgbAverage,
+        _ => super::ir::FloatImageChannel::RgbAverage,
     }
 }
 
 fn image_channels(
     channels: usize,
     source: &GpuSourceLocation,
-) -> Result<GpuImageChannels, GpuCompileError> {
+) -> Result<ImageChannels, GpuCompileError> {
     match channels {
-        1 => Ok(GpuImageChannels::R),
-        2 => Ok(GpuImageChannels::Rg),
-        3 => Ok(GpuImageChannels::Rgb),
-        4 => Ok(GpuImageChannels::Rgba),
+        1 => Ok(ImageChannels::R),
+        2 => Ok(ImageChannels::Rg),
+        3 => Ok(ImageChannels::Rgb),
+        4 => Ok(ImageChannels::Rgba),
         _ => Err(invalid_parameter(
             "filename",
             "GPU image supports only one to four channels",
@@ -450,7 +447,7 @@ fn build_mip_storage(
     width: u32,
     height: u32,
     channels: usize,
-) -> (Vec<Float>, Box<[super::ir::GpuMipLevel]>) {
+) -> (Vec<Float>, Box<[super::ir::MipLevel]>) {
     let mut storage = Vec::from(base);
     let mut levels = Vec::new();
     let mut level_width = width;
@@ -458,7 +455,7 @@ fn build_mip_storage(
     let mut level = base.to_vec();
     loop {
         let offset = storage.len() - level.len();
-        levels.push(super::ir::GpuMipLevel {
+        levels.push(super::ir::MipLevel {
             resolution: [level_width, level_height],
             texel_offset: offset as u64,
             texel_count: level.len() as u64,
@@ -496,13 +493,13 @@ fn build_image_storage(
     raw: &crate::util::imageio::read_image::RawImage,
     width: u32,
     height: u32,
-    channels: GpuImageChannels,
+    channels: ImageChannels,
     source: &GpuSourceLocation,
 ) -> Result<
     (
-        super::ir::GpuTexelStorage,
-        Box<[super::ir::GpuMipLevel]>,
-        super::ir::GpuColorEncoding,
+        super::ir::TexelStorage,
+        Box<[super::ir::MipLevel]>,
+        super::ir::ColorEncoding,
     ),
     GpuCompileError,
 > {
@@ -520,19 +517,19 @@ fn encode_mip_storage(
     source_data: &RawImageData,
     encoding: ColorEncoding,
     channel_count: usize,
-) -> super::ir::GpuTexelStorage {
+) -> super::ir::TexelStorage {
     match source_data {
         RawImageData::F32(_) => {
-            super::ir::GpuTexelStorage::F32(linear_storage.to_vec().into_boxed_slice())
+            super::ir::TexelStorage::F32(linear_storage.to_vec().into_boxed_slice())
         }
-        RawImageData::F16(_) => super::ir::GpuTexelStorage::F16(
+        RawImageData::F16(_) => super::ir::TexelStorage::F16(
             linear_storage
                 .iter()
                 .map(|value| half::f16::from_f32(*value).to_bits())
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         ),
-        RawImageData::U8 { .. } => super::ir::GpuTexelStorage::U8(
+        RawImageData::U8 { .. } => super::ir::TexelStorage::U8(
             linear_storage
                 .iter()
                 .enumerate()
@@ -601,21 +598,21 @@ fn raw_encoding(raw: &crate::util::imageio::read_image::RawImage) -> ColorEncodi
     }
 }
 
-fn gpu_color_encoding(encoding: ColorEncoding) -> super::ir::GpuColorEncoding {
+fn gpu_color_encoding(encoding: ColorEncoding) -> super::ir::ColorEncoding {
     match encoding {
-        ColorEncoding::Linear => super::ir::GpuColorEncoding::Linear,
-        ColorEncoding::SRgb => super::ir::GpuColorEncoding::Srgb,
-        ColorEncoding::Gamma(exponent) => super::ir::GpuColorEncoding::Gamma { exponent },
+        ColorEncoding::Linear => super::ir::ColorEncoding::Linear,
+        ColorEncoding::SRgb => super::ir::ColorEncoding::Srgb,
+        ColorEncoding::Gamma(exponent) => super::ir::ColorEncoding::Gamma { exponent },
     }
 }
 
 fn compile_textures(
     builder: &SceneBuilder,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    float_textures: &mut Vec<GpuFloatTexture>,
-    spectrum_textures: &mut Vec<GpuSpectrumTexture>,
-    images: &mut Vec<GpuImageResource>,
-    texture_mappings: &mut Vec<GpuTextureMapping>,
+    spectra: &mut Vec<SpectrumResource>,
+    float_textures: &mut Vec<FloatTexture>,
+    spectrum_textures: &mut Vec<SpectrumTexture>,
+    images: &mut Vec<ImageResource>,
+    texture_mappings: &mut Vec<TextureMapping>,
 ) -> Result<
     (
         Vec<Option<super::ir::FloatTextureId>>,
@@ -628,8 +625,8 @@ fn compile_textures(
         let source = texture_source_location(texture);
         if texture.base.name == "imagemap" {
             let info = compile_image_texture(builder, texture, images, texture_mappings)?;
-            let id = super::ir::FloatTextureId(float_textures.len() as GpuIndex);
-            float_textures.push(GpuFloatTexture::Image {
+            let id = super::ir::FloatTextureId(float_textures.len() as Index);
+            float_textures.push(FloatTexture::Image {
                 image: info.image,
                 mapping: info.mapping,
                 scale: info.scale,
@@ -659,8 +656,8 @@ fn compile_textures(
                 ))
             }
         };
-        let id = super::ir::FloatTextureId(float_textures.len() as GpuIndex);
-        float_textures.push(GpuFloatTexture::Constant { value });
+        let id = super::ir::FloatTextureId(float_textures.len() as Index);
+        float_textures.push(FloatTexture::Constant { value });
         float_ids[index] = Some(id);
     }
 
@@ -669,8 +666,8 @@ fn compile_textures(
         let source = texture_source_location(texture);
         if texture.base.name == "imagemap" {
             let info = compile_image_texture(builder, texture, images, texture_mappings)?;
-            let id = super::ir::SpectrumTextureId(spectrum_textures.len() as GpuIndex);
-            spectrum_textures.push(GpuSpectrumTexture::Image {
+            let id = super::ir::SpectrumTextureId(spectrum_textures.len() as Index);
+            spectrum_textures.push(SpectrumTexture::Image {
                 image: info.image,
                 mapping: info.mapping,
                 scale: info.scale,
@@ -678,7 +675,7 @@ fn compile_textures(
                 swrap: info.swrap,
                 twrap: info.twrap,
                 filter: info.filter,
-                spectrum_type: super::ir::GpuSpectrumType::Albedo,
+                spectrum_type: super::ir::SpectrumType::Albedo,
             });
             spectrum_ids[index] = Some(id);
             continue;
@@ -700,16 +697,16 @@ fn compile_textures(
                 ))
             }
         };
-        let spectrum = SpectrumId(spectra.len() as GpuIndex);
-        spectra.push(GpuSpectrumResource::RgbAlbedo {
+        let spectrum = SpectrumId(spectra.len() as Index);
+        spectra.push(SpectrumResource::RgbAlbedo {
             coefficients: [
                 to_gpu_float(coefficients[0], &source)?,
                 to_gpu_float(coefficients[1], &source)?,
                 to_gpu_float(coefficients[2], &source)?,
             ],
         });
-        let id = super::ir::SpectrumTextureId(spectrum_textures.len() as GpuIndex);
-        spectrum_textures.push(GpuSpectrumTexture::Constant { value: spectrum });
+        let id = super::ir::SpectrumTextureId(spectrum_textures.len() as Index);
+        spectrum_textures.push(SpectrumTexture::Constant { value: spectrum });
         spectrum_ids[index] = Some(id);
     }
     Ok((float_ids, spectrum_ids))
@@ -718,18 +715,18 @@ fn compile_textures(
 fn compile_shape(
     builder: &SceneBuilder,
     shape: &ShapeSceneEntity,
-    transforms: &mut Vec<GpuTransform>,
-    geometry: &mut Vec<GpuGeometry>,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    spectrum_textures: &mut Vec<GpuSpectrumTexture>,
-    float_textures: &[GpuFloatTexture],
+    transforms: &mut Vec<Transform>,
+    geometry: &mut Vec<Geometry>,
+    spectra: &mut Vec<SpectrumResource>,
+    spectrum_textures: &mut Vec<SpectrumTexture>,
+    float_textures: &[FloatTexture],
     float_texture_ids: &[Option<super::ir::FloatTextureId>],
     spectrum_texture_ids: &[Option<super::ir::SpectrumTextureId>],
-    images: &mut Vec<GpuImageResource>,
-    texture_mappings: &mut Vec<GpuTextureMapping>,
-    materials: &mut Vec<GpuMaterial>,
-    primitives: &mut Vec<GpuPrimitive>,
-    lights: &mut Vec<GpuLight>,
+    images: &mut Vec<ImageResource>,
+    texture_mappings: &mut Vec<TextureMapping>,
+    materials: &mut Vec<Material>,
+    primitives: &mut Vec<Primitive>,
+    lights: &mut Vec<Light>,
 ) -> Result<super::ir::PrimitiveId, GpuCompileError> {
     let source = source_location(shape);
     if !matches!(
@@ -768,7 +765,7 @@ fn compile_shape(
             "shape displacement on non-PLY geometry",
         ));
     }
-    let transform_id = TransformId(transforms.len() as GpuIndex);
+    let transform_id = TransformId(transforms.len() as Index);
     transforms.push(compile_transform(&shape.render_from_object, &source)?);
     let material = compile_material(
         builder,
@@ -817,9 +814,9 @@ fn compile_shape(
     let geometry_id = if shape.base.name == "plymesh" {
         let base_mesh = ply_mesh(builder, &shape.base.params, &source)?;
         if shape.base.params.get_textures_ref("displacement").is_some() {
-            let base_id = GeometryId(geometry.len() as GpuIndex);
-            geometry.push(GpuGeometry::TriangleMesh(base_mesh.clone()));
-            let displaced_id = GeometryId(geometry.len() as GpuIndex);
+            let base_id = GeometryId(geometry.len() as Index);
+            geometry.push(Geometry::TriangleMesh(base_mesh.clone()));
+            let displaced_id = GeometryId(geometry.len() as Index);
             let displaced = displaced_ply_mesh(
                 builder,
                 &shape.base.params,
@@ -830,44 +827,42 @@ fn compile_shape(
                 images,
                 &source,
             )?;
-            geometry.push(GpuGeometry::DisplacedTriangleMesh(displaced));
+            geometry.push(Geometry::DisplacedTriangleMesh(displaced));
             displaced_id
         } else {
-            let id = GeometryId(geometry.len() as GpuIndex);
-            geometry.push(GpuGeometry::TriangleMesh(base_mesh));
+            let id = GeometryId(geometry.len() as Index);
+            geometry.push(Geometry::TriangleMesh(base_mesh));
             id
         }
     } else {
-        let id = GeometryId(geometry.len() as GpuIndex);
+        let id = GeometryId(geometry.len() as Index);
         let shape_geometry = match shape.base.name.as_str() {
-            "trianglemesh" => {
-                GpuGeometry::TriangleMesh(triangle_mesh(&shape.base.params, &source)?)
-            }
+            "trianglemesh" => Geometry::TriangleMesh(triangle_mesh(&shape.base.params, &source)?),
             "bilinearmesh" => {
-                GpuGeometry::BilinearPatchMesh(bilinear_mesh(&shape.base.params, &source)?)
+                Geometry::BilinearPatchMesh(bilinear_mesh(&shape.base.params, &source)?)
             }
-            "curve" | "curves" => GpuGeometry::CurveMesh(curve_mesh(
+            "curve" | "curves" => Geometry::CurveMesh(curve_mesh(
                 &shape.base.params,
                 &shape.child_params,
                 &source,
             )?),
-            "sphere" => GpuGeometry::Quadric(quadric(&shape.base.params, "sphere", &source)?),
-            "cylinder" => GpuGeometry::Quadric(quadric(&shape.base.params, "cylinder", &source)?),
-            "disk" => GpuGeometry::Quadric(quadric(&shape.base.params, "disk", &source)?),
+            "sphere" => Geometry::Quadric(quadric(&shape.base.params, "sphere", &source)?),
+            "cylinder" => Geometry::Quadric(quadric(&shape.base.params, "cylinder", &source)?),
+            "disk" => Geometry::Quadric(quadric(&shape.base.params, "disk", &source)?),
             _ => unreachable!("shape name was checked above"),
         };
         geometry.push(shape_geometry);
         id
     };
-    let primitive_id = super::ir::PrimitiveId(primitives.len() as GpuIndex);
-    primitives.push(GpuPrimitive {
+    let primitive_id = super::ir::PrimitiveId(primitives.len() as Index);
+    primitives.push(Primitive {
         geometry: geometry_id,
         transform: transform_id,
         material: Some(material),
         alpha,
         area_light: area_light.map_or(
-            super::ir::GpuAreaLightBinding::None,
-            super::ir::GpuAreaLightBinding::Uniform,
+            super::ir::AreaLightBinding::None,
+            super::ir::AreaLightBinding::Uniform,
         ),
         reverse_orientation: shape.reverse_orientation,
     });
@@ -878,7 +873,7 @@ fn ply_mesh(
     builder: &SceneBuilder,
     params: &ParameterDictionary,
     source: &GpuSourceLocation,
-) -> Result<GpuTriangleMesh, GpuCompileError> {
+) -> Result<TriangleMesh, GpuCompileError> {
     let params = make_absolute_path(params, &builder.seen_work_dirs);
     let filename = params.get_one_string("filename", "");
     if filename.is_empty() {
@@ -911,7 +906,7 @@ fn ply_mesh(
         .p
         .iter()
         .map(|point| {
-            Ok(GpuPoint3([
+            Ok(Point3([
                 to_gpu_float(point[0], source)?,
                 to_gpu_float(point[1], source)?,
                 to_gpu_float(point[2], source)?,
@@ -928,7 +923,7 @@ fn ply_mesh(
             mesh.n
                 .iter()
                 .map(|normal| {
-                    Ok(GpuNormal3([
+                    Ok(Normal3([
                         to_gpu_float(normal[0], source)?,
                         to_gpu_float(normal[1], source)?,
                         to_gpu_float(normal[2], source)?,
@@ -944,7 +939,7 @@ fn ply_mesh(
             mesh.uv
                 .iter()
                 .map(|uv| {
-                    Ok(GpuPoint2([
+                    Ok(Point2([
                         to_gpu_float(uv[0], source)?,
                         to_gpu_float(uv[1], source)?,
                     ]))
@@ -959,7 +954,7 @@ fn ply_mesh(
             mesh.face_indices
                 .iter()
                 .map(|index| {
-                    GpuIndex::try_from(*index)
+                    Index::try_from(*index)
                         .map_err(|_| invalid_parameter("face_indices", "negative index", source))
                 })
                 .collect::<Result<Vec<_>, GpuCompileError>>()?,
@@ -967,7 +962,7 @@ fn ply_mesh(
     } else {
         None
     };
-    Ok(GpuTriangleMesh {
+    Ok(TriangleMesh {
         positions,
         indices,
         normals,
@@ -981,12 +976,12 @@ fn displaced_ply_mesh(
     builder: &SceneBuilder,
     params: &ParameterDictionary,
     base_mesh_id: GeometryId,
-    base_mesh: &GpuTriangleMesh,
-    float_textures: &[GpuFloatTexture],
+    base_mesh: &TriangleMesh,
+    float_textures: &[FloatTexture],
     float_texture_ids: &[Option<super::ir::FloatTextureId>],
-    images: &[GpuImageResource],
+    images: &[ImageResource],
     source: &GpuSourceLocation,
-) -> Result<GpuDisplacedTriangleMesh, GpuCompileError> {
+) -> Result<DisplacedTriangleMesh, GpuCompileError> {
     let texture_name = params
         .get_textures_ref("displacement")
         .and_then(|names| names.first().cloned())
@@ -1016,12 +1011,12 @@ fn displaced_ply_mesh(
         let uv0 = uvs[triangle[0] as usize].0;
         let uv1 = uvs[triangle[1] as usize].0;
         let uv2 = uvs[triangle[2] as usize].0;
-        let parameter_bounds = GpuBounds2 {
-            min: GpuPoint2([
+        let parameter_bounds = Bounds2 {
+            min: Point2([
                 uv0[0].min(uv1[0]).min(uv2[0]),
                 uv0[1].min(uv1[1]).min(uv2[1]),
             ]),
-            max: GpuPoint2([
+            max: Point2([
                 uv0[0].max(uv1[0]).max(uv2[0]),
                 uv0[1].max(uv1[1]).max(uv2[1]),
             ]),
@@ -1039,8 +1034,8 @@ fn displaced_ply_mesh(
                 source,
             ));
         }
-        let root = MinMaxNodeId(min_max_nodes.len() as GpuIndex);
-        min_max_nodes.push(super::ir::GpuMinMaxNode {
+        let root = MinMaxNodeId(min_max_nodes.len() as Index);
+        min_max_nodes.push(super::ir::MinMaxNode {
             parameter_bounds,
             displacement_min,
             displacement_max,
@@ -1065,7 +1060,7 @@ fn displaced_ply_mesh(
             max[axis] = max[axis].max(point.0[axis] + extent);
         }
     }
-    Ok(GpuDisplacedTriangleMesh {
+    Ok(DisplacedTriangleMesh {
         base_mesh: base_mesh_id,
         displacement,
         displacement_scale: 1.0,
@@ -1074,9 +1069,9 @@ fn displaced_ply_mesh(
         min_max_nodes: min_max_nodes.into_boxed_slice(),
         triangle_roots: triangle_roots.into_boxed_slice(),
         displaced_bounds_object: vec![
-            GpuBounds3 {
-                min: GpuPoint3(min),
-                max: GpuPoint3(max),
+            Bounds3 {
+                min: Point3(min),
+                max: Point3(max),
             };
             base_mesh.indices.len()
         ]
@@ -1086,16 +1081,16 @@ fn displaced_ply_mesh(
 
 fn float_texture_bounds(
     texture_id: super::ir::FloatTextureId,
-    float_textures: &[GpuFloatTexture],
-    images: &[GpuImageResource],
+    float_textures: &[FloatTexture],
+    images: &[ImageResource],
     source: &GpuSourceLocation,
-) -> Result<(GpuFloat, GpuFloat), GpuCompileError> {
+) -> Result<(Float, Float), GpuCompileError> {
     let texture = float_textures
         .get(texture_id.0 as usize)
         .ok_or_else(|| invalid_parameter("displacement", "texture ID is invalid", source))?;
     let (mut min, mut max) = match texture {
-        GpuFloatTexture::Constant { value } => (*value, *value),
-        GpuFloatTexture::Image {
+        FloatTexture::Constant { value } => (*value, *value),
+        FloatTexture::Image {
             image,
             channel,
             scale,
@@ -1138,14 +1133,14 @@ fn float_texture_bounds(
 }
 
 fn image_float_channel_values(
-    image: &GpuImageResource,
-    channel: super::ir::GpuFloatImageChannel,
+    image: &ImageResource,
+    channel: super::ir::FloatImageChannel,
     source: &GpuSourceLocation,
 ) -> Result<Vec<Float>, GpuCompileError> {
     let channel_count = image.channels.count();
     let selected = match channel {
-        super::ir::GpuFloatImageChannel::Channel0 => 0,
-        super::ir::GpuFloatImageChannel::Alpha => {
+        super::ir::FloatImageChannel::Channel0 => 0,
+        super::ir::FloatImageChannel::Alpha => {
             if channel_count != 2 && channel_count != 4 {
                 return Err(invalid_parameter(
                     "displacement",
@@ -1155,7 +1150,7 @@ fn image_float_channel_values(
             }
             channel_count - 1
         }
-        super::ir::GpuFloatImageChannel::RgbAverage => {
+        super::ir::FloatImageChannel::RgbAverage => {
             if channel_count < 3 {
                 return Err(invalid_parameter(
                     "displacement",
@@ -1169,7 +1164,7 @@ fn image_float_channel_values(
     let mut values = Vec::new();
     let mut push_pixel = |pixel: &[Float]| {
         values.push(
-            if matches!(channel, super::ir::GpuFloatImageChannel::RgbAverage) {
+            if matches!(channel, super::ir::FloatImageChannel::RgbAverage) {
                 (pixel[0] + pixel[1] + pixel[2]) / 3.0
             } else {
                 pixel[selected]
@@ -1177,12 +1172,12 @@ fn image_float_channel_values(
         );
     };
     match &image.storage {
-        super::ir::GpuTexelStorage::F32(data) => {
+        super::ir::TexelStorage::F32(data) => {
             for pixel in data.chunks_exact(channel_count) {
                 push_pixel(pixel);
             }
         }
-        super::ir::GpuTexelStorage::F16(data) => {
+        super::ir::TexelStorage::F16(data) => {
             for pixel in data.chunks_exact(channel_count) {
                 let values_f32 = pixel
                     .iter()
@@ -1191,7 +1186,7 @@ fn image_float_channel_values(
                 push_pixel(&values_f32);
             }
         }
-        super::ir::GpuTexelStorage::U8(data) => {
+        super::ir::TexelStorage::U8(data) => {
             for pixel in data.chunks_exact(channel_count) {
                 let values_f32 = pixel
                     .iter()
@@ -1202,11 +1197,11 @@ fn image_float_channel_values(
                             normalized
                         } else {
                             match image.color_encoding {
-                                super::ir::GpuColorEncoding::Linear => normalized,
-                                super::ir::GpuColorEncoding::Srgb => {
+                                super::ir::ColorEncoding::Linear => normalized,
+                                super::ir::ColorEncoding::Srgb => {
                                     ColorEncoding::SRgb.to_linear(normalized)
                                 }
-                                super::ir::GpuColorEncoding::Gamma { exponent } => {
+                                super::ir::ColorEncoding::Gamma { exponent } => {
                                     normalized.powf(exponent)
                                 }
                             }
@@ -1231,7 +1226,7 @@ fn curve_mesh(
     params: &ParameterDictionary,
     child_params: &[ParameterDictionary],
     source: &GpuSourceLocation,
-) -> Result<GpuCurveMesh, GpuCompileError> {
+) -> Result<CurveMesh, GpuCompileError> {
     let grouped = params.get_points("P").is_empty();
     let first_params = if grouped {
         child_params
@@ -1241,9 +1236,9 @@ fn curve_mesh(
         params
     };
     let curve_type = match first_params.get_one_string("type", "flat").as_str() {
-        "flat" => GpuCurveType::Flat,
-        "cylinder" => GpuCurveType::Cylinder,
-        "ribbon" => GpuCurveType::Ribbon,
+        "flat" => CurveType::Flat,
+        "cylinder" => CurveType::Cylinder,
+        "ribbon" => CurveType::Ribbon,
         _ => return Err(invalid_parameter("type", "unknown curve type", source)),
     };
     let mut curves = Vec::with_capacity(child_params.len() + 1);
@@ -1257,14 +1252,14 @@ fn curve_mesh(
             curves.push(curve_segment(params, curve_type, source)?);
         }
     }
-    Ok(GpuCurveMesh { curve_type, curves })
+    Ok(CurveMesh { curve_type, curves })
 }
 
 fn curve_segment(
     params: &ParameterDictionary,
-    curve_type: GpuCurveType,
+    curve_type: CurveType,
     source: &GpuSourceLocation,
-) -> Result<GpuCurveSegment, GpuCompileError> {
+) -> Result<CurveSegment, GpuCompileError> {
     let points = params.get_points("P");
     if points.len() != 12 {
         return Err(invalid_parameter(
@@ -1273,9 +1268,9 @@ fn curve_segment(
             source,
         ));
     }
-    let mut control_points = [GpuPoint3([0.0; 3]); 4];
+    let mut control_points = [Point3([0.0; 3]); 4];
     for (point, values) in control_points.iter_mut().zip(points.chunks_exact(3)) {
-        *point = GpuPoint3([
+        *point = Point3([
             to_gpu_float(values[0], source)?,
             to_gpu_float(values[1], source)?,
             to_gpu_float(values[2], source)?,
@@ -1302,7 +1297,7 @@ fn curve_segment(
     }
     let raw_normals = params.get_points("N");
     let endpoint_normals = match curve_type {
-        GpuCurveType::Ribbon => {
+        CurveType::Ribbon => {
             if raw_normals.len() != 6 {
                 return Err(invalid_parameter(
                     "N",
@@ -1311,19 +1306,19 @@ fn curve_segment(
                 ));
             }
             Some([
-                GpuNormal3([
+                Normal3([
                     to_gpu_float(raw_normals[0], source)?,
                     to_gpu_float(raw_normals[1], source)?,
                     to_gpu_float(raw_normals[2], source)?,
                 ]),
-                GpuNormal3([
+                Normal3([
                     to_gpu_float(raw_normals[3], source)?,
                     to_gpu_float(raw_normals[4], source)?,
                     to_gpu_float(raw_normals[5], source)?,
                 ]),
             ])
         }
-        GpuCurveType::Flat | GpuCurveType::Cylinder => {
+        CurveType::Flat | CurveType::Cylinder => {
             if !raw_normals.is_empty() {
                 return Err(invalid_parameter(
                     "N",
@@ -1334,7 +1329,7 @@ fn curve_segment(
             None
         }
     };
-    Ok(GpuCurveSegment {
+    Ok(CurveSegment {
         control_points,
         widths,
         endpoint_normals,
@@ -1343,11 +1338,11 @@ fn curve_segment(
 
 fn compile_instance_transform(
     render_from_instance: &RenderFromObject,
-    transforms: &mut Vec<GpuTransform>,
+    transforms: &mut Vec<Transform>,
     source: &GpuSourceLocation,
 ) -> Result<TransformId, GpuCompileError> {
     let transform = compile_transform(render_from_instance, source)?;
-    let id = TransformId(transforms.len() as GpuIndex);
+    let id = TransformId(transforms.len() as Index);
     transforms.push(transform);
     Ok(id)
 }
@@ -1355,17 +1350,17 @@ fn compile_instance_transform(
 fn compile_transform(
     render_from_object: &RenderFromObject,
     source: &GpuSourceLocation,
-) -> Result<GpuTransform, GpuCompileError> {
+) -> Result<Transform, GpuCompileError> {
     Ok(match render_from_object {
         RenderFromObject::Static(transform) => {
-            GpuTransform::Static(static_transform(transform, source)?)
+            Transform::Static(static_transform(transform, source)?)
         }
         RenderFromObject::Animated {
             from,
             to,
             start_time,
             end_time,
-        } => GpuTransform::Animated(GpuAnimatedTransform {
+        } => Transform::Animated(AnimatedTransform {
             start: static_transform(from, source)?,
             end: static_transform(to, source)?,
             start_time: to_gpu_float(*start_time, source)?,
@@ -1376,9 +1371,9 @@ fn compile_transform(
 
 fn bounds_for_primitives(
     primitive_ids: &[super::ir::PrimitiveId],
-    primitives: &[GpuPrimitive],
-    geometry: &[GpuGeometry],
-) -> Result<GpuBounds3, GpuCompileError> {
+    primitives: &[Primitive],
+    geometry: &[Geometry],
+) -> Result<Bounds3, GpuCompileError> {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
     for primitive_id in primitive_ids {
@@ -1397,17 +1392,17 @@ fn bounds_for_primitives(
             }
         })?;
         match shape_geometry {
-            GpuGeometry::TriangleMesh(mesh) => {
+            Geometry::TriangleMesh(mesh) => {
                 for point in &mesh.positions {
                     extend_bounds(&mut min, &mut max, point.0);
                 }
             }
-            GpuGeometry::BilinearPatchMesh(mesh) => {
+            Geometry::BilinearPatchMesh(mesh) => {
                 for point in &mesh.positions {
                     extend_bounds(&mut min, &mut max, point.0);
                 }
             }
-            GpuGeometry::CurveMesh(mesh) => {
+            Geometry::CurveMesh(mesh) => {
                 for curve in &mesh.curves {
                     let radius = curve.widths.iter().copied().fold(0.0, f32::max) * 0.5;
                     for point in curve.control_points {
@@ -1415,26 +1410,26 @@ fn bounds_for_primitives(
                     }
                 }
             }
-            GpuGeometry::Quadric(quadric) => {
+            Geometry::Quadric(quadric) => {
                 let (radius, z_min, z_max) = match quadric {
-                    GpuQuadric::Sphere {
+                    Quadric::Sphere {
                         radius,
                         z_min,
                         z_max,
                         ..
                     }
-                    | GpuQuadric::Cylinder {
+                    | Quadric::Cylinder {
                         radius,
                         z_min,
                         z_max,
                         ..
                     } => (*radius, *z_min, *z_max),
-                    GpuQuadric::Disk { radius, height, .. } => (*radius, *height, *height),
+                    Quadric::Disk { radius, height, .. } => (*radius, *height, *height),
                 };
                 extend_bounds(&mut min, &mut max, [-radius, -radius, z_min]);
                 extend_bounds(&mut min, &mut max, [radius, radius, z_max]);
             }
-            GpuGeometry::DisplacedTriangleMesh(mesh) => {
+            Geometry::DisplacedTriangleMesh(mesh) => {
                 for bound in &mesh.displaced_bounds_object {
                     extend_bounds(&mut min, &mut max, bound.min.0);
                     extend_bounds(&mut min, &mut max, bound.max.0);
@@ -1443,9 +1438,9 @@ fn bounds_for_primitives(
         }
     }
     if min.iter().zip(max.iter()).all(|(min, max)| min <= max) {
-        Ok(GpuBounds3 {
-            min: GpuPoint3(min),
-            max: GpuPoint3(max),
+        Ok(Bounds3 {
+            min: Point3(min),
+            max: Point3(max),
         })
     } else {
         Err(GpuCompileError::InvalidParameter {
@@ -1470,7 +1465,7 @@ fn extend_bounds_with_radius(min: &mut [f32; 3], max: &mut [f32; 3], point: [f32
 fn bilinear_mesh(
     params: &ParameterDictionary,
     source: &GpuSourceLocation,
-) -> Result<GpuBilinearPatchMesh, GpuCompileError> {
+) -> Result<BilinearPatchMesh, GpuCompileError> {
     let raw_positions = params.get_points("P");
     if raw_positions.is_empty() || raw_positions.len() % 3 != 0 {
         return Err(invalid_parameter(
@@ -1482,7 +1477,7 @@ fn bilinear_mesh(
     let positions = raw_positions
         .chunks_exact(3)
         .map(|point| {
-            Ok(GpuPoint3([
+            Ok(Point3([
                 to_gpu_float(point[0], source)?,
                 to_gpu_float(point[1], source)?,
                 to_gpu_float(point[2], source)?,
@@ -1502,13 +1497,13 @@ fn bilinear_mesh(
         .map(|patch| {
             let mut result = [0; 4];
             for (dst, index) in result.iter_mut().zip(patch) {
-                *dst = GpuIndex::try_from(*index)
+                *dst = Index::try_from(*index)
                     .map_err(|_| invalid_parameter("indices", "negative index", source))?;
             }
             Ok(result)
         })
-        .collect::<Result<Vec<[GpuIndex; 4]>, GpuCompileError>>()?;
-    Ok(GpuBilinearPatchMesh {
+        .collect::<Result<Vec<[Index; 4]>, GpuCompileError>>()?;
+    Ok(BilinearPatchMesh {
         positions,
         indices,
         normals: optional_vec3(params.get_points("N"), "N", source)?,
@@ -1521,26 +1516,26 @@ fn quadric(
     params: &ParameterDictionary,
     name: &'static str,
     source: &GpuSourceLocation,
-) -> Result<GpuQuadric, GpuCompileError> {
+) -> Result<Quadric, GpuCompileError> {
     let radius = finite_parameter(params, "radius", 1.0, source)?;
     let z_min = finite_parameter(params, "zmin", -1.0, source)?;
     let z_max = finite_parameter(params, "zmax", 1.0, source)?;
     let phi_max_radians =
         finite_parameter(params, "phimax", 360.0, source)? * std::f32::consts::PI / 180.0;
     match name {
-        "sphere" => Ok(GpuQuadric::Sphere {
+        "sphere" => Ok(Quadric::Sphere {
             radius,
             z_min,
             z_max,
             phi_max_radians,
         }),
-        "cylinder" => Ok(GpuQuadric::Cylinder {
+        "cylinder" => Ok(Quadric::Cylinder {
             radius,
             z_min,
             z_max,
             phi_max_radians,
         }),
-        "disk" => Ok(GpuQuadric::Disk {
+        "disk" => Ok(Quadric::Disk {
             height: finite_parameter(params, "height", 0.0, source)?,
             radius,
             inner_radius: finite_parameter(params, "innerradius", 0.0, source)?,
@@ -1555,7 +1550,7 @@ fn finite_parameter(
     name: &'static str,
     default: Float,
     source: &GpuSourceLocation,
-) -> Result<GpuFloat, GpuCompileError> {
+) -> Result<Float, GpuCompileError> {
     let value = params.get_one_float(name, default) as f32;
     value
         .is_finite()
@@ -1568,7 +1563,7 @@ fn vector3_parameter(
     name: &'static str,
     default: [Float; 3],
     source: &GpuSourceLocation,
-) -> Result<GpuVector3, GpuCompileError> {
+) -> Result<Vector3, GpuCompileError> {
     let values = params.get_points(name);
     let values = if values.is_empty() {
         default
@@ -1581,7 +1576,7 @@ fn vector3_parameter(
             source,
         ));
     };
-    Ok(GpuVector3([
+    Ok(Vector3([
         to_gpu_float(values[0], source)?,
         to_gpu_float(values[1], source)?,
         to_gpu_float(values[2], source)?,
@@ -1593,7 +1588,7 @@ fn compile_rgb_spectrum(
     name: &'static str,
     default: [Float; 3],
     source: &GpuSourceLocation,
-    spectra: &mut Vec<GpuSpectrumResource>,
+    spectra: &mut Vec<SpectrumResource>,
 ) -> Result<SpectrumId, GpuCompileError> {
     if params.get_textures_ref(name).is_some()
         || params.get_spectrums_ref(name).is_some()
@@ -1616,8 +1611,8 @@ fn compile_rgb_spectrum(
             ))
         }
     };
-    let id = SpectrumId(spectra.len() as GpuIndex);
-    spectra.push(GpuSpectrumResource::RgbUnbounded {
+    let id = SpectrumId(spectra.len() as Index);
+    spectra.push(SpectrumResource::RgbUnbounded {
         coefficients: [
             to_gpu_float(coefficients[0], source)?,
             to_gpu_float(coefficients[1], source)?,
@@ -1630,12 +1625,12 @@ fn compile_rgb_spectrum(
 fn compile_material(
     builder: &SceneBuilder,
     shape: &ShapeSceneEntity,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    spectrum_textures: &mut Vec<GpuSpectrumTexture>,
+    spectra: &mut Vec<SpectrumResource>,
+    spectrum_textures: &mut Vec<SpectrumTexture>,
     float_texture_ids: &[Option<super::ir::FloatTextureId>],
     spectrum_texture_ids: &[Option<super::ir::SpectrumTextureId>],
-    images: &mut Vec<GpuImageResource>,
-    materials: &mut Vec<GpuMaterial>,
+    images: &mut Vec<ImageResource>,
+    materials: &mut Vec<Material>,
 ) -> Result<MaterialId, GpuCompileError> {
     if shape.material_is_default
         && shape.material_index == usize::MAX
@@ -1715,7 +1710,7 @@ fn compile_material(
                 )
             })?;
         let id = MaterialId(materials.len() as u32);
-        materials.push(GpuMaterial::Diffuse(GpuDiffuseMaterial {
+        materials.push(Material::Diffuse(DiffuseMaterial {
             reflectance: texture_id,
             displacement,
             normal_map,
@@ -1734,17 +1729,17 @@ fn compile_material(
         }
     };
     let spectrum = SpectrumId(spectra.len() as u32);
-    spectra.push(GpuSpectrumResource::RgbAlbedo {
+    spectra.push(SpectrumResource::RgbAlbedo {
         coefficients: [
             to_gpu_float(coefficients[0], &source_location(shape))?,
             to_gpu_float(coefficients[1], &source_location(shape))?,
             to_gpu_float(coefficients[2], &source_location(shape))?,
         ],
     });
-    let spectrum_texture = super::ir::SpectrumTextureId(spectrum_textures.len() as GpuIndex);
-    spectrum_textures.push(GpuSpectrumTexture::Constant { value: spectrum });
+    let spectrum_texture = super::ir::SpectrumTextureId(spectrum_textures.len() as Index);
+    spectrum_textures.push(SpectrumTexture::Constant { value: spectrum });
     let id = MaterialId(materials.len() as u32);
-    materials.push(GpuMaterial::Diffuse(GpuDiffuseMaterial {
+    materials.push(Material::Diffuse(DiffuseMaterial {
         reflectance: spectrum_texture,
         displacement,
         normal_map,
@@ -1778,7 +1773,7 @@ fn material_texture_id(
 fn compile_normal_map_image(
     builder: &SceneBuilder,
     material: &crate::parser::scene_builder::MaterialSceneEntity,
-    images: &mut Vec<GpuImageResource>,
+    images: &mut Vec<ImageResource>,
     source: &GpuSourceLocation,
 ) -> Result<Option<super::ir::ImageId>, GpuCompileError> {
     let params = make_absolute_path(&material.base.params, &builder.seen_work_dirs);
@@ -1806,14 +1801,14 @@ fn compile_normal_map_image(
         .map_err(|_| invalid_parameter("normalmap", "image width is too large", source))?;
     let height = u32::try_from(raw.resolution.y)
         .map_err(|_| invalid_parameter("normalmap", "image height is too large", source))?;
-    let image = super::ir::ImageId(images.len() as GpuIndex);
+    let image = super::ir::ImageId(images.len() as Index);
     let (mip_values, mip_levels) = build_mip_storage(&pixels, width, height, 3);
-    images.push(GpuImageResource {
+    images.push(ImageResource {
         resolution: [width, height],
-        channels: GpuImageChannels::Rgb,
+        channels: ImageChannels::Rgb,
         storage: encode_mip_storage(&mip_values, &raw.data, ColorEncoding::Linear, 3),
         mip_levels,
-        color_encoding: super::ir::GpuColorEncoding::Linear,
+        color_encoding: super::ir::ColorEncoding::Linear,
     });
     Ok(Some(image))
 }
@@ -1821,7 +1816,7 @@ fn compile_normal_map_image(
 fn triangle_mesh(
     params: &ParameterDictionary,
     source: &GpuSourceLocation,
-) -> Result<GpuTriangleMesh, GpuCompileError> {
+) -> Result<TriangleMesh, GpuCompileError> {
     let positions = params.get_points("P");
     if positions.is_empty() {
         return Err(GpuCompileError::MissingParameter {
@@ -1839,7 +1834,7 @@ fn triangle_mesh(
     let positions = positions
         .chunks_exact(3)
         .map(|p| {
-            Ok(GpuPoint3([
+            Ok(Point3([
                 to_gpu_float(p[0], source)?,
                 to_gpu_float(p[1], source)?,
                 to_gpu_float(p[2], source)?,
@@ -1865,21 +1860,17 @@ fn triangle_mesh(
     for triangle in raw_indices.chunks_exact(3) {
         let mut converted = [0; 3];
         for (dst, index) in converted.iter_mut().zip(triangle) {
-            *dst = GpuIndex::try_from(*index)
+            *dst = Index::try_from(*index)
                 .map_err(|_| invalid_parameter("indices", "negative index", source))?;
         }
         indices.push(converted);
     }
 
     let normals = optional_vec3(params.get_points("N"), "N", source)?;
-    let tangents = optional_vec3(params.get_points("S"), "S", source)?.map(|values| {
-        values
-            .into_iter()
-            .map(|normal| GpuVector3(normal.0))
-            .collect()
-    });
+    let tangents = optional_vec3(params.get_points("S"), "S", source)?
+        .map(|values| values.into_iter().map(|normal| Vector3(normal.0)).collect());
     let uvs = optional_vec2(params.get_points("uv"), "uv", source)?;
-    Ok(GpuTriangleMesh {
+    Ok(TriangleMesh {
         positions,
         indices,
         normals,
@@ -1893,7 +1884,7 @@ fn optional_vec2(
     values: Vec<Float>,
     parameter: &'static str,
     source: &GpuSourceLocation,
-) -> Result<Option<Vec<GpuPoint2>>, GpuCompileError> {
+) -> Result<Option<Vec<Point2>>, GpuCompileError> {
     if values.is_empty() {
         return Ok(None);
     }
@@ -1907,7 +1898,7 @@ fn optional_vec2(
     values
         .chunks_exact(2)
         .map(|value| {
-            Ok(GpuPoint2([
+            Ok(Point2([
                 to_gpu_float(value[0], source)?,
                 to_gpu_float(value[1], source)?,
             ]))
@@ -1920,7 +1911,7 @@ fn optional_vec3(
     values: Vec<Float>,
     parameter: &'static str,
     source: &GpuSourceLocation,
-) -> Result<Option<Vec<GpuNormal3>>, GpuCompileError> {
+) -> Result<Option<Vec<Normal3>>, GpuCompileError> {
     if values.is_empty() {
         return Ok(None);
     }
@@ -1934,7 +1925,7 @@ fn optional_vec3(
     values
         .chunks_exact(3)
         .map(|value| {
-            Ok(GpuNormal3([
+            Ok(Normal3([
                 to_gpu_float(value[0], source)?,
                 to_gpu_float(value[1], source)?,
                 to_gpu_float(value[2], source)?,
@@ -1945,30 +1936,30 @@ fn optional_vec3(
 }
 
 fn static_transform(
-    transform: &Transform,
+    transform: &CpuTransform,
     source: &GpuSourceLocation,
-) -> Result<GpuStaticTransform, GpuCompileError> {
-    Ok(GpuStaticTransform {
+) -> Result<StaticTransform, GpuCompileError> {
+    Ok(StaticTransform {
         render_from_object: matrix(transform.m, source)?,
         object_from_render: matrix(transform.minv, source)?,
         swaps_handedness: transform.swaps_handedness(),
     })
 }
 
-fn matrix(matrix: Matrix4x4, source: &GpuSourceLocation) -> Result<GpuMatrix4x4, GpuCompileError> {
+fn matrix(matrix: CpuMatrix4x4, source: &GpuSourceLocation) -> Result<Matrix4x4, GpuCompileError> {
     let mut result = [[0.0; 4]; 4];
     for (row, values) in result.iter_mut().enumerate() {
         for (column, value) in values.iter_mut().enumerate() {
             *value = to_gpu_float(matrix.m[row * 4 + column], source)?;
         }
     }
-    Ok(GpuMatrix4x4(result))
+    Ok(Matrix4x4(result))
 }
 
 fn render_config(
     builder: &SceneBuilder,
-    transforms: &mut Vec<GpuTransform>,
-) -> Result<GpuRenderConfig, GpuCompileError> {
+    transforms: &mut Vec<Transform>,
+) -> Result<RenderConfig, GpuCompileError> {
     let source = empty_source();
     if builder.camera_name != "perspective" {
         return Err(GpuCompileError::UnsupportedSceneFeature {
@@ -2063,7 +2054,7 @@ fn render_config(
             &empty_source(),
         ));
     }
-    let pixel_bounds = GpuBounds2i {
+    let pixel_bounds = Bounds2i {
         min: [
             u32::try_from(min[0]).map_err(|_| {
                 invalid_parameter(
@@ -2128,17 +2119,17 @@ fn render_config(
     if halffov > 0.0 {
         fov = 2.0 * halffov;
     }
-    let camera_to_screen = Transform::perspective(fov, 1e-2, 1000.0);
-    let screen_to_raster = Transform::scale(xresolution as Float, yresolution as Float, 1.0)
-        * Transform::scale(
+    let camera_to_screen = CpuTransform::perspective(fov, 1e-2, 1000.0);
+    let screen_to_raster = CpuTransform::scale(xresolution as Float, yresolution as Float, 1.0)
+        * CpuTransform::scale(
             1.0 / (screen[1] - screen[0]),
             1.0 / (screen[2] - screen[3]),
             1.0,
         )
-        * Transform::translate(-screen[0], -screen[3], 0.0);
+        * CpuTransform::translate(-screen[0], -screen[3], 0.0);
     let raster_to_camera = camera_to_screen.inverse() * screen_to_raster.inverse();
-    let camera_transform_id = TransformId(transforms.len() as GpuIndex);
-    transforms.push(GpuTransform::Static(static_transform(
+    let camera_transform_id = TransformId(transforms.len() as Index);
+    transforms.push(Transform::Static(static_transform(
         &builder.camera_to_world[0],
         &empty_source(),
     )?));
@@ -2191,8 +2182,8 @@ fn render_config(
             &empty_source(),
         ));
     }
-    Ok(GpuRenderConfig {
-        camera: GpuPerspectiveCamera {
+    Ok(RenderConfig {
+        camera: PerspectiveCamera {
             render_from_camera: camera_transform_id,
             camera_from_raster: matrix(raster_to_camera.m, &empty_source())?,
             lens_radius,
@@ -2200,15 +2191,15 @@ fn render_config(
             shutter_open,
             shutter_close,
         },
-        sampler: GpuIndependentSampler {
+        sampler: IndependentSampler {
             samples_per_pixel,
             seed: builder.sampler_params.get_one_int("seed", 0) as u64,
         },
-        film: GpuRgbFilm {
+        film: RgbFilm {
             full_resolution: [xresolution as u32, yresolution as u32],
             pixel_bounds,
             diagonal_mm,
-            output_rgb_from_xyz: GpuMatrix3x3([
+            output_rgb_from_xyz: Matrix3x3([
                 [3.240479, -1.537150, -0.498535],
                 [-0.969256, 1.875991, 0.041556],
                 [0.055648, -0.204043, 1.057311],
@@ -2216,10 +2207,10 @@ fn render_config(
             iso,
             max_component_value,
         },
-        filter: GpuBoxFilter {
-            radius: GpuVector2([xradius, yradius]),
+        filter: BoxFilter {
+            radius: Vector2([xradius, yradius]),
         },
-        integrator: GpuWavefrontVolPath {
+        integrator: WavefrontVolPath {
             max_depth: u32::try_from(max_depth).map_err(|_| {
                 invalid_parameter(
                     "maxdepth",
@@ -2229,7 +2220,7 @@ fn render_config(
             })?,
             regularize: builder.integrator_params.get_one_bool("regularize", false),
         },
-        light_sampler: GpuLightSampler::Uniform,
+        light_sampler: LightSampler::Uniform,
     })
 }
 
@@ -2252,7 +2243,7 @@ struct GpuSourceGroups {
     instances: Vec<SourceId>,
 }
 
-fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
+fn source_map(builder: &SceneBuilder, ir: &SceneIr) -> GpuSourceMap {
     let mut locations = Vec::new();
     let mut groups = GpuSourceGroups::default();
     for shape in &builder.shapes {
@@ -2312,7 +2303,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
         );
     }
     for material in &builder.materials {
-        groups.materials.push(SourceId(locations.len() as GpuIndex));
+        groups.materials.push(SourceId(locations.len() as Index));
         locations.push(GpuSourceLocation {
             filename: material.base.loc.filename.clone(),
             line: material.base.loc.line,
@@ -2334,7 +2325,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
         add_resource(
             &mut resources,
             GpuResourceKind::Primitive,
-            index as GpuIndex,
+            index as Index,
             source,
         );
         add_resource(
@@ -2343,7 +2334,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
             primitive.geometry.0,
             source,
         );
-        if let Some(super::ir::GpuGeometry::DisplacedTriangleMesh(mesh)) =
+        if let Some(super::ir::Geometry::DisplacedTriangleMesh(mesh)) =
             ir.view().geometry.get(primitive.geometry.0 as usize)
         {
             add_resource(
@@ -2366,7 +2357,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
                 material.0,
                 source,
             );
-            if let Some(super::ir::GpuMaterial::Diffuse(material)) =
+            if let Some(super::ir::Material::Diffuse(material)) =
                 ir.view().materials.get(material.0 as usize)
             {
                 add_spectrum_texture_resources(
@@ -2387,10 +2378,10 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
             add_float_texture_resources(&mut resources, ir.view(), texture, source);
         }
         match &primitive.area_light {
-            super::ir::GpuAreaLightBinding::None => {}
-            super::ir::GpuAreaLightBinding::Uniform(light) => {
+            super::ir::AreaLightBinding::None => {}
+            super::ir::AreaLightBinding::Uniform(light) => {
                 add_resource(&mut resources, GpuResourceKind::Light, light.0, source);
-                if let Some(super::ir::GpuLight::DiffuseArea(light)) =
+                if let Some(super::ir::Light::DiffuseArea(light)) =
                     ir.view().lights.get(light.0 as usize)
                 {
                     add_spectrum_texture_resources(
@@ -2401,7 +2392,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
                     );
                 }
             }
-            super::ir::GpuAreaLightBinding::PerElement(lights) => {
+            super::ir::AreaLightBinding::PerElement(lights) => {
                 for light in lights {
                     add_resource(&mut resources, GpuResourceKind::Light, light.0, source);
                 }
@@ -2415,10 +2406,10 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
         add_resource(
             &mut resources,
             GpuResourceKind::FloatTexture,
-            index as GpuIndex,
+            index as Index,
             source,
         );
-        if let super::ir::GpuFloatTexture::Image { image, mapping, .. } = texture {
+        if let super::ir::FloatTexture::Image { image, mapping, .. } = texture {
             add_resource(&mut resources, GpuResourceKind::Image, image.0, source);
             add_resource(
                 &mut resources,
@@ -2435,10 +2426,10 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
         add_resource(
             &mut resources,
             GpuResourceKind::SpectrumTexture,
-            index as GpuIndex,
+            index as Index,
             source,
         );
-        if let super::ir::GpuSpectrumTexture::Image { image, mapping, .. } = texture {
+        if let super::ir::SpectrumTexture::Image { image, mapping, .. } = texture {
             add_resource(&mut resources, GpuResourceKind::Image, image.0, source);
             add_resource(
                 &mut resources,
@@ -2453,10 +2444,10 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
             add_resource(
                 &mut resources,
                 GpuResourceKind::Light,
-                index as GpuIndex,
+                index as Index,
                 source,
             );
-            if let super::ir::GpuLight::Point(point) = light {
+            if let super::ir::Light::Point(point) = light {
                 add_resource(
                     &mut resources,
                     GpuResourceKind::Transform,
@@ -2470,7 +2461,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
         add_resource(
             &mut resources,
             GpuResourceKind::InstanceDefinition,
-            index as GpuIndex,
+            index as Index,
             source,
         );
     }
@@ -2481,7 +2472,7 @@ fn source_map(builder: &SceneBuilder, ir: &GpuSceneIr) -> GpuSourceMap {
         add_resource(
             &mut resources,
             GpuResourceKind::Instance,
-            index as GpuIndex,
+            index as Index,
             source,
         );
         add_resource(
@@ -2503,7 +2494,7 @@ fn add_source(
     group: &mut Vec<SourceId>,
     location: GpuSourceLocation,
 ) {
-    let id = SourceId(locations.len() as GpuIndex);
+    let id = SourceId(locations.len() as Index);
     locations.push(location);
     group.push(id);
 }
@@ -2511,7 +2502,7 @@ fn add_source(
 fn add_resource(
     resources: &mut Vec<GpuSourceEntry>,
     kind: GpuResourceKind,
-    index: GpuIndex,
+    index: Index,
     source: SourceId,
 ) {
     if resources
@@ -2529,12 +2520,12 @@ fn add_resource(
 
 fn add_float_texture_resources(
     resources: &mut Vec<GpuSourceEntry>,
-    view: super::ir::GpuSceneView<'_>,
+    view: super::ir::SceneView<'_>,
     texture: super::ir::FloatTextureId,
     source: SourceId,
 ) {
     add_resource(resources, GpuResourceKind::FloatTexture, texture.0, source);
-    if let Some(super::ir::GpuFloatTexture::Image { image, mapping, .. }) =
+    if let Some(super::ir::FloatTexture::Image { image, mapping, .. }) =
         view.float_textures.get(texture.0 as usize)
     {
         add_resource(resources, GpuResourceKind::Image, image.0, source);
@@ -2549,7 +2540,7 @@ fn add_float_texture_resources(
 
 fn add_spectrum_texture_resources(
     resources: &mut Vec<GpuSourceEntry>,
-    view: super::ir::GpuSceneView<'_>,
+    view: super::ir::SceneView<'_>,
     texture: super::ir::SpectrumTextureId,
     source: SourceId,
 ) {
@@ -2560,10 +2551,10 @@ fn add_spectrum_texture_resources(
         source,
     );
     match view.spectrum_textures.get(texture.0 as usize) {
-        Some(super::ir::GpuSpectrumTexture::Constant { value }) => {
+        Some(super::ir::SpectrumTexture::Constant { value }) => {
             add_resource(resources, GpuResourceKind::Spectrum, value.0, source);
         }
-        Some(super::ir::GpuSpectrumTexture::Image { image, mapping, .. }) => {
+        Some(super::ir::SpectrumTexture::Image { image, mapping, .. }) => {
             add_resource(resources, GpuResourceKind::Image, image.0, source);
             add_resource(
                 resources,
@@ -2577,8 +2568,8 @@ fn add_spectrum_texture_resources(
 }
 
 fn attach_requirement_sources(
-    requirements: &mut super::ir::GpuRequirements,
-    view: super::ir::GpuSceneView<'_>,
+    requirements: &mut super::ir::Requirements,
+    view: super::ir::SceneView<'_>,
     source_map: &GpuSourceMap,
 ) {
     for required in requirements.features.iter_mut() {
@@ -2596,126 +2587,126 @@ fn attach_requirement_sources(
 }
 
 fn requirement_resource_matches(
-    feature: GpuFeature,
+    feature: Feature,
     entry: &GpuSourceEntry,
-    view: super::ir::GpuSceneView<'_>,
+    view: super::ir::SceneView<'_>,
 ) -> bool {
     match feature {
-        GpuFeature::TriangleMesh => {
+        Feature::TriangleMesh => {
             entry.kind == GpuResourceKind::Geometry
                 && matches!(
                     view.geometry.get(entry.index as usize),
-                    Some(super::ir::GpuGeometry::TriangleMesh(_))
+                    Some(super::ir::Geometry::TriangleMesh(_))
                 )
         }
-        GpuFeature::BilinearPatch => {
+        Feature::BilinearPatch => {
             entry.kind == GpuResourceKind::Geometry
                 && matches!(
                     view.geometry.get(entry.index as usize),
-                    Some(super::ir::GpuGeometry::BilinearPatchMesh(_))
+                    Some(super::ir::Geometry::BilinearPatchMesh(_))
                 )
         }
-        GpuFeature::Curve => {
+        Feature::Curve => {
             entry.kind == GpuResourceKind::Geometry
                 && matches!(
                     view.geometry.get(entry.index as usize),
-                    Some(super::ir::GpuGeometry::CurveMesh(_))
+                    Some(super::ir::Geometry::CurveMesh(_))
                 )
         }
-        GpuFeature::Quadric => {
+        Feature::Quadric => {
             entry.kind == GpuResourceKind::Geometry
                 && matches!(
                     view.geometry.get(entry.index as usize),
-                    Some(super::ir::GpuGeometry::Quadric(_))
+                    Some(super::ir::Geometry::Quadric(_))
                 )
         }
-        GpuFeature::DisplacedTriangle => {
+        Feature::DisplacedTriangle => {
             entry.kind == GpuResourceKind::Geometry
                 && matches!(
                     view.geometry.get(entry.index as usize),
-                    Some(super::ir::GpuGeometry::DisplacedTriangleMesh(_))
+                    Some(super::ir::Geometry::DisplacedTriangleMesh(_))
                 )
         }
-        GpuFeature::FloatConstantTexture => {
+        Feature::FloatConstantTexture => {
             entry.kind == GpuResourceKind::FloatTexture
                 && matches!(
                     view.float_textures.get(entry.index as usize),
-                    Some(super::ir::GpuFloatTexture::Constant { .. })
+                    Some(super::ir::FloatTexture::Constant { .. })
                 )
         }
-        GpuFeature::FloatImageTexture => {
+        Feature::FloatImageTexture => {
             entry.kind == GpuResourceKind::FloatTexture
                 && matches!(
                     view.float_textures.get(entry.index as usize),
-                    Some(super::ir::GpuFloatTexture::Image { .. })
+                    Some(super::ir::FloatTexture::Image { .. })
                 )
         }
-        GpuFeature::SpectrumConstantTexture => {
+        Feature::SpectrumConstantTexture => {
             entry.kind == GpuResourceKind::SpectrumTexture
                 && matches!(
                     view.spectrum_textures.get(entry.index as usize),
-                    Some(super::ir::GpuSpectrumTexture::Constant { .. })
+                    Some(super::ir::SpectrumTexture::Constant { .. })
                 )
         }
-        GpuFeature::SpectrumImageTexture => {
+        Feature::SpectrumImageTexture => {
             entry.kind == GpuResourceKind::SpectrumTexture
                 && matches!(
                     view.spectrum_textures.get(entry.index as usize),
-                    Some(super::ir::GpuSpectrumTexture::Image { .. })
+                    Some(super::ir::SpectrumTexture::Image { .. })
                 )
         }
-        GpuFeature::DiffuseMaterial => {
+        Feature::DiffuseMaterial => {
             entry.kind == GpuResourceKind::Material
                 && matches!(
                     view.materials.get(entry.index as usize),
-                    Some(super::ir::GpuMaterial::Diffuse(_))
+                    Some(super::ir::Material::Diffuse(_))
                 )
         }
-        GpuFeature::PointLight => {
+        Feature::PointLight => {
             entry.kind == GpuResourceKind::Light
                 && matches!(
                     view.lights.get(entry.index as usize),
-                    Some(super::ir::GpuLight::Point(_))
+                    Some(super::ir::Light::Point(_))
                 )
         }
-        GpuFeature::DiffuseAreaLight => {
+        Feature::DiffuseAreaLight => {
             entry.kind == GpuResourceKind::Light
                 && matches!(
                     view.lights.get(entry.index as usize),
-                    Some(super::ir::GpuLight::DiffuseArea(_))
+                    Some(super::ir::Light::DiffuseArea(_))
                 )
         }
-        GpuFeature::UniformInfiniteLight => {
+        Feature::UniformInfiniteLight => {
             entry.kind == GpuResourceKind::Light
                 && matches!(
                     view.lights.get(entry.index as usize),
-                    Some(super::ir::GpuLight::UniformInfinite(_))
+                    Some(super::ir::Light::UniformInfinite(_))
                 )
         }
-        GpuFeature::StaticTransform => {
+        Feature::StaticTransform => {
             entry.kind == GpuResourceKind::Transform
                 && matches!(
                     view.transforms.get(entry.index as usize),
-                    Some(super::ir::GpuTransform::Static(_))
+                    Some(super::ir::Transform::Static(_))
                 )
         }
-        GpuFeature::AnimatedTransform => {
+        Feature::AnimatedTransform => {
             entry.kind == GpuResourceKind::Transform
                 && matches!(
                     view.transforms.get(entry.index as usize),
-                    Some(super::ir::GpuTransform::Animated(_))
+                    Some(super::ir::Transform::Animated(_))
                 )
         }
-        GpuFeature::PerspectiveCamera
-        | GpuFeature::IndependentSampler
-        | GpuFeature::RgbFilm
-        | GpuFeature::BoxFilter
-        | GpuFeature::WavefrontVolPath
-        | GpuFeature::UniformLightSampler => false,
+        Feature::PerspectiveCamera
+        | Feature::IndependentSampler
+        | Feature::RgbFilm
+        | Feature::BoxFilter
+        | Feature::WavefrontVolPath
+        | Feature::UniformLightSampler => false,
     }
 }
 
-fn to_gpu_float(value: Float, source: &GpuSourceLocation) -> Result<GpuFloat, GpuCompileError> {
+fn to_gpu_float(value: Float, source: &GpuSourceLocation) -> Result<Float, GpuCompileError> {
     let value = value as f32;
     value.is_finite().then_some(value).ok_or_else(|| {
         invalid_parameter(

@@ -1,8 +1,8 @@
 use super::super::ir::{
-    GeometryId, GpuAreaLightBinding, GpuColorEncoding, GpuFloatImageChannel, GpuFloatTexture,
-    GpuGeometry, GpuImageChannels, GpuImageFilter, GpuImageResource, GpuImageWrapMode, GpuLight,
-    GpuMaterial, GpuSceneView, GpuSpectrumResource, GpuSpectrumTexture, GpuSpectrumType,
-    GpuTexelStorage, GpuTextureMapping, GpuTransform, InstanceId, LightId, PrimitiveId,
+    AreaLightBinding, ColorEncoding, FloatImageChannel, FloatTexture, Geometry, GeometryId,
+    ImageChannels, ImageFilter, ImageResource, ImageWrapMode, InstanceId, Light, LightId, Material,
+    PrimitiveId, SceneView, SpectrumResource, SpectrumTexture, SpectrumType, TexelStorage,
+    TextureMapping, Transform,
 };
 use super::device::DeviceContext;
 use super::error::{BackendError, PlanError};
@@ -52,7 +52,7 @@ pub struct ImageMipPlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImagePlan {
     pub resolution: [u32; 2],
-    pub channels: GpuImageChannels,
+    pub channels: ImageChannels,
     pub mip_levels: Vec<ImageMipPlan>,
     pub texels: Vec<f32>,
 }
@@ -60,13 +60,13 @@ pub struct ImagePlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpectrumTexturePlan {
     pub image: u32,
-    pub mapping: GpuTextureMapping,
+    pub mapping: TextureMapping,
     pub scale: f32,
     pub invert: bool,
-    pub swrap: GpuImageWrapMode,
-    pub twrap: GpuImageWrapMode,
-    pub filter: GpuImageFilter,
-    pub spectrum_type: GpuSpectrumType,
+    pub swrap: ImageWrapMode,
+    pub twrap: ImageWrapMode,
+    pub filter: ImageFilter,
+    pub spectrum_type: SpectrumType,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,13 +74,13 @@ pub enum FloatTexturePlan {
     Constant(f32),
     Image {
         image: u32,
-        mapping: GpuTextureMapping,
+        mapping: TextureMapping,
         scale: f32,
         invert: bool,
-        swrap: GpuImageWrapMode,
-        twrap: GpuImageWrapMode,
-        filter: GpuImageFilter,
-        channel: GpuFloatImageChannel,
+        swrap: ImageWrapMode,
+        twrap: ImageWrapMode,
+        filter: ImageFilter,
+        channel: FloatImageChannel,
     },
 }
 
@@ -174,7 +174,7 @@ pub struct ScenePlan {
 }
 
 fn primitive_transform(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     primitive_id: PrimitiveId,
 ) -> Result<[[f32; 4]; 4], BackendError> {
     let primitive = scene
@@ -193,15 +193,15 @@ fn primitive_transform(
                 index: primitive.transform.0,
             }))?;
     match transform {
-        GpuTransform::Static(transform) => Ok(transform.render_from_object.0),
-        GpuTransform::Animated(_) => Err(BackendError::Plan(PlanError::UnsupportedTransform {
+        Transform::Static(transform) => Ok(transform.render_from_object.0),
+        Transform::Animated(_) => Err(BackendError::Plan(PlanError::UnsupportedTransform {
             transform: primitive.transform,
         })),
     }
 }
 
 fn collect_instance_primitives(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     instance_id: InstanceId,
     parent: [[f32; 4]; 4],
     output: &mut Vec<(PrimitiveId, [[f32; 4]; 4])>,
@@ -234,7 +234,7 @@ fn collect_instance_primitives(
                 resource: "instance transform",
                 index: instance.transform.0,
             }))?;
-    let GpuTransform::Static(instance_transform) = instance_transform else {
+    let Transform::Static(instance_transform) = instance_transform else {
         return Err(BackendError::Plan(PlanError::UnsupportedTransform {
             transform: instance.transform,
         }));
@@ -322,7 +322,7 @@ impl ScenePlan {
         Ok(())
     }
 
-    pub fn from_scene(scene: GpuSceneView<'_>) -> Result<Self, BackendError> {
+    pub fn from_scene(scene: SceneView<'_>) -> Result<Self, BackendError> {
         let mut world_entries = Vec::new();
         for primitive_id in scene.world_primitives {
             world_entries.push((*primitive_id, primitive_transform(scene, *primitive_id)?));
@@ -392,7 +392,7 @@ impl ScenePlan {
                         index: primitive.geometry.0,
                     }))?;
             let triangle_mesh = match geometry {
-                GpuGeometry::TriangleMesh(mesh) => mesh,
+                Geometry::TriangleMesh(mesh) => mesh,
                 _ => {
                     return Err(BackendError::Plan(PlanError::UnsupportedGeometry {
                         geometry: primitive.geometry,
@@ -502,8 +502,8 @@ impl ScenePlan {
             Self::validate_custom_data(custom_data).map_err(BackendError::Plan)?;
             let triangle_count = blases[blas].index_count / 3;
             match &primitive.area_light {
-                GpuAreaLightBinding::None => {}
-                GpuAreaLightBinding::Uniform(light) => {
+                AreaLightBinding::None => {}
+                AreaLightBinding::Uniform(light) => {
                     validate_area_light(scene, *light, primitive_id.0)?;
                     area_light_occurrences.extend((0..triangle_count).map(|triangle| {
                         AreaLightOccurrence {
@@ -514,7 +514,7 @@ impl ScenePlan {
                         }
                     }));
                 }
-                GpuAreaLightBinding::PerElement(lights) => {
+                AreaLightBinding::PerElement(lights) => {
                     if lights.len() != triangle_count as usize {
                         return Err(BackendError::Plan(PlanError::InvalidAreaLightBinding {
                             primitive: primitive_id.0,
@@ -585,7 +585,7 @@ fn validate_initial_light_scope(lights: &[LightPlan]) -> Result<(), BackendError
 }
 
 fn lower_material(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     material_id: Option<super::super::ir::MaterialId>,
     primitive: PrimitiveId,
     images: &mut Vec<ImagePlan>,
@@ -602,7 +602,7 @@ fn lower_material(
             resource: "material",
             index: material_id.0,
         }))?;
-    let GpuMaterial::Diffuse(diffuse) = material;
+    let Material::Diffuse(diffuse) = material;
     let displacement = diffuse
         .displacement
         .map(|texture| {
@@ -627,12 +627,12 @@ fn lower_material(
             index: diffuse.reflectance.0,
         }))?;
     let reflectance = match texture {
-        GpuSpectrumTexture::Constant { value } => {
+        SpectrumTexture::Constant { value } => {
             MaterialReflectancePlan::Constant(match spectrum_rgb(scene, *value, primitive.0)? {
                 [red, green, blue] => [red, green, blue, 1.0],
             })
         }
-        GpuSpectrumTexture::Image {
+        SpectrumTexture::Image {
             image,
             mapping,
             scale,
@@ -676,7 +676,7 @@ fn lower_material(
 }
 
 fn lower_normal_map_image(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     image: super::super::ir::ImageId,
     images: &mut Vec<ImagePlan>,
     image_to_plan: &mut [Option<u32>],
@@ -691,7 +691,7 @@ fn lower_normal_map_image(
         }))?;
     if !matches!(
         image_resource.channels,
-        GpuImageChannels::Rgb | GpuImageChannels::Rgba
+        ImageChannels::Rgb | ImageChannels::Rgba
     ) {
         return Err(BackendError::Plan(PlanError::UnsupportedTexture {
             texture: primitive.0,
@@ -710,15 +710,15 @@ fn lower_normal_map_image(
 
 #[allow(clippy::too_many_arguments)]
 fn lower_spectrum_texture(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     image: super::super::ir::ImageId,
     mapping: super::super::ir::TextureMappingId,
     scale: f32,
     invert: bool,
-    swrap: GpuImageWrapMode,
-    twrap: GpuImageWrapMode,
-    filter: GpuImageFilter,
-    spectrum_type: GpuSpectrumType,
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilter,
+    spectrum_type: SpectrumType,
     images: &mut Vec<ImagePlan>,
     spectrum_textures: &mut Vec<SpectrumTexturePlan>,
     image_to_plan: &mut [Option<u32>],
@@ -738,7 +738,7 @@ fn lower_spectrum_texture(
             resource: "texture mapping",
             index: mapping.0,
         }))?;
-    if !matches!(mapping, GpuTextureMapping::Uv { .. })
+    if !matches!(mapping, TextureMapping::Uv { .. })
         || !supported_filter(filter)
         || !supported_wrap(swrap)
         || !supported_wrap(twrap)
@@ -786,32 +786,32 @@ fn lower_spectrum_texture(
     Ok(texture_index)
 }
 
-fn supported_wrap(wrap: GpuImageWrapMode) -> bool {
+fn supported_wrap(wrap: ImageWrapMode) -> bool {
     matches!(
         wrap,
-        GpuImageWrapMode::Black | GpuImageWrapMode::Clamp | GpuImageWrapMode::Repeat
+        ImageWrapMode::Black | ImageWrapMode::Clamp | ImageWrapMode::Repeat
     )
 }
 
-fn supported_filter(filter: GpuImageFilter) -> bool {
+fn supported_filter(filter: ImageFilter) -> bool {
     matches!(
         filter,
-        GpuImageFilter::Point
-            | GpuImageFilter::Bilinear
-            | GpuImageFilter::Trilinear
-            | GpuImageFilter::Ewa { .. }
+        ImageFilter::Point
+            | ImageFilter::Bilinear
+            | ImageFilter::Trilinear
+            | ImageFilter::Ewa { .. }
     )
 }
 
 fn lower_float_texture(
-    scene: GpuSceneView<'_>,
-    texture: GpuFloatTexture,
+    scene: SceneView<'_>,
+    texture: FloatTexture,
     images: &mut Vec<ImagePlan>,
     image_to_plan: &mut [Option<u32>],
 ) -> Result<FloatTexturePlan, BackendError> {
     match texture {
-        GpuFloatTexture::Constant { value } => Ok(FloatTexturePlan::Constant(value)),
-        GpuFloatTexture::Image {
+        FloatTexture::Constant { value } => Ok(FloatTexturePlan::Constant(value)),
+        FloatTexture::Image {
             image,
             mapping,
             scale,
@@ -836,7 +836,7 @@ fn lower_float_texture(
                     resource: "image",
                     index: image.0,
                 }))?;
-            if !matches!(mapping, GpuTextureMapping::Uv { .. })
+            if !matches!(mapping, TextureMapping::Uv { .. })
                 || !supported_filter(filter)
                 || !supported_wrap(swrap)
                 || !supported_wrap(twrap)
@@ -845,10 +845,10 @@ fn lower_float_texture(
                     texture: image.0,
                 }));
             }
-            if matches!(channel, GpuFloatImageChannel::Alpha)
+            if matches!(channel, FloatImageChannel::Alpha)
                 && !matches!(
                     image_resource.channels,
-                    GpuImageChannels::Rg | GpuImageChannels::Rgba
+                    ImageChannels::Rg | ImageChannels::Rgba
                 )
             {
                 return Err(BackendError::Plan(PlanError::UnsupportedTexture {
@@ -880,7 +880,7 @@ fn lower_float_texture(
     }
 }
 
-fn lower_image(image: &GpuImageResource) -> Result<ImagePlan, BackendError> {
+fn lower_image(image: &ImageResource) -> Result<ImagePlan, BackendError> {
     let channel_count = image.channels.count();
     let texels = image_scalar_values(image, channel_count)?;
     let mip_levels = image
@@ -934,17 +934,17 @@ fn lower_image(image: &GpuImageResource) -> Result<ImagePlan, BackendError> {
 }
 
 fn image_scalar_values(
-    image: &GpuImageResource,
+    image: &ImageResource,
     channel_count: usize,
 ) -> Result<Vec<f32>, BackendError> {
     let mut values = Vec::new();
     match &image.storage {
-        GpuTexelStorage::F32(data) => values.extend(data.iter().copied()),
-        GpuTexelStorage::F16(data) => values.extend(
+        TexelStorage::F32(data) => values.extend(data.iter().copied()),
+        TexelStorage::F16(data) => values.extend(
             data.iter()
                 .map(|value| half::f16::from_bits(*value).to_f32()),
         ),
-        GpuTexelStorage::U8(data) => {
+        TexelStorage::U8(data) => {
             values.extend(data.iter().enumerate().map(|(index, value)| {
                 let normalized = f32::from(*value) / 255.0;
                 let channel = index % channel_count;
@@ -952,11 +952,11 @@ fn image_scalar_values(
                     normalized
                 } else {
                     match image.color_encoding {
-                        GpuColorEncoding::Linear => normalized,
-                        GpuColorEncoding::Srgb => {
+                        ColorEncoding::Linear => normalized,
+                        ColorEncoding::Srgb => {
                             crate::util::imageio::ColorEncoding::SRgb.to_linear(normalized)
                         }
-                        GpuColorEncoding::Gamma { exponent } => normalized.powf(exponent),
+                        ColorEncoding::Gamma { exponent } => normalized.powf(exponent),
                     }
                 }
             }));
@@ -972,7 +972,7 @@ fn image_scalar_values(
 }
 
 fn spectrum_rgb(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     spectrum_id: super::super::ir::SpectrumId,
     resource_id: u32,
 ) -> Result<[f32; 3], BackendError> {
@@ -983,9 +983,9 @@ fn spectrum_rgb(
             resource: "spectrum",
             index: spectrum_id.0,
         }))? {
-        GpuSpectrumResource::Constant { value } => Ok([*value, *value, *value]),
-        GpuSpectrumResource::RgbAlbedo { coefficients }
-        | GpuSpectrumResource::RgbUnbounded { coefficients } => {
+        SpectrumResource::Constant { value } => Ok([*value, *value, *value]),
+        SpectrumResource::RgbAlbedo { coefficients }
+        | SpectrumResource::RgbUnbounded { coefficients } => {
             Ok([coefficients[0], coefficients[1], coefficients[2]])
         }
         _ => {
@@ -997,20 +997,20 @@ fn spectrum_rgb(
 }
 
 fn validate_area_light(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     light: LightId,
     primitive: u32,
 ) -> Result<(), BackendError> {
     match scene.lights.get(light.0 as usize) {
-        Some(GpuLight::DiffuseArea(_)) => Ok(()),
+        Some(Light::DiffuseArea(_)) => Ok(()),
         _ => Err(BackendError::Plan(PlanError::UnsupportedAreaLight {
             primitive,
         })),
     }
 }
 
-fn area_emission_rgb(scene: GpuSceneView<'_>, light_id: LightId) -> Result<[f32; 3], BackendError> {
-    let Some(GpuLight::DiffuseArea(area)) = scene.lights.get(light_id.0 as usize) else {
+fn area_emission_rgb(scene: SceneView<'_>, light_id: LightId) -> Result<[f32; 3], BackendError> {
+    let Some(Light::DiffuseArea(area)) = scene.lights.get(light_id.0 as usize) else {
         return Err(BackendError::Plan(PlanError::UnsupportedLight {
             light: light_id.0,
         }));
@@ -1022,7 +1022,7 @@ fn area_emission_rgb(scene: GpuSceneView<'_>, light_id: LightId) -> Result<[f32;
             resource: "area light emission texture",
             index: area.emission.0,
         }))?;
-    let GpuSpectrumTexture::Constant { value } = texture else {
+    let SpectrumTexture::Constant { value } = texture else {
         return Err(BackendError::Plan(PlanError::UnsupportedLight {
             light: light_id.0,
         }));
@@ -1031,14 +1031,14 @@ fn area_emission_rgb(scene: GpuSceneView<'_>, light_id: LightId) -> Result<[f32;
 }
 
 fn lower_lights(
-    scene: GpuSceneView<'_>,
+    scene: SceneView<'_>,
     area_light_occurrences: &[AreaLightOccurrence],
 ) -> Result<Vec<LightPlan>, BackendError> {
     let mut lights = Vec::with_capacity(scene.lights.len().max(1));
     let mut area_sources = Vec::new();
     for (index, light) in scene.lights.iter().enumerate() {
         match light {
-            GpuLight::Point(point) => {
+            Light::Point(point) => {
                 let transform = scene
                     .transforms
                     .get(point.render_from_light.0 as usize)
@@ -1046,7 +1046,7 @@ fn lower_lights(
                         resource: "light transform",
                         index: point.render_from_light.0,
                     }))?;
-                let GpuTransform::Static(transform) = transform else {
+                let Transform::Static(transform) = transform else {
                     return Err(BackendError::Plan(PlanError::UnsupportedTransform {
                         transform: point.render_from_light,
                     }));
@@ -1068,7 +1068,7 @@ fn lower_lights(
                     flags: 0,
                 });
             }
-            GpuLight::UniformInfinite(infinite) => {
+            Light::UniformInfinite(infinite) => {
                 let rgb = spectrum_rgb(scene, infinite.radiance, index as u32)?;
                 lights.push(LightPlan {
                     position: [0.0; 4],
@@ -1084,7 +1084,7 @@ fn lower_lights(
                     flags: 0,
                 });
             }
-            GpuLight::DiffuseArea(area) => {
+            Light::DiffuseArea(area) => {
                 let light_id = LightId(index as u32);
                 let rgb = area_emission_rgb(scene, light_id)?;
                 let source_index = checked_len(lights.len(), "light source table")?;
@@ -1349,54 +1349,54 @@ pub fn texture_bytes(plan: &ScenePlan) -> Vec<u8> {
     words.into_iter().flat_map(u32::to_le_bytes).collect()
 }
 
-fn uv_mapping_words(mapping: GpuTextureMapping) -> [u32; 4] {
+fn uv_mapping_words(mapping: TextureMapping) -> [u32; 4] {
     match mapping {
-        GpuTextureMapping::Uv { su, sv, du, dv } => {
+        TextureMapping::Uv { su, sv, du, dv } => {
             [su.to_bits(), sv.to_bits(), du.to_bits(), dv.to_bits()]
         }
         _ => [1.0f32.to_bits(), 1.0f32.to_bits(), 0, 0],
     }
 }
 
-fn float_channel_bits(channel: GpuFloatImageChannel) -> u32 {
+fn float_channel_bits(channel: FloatImageChannel) -> u32 {
     match channel {
-        GpuFloatImageChannel::Channel0 => 0,
-        GpuFloatImageChannel::Alpha => 1,
-        GpuFloatImageChannel::RgbAverage => 2,
+        FloatImageChannel::Channel0 => 0,
+        FloatImageChannel::Alpha => 1,
+        FloatImageChannel::RgbAverage => 2,
     }
 }
 
-fn filter_bits(filter: GpuImageFilter) -> u32 {
+fn filter_bits(filter: ImageFilter) -> u32 {
     match filter {
-        GpuImageFilter::Point => 0,
-        GpuImageFilter::Bilinear => 1,
-        GpuImageFilter::Trilinear => 2,
-        GpuImageFilter::Ewa { .. } => 3,
+        ImageFilter::Point => 0,
+        ImageFilter::Bilinear => 1,
+        ImageFilter::Trilinear => 2,
+        ImageFilter::Ewa { .. } => 3,
     }
 }
 
-fn max_anisotropy_bits(filter: GpuImageFilter) -> u32 {
+fn max_anisotropy_bits(filter: ImageFilter) -> u32 {
     match filter {
-        GpuImageFilter::Ewa { max_anisotropy } => max_anisotropy.to_bits(),
+        ImageFilter::Ewa { max_anisotropy } => max_anisotropy.to_bits(),
         _ => 0,
     }
 }
 
-fn wrap_bits(wrap: GpuImageWrapMode, shift: u32) -> u32 {
+fn wrap_bits(wrap: ImageWrapMode, shift: u32) -> u32 {
     let value = match wrap {
-        GpuImageWrapMode::Black => 0,
-        GpuImageWrapMode::Clamp => 1,
-        GpuImageWrapMode::Repeat => 2,
-        GpuImageWrapMode::OctahedralSphere => 3,
+        ImageWrapMode::Black => 0,
+        ImageWrapMode::Clamp => 1,
+        ImageWrapMode::Repeat => 2,
+        ImageWrapMode::OctahedralSphere => 3,
     };
     value << shift
 }
 
-fn spectrum_bits(spectrum: GpuSpectrumType) -> u32 {
+fn spectrum_bits(spectrum: SpectrumType) -> u32 {
     match spectrum {
-        GpuSpectrumType::Albedo => 0,
-        GpuSpectrumType::Unbounded => 1,
-        GpuSpectrumType::Illuminant => 2,
+        SpectrumType::Albedo => 0,
+        SpectrumType::Unbounded => 1,
+        SpectrumType::Illuminant => 2,
     }
 }
 

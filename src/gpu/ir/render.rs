@@ -1,8 +1,8 @@
-use super::{GpuBounds2i, GpuFloat, GpuIndex, GpuMatrix3x3, GpuMatrix4x4, GpuVector2, TransformId};
+use super::{Bounds2i, Float, Index, Matrix3x3, Matrix4x4, TransformId, Vector2};
 use crate::base::film::Film;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 
-impl GpuBounds2i {
+impl Bounds2i {
     pub fn area(self) -> Option<u64> {
         let width = u64::from(self.max[0]).checked_sub(u64::from(self.min[0]))?;
         let height = u64::from(self.max[1]).checked_sub(u64::from(self.min[1]))?;
@@ -11,32 +11,32 @@ impl GpuBounds2i {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GpuRenderRequestError {
+pub enum RenderRequestError {
     ZeroSampleCount,
     SampleRangeOverflow,
     SampleRangeExceedsSamplesPerPixel,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GpuRenderRequest {
+pub struct RenderRequest {
     pub sample_start: u64,
     pub sample_count: u32,
 }
 
-impl GpuRenderRequest {
+impl RenderRequest {
     pub fn new(
-        render: &GpuRenderConfig,
+        render: &RenderConfig,
         sample_start: u64,
         sample_count: u32,
-    ) -> Result<Self, GpuRenderRequestError> {
+    ) -> Result<Self, RenderRequestError> {
         if sample_count == 0 {
-            return Err(GpuRenderRequestError::ZeroSampleCount);
+            return Err(RenderRequestError::ZeroSampleCount);
         }
         let sample_end = sample_start
             .checked_add(u64::from(sample_count))
-            .ok_or(GpuRenderRequestError::SampleRangeOverflow)?;
+            .ok_or(RenderRequestError::SampleRangeOverflow)?;
         if sample_end > u64::from(render.sampler.samples_per_pixel) {
-            return Err(GpuRenderRequestError::SampleRangeExceedsSamplesPerPixel);
+            return Err(RenderRequestError::SampleRangeExceedsSamplesPerPixel);
         }
         Ok(Self {
             sample_start,
@@ -46,31 +46,31 @@ impl GpuRenderRequest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct GpuRenderOutput {
-    pub pixel_bounds: GpuBounds2i,
+pub struct RenderOutput {
+    pub pixel_bounds: Bounds2i,
     pub rgb: Box<[[f32; 3]]>,
     pub sample_start: u64,
     pub sample_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GpuRenderOutputError {
+pub enum RenderOutputError {
     InvalidPixelBounds,
     PixelCountMismatch { expected: usize, actual: usize },
 }
 
-impl GpuRenderOutput {
+impl RenderOutput {
     pub fn new(
-        pixel_bounds: GpuBounds2i,
+        pixel_bounds: Bounds2i,
         rgb: Box<[[f32; 3]]>,
-        request: GpuRenderRequest,
-    ) -> Result<Self, GpuRenderOutputError> {
+        request: RenderRequest,
+    ) -> Result<Self, RenderOutputError> {
         let expected = pixel_bounds
             .pixel_count()
             .filter(|count| *count > 0)
-            .ok_or(GpuRenderOutputError::InvalidPixelBounds)?;
+            .ok_or(RenderOutputError::InvalidPixelBounds)?;
         if rgb.len() != expected {
-            return Err(GpuRenderOutputError::PixelCountMismatch {
+            return Err(RenderOutputError::PixelCountMismatch {
                 expected,
                 actual: rgb.len(),
             });
@@ -97,53 +97,53 @@ impl GpuRenderOutput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuPerspectiveCamera {
+pub struct PerspectiveCamera {
     pub render_from_camera: TransformId,
-    pub camera_from_raster: GpuMatrix4x4,
-    pub lens_radius: GpuFloat,
-    pub focal_distance: GpuFloat,
-    pub shutter_open: GpuFloat,
-    pub shutter_close: GpuFloat,
+    pub camera_from_raster: Matrix4x4,
+    pub lens_radius: Float,
+    pub focal_distance: Float,
+    pub shutter_open: Float,
+    pub shutter_close: Float,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuIndependentSampler {
+pub struct IndependentSampler {
     pub samples_per_pixel: u32,
     pub seed: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuRgbFilm {
-    pub full_resolution: [GpuIndex; 2],
-    pub pixel_bounds: GpuBounds2i,
-    pub diagonal_mm: GpuFloat,
-    pub output_rgb_from_xyz: GpuMatrix3x3,
-    pub iso: GpuFloat,
-    pub max_component_value: GpuFloat,
+pub struct RgbFilm {
+    pub full_resolution: [Index; 2],
+    pub pixel_bounds: Bounds2i,
+    pub diagonal_mm: Float,
+    pub output_rgb_from_xyz: Matrix3x3,
+    pub iso: Float,
+    pub max_component_value: Float,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuBoxFilter {
-    pub radius: GpuVector2,
+pub struct BoxFilter {
+    pub radius: Vector2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuWavefrontVolPath {
+pub struct WavefrontVolPath {
     pub max_depth: u32,
     pub regularize: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuLightSampler {
+pub enum LightSampler {
     Uniform,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuRenderConfig {
-    pub camera: GpuPerspectiveCamera,
-    pub sampler: GpuIndependentSampler,
-    pub film: GpuRgbFilm,
-    pub filter: GpuBoxFilter,
-    pub integrator: GpuWavefrontVolPath,
-    pub light_sampler: GpuLightSampler,
+pub struct RenderConfig {
+    pub camera: PerspectiveCamera,
+    pub sampler: IndependentSampler,
+    pub film: RgbFilm,
+    pub filter: BoxFilter,
+    pub integrator: WavefrontVolPath,
+    pub light_sampler: LightSampler,
 }

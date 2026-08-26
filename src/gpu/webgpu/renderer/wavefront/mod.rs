@@ -1,4 +1,4 @@
-use super::super::super::ir::{GpuRenderOutput, GpuRenderRequest};
+use super::super::super::ir::{RenderOutput, RenderRequest};
 use super::super::error::BackendError;
 use super::super::shader::ShaderStageId;
 use super::resources::{RenderBuffers, RenderDimensions};
@@ -6,11 +6,11 @@ use super::Renderer;
 
 pub fn render(
     renderer: &Renderer,
-    request: GpuRenderRequest,
+    request: RenderRequest,
     dimensions: &RenderDimensions,
     buffers: &RenderBuffers,
     bind_group: &wgpu::BindGroup,
-) -> Result<GpuRenderOutput, BackendError> {
+) -> Result<RenderOutput, BackendError> {
     let sample_end = request
         .sample_start
         .checked_add(u64::from(request.sample_count))
@@ -113,7 +113,7 @@ pub fn render(
         .into_iter()
         .map(|pixel| pixel.map(|component| component * inverse_sample_count))
         .collect();
-    GpuRenderOutput::new(dimensions.pixel_bounds, rgb.into_boxed_slice(), request)
+    RenderOutput::new(dimensions.pixel_bounds, rgb.into_boxed_slice(), request)
         .map_err(|error| BackendError::Readback(format!("invalid wavefront output: {error:?}")))
 }
 

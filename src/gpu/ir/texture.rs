@@ -1,39 +1,39 @@
-use super::{GpuFloat, GpuIndex, GpuMatrix4x4, GpuVector3, ImageId, SpectrumId};
+use super::{Float, ImageId, Index, Matrix4x4, SpectrumId, Vector3};
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum GpuSpectrumResource {
+pub enum SpectrumResource {
     Constant {
-        value: GpuFloat,
+        value: Float,
     },
     PiecewiseLinear {
-        wavelengths_nm: Box<[GpuFloat]>,
-        values: Box<[GpuFloat]>,
+        wavelengths_nm: Box<[Float]>,
+        values: Box<[Float]>,
     },
     RgbAlbedo {
-        coefficients: [GpuFloat; 3],
+        coefficients: [Float; 3],
     },
     RgbUnbounded {
-        coefficients: [GpuFloat; 3],
+        coefficients: [Float; 3],
     },
     RgbIlluminant {
-        coefficients: [GpuFloat; 3],
+        coefficients: [Float; 3],
         illuminant: SpectrumId,
     },
     Blackbody {
-        temperature_kelvin: GpuFloat,
-        scale: GpuFloat,
+        temperature_kelvin: Float,
+        scale: Float,
     },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GpuImageChannels {
+pub enum ImageChannels {
     R,
     Rg,
     Rgb,
     Rgba,
 }
 
-impl GpuImageChannels {
+impl ImageChannels {
     pub fn count(self) -> usize {
         match self {
             Self::R => 1,
@@ -45,37 +45,37 @@ impl GpuImageChannels {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum GpuTexelStorage {
+pub enum TexelStorage {
     U8(Box<[u8]>),
     F16(Box<[u16]>),
-    F32(Box<[GpuFloat]>),
+    F32(Box<[Float]>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuColorEncoding {
+pub enum ColorEncoding {
     Linear,
     Srgb,
-    Gamma { exponent: GpuFloat },
+    Gamma { exponent: Float },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GpuMipLevel {
-    pub resolution: [GpuIndex; 2],
+pub struct MipLevel {
+    pub resolution: [Index; 2],
     pub texel_offset: u64,
     pub texel_count: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct GpuImageResource {
-    pub resolution: [GpuIndex; 2],
-    pub channels: GpuImageChannels,
-    pub storage: GpuTexelStorage,
-    pub mip_levels: Box<[GpuMipLevel]>,
-    pub color_encoding: GpuColorEncoding,
+pub struct ImageResource {
+    pub resolution: [Index; 2],
+    pub channels: ImageChannels,
+    pub storage: TexelStorage,
+    pub mip_levels: Box<[MipLevel]>,
+    pub color_encoding: ColorEncoding,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuImageWrapMode {
+pub enum ImageWrapMode {
     Black,
     Clamp,
     Repeat,
@@ -83,82 +83,82 @@ pub enum GpuImageWrapMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuImageFilter {
+pub enum ImageFilter {
     Point,
     Bilinear,
     Trilinear,
-    Ewa { max_anisotropy: GpuFloat },
+    Ewa { max_anisotropy: Float },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuTextureMapping {
+pub enum TextureMapping {
     Uv {
-        su: GpuFloat,
-        sv: GpuFloat,
-        du: GpuFloat,
-        dv: GpuFloat,
+        su: Float,
+        sv: Float,
+        du: Float,
+        dv: Float,
     },
     Spherical {
-        texture_from_render: GpuMatrix4x4,
+        texture_from_render: Matrix4x4,
     },
     Cylindrical {
-        texture_from_render: GpuMatrix4x4,
+        texture_from_render: Matrix4x4,
     },
     Planar {
-        texture_from_render: GpuMatrix4x4,
-        vs: GpuVector3,
-        vt: GpuVector3,
-        ds: GpuFloat,
-        dt: GpuFloat,
+        texture_from_render: Matrix4x4,
+        vs: Vector3,
+        vt: Vector3,
+        ds: Float,
+        dt: Float,
     },
     Transform3D {
-        texture_from_render: GpuMatrix4x4,
+        texture_from_render: Matrix4x4,
     },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuFloatTexture {
+pub enum FloatTexture {
     Constant {
-        value: GpuFloat,
+        value: Float,
     },
     Image {
         image: ImageId,
         mapping: super::TextureMappingId,
-        scale: GpuFloat,
+        scale: Float,
         invert: bool,
-        swrap: GpuImageWrapMode,
-        twrap: GpuImageWrapMode,
-        filter: GpuImageFilter,
-        channel: GpuFloatImageChannel,
+        swrap: ImageWrapMode,
+        twrap: ImageWrapMode,
+        filter: ImageFilter,
+        channel: FloatImageChannel,
     },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GpuFloatImageChannel {
+pub enum FloatImageChannel {
     Channel0,
     Alpha,
     RgbAverage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GpuSpectrumTexture {
+pub enum SpectrumTexture {
     Constant {
         value: SpectrumId,
     },
     Image {
         image: ImageId,
         mapping: super::TextureMappingId,
-        scale: GpuFloat,
+        scale: Float,
         invert: bool,
-        swrap: GpuImageWrapMode,
-        twrap: GpuImageWrapMode,
-        filter: GpuImageFilter,
-        spectrum_type: GpuSpectrumType,
+        swrap: ImageWrapMode,
+        twrap: ImageWrapMode,
+        filter: ImageFilter,
+        spectrum_type: SpectrumType,
     },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GpuSpectrumType {
+pub enum SpectrumType {
     Albedo,
     Unbounded,
     Illuminant,

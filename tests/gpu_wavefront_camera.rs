@@ -1,6 +1,6 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::ir::{GpuRenderConfig, GpuRenderRequest};
+use pbrt_r4::gpu::ir::{RenderConfig, RenderRequest};
 use pbrt_r4::gpu::webgpu::{PrepareOptions, Renderer};
 use pbrt_r4::parser::{parse_string, SceneBuilder};
 
@@ -35,7 +35,7 @@ fn wavefront_renders_direct_diffuse_lighting_with_hit_and_miss_pixels() {
         panic!("Hardware Ray Query is required for this WebGPU test: {error}")
     });
     let executable = renderer.prepare(&compiled).unwrap();
-    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let request = RenderRequest::new(&RenderConfig::default(), 0, 1).unwrap();
     let output = renderer.render(&executable, &request).unwrap();
 
     assert_eq!(output.rgb.len(), 8);
@@ -123,7 +123,7 @@ fn wavefront_adds_uniform_infinite_radiance_for_miss_rays() {
         panic!("Hardware Ray Query is required for this WebGPU test: {error}")
     });
     let executable = renderer.prepare(&compiled).unwrap();
-    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let request = RenderRequest::new(&RenderConfig::default(), 0, 1).unwrap();
     let output = renderer.render(&executable, &request).unwrap();
     assert!(output.rgb[0].iter().all(|component| *component > 0.0));
 }
@@ -161,7 +161,7 @@ fn wavefront_samples_a_diffuse_area_light() {
         panic!("Hardware Ray Query is required for this WebGPU test: {error}")
     });
     let executable = renderer.prepare(&compiled).unwrap();
-    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let request = RenderRequest::new(&RenderConfig::default(), 0, 1).unwrap();
     let output = renderer.render(&executable, &request).unwrap();
     assert!(output.rgb[0].iter().all(|component| component.is_finite()));
     assert!(
@@ -200,7 +200,7 @@ fn wavefront_adds_emissive_area_surface_when_hit() {
         panic!("Hardware Ray Query is required for this WebGPU test: {error}")
     });
     let executable = renderer.prepare(&compiled).unwrap();
-    let request = GpuRenderRequest::new(&GpuRenderConfig::default(), 0, 1).unwrap();
+    let request = RenderRequest::new(&RenderConfig::default(), 0, 1).unwrap();
     let output = renderer.render(&executable, &request).unwrap();
 
     assert!(output.rgb[0].iter().all(|component| component.is_finite()));
@@ -244,8 +244,8 @@ fn render_center_pixel_with_sample_count(
         panic!("Hardware Ray Query is required for this WebGPU test: {error}")
     });
     let executable = renderer.prepare(&compiled).unwrap();
-    let mut render_config = GpuRenderConfig::default();
+    let mut render_config = RenderConfig::default();
     render_config.sampler.samples_per_pixel = sample_count;
-    let request = GpuRenderRequest::new(&render_config, 0, sample_count).unwrap();
+    let request = RenderRequest::new(&render_config, 0, sample_count).unwrap();
     renderer.render(&executable, &request).unwrap().rgb[0]
 }

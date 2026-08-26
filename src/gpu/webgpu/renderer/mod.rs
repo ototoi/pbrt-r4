@@ -1,5 +1,5 @@
 use super::super::compiler::GpuCompiledScene;
-use super::super::ir::{GpuMatrix4x4, GpuRenderOutput, GpuRenderRequest, GpuSceneView};
+use super::super::ir::{Matrix4x4, RenderOutput, RenderRequest, SceneView};
 use super::device::{AccelerationMode, DeviceContext, PrepareOptions};
 use super::error::BackendError;
 use super::geometry::{HardwareAcceleration, ScenePlan};
@@ -21,7 +21,7 @@ pub struct ExecutableScene {
 }
 
 impl ExecutableScene {
-    pub fn scene(&self) -> GpuSceneView<'_> {
+    pub fn scene(&self) -> SceneView<'_> {
         self.scene.view()
     }
 }
@@ -81,10 +81,10 @@ impl Renderer {
     pub fn render(
         &mut self,
         scene: &ExecutableScene,
-        request: &GpuRenderRequest,
-    ) -> Result<GpuRenderOutput, BackendError> {
+        request: &RenderRequest,
+    ) -> Result<RenderOutput, BackendError> {
         let scene_view = scene.scene();
-        let request = GpuRenderRequest::new(
+        let request = RenderRequest::new(
             scene_view.render,
             request.sample_start,
             request.sample_count,
@@ -115,7 +115,7 @@ impl Renderer {
     pub fn render_to_film(
         &mut self,
         scene: &ExecutableScene,
-        request: &GpuRenderRequest,
+        request: &RenderRequest,
         film: &mut Film,
     ) -> Result<(), BackendError> {
         let output = self.render(scene, request)?;
@@ -260,8 +260,8 @@ fn common_bind_group_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
 }
 
 fn camera_uniform_bytes(
-    scene: GpuSceneView<'_>,
-    request: GpuRenderRequest,
+    scene: SceneView<'_>,
+    request: RenderRequest,
     bvh_primitive_offset: u32,
     bvh_node_offset: u32,
 ) -> Vec<u8> {
@@ -269,8 +269,8 @@ fn camera_uniform_bytes(
         .transforms
         .get(scene.render.camera.render_from_camera.0 as usize)
     {
-        Some(super::super::ir::GpuTransform::Static(transform)) => transform.render_from_object,
-        _ => GpuMatrix4x4::identity(),
+        Some(super::super::ir::Transform::Static(transform)) => transform.render_from_object,
+        _ => Matrix4x4::identity(),
     };
     let pixel_bounds = scene.render.film.pixel_bounds;
     let width = (pixel_bounds.max[0] - pixel_bounds.min[0]) as f32;

@@ -1,7 +1,7 @@
 #![cfg(any(feature = "cuda", feature = "webgpu"))]
 
 use pbrt_r4::gpu::compiler::{GpuResourceKind, GpuSourceEntry};
-use pbrt_r4::gpu::ir::{GpuGeometry, GpuImageFilter, GpuMaterial, GpuSpectrumResource};
+use pbrt_r4::gpu::ir::{Geometry, ImageFilter, Material, SpectrumResource};
 use pbrt_r4::parser::{parse_string, SceneBuilder};
 
 #[test]
@@ -30,7 +30,7 @@ fn scene_builder_compiles_a_default_trianglemesh() {
     assert_eq!(view.render.film.pixel_bounds.max, [1280, 720]);
     assert_eq!(view.render.sampler.samples_per_pixel, 4);
     assert!(!view.primitives[0].reverse_orientation);
-    assert!(matches!(view.geometry[0], GpuGeometry::TriangleMesh(_)));
+    assert!(matches!(view.geometry[0], Geometry::TriangleMesh(_)));
     let requirements = compiled.requirements();
     assert_eq!(compiled.source_map().locations.len(), 1);
     assert!(compiled.source_map().resources.contains(&GpuSourceEntry {
@@ -53,7 +53,7 @@ fn scene_builder_compiles_a_default_trianglemesh() {
     assert_eq!(requirements.resource_counts.primitives, 1);
     assert_eq!(requirements.maxima.vertices_per_geometry, 3);
     assert!(requirements.features.iter().any(|required| {
-        required.feature == pbrt_r4::gpu::ir::GpuFeature::TriangleMesh
+        required.feature == pbrt_r4::gpu::ir::Feature::TriangleMesh
             && required.sources.as_ref() == [pbrt_r4::gpu::ir::SourceId(0)]
     }));
     assert!(requirements
@@ -149,11 +149,11 @@ fn scene_builder_compiles_constant_diffuse_material() {
     assert_eq!(view.primitives[0].material.map(|id| id.0), Some(1));
     assert!(matches!(
         view.materials[1],
-        GpuMaterial::Diffuse(material) if material.reflectance.0 == 1
+        Material::Diffuse(material) if material.reflectance.0 == 1
     ));
     assert!(matches!(
         view.spectra[1],
-        GpuSpectrumResource::RgbAlbedo { coefficients }
+        SpectrumResource::RgbAlbedo { coefficients }
             if coefficients == [0.2, 0.4, 0.6]
     ));
 }
@@ -226,10 +226,10 @@ fn scene_builder_compiles_animated_shape_transforms() {
     let compiled = builder.build_gpu_ir().unwrap();
     assert!(matches!(
         compiled.view().transforms[0],
-        pbrt_r4::gpu::ir::GpuTransform::Animated(_)
+        pbrt_r4::gpu::ir::Transform::Animated(_)
     ));
     assert!(compiled.requirements().features.iter().any(|required| {
-        required.feature == pbrt_r4::gpu::ir::GpuFeature::AnimatedTransform
+        required.feature == pbrt_r4::gpu::ir::Feature::AnimatedTransform
             && required.sources.as_ref() == [pbrt_r4::gpu::ir::SourceId(0)]
     }));
 }
@@ -280,12 +280,12 @@ fn scene_builder_binds_diffuse_area_light_to_primitive() {
     assert_eq!(view.lights.len(), 1);
     assert!(matches!(
         view.lights[0],
-        pbrt_r4::gpu::ir::GpuLight::DiffuseArea(light)
+        pbrt_r4::gpu::ir::Light::DiffuseArea(light)
             if light.scale == 3.0 && light.two_sided == false
     ));
     assert!(matches!(
         view.primitives[0].area_light,
-        pbrt_r4::gpu::ir::GpuAreaLightBinding::Uniform(light) if light.0 == 0
+        pbrt_r4::gpu::ir::AreaLightBinding::Uniform(light) if light.0 == 0
     ));
 }
 
@@ -330,12 +330,12 @@ fn scene_builder_preserves_imagemap_filter_selection() {
         .unwrap();
 
     for (filter, expected) in [
-        ("point", GpuImageFilter::Point),
-        ("bilinear", GpuImageFilter::Bilinear),
-        ("trilinear", GpuImageFilter::Trilinear),
+        ("point", ImageFilter::Point),
+        ("bilinear", ImageFilter::Bilinear),
+        ("trilinear", ImageFilter::Trilinear),
         (
             "ewa",
-            GpuImageFilter::Ewa {
+            ImageFilter::Ewa {
                 max_anisotropy: 4.0,
             },
         ),
@@ -367,15 +367,15 @@ fn scene_builder_preserves_imagemap_filter_selection() {
         let texture = compiled.view().spectrum_textures[1];
         assert!(matches!(
             texture,
-            pbrt_r4::gpu::ir::GpuSpectrumTexture::Image { filter, .. } if filter == expected
+            pbrt_r4::gpu::ir::SpectrumTexture::Image { filter, .. } if filter == expected
         ));
         assert!(matches!(
             &compiled.view().images[0].storage,
-            pbrt_r4::gpu::ir::GpuTexelStorage::U8(_)
+            pbrt_r4::gpu::ir::TexelStorage::U8(_)
         ));
         assert_eq!(
             compiled.view().images[0].color_encoding,
-            pbrt_r4::gpu::ir::GpuColorEncoding::Srgb
+            pbrt_r4::gpu::ir::ColorEncoding::Srgb
         );
     }
 }
@@ -411,16 +411,13 @@ fn scene_builder_uses_luma_channel_for_two_channel_float_imagemap() {
     let view = compiled.view();
     assert!(matches!(
         view.float_textures[0],
-        pbrt_r4::gpu::ir::GpuFloatTexture::Image {
-            channel: pbrt_r4::gpu::ir::GpuFloatImageChannel::Channel0,
+        pbrt_r4::gpu::ir::FloatTexture::Image {
+            channel: pbrt_r4::gpu::ir::FloatImageChannel::Channel0,
             ..
         }
     ));
     assert_eq!(view.primitives[0].alpha.map(|id| id.0), Some(0));
-    assert_eq!(
-        view.images[0].channels,
-        pbrt_r4::gpu::ir::GpuImageChannels::Rg
-    );
+    assert_eq!(view.images[0].channels, pbrt_r4::gpu::ir::ImageChannels::Rg);
 }
 
 #[test]
@@ -444,7 +441,7 @@ fn scene_builder_compiles_uniform_infinite_light() {
     assert_eq!(compiled.view().lights.len(), 1);
     assert!(matches!(
         compiled.view().lights[0],
-        pbrt_r4::gpu::ir::GpuLight::UniformInfinite(light)
+        pbrt_r4::gpu::ir::Light::UniformInfinite(light)
             if light.radiance.0 == 1 && light.scale == 2.0
     ));
 }
@@ -497,7 +494,7 @@ fn scene_builder_preserves_material_displacement_reference() {
     let compiled = builder.build_gpu_ir().unwrap();
     assert!(matches!(
         compiled.view().materials[1],
-        GpuMaterial::Diffuse(material) if material.displacement.is_some()
+        Material::Diffuse(material) if material.displacement.is_some()
     ));
 }
 
@@ -519,10 +516,7 @@ fn scene_builder_compiles_quadric_shapes_without_fallback() {
     .unwrap();
 
     let compiled = builder.build_gpu_ir().unwrap();
-    assert!(matches!(
-        compiled.view().geometry[0],
-        GpuGeometry::Quadric(_)
-    ));
+    assert!(matches!(compiled.view().geometry[0], Geometry::Quadric(_)));
 }
 
 #[test]
@@ -547,7 +541,7 @@ fn scene_builder_compiles_bilinear_mesh() {
     let compiled = builder.build_gpu_ir().unwrap();
     assert!(matches!(
         compiled.view().geometry[0],
-        GpuGeometry::BilinearPatchMesh(_)
+        Geometry::BilinearPatchMesh(_)
     ));
 }
 
@@ -573,7 +567,7 @@ fn scene_builder_compiles_curve_mesh() {
     let compiled = builder.build_gpu_ir().unwrap();
     assert!(matches!(
         &compiled.view().geometry[0],
-        GpuGeometry::CurveMesh(mesh) if mesh.curves.len() == 1
+        Geometry::CurveMesh(mesh) if mesh.curves.len() == 1
     ));
 }
 
@@ -604,7 +598,7 @@ fn scene_builder_compiles_triangle_plymesh() {
     let compiled = builder.build_gpu_ir().unwrap();
     assert!(matches!(
         &compiled.view().geometry[0],
-        GpuGeometry::TriangleMesh(mesh)
+        Geometry::TriangleMesh(mesh)
             if mesh.positions.len() == 3 && mesh.indices == vec![[0, 1, 2]]
     ));
 }
@@ -640,7 +634,7 @@ fn scene_builder_compiles_ply_shape_displacement_into_minmax_ir() {
     assert_eq!(view.primitives[0].geometry.0, 1);
     assert!(matches!(
         &view.geometry[1],
-        GpuGeometry::DisplacedTriangleMesh(mesh)
+        Geometry::DisplacedTriangleMesh(mesh)
             if mesh.base_mesh.0 == 0
                 && mesh.triangle_roots.len() == 1
                 && mesh.min_max_nodes[0].displacement_min == 0.25

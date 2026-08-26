@@ -8,7 +8,7 @@ pub enum BackendError {
     DeviceRequest(String),
     MissingRayQueryFeature,
     Plan(PlanError),
-    InvalidRenderRequest(super::super::ir::GpuRenderRequestError),
+    InvalidRenderRequest(super::super::ir::RenderRequestError),
     UnsupportedRenderRequest { reason: &'static str },
     Readback(String),
     UnsupportedAccelerationMode(AccelerationMode),

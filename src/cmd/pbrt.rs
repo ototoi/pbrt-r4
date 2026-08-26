@@ -7,7 +7,7 @@ use pbrt_r4::base::filter::Filter;
 use pbrt_r4::displays::SequentialDisplay;
 use pbrt_r4::displays::TevDisplay;
 #[cfg(feature = "webgpu")]
-use pbrt_r4::gpu::ir::{GpuRenderConfig, GpuRenderRequest};
+use pbrt_r4::gpu::ir::{RenderConfig, RenderRequest};
 #[cfg(feature = "webgpu")]
 use pbrt_r4::gpu::webgpu::{PrepareOptions, Renderer};
 #[cfg(feature = "webgpu")]
@@ -682,9 +682,9 @@ fn render_gpu_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
         }
     };
     let render = compiled.view().render;
-    let mut render_config = GpuRenderConfig::default();
+    let mut render_config = RenderConfig::default();
     render_config.sampler.samples_per_pixel = render.sampler.samples_per_pixel;
-    let request = match GpuRenderRequest::new(&render_config, 0, render.sampler.samples_per_pixel) {
+    let request = match RenderRequest::new(&render_config, 0, render.sampler.samples_per_pixel) {
         Ok(request) => request,
         Err(error) => {
             error!("invalid GPU render request: {:?}", error);

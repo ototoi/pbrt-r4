@@ -1,11 +1,11 @@
-use super::super::super::ir::{GpuBounds2i, GpuSceneView};
+use super::super::super::ir::{Bounds2i, SceneView};
 use super::super::arena::ArenaLayout;
 use super::super::error::BackendError;
 use super::{Pipeline, SceneResources};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 pub struct RenderDimensions {
-    pub pixel_bounds: GpuBounds2i,
+    pub pixel_bounds: Bounds2i,
     pub pixel_count: usize,
     pub output_size: wgpu::BufferAddress,
     pub output_buffer_size: wgpu::BufferAddress,
@@ -15,7 +15,7 @@ pub struct RenderDimensions {
 }
 
 impl RenderDimensions {
-    pub fn from_scene(scene: GpuSceneView<'_>) -> Result<Self, BackendError> {
+    pub fn from_scene(scene: SceneView<'_>) -> Result<Self, BackendError> {
         let pixel_bounds = scene.render.film.pixel_bounds;
         let width = pixel_bounds.max[0]
             .checked_sub(pixel_bounds.min[0])
@@ -93,8 +93,8 @@ impl RenderBuffers {
 
 pub fn create_uniform_buffer(
     device: &wgpu::Device,
-    scene: GpuSceneView<'_>,
-    request: super::super::super::ir::GpuRenderRequest,
+    scene: SceneView<'_>,
+    request: super::super::super::ir::RenderRequest,
     bvh_primitive_offset: u32,
     bvh_node_offset: u32,
 ) -> wgpu::Buffer {

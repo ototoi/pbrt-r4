@@ -1,4 +1,4 @@
-use super::super::ir::{GpuIndex, SourceId};
+use super::super::ir::{Index, SourceId};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuSourceMap {
@@ -25,6 +25,6 @@ pub enum GpuResourceKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GpuSourceEntry {
     pub kind: GpuResourceKind,
-    pub index: GpuIndex,
+    pub index: Index,
     pub source: SourceId,
 }

@@ -1,12 +1,12 @@
 use super::{
     build_mip_storage, compile_rgb_spectrum, compile_transform, encode_mip_storage,
     finite_parameter, gpu_color_encoding, invalid_parameter, light_source_location, raw_encoding,
-    raw_linear_pixels, GpuCompileError, GpuDiffuseAreaLight, GpuImageChannels, GpuImageFilter,
-    GpuImageResource, GpuImageWrapMode, GpuIndex, GpuLight, GpuPointLight, GpuSourceLocation,
-    GpuSpectrumResource, GpuSpectrumTexture, GpuTextureMapping, GpuTransform,
-    GpuUniformInfiniteLight, LightSceneEntity, SceneBuilder, TransformId,
+    raw_linear_pixels, DiffuseAreaLight, GpuCompileError, GpuSourceLocation, ImageChannels,
+    ImageFilter, ImageResource, ImageWrapMode, Index, Light, LightSceneEntity, PointLight,
+    SceneBuilder, SpectrumResource, SpectrumTexture, TextureMapping, Transform, TransformId,
+    UniformInfiniteLight,
 };
-use crate::gpu::ir::{GpuSpectrumType, ImageId, LightId, SpectrumTextureId, TextureMappingId};
+use crate::gpu::ir::{ImageId, LightId, SpectrumTextureId, SpectrumType, TextureMappingId};
 use crate::parser::scene_builder::path_resolver::make_absolute_path;
 use crate::parser::scene_builder::AreaLightSceneEntity;
 use crate::util::imageio::{read_raw_image_with_encoding, ColorEncoding};
@@ -15,12 +15,12 @@ use std::path::Path;
 pub fn compile_light(
     _builder: &SceneBuilder,
     light: &LightSceneEntity,
-    transforms: &mut Vec<GpuTransform>,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    lights: &mut Vec<GpuLight>,
+    transforms: &mut Vec<Transform>,
+    spectra: &mut Vec<SpectrumResource>,
+    lights: &mut Vec<Light>,
 ) -> Result<(), GpuCompileError> {
     let source = light_source_location(light);
-    let transform_id = TransformId(transforms.len() as GpuIndex);
+    let transform_id = TransformId(transforms.len() as Index);
     transforms.push(compile_transform(&light.base.render_from_object, &source)?);
     let (spectrum_name, default_scale) = match light.base.base.name.as_str() {
         "point" => ("I", 1.0),
@@ -41,12 +41,12 @@ pub fn compile_light(
     )?;
     let scale = finite_parameter(&light.base.base.params, "scale", default_scale, &source)?;
     match light.base.base.name.as_str() {
-        "point" => lights.push(GpuLight::Point(GpuPointLight {
+        "point" => lights.push(Light::Point(PointLight {
             render_from_light: transform_id,
             intensity: spectrum,
             scale,
         })),
-        "infinite" => lights.push(GpuLight::UniformInfinite(GpuUniformInfiniteLight {
+        "infinite" => lights.push(Light::UniformInfinite(UniformInfiniteLight {
             radiance: spectrum,
             scale,
         })),
@@ -58,11 +58,11 @@ pub fn compile_light(
 pub fn compile_area_light(
     builder: &SceneBuilder,
     area: &AreaLightSceneEntity,
-    spectra: &mut Vec<GpuSpectrumResource>,
-    spectrum_textures: &mut Vec<GpuSpectrumTexture>,
-    images: &mut Vec<GpuImageResource>,
-    texture_mappings: &mut Vec<GpuTextureMapping>,
-    lights: &mut Vec<GpuLight>,
+    spectra: &mut Vec<SpectrumResource>,
+    spectrum_textures: &mut Vec<SpectrumTexture>,
+    images: &mut Vec<ImageResource>,
+    texture_mappings: &mut Vec<TextureMapping>,
+    lights: &mut Vec<Light>,
     source: &GpuSourceLocation,
 ) -> Result<LightId, GpuCompileError> {
     if area.base.name != "diffuse" {
@@ -87,8 +87,8 @@ pub fn compile_area_light(
     let filename = params.get_one_filename("filename", "");
     let emission_texture = if filename.is_empty() {
         let emission = compile_rgb_spectrum(&params, "L", [1.0, 1.0, 1.0], source, spectra)?;
-        let emission_texture = SpectrumTextureId(spectrum_textures.len() as GpuIndex);
-        spectrum_textures.push(GpuSpectrumTexture::Constant { value: emission });
+        let emission_texture = SpectrumTextureId(spectrum_textures.len() as Index);
+        spectrum_textures.push(SpectrumTexture::Constant { value: emission });
         emission_texture
     } else {
         if params.get_points_ref("L").is_some()
@@ -110,8 +110,8 @@ pub fn compile_area_light(
         )?
     };
     let scale = finite_parameter(&area.base.params, "scale", 1.0, source)?;
-    let light_id = LightId(lights.len() as GpuIndex);
-    lights.push(GpuLight::DiffuseArea(GpuDiffuseAreaLight {
+    let light_id = LightId(lights.len() as Index);
+    lights.push(Light::DiffuseArea(DiffuseAreaLight {
         emission: emission_texture,
         scale,
         two_sided: area.base.params.get_one_bool("twosided", false),
@@ -121,9 +121,9 @@ pub fn compile_area_light(
 
 fn compile_area_light_image(
     filename: &str,
-    images: &mut Vec<GpuImageResource>,
-    texture_mappings: &mut Vec<GpuTextureMapping>,
-    spectrum_textures: &mut Vec<GpuSpectrumTexture>,
+    images: &mut Vec<ImageResource>,
+    texture_mappings: &mut Vec<TextureMapping>,
+    spectrum_textures: &mut Vec<SpectrumTexture>,
     source: &GpuSourceLocation,
 ) -> Result<SpectrumTextureId, GpuCompileError> {
     let encoding = if Path::new(filename)
@@ -166,31 +166,31 @@ fn compile_area_light_image(
     let (linear_storage, mip_levels) = build_mip_storage(&pixels, width, height, 3);
     let encoding = raw_encoding(&raw);
     let storage = encode_mip_storage(&linear_storage, &raw.data, encoding, 3);
-    let image = ImageId(images.len() as GpuIndex);
-    images.push(GpuImageResource {
+    let image = ImageId(images.len() as Index);
+    images.push(ImageResource {
         resolution: [width, height],
-        channels: GpuImageChannels::Rgb,
+        channels: ImageChannels::Rgb,
         storage,
         mip_levels,
         color_encoding: gpu_color_encoding(encoding),
     });
-    let mapping = TextureMappingId(texture_mappings.len() as GpuIndex);
-    texture_mappings.push(GpuTextureMapping::Uv {
+    let mapping = TextureMappingId(texture_mappings.len() as Index);
+    texture_mappings.push(TextureMapping::Uv {
         su: 1.0,
         sv: -1.0,
         du: 0.0,
         dv: 1.0,
     });
-    let texture = SpectrumTextureId(spectrum_textures.len() as GpuIndex);
-    spectrum_textures.push(GpuSpectrumTexture::Image {
+    let texture = SpectrumTextureId(spectrum_textures.len() as Index);
+    spectrum_textures.push(SpectrumTexture::Image {
         image,
         mapping,
         scale: 1.0,
         invert: false,
-        swrap: GpuImageWrapMode::Clamp,
-        twrap: GpuImageWrapMode::Clamp,
-        filter: GpuImageFilter::Bilinear,
-        spectrum_type: GpuSpectrumType::Illuminant,
+        swrap: ImageWrapMode::Clamp,
+        twrap: ImageWrapMode::Clamp,
+        filter: ImageFilter::Bilinear,
+        spectrum_type: SpectrumType::Illuminant,
     });
     Ok(texture)
 }
