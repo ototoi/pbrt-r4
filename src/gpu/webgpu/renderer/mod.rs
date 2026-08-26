@@ -4,6 +4,7 @@ use super::device::{AccelerationMode, DeviceContext, PrepareOptions};
 use super::error::BackendError;
 use super::geometry::{HardwareAcceleration, ScenePlan};
 use super::shader::{build_wavefront_shader_set, ShaderSet, ShaderStageId};
+use crate::base::film::Film;
 
 mod resources;
 mod wavefront;
@@ -109,6 +110,17 @@ impl Renderer {
         );
 
         wavefront::render(self, request, &dimensions, &buffers, &bind_group)
+    }
+
+    pub fn render_to_film(
+        &mut self,
+        scene: &ExecutableScene,
+        request: &GpuRenderRequest,
+        film: &mut Film,
+    ) -> Result<(), BackendError> {
+        let output = self.render(scene, request)?;
+        output.write_to_film(film);
+        Ok(())
     }
 
     pub fn adapter_info(&self) -> wgpu::AdapterInfo {
