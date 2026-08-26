@@ -1,6 +1,6 @@
 use super::alphamask::AlphaMaskShape;
 use super::triangle::{get_alpha_texture, get_shadow_alpha_texture};
-use crate::base::shape::Shape;
+use crate::base::shape::{Shape, ShapeSampleContext};
 use crate::interaction::*;
 use crate::paramdict::*;
 
@@ -10,6 +10,7 @@ use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::lowdiscrepancy::*;
+use crate::util::sampling;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::collections::HashMap;
@@ -280,6 +281,8 @@ pub fn create_bilinear_patch_mesh(
 }
 
 impl BilinearPatch {
+    const MIN_SPHERICAL_SAMPLE_AREA: Float = 1e-4;
+
     fn new(mesh: &Arc<BilinearPatchMeshData>, patch_index: usize) -> Self {
         // pbrt-v4 `BilinearPatch::CreatePatches` (shapes.cpp) keeps every
         // patch in the mesh and lets `IntersectBilinearPatch` cope with
@@ -717,32 +720,133 @@ impl BilinearPatch {
     }
 
     pub fn sample_from(&self, inter: &Interaction, u: &Point2f) -> Option<(Interaction, Float)> {
-        let (intr, pdf) = self.sample(u)?;
-        let wi = intr.get_p() - inter.get_p();
-        if wi.length_squared() <= 0.0 {
-            return None;
+        let (p00, p10, p01, p11) = self.control_points();
+        let p_ref = inter.get_p();
+        let v00 = (p00 - p_ref).normalize();
+        let v10 = (p10 - p_ref).normalize();
+        let v01 = (p01 - p_ref).normalize();
+        let v11 = (p11 - p_ref).normalize();
+        let solid_angle = sampling::spherical_quad_area(&v00, &v10, &v11, &v01);
+
+        if !self.is_rectangle() || solid_angle <= Self::MIN_SPHERICAL_SAMPLE_AREA {
+            let (mut intr, pdf) = self.sample(u)?;
+            intr.set_time(inter.get_time());
+            let wi = intr.get_p() - p_ref;
+            if wi.length_squared() == 0.0 {
+                return None;
+            }
+            let wi = wi.normalize();
+            let pdf =
+                pdf * Point3f::distance_squared(&p_ref, &intr.get_p()) / intr.get_n().abs_dot(&-wi);
+            if pdf.is_infinite() {
+                return None;
+            }
+            return Some((intr, pdf));
         }
-        let wi = wi.normalize();
-        let pdf = pdf * Point3f::distance_squared(&inter.get_p(), &intr.get_p())
-            / intr.get_n().abs_dot(&-wi);
-        if pdf <= 0.0 || pdf.is_infinite() {
-            return None;
+
+        let context = ShapeSampleContext::from(inter);
+        let mut u = *u;
+        let mut pdf = 1.0;
+        if context.ns != Normal3f::zero() {
+            let weights = [
+                Float::max(0.01, Vector3f::abs_dot(&v00, &context.ns)),
+                Float::max(0.01, Vector3f::abs_dot(&v10, &context.ns)),
+                Float::max(0.01, Vector3f::abs_dot(&v01, &context.ns)),
+                Float::max(0.01, Vector3f::abs_dot(&v11, &context.ns)),
+            ];
+            u = sampling::sample_bilinear(u, &weights);
+            pdf *= sampling::bilinear_pdf(u, &weights);
         }
+
+        let eu = p10 - p00;
+        let ev = p01 - p00;
+        let (p, quad_pdf) = sampling::sample_spherical_rectangle(p_ref, p00, eu, ev, u);
+        pdf *= quad_pdf;
+
+        let uv = Point2f::new(
+            Vector3f::dot(&(p - p00), &eu) / Point3f::distance_squared(&p10, &p00),
+            Vector3f::dot(&(p - p00), &ev) / Point3f::distance_squared(&p01, &p00),
+        );
+        let mut n = Vector3f::cross(&eu, &ev).normalize();
+        let vertices = self.vertex_indices();
+        if !self.mesh.n.is_empty() {
+            let ns = interpolate_n(
+                uv,
+                self.mesh.n[vertices[0] as usize],
+                self.mesh.n[vertices[1] as usize],
+                self.mesh.n[vertices[2] as usize],
+                self.mesh.n[vertices[3] as usize],
+            );
+            n = face_forward(&n, &ns);
+        } else if self.mesh.reverse_orientation ^ self.mesh.swaps_handedness {
+            n = -n;
+        }
+
+        let st = if self.mesh.uv.is_empty() {
+            uv
+        } else {
+            interpolate_uv(
+                uv,
+                self.mesh.uv[vertices[0] as usize],
+                self.mesh.uv[vertices[1] as usize],
+                self.mesh.uv[vertices[2] as usize],
+                self.mesh.uv[vertices[3] as usize],
+            )
+        };
+        let intr = Interaction::Base(BaseInteraction {
+            p,
+            n,
+            uv: st,
+            time: context.time,
+            ..Default::default()
+        });
         Some((intr, pdf))
     }
 
     pub fn pdf_from(&self, inter: &Interaction, wi: &Vector3f) -> Float {
         let ray = inter.spawn_ray(wi);
-        if let Some(si) = self.intersect(&ray, Float::INFINITY) {
-            let isect_light = si.intr;
-            let pdf = Point3f::distance_squared(&inter.get_p(), &isect_light.p)
-                / (Vector3f::abs_dot(&isect_light.n, &(-*wi)) * self.area());
+        let Some(si) = self.intersect(&ray, Float::INFINITY) else {
+            return 0.0;
+        };
+        let isect_light = si.intr;
+
+        let (p00, p10, p01, p11) = self.control_points();
+        let p_ref = inter.get_p();
+        let v00 = (p00 - p_ref).normalize();
+        let v10 = (p10 - p_ref).normalize();
+        let v01 = (p01 - p_ref).normalize();
+        let v11 = (p11 - p_ref).normalize();
+        let solid_angle = sampling::spherical_quad_area(&v00, &v10, &v11, &v01);
+
+        if !self.is_rectangle() || solid_angle <= Self::MIN_SPHERICAL_SAMPLE_AREA {
+            let pdf = self.pdf(&Interaction::Surface(isect_light.clone()))
+                * Point3f::distance_squared(&p_ref, &isect_light.p)
+                / Vector3f::abs_dot(&isect_light.n, &(-*wi));
             if pdf.is_infinite() {
                 return 0.0;
             }
             return pdf;
         }
-        0.0
+
+        let mut pdf = 1.0 / solid_angle;
+        let context = ShapeSampleContext::from(inter);
+        if context.ns != Normal3f::zero() {
+            let weights = [
+                Float::max(0.01, Vector3f::abs_dot(&v00, &context.ns)),
+                Float::max(0.01, Vector3f::abs_dot(&v10, &context.ns)),
+                Float::max(0.01, Vector3f::abs_dot(&v01, &context.ns)),
+                Float::max(0.01, Vector3f::abs_dot(&v11, &context.ns)),
+            ];
+            let u = sampling::invert_spherical_rectangle_sample(
+                p_ref,
+                p00,
+                p10 - p00,
+                p01 - p00,
+                isect_light.p,
+            );
+            pdf *= sampling::bilinear_pdf(u, &weights);
+        }
+        pdf
     }
 
     pub fn solid_angle(&self, p: &Point3f, n_samples: i32) -> Float {

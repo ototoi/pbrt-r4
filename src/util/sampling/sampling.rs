@@ -26,6 +26,34 @@ pub fn spherical_triangle_area(a: &Vector3f, b: &Vector3f, c: &Vector3f) -> Floa
     )
 }
 
+/// pbrt-v4 `SphericalQuadArea` — solid angle of the spherical quadrilateral
+/// formed by four unit-length direction vectors.
+#[inline]
+pub fn spherical_quad_area(a: &Vector3f, b: &Vector3f, c: &Vector3f, d: &Vector3f) -> Float {
+    let mut axb = Vector3f::cross(a, b);
+    let mut bxc = Vector3f::cross(b, c);
+    let mut cxd = Vector3f::cross(c, d);
+    let mut dxa = Vector3f::cross(d, a);
+    if axb.length_squared() == 0.0
+        || bxc.length_squared() == 0.0
+        || cxd.length_squared() == 0.0
+        || dxa.length_squared() == 0.0
+    {
+        return 0.0;
+    }
+    axb = axb.normalize();
+    bxc = bxc.normalize();
+    cxd = cxd.normalize();
+    dxa = dxa.normalize();
+
+    let alpha = angle_between(&dxa, &-axb);
+    let beta = angle_between(&axb, &-bxc);
+    let gamma = angle_between(&bxc, &-cxd);
+    let delta = angle_between(&cxd, &-dxa);
+
+    Float::abs(alpha + beta + gamma + delta - 2.0 * PI)
+}
+
 // pbrt-v4 helpers (math.h) used by SampleSphericalTriangle and its
 // bilinear cosine-warp PDF; defined here so all of r4's spherical
 // triangle sampling lives next to its other Monte Carlo helpers.

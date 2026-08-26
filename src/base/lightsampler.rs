@@ -9,7 +9,7 @@ use crate::cpu::lightdistrib::spatial::SpatialLightDistribution;
 use crate::interaction::*;
 use crate::util::base::*;
 use crate::util::error::PbrtError;
-use crate::util::geometry::Bounds3f;
+use crate::util::geometry::{max_component, Bounds3f};
 use crate::util::sampling::Distribution1D;
 use crate::util::spectrum::SampledWavelengths;
 
@@ -323,7 +323,7 @@ impl BVHLightSampler {
                 });
             }
 
-            for i in 0..(N_BUCKETS - 1) {
+            for i in 1..(N_BUCKETS - 1) {
                 let mut b0: Option<LightBounds> = None;
                 let mut b1: Option<LightBounds> = None;
                 for j in 0..=i {
@@ -522,25 +522,23 @@ fn light_index_key(light: &Arc<Light>) -> usize {
     light_ptr_key(light)
 }
 
-fn evaluate_cost(b: Option<&LightBounds>, parent: &Bounds3f, _dim: usize) -> Float {
+fn evaluate_cost(b: Option<&LightBounds>, parent: &Bounds3f, dim: usize) -> Float {
     let Some(lb) = b else { return 0.0 };
-    // pbrt-v4 `EvaluateCost` (lightsamplers.cpp) — light-bounds cost
-    // weighted by power and surface area, normalised by the parent's
-    // surface area (skip the cone-spread term used for the full SAH —
-    // testing showed the simpler form is what r4 needs to stay close to
-    // v4's behaviour for typical scenes; this matches v4 in spirit).
-    let parent_sa = parent.surface_area().max(1e-6);
-    let child_sa = lb.bounds.surface_area().max(0.0);
-    // Cone fraction: 1 / cosTheta_o approximates the angular spread cost.
+    // Evaluate direction bounds measure for LightBounds
     let theta_o = lb.cos_theta_o.acos();
     let theta_w = (theta_o + lb.cos_theta_e.acos()).min(std::f32::consts::PI as Float);
+    let sin_theta_o = Float::sqrt(Float::max(0.0, 1.0 - lb.cos_theta_o * lb.cos_theta_o));
     let m_omega = 2.0 * std::f32::consts::PI as Float * (1.0 - lb.cos_theta_o)
         + std::f32::consts::PI as Float / 2.0
-            * (2.0 * theta_w * theta_o.sin()
+            * (2.0 * theta_w * sin_theta_o
                 - (theta_o - 2.0 * theta_w).cos()
-                - 2.0 * theta_o * theta_o.sin()
-                + theta_o.cos());
-    lb.phi * m_omega.max(1e-3) * child_sa / parent_sa
+                - 2.0 * theta_o * sin_theta_o
+                + lb.cos_theta_o);
+
+    // Return complete cost estimate for LightBounds
+    let diagonal = parent.diagonal();
+    let kr = max_component(&diagonal) / diagonal[dim];
+    lb.phi * m_omega * kr * lb.bounds.surface_area()
 }
 
 #[derive(Clone)]
