@@ -26,3 +26,19 @@ fn domain_width_contributes_to_integral() {
     let distribution = PiecewiseConstant1D::new(&[2.0, 2.0], -2.0, 4.0);
     assert!((distribution.integral() - 12.0).abs() < 1e-6);
 }
+
+#[test]
+fn one_dimensional_pdf_is_normalized_on_non_unit_domain() {
+    let distribution = PiecewiseConstant1D::new(&[1.0, 1.0], -2.0, 4.0);
+    assert!((distribution.pdf(0.0) - 1.0 / 6.0).abs() < 1e-6);
+}
+
+#[test]
+fn one_dimensional_sample_invert_round_trips() {
+    let distribution = PiecewiseConstant1D::new(&[1.0, 3.0], -2.0, 4.0);
+    for sample in [0.0, 0.125, 0.25, 0.5, 0.875, 1.0] {
+        let (value, _, _) = distribution.sample(sample);
+        let inverse = distribution.invert(value).unwrap();
+        assert!((inverse - sample.min(1.0 - 1e-7)).abs() < 1e-6);
+    }
+}

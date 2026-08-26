@@ -77,7 +77,10 @@ impl PiecewiseConstant1D {
             self.func.len() - 1,
         );
         if self.integral > 0.0 {
-            self.func[i] / self.integral / (self.domain.1 - self.domain.0)
+            // `integral` already includes the width of the domain, so this
+            // ratio is a density with respect to x. Dividing by the domain
+            // width again would make the PDF integrate to 1 / (b - a).
+            self.func[i] / self.integral
         } else {
             0.0
         }
@@ -93,12 +96,8 @@ impl PiecewiseConstant1D {
             0,
             self.func.len() - 1,
         );
-        let c0 = self.cdf[i];
-        let c1 = self.cdf[i + 1];
-        if c1 <= c0 {
-            return None;
-        }
-        Some((i as Float + (u - c0) / (c1 - c0)) / self.func.len() as Float)
+        let du = u * self.func.len() as Float - i as Float;
+        Some(lerp(du, self.cdf[i], self.cdf[i + 1]))
     }
 }
 
