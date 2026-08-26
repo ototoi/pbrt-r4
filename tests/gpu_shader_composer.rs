@@ -14,6 +14,7 @@ fn wavefront_shader_is_composed_from_dedicated_fragments() {
     assert!(shader.source.contains("shaders/wavefront/escaped.wgsl"));
     assert!(shader.source.contains("shaders/wavefront/indirect.wgsl"));
     assert!(shader.source.contains("shaders/wavefront/surface.wgsl"));
+    assert!(shader.source.contains("shaders/wavefront/emissive.wgsl"));
     assert!(shader.source.contains("shaders/wavefront/material.wgsl"));
     assert!(shader
         .source
@@ -30,5 +31,5 @@ fn wavefront_shader_is_composed_from_dedicated_fragments() {
     assert!(shader.stage(ShaderStageId::EvaluateMaterial).is_some());
     assert!(shader.stage(ShaderStageId::SampleDirectLighting).is_some());
     assert!(shader.stage(ShaderStageId::IntersectShadow).is_some());
-    assert_eq!(shader.stages.len(), 10);
+    assert_eq!(shader.stages.len(), 11);
 }

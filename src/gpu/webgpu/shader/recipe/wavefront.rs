@@ -65,6 +65,12 @@ pub fn build_wavefront() -> ShaderRecipe {
                 dependencies: vec![FragmentId::WavefrontAbi],
             },
             Fragment {
+                id: FragmentId::WavefrontEmissive,
+                path: "shaders/wavefront/emissive.wgsl",
+                source: include_str!("../../shaders/wavefront/emissive.wgsl"),
+                dependencies: vec![FragmentId::AreaGeometry, FragmentId::WavefrontAbi],
+            },
+            Fragment {
                 id: FragmentId::WavefrontMaterial,
                 path: "shaders/wavefront/material.wgsl",
                 source: include_str!("../../shaders/wavefront/material.wgsl"),
@@ -104,6 +110,7 @@ pub fn build_wavefront() -> ShaderRecipe {
             FragmentId::WavefrontIntersection,
             FragmentId::WavefrontEscaped,
             FragmentId::WavefrontSurface,
+            FragmentId::WavefrontEmissive,
             FragmentId::WavefrontMaterial,
             FragmentId::WavefrontDirectLighting,
             FragmentId::WavefrontShadow,
@@ -130,6 +137,10 @@ pub fn build_wavefront() -> ShaderRecipe {
             ShaderStage {
                 id: ShaderStageId::EvaluateSurfaceInteraction,
                 entry_point: "evaluate_surface_interaction",
+            },
+            ShaderStage {
+                id: ShaderStageId::HandleEmissiveIntersection,
+                entry_point: "handle_emissive_intersection",
             },
             ShaderStage {
                 id: ShaderStageId::EvaluateMaterial,

@@ -11,6 +11,7 @@ pub enum FragmentId {
     WavefrontIntersection,
     WavefrontEscaped,
     WavefrontSurface,
+    WavefrontEmissive,
     WavefrontMaterial,
     WavefrontDirectLighting,
     WavefrontShadow,

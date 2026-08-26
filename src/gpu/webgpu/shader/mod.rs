@@ -8,6 +8,7 @@ pub enum ShaderStageId {
     IntersectClosest,
     HandleEscapedRays,
     EvaluateSurfaceInteraction,
+    HandleEmissiveIntersection,
     EvaluateMaterial,
     SampleDirectLighting,
     IntersectShadow,

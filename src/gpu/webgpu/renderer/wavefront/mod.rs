@@ -69,6 +69,12 @@ pub fn render(
                         .stage(ShaderStageId::EvaluateSurfaceInteraction),
                 );
                 pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+                pass.set_pipeline(
+                    renderer
+                        .pipeline
+                        .stage(ShaderStageId::HandleEmissiveIntersection),
+                );
+                pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
                 pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::EvaluateMaterial));
                 pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
                 pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::SampleDirectLighting));
