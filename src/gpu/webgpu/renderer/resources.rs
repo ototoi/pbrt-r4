@@ -1,6 +1,6 @@
 use super::super::super::ir::{GpuBounds2i, GpuSceneView};
+use super::super::arena::ArenaLayout;
 use super::super::error::BackendError;
-use super::super::wavefront::WavefrontLayout;
 use super::{Pipeline, SceneResources};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
@@ -9,9 +9,8 @@ pub struct RenderDimensions {
     pub pixel_count: usize,
     pub output_size: wgpu::BufferAddress,
     pub output_buffer_size: wgpu::BufferAddress,
-    pub wavefront_layout: WavefrontLayout,
-    pub wavefront_workgroups: u32,
-    pub legacy_workgroups: [u32; 2],
+    pub arena_layout: ArenaLayout,
+    pub workgroups: u32,
 }
 
 impl RenderDimensions {
@@ -36,24 +35,18 @@ impl RenderDimensions {
                 .ok_or_else(|| BackendError::Readback("output size overflow".to_string()))?,
         )
         .map_err(|_| BackendError::Readback("output size overflow".to_string()))?;
-        let queue_index_size = output_size
-            .checked_mul(6)
-            .ok_or_else(|| BackendError::Readback("ray queue index size overflow".to_string()))?;
-        let output_buffer_size = output_size
-            .checked_add(queue_index_size)
-            .ok_or_else(|| BackendError::Readback("film buffer size overflow".to_string()))?;
+        let output_buffer_size = output_size;
         let pixel_count_u32 = u32::try_from(pixel_count)
             .map_err(|_| BackendError::Readback("pixel count exceeds u32".to_string()))?;
-        let wavefront_layout = WavefrontLayout::for_pixel_count(pixel_count_u32)
+        let arena_layout = ArenaLayout::for_pixel_count(pixel_count_u32)
             .ok_or_else(|| BackendError::Readback("wavefront arena size overflow".to_string()))?;
         Ok(Self {
             pixel_bounds,
             pixel_count,
             output_size,
             output_buffer_size,
-            wavefront_workgroups: pixel_count_u32.div_ceil(64),
-            legacy_workgroups: [width.div_ceil(8), height.div_ceil(8)],
-            wavefront_layout,
+            workgroups: pixel_count_u32.div_ceil(64),
+            arena_layout,
         })
     }
 }
@@ -61,8 +54,7 @@ impl RenderDimensions {
 pub struct RenderBuffers {
     pub output: wgpu::Buffer,
     pub readback: wgpu::Buffer,
-    pub control_readback: wgpu::Buffer,
-    pub wavefront: wgpu::Buffer,
+    pub arena: wgpu::Buffer,
 }
 
 impl RenderBuffers {
@@ -81,15 +73,9 @@ impl RenderBuffers {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let control_readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("pbrt-r4 WebGPU wavefront control readback"),
-            size: u64::from(super::super::wavefront::WAVEFRONT_CONTROL_SIZE),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let wavefront = device.create_buffer(&wgpu::BufferDescriptor {
+        let arena = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pbrt-r4 WebGPU wavefront arena"),
-            size: u64::from(dimensions.wavefront_layout.byte_len),
+            size: u64::from(dimensions.arena_layout.byte_len),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -98,8 +84,7 @@ impl RenderBuffers {
         Self {
             output,
             readback,
-            control_readback,
-            wavefront,
+            arena,
         }
     }
 }
@@ -145,24 +130,12 @@ pub fn create_bind_group(
             buffer_entry(7, acceleration.material_buffer.as_entire_binding()),
             buffer_entry(8, acceleration.light_buffer.as_entire_binding()),
             buffer_entry(9, acceleration.texture_buffer.as_entire_binding()),
-            buffer_entry(10, buffers.wavefront.as_entire_binding()),
-        ],
-        SceneResources::Software(acceleration) => vec![
-            buffer_entry(0, uniform.as_entire_binding()),
-            buffer_entry(1, buffers.output.as_entire_binding()),
-            buffer_entry(3, acceleration.vertex_buffer.as_entire_binding()),
-            buffer_entry(4, acceleration.index_buffer.as_entire_binding()),
-            buffer_entry(5, acceleration.primitive_buffer.as_entire_binding()),
-            buffer_entry(6, acceleration.transform_buffer.as_entire_binding()),
-            buffer_entry(7, acceleration.material_buffer.as_entire_binding()),
-            buffer_entry(8, acceleration.light_buffer.as_entire_binding()),
-            buffer_entry(9, acceleration.bvh_buffer.as_entire_binding()),
+            buffer_entry(10, buffers.arena.as_entire_binding()),
         ],
     };
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(match resources {
             SceneResources::Hardware(_) => "pbrt-r4 WebGPU hardware bind group",
-            SceneResources::Software(_) => "pbrt-r4 WebGPU software BVH bind group",
         }),
         layout: &pipeline.bind_group_layout,
         entries: &entries,

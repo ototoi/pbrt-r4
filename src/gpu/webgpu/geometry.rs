@@ -311,42 +311,6 @@ fn normal_transform(
 }
 
 impl ScenePlan {
-    pub fn supports_wavefront_min(&self, scene: GpuSceneView<'_>) -> bool {
-        !scene.lights.is_empty()
-            && scene
-                .geometry
-                .iter()
-                .all(|geometry| matches!(geometry, GpuGeometry::TriangleMesh(_)))
-            && scene
-                .transforms
-                .iter()
-                .all(|transform| matches!(transform, GpuTransform::Static(_)))
-            && scene.images.iter().all(|image| image.mip_levels.len() <= 1)
-            && scene.lights.iter().all(|light| {
-                matches!(
-                    light,
-                    GpuLight::Point(_) | GpuLight::UniformInfinite(_) | GpuLight::DiffuseArea(_)
-                )
-            })
-            && self
-                .lights
-                .iter()
-                .take(
-                    self.lights
-                        .first()
-                        .map_or(0, |light| (light.flags >> 16) as usize),
-                )
-                .all(|light| light.kind <= 2)
-            && self
-                .primitives
-                .iter()
-                .all(|primitive| primitive.alpha.is_none())
-            && self
-                .materials
-                .iter()
-                .all(|material| material.normal_map.is_none() && material.displacement.is_none())
-    }
-
     pub fn validate_custom_data(custom_data: u32) -> Result<(), PlanError> {
         if custom_data > MAX_TLAS_CUSTOM_DATA {
             return Err(PlanError::LimitExceeded {
@@ -414,6 +378,11 @@ impl ScenePlan {
                         resource: "primitive",
                         index: primitive_id.0,
                     }))?;
+            if primitive.alpha.is_some() {
+                return Err(BackendError::Plan(PlanError::UnsupportedAlphaMask {
+                    primitive: primitive_id.0,
+                }));
+            }
             let geometry =
                 scene
                     .geometry
@@ -444,11 +413,7 @@ impl ScenePlan {
                 &mut image_to_plan,
             )?;
 
-            let alpha_requires_uv = primitive
-                .alpha
-                .and_then(|texture| scene.float_textures.get(texture.0 as usize))
-                .is_some_and(|texture| matches!(texture, GpuFloatTexture::Image { .. }));
-            if (material.requires_uv() || alpha_requires_uv)
+            if material.requires_uv()
                 && (triangle_mesh.uvs.is_none() || triangle_mesh.face_indices.is_some())
             {
                 return Err(BackendError::Plan(PlanError::UnsupportedTexture {
@@ -535,28 +500,7 @@ impl ScenePlan {
 
             let custom_data = checked_len(tlas_instances.len(), "TLAS custom data")?;
             Self::validate_custom_data(custom_data).map_err(BackendError::Plan)?;
-            let alpha = primitive.alpha.map(|texture| {
-                if usize::try_from(texture.0)
-                    .ok()
-                    .and_then(|index| float_textures.get(index))
-                    .is_none()
-                {
-                    Err(BackendError::Plan(PlanError::InvalidReference {
-                        resource: "alpha texture",
-                        index: texture.0,
-                    }))
-                } else {
-                    Ok(texture.0)
-                }
-            });
-            let alpha = alpha.transpose()?;
             let triangle_count = blases[blas].index_count / 3;
-            let constant_zero_alpha = primitive
-                .alpha
-                .and_then(|texture| scene.float_textures.get(texture.0 as usize))
-                .is_some_and(|texture| {
-                    matches!(texture, GpuFloatTexture::Constant { value } if *value == 0.0)
-                });
             match &primitive.area_light {
                 GpuAreaLightBinding::None => {}
                 GpuAreaLightBinding::Uniform(light) => {
@@ -566,7 +510,7 @@ impl ScenePlan {
                             light: *light,
                             primitive: custom_data,
                             triangle,
-                            constant_zero_alpha,
+                            constant_zero_alpha: false,
                         }
                     }));
                 }
@@ -584,7 +528,7 @@ impl ScenePlan {
                             light,
                             primitive: custom_data,
                             triangle: triangle as u32,
-                            constant_zero_alpha,
+                            constant_zero_alpha: false,
                         });
                     }
                 }
@@ -594,7 +538,7 @@ impl ScenePlan {
                 first_index: blases[blas].first_index,
                 triangle_count,
                 material: custom_data,
-                alpha,
+                alpha: None,
                 reverse_orientation: primitive.reverse_orientation,
             });
             materials.push(material);
@@ -611,6 +555,7 @@ impl ScenePlan {
         }
 
         let lights = lower_lights(scene, &area_light_occurrences)?;
+        validate_initial_light_scope(&lights)?;
         Ok(Self {
             vertices,
             indices,
@@ -625,6 +570,18 @@ impl ScenePlan {
             spectrum_textures,
         })
     }
+}
+
+fn validate_initial_light_scope(lights: &[LightPlan]) -> Result<(), BackendError> {
+    let source_count = lights.first().map_or(0, |light| light.flags >> 16);
+    if lights
+        .iter()
+        .take(source_count as usize)
+        .any(|light| !matches!(light.kind, 0 | 1))
+    {
+        return Err(BackendError::Plan(PlanError::UnsupportedLightConfiguration));
+    }
+    Ok(())
 }
 
 fn lower_material(
@@ -703,6 +660,14 @@ fn lower_material(
             MaterialReflectancePlan::SpectrumTexture(texture_index)
         }
     };
+    if !matches!(reflectance, MaterialReflectancePlan::Constant(_))
+        || normal_map.is_some()
+        || displacement.is_some()
+    {
+        return Err(BackendError::Plan(PlanError::UnsupportedMaterial {
+            primitive: primitive.0,
+        }));
+    }
     Ok(MaterialPlan {
         reflectance,
         normal_map,
@@ -1528,9 +1493,10 @@ impl HardwareAcceleration {
                 vertex_count: blas.vertex_count,
                 index_format: Some(IndexFormat::Uint32),
                 index_count: Some(blas.index_count),
-                // Keep triangle candidates visible to the shader.  Alpha-masked
-                // primitives must be rejected or confirmed per candidate.
-                flags: AccelerationStructureGeometryFlags::empty(),
+                // The initial Hardware Ray Query path accepts opaque triangles only.
+                // Alpha-tested geometry is rejected during scene preparation until its
+                // candidate-intersection path is implemented.
+                flags: AccelerationStructureGeometryFlags::OPAQUE,
             })
             .collect();
         let blases: Vec<_> = sizes

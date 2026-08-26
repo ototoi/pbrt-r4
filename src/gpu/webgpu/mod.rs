@@ -1,12 +1,11 @@
 //! Native WebGPU backend boundary.
 
+mod arena;
 mod device;
 mod error;
 mod geometry;
 mod renderer;
 pub mod shader;
-mod software;
-pub mod wavefront;
 
 pub use device::{AccelerationMode, BackendPreference, PowerPreference, PrepareOptions};
 pub use error::{BackendError, PlanError};
@@ -16,4 +15,3 @@ pub use geometry::{
     TlasInstancePlan,
 };
 pub use renderer::{ExecutableScene, Renderer};
-pub use software::SoftwareBvhPlan;

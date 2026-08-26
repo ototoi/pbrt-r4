@@ -1,3 +1,5 @@
+enable wgpu_ray_query;
+
 struct Camera {
     camera_from_raster: mat4x4<f32>,
     render_from_camera: mat4x4<f32>,

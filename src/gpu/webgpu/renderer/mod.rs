@@ -3,10 +3,8 @@ use super::super::ir::{GpuMatrix4x4, GpuRenderOutput, GpuRenderRequest, GpuScene
 use super::device::{AccelerationMode, DeviceContext, PrepareOptions};
 use super::error::BackendError;
 use super::geometry::{HardwareAcceleration, ScenePlan};
-use super::shader::{build_shader_set, ShaderStageId};
-use super::software::SoftwareAcceleration;
+use super::shader::{build_wavefront_shader_set, ShaderSet, ShaderStageId};
 
-mod legacy;
 mod resources;
 mod wavefront;
 
@@ -14,13 +12,11 @@ use resources::{RenderBuffers, RenderDimensions};
 
 enum SceneResources {
     Hardware(HardwareAcceleration),
-    Software(SoftwareAcceleration),
 }
 
 pub struct ExecutableScene {
     scene: GpuCompiledScene,
     resources: SceneResources,
-    supports_wavefront_min: bool,
 }
 
 impl ExecutableScene {
@@ -52,8 +48,13 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(options: &PrepareOptions) -> Result<Self, BackendError> {
+        if options.acceleration_mode != AccelerationMode::HardwareRayQuery {
+            return Err(BackendError::UnsupportedAccelerationMode(
+                options.acceleration_mode,
+            ));
+        }
         let device_context = DeviceContext::create(options)?;
-        let pipeline = create_pipeline(&device_context, options.acceleration_mode);
+        let pipeline = create_pipeline(&device_context);
         Ok(Self {
             device_context,
             pipeline,
@@ -62,19 +63,17 @@ impl Renderer {
 
     pub fn prepare(&mut self, scene: &GpuCompiledScene) -> Result<ExecutableScene, BackendError> {
         let plan = ScenePlan::from_scene(scene.view())?;
-        let supports_wavefront_min = plan.supports_wavefront_min(scene.view());
         let resources = match self.device_context.acceleration_mode {
             AccelerationMode::HardwareRayQuery => {
                 SceneResources::Hardware(HardwareAcceleration::create(&self.device_context, &plan)?)
             }
             AccelerationMode::SoftwareBvh => {
-                SceneResources::Software(SoftwareAcceleration::create(&self.device_context, &plan)?)
+                unreachable!("software mode is rejected in Renderer::new")
             }
         };
         Ok(ExecutableScene {
             scene: scene.clone(),
             resources,
-            supports_wavefront_min,
         })
     }
 
@@ -92,15 +91,7 @@ impl Renderer {
         .map_err(BackendError::InvalidRenderRequest)?;
         let dimensions = RenderDimensions::from_scene(scene_view)?;
 
-        let (bvh_primitive_offset, bvh_node_offset) = match &scene.resources {
-            SceneResources::Hardware(_) => (0, 0),
-            SceneResources::Software(acceleration) => (
-                acceleration.bvh_primitive_offset,
-                acceleration.bvh_node_offset,
-            ),
-        };
-        let use_wavefront_min =
-            matches!(&scene.resources, SceneResources::Hardware(_)) && scene.supports_wavefront_min;
+        let (bvh_primitive_offset, bvh_node_offset) = (0, 0);
         let uniform_buffer = resources::create_uniform_buffer(
             &self.device_context.device,
             scene_view,
@@ -117,10 +108,7 @@ impl Renderer {
             &scene.resources,
         );
 
-        if use_wavefront_min {
-            return wavefront::render(self, scene, request, &dimensions, &buffers, &bind_group);
-        }
-        legacy::render(self, request, &dimensions, &buffers, &bind_group)
+        wavefront::render(self, request, &dimensions, &buffers, &bind_group)
     }
 
     pub fn adapter_info(&self) -> wgpu::AdapterInfo {
@@ -136,12 +124,19 @@ impl Renderer {
     }
 }
 
-fn create_pipeline(context: &DeviceContext, mode: AccelerationMode) -> Pipeline {
-    let shader_set = build_shader_set(mode).expect("built-in WebGPU shader recipe is valid");
-    let bind_group_layout = match mode {
-        AccelerationMode::HardwareRayQuery => create_hardware_bind_group_layout(&context.device),
-        AccelerationMode::SoftwareBvh => create_software_bind_group_layout(&context.device),
-    };
+fn create_pipeline(context: &DeviceContext) -> Pipeline {
+    let shader_set =
+        build_wavefront_shader_set().expect("built-in WebGPU wavefront recipe is valid");
+    create_pipeline_from_shader_set(context, AccelerationMode::HardwareRayQuery, shader_set)
+}
+
+fn create_pipeline_from_shader_set(
+    context: &DeviceContext,
+    mode: AccelerationMode,
+    shader_set: ShaderSet,
+) -> Pipeline {
+    assert_eq!(mode, AccelerationMode::HardwareRayQuery);
+    let bind_group_layout = create_hardware_bind_group_layout(&context.device);
     let shader = context
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -208,14 +203,6 @@ fn create_hardware_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
     })
 }
 
-fn create_software_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let entries = common_bind_group_entries();
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("pbrt-r4 WebGPU software BVH bind group layout"),
-        entries: &entries,
-    })
-}
-
 fn common_bind_group_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
     let storage_read_only = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -255,8 +242,6 @@ fn common_bind_group_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
         storage_read_only(7),
         storage_read_only(8),
     ];
-    // Binding 9 is the texture table for hardware mode and the texture table
-    // plus BVH data for software mode.
     entries.push(storage_read_only(9));
     entries
 }

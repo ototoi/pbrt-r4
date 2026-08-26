@@ -53,12 +53,16 @@ pub enum PlanError {
     UnsupportedMaterial {
         primitive: u32,
     },
+    UnsupportedAlphaMask {
+        primitive: u32,
+    },
     UnsupportedTexture {
         texture: u32,
     },
     UnsupportedLight {
         light: u32,
     },
+    UnsupportedLightConfiguration,
 }
 
 impl std::fmt::Display for BackendError {
@@ -146,11 +150,23 @@ impl std::fmt::Display for PlanError {
             Self::UnsupportedMaterial { primitive } => {
                 write!(formatter, "unsupported material for primitive {primitive}")
             }
+            Self::UnsupportedAlphaMask { primitive } => {
+                write!(
+                    formatter,
+                    "alpha masking is not yet supported for primitive {primitive}"
+                )
+            }
             Self::UnsupportedTexture { texture } => {
                 write!(formatter, "unsupported texture {texture}")
             }
             Self::UnsupportedLight { light } => {
                 write!(formatter, "unsupported light {light}")
+            }
+            Self::UnsupportedLightConfiguration => {
+                write!(
+                    formatter,
+                    "the initial wavefront renderer supports only point and uniform infinite lights"
+                )
             }
         }
     }

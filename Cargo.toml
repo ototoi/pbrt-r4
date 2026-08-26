@@ -114,13 +114,13 @@ name = "pspec"
 path = "src/cmd/pspec.rs"
 
 [[test]]
-name = "webgpu"
-path = "tests/gpu/webgpu.rs"
+name = "gpu_shader_composer"
+path = "tests/gpu_shader_composer.rs"
 required-features = ["webgpu"]
 
 [[test]]
-name = "gpu_shader_composer"
-path = "tests/gpu_shader_composer.rs"
+name = "gpu_wavefront_camera"
+path = "tests/gpu_wavefront_camera.rs"
 required-features = ["webgpu"]
 
 # `[profile.release]` left at cargo defaults (opt-level=3, no LTO).

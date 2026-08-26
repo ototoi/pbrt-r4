@@ -4,18 +4,16 @@ use std::collections::HashSet;
 pub enum FragmentId {
     Abi,
     Transform,
-    Texture,
-    Geometry,
     Sampling,
-    AreaGeometry,
-    AreaSampling,
-    Emission,
     WavefrontAbi,
-    HardwareBindings,
-    RayQueryTraversal,
-    SoftwareBvhTraversal,
-    EntryMain,
-    EntryWavefront,
+    WavefrontCamera,
+    WavefrontIntersection,
+    WavefrontEscaped,
+    WavefrontSurface,
+    WavefrontMaterial,
+    WavefrontDirectLighting,
+    WavefrontShadow,
+    WavefrontFilm,
 }
 
 #[derive(Clone)]
