@@ -1,4 +1,6 @@
 use super::{GpuBounds2i, GpuFloat, GpuIndex, GpuMatrix3x3, GpuMatrix4x4, GpuVector2, TransformId};
+use crate::base::film::Film;
+use crate::util::spectrum::{Spectrum, SpectrumType};
 
 impl GpuBounds2i {
     pub fn area(self) -> Option<u64> {
@@ -79,6 +81,18 @@ impl GpuRenderOutput {
             sample_start: request.sample_start,
             sample_count: request.sample_count,
         })
+    }
+
+    /// Copies GPU RGB readback into the CPU film accumulator. The GPU path
+    /// currently produces unbounded RGB values, so the conversion uses the
+    /// same RGB-to-spectrum representation as the CPU film input path.
+    pub fn write_to_film(&self, film: &mut Film) {
+        let image: Vec<Spectrum> = self
+            .rgb
+            .iter()
+            .map(|rgb| Spectrum::from_rgb(rgb, SpectrumType::Unbounded))
+            .collect();
+        film.set_image(&image);
     }
 }
 
