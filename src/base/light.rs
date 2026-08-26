@@ -171,7 +171,6 @@ impl LightBounds {
             return 0.0;
         }
 
-        // Return final importance at reference point
         let mut importance = self.phi * cos_theta_p / d2;
         // Account for cos theta_i in importance at surfaces
         if n != Normal3f::zero() {
@@ -199,7 +198,6 @@ pub fn union_light_bounds(a: &LightBounds, b: &LightBounds) -> LightBounds {
         &DirectionCone::new(a.w, a.cos_theta_o),
         &DirectionCone::new(b.w, b.cos_theta_o),
     );
-    // Return final LightBounds union
     LightBounds::new(
         a.bounds.union(&b.bounds),
         cone.w,

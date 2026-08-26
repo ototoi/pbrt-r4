@@ -1,6 +1,7 @@
 use pbrt_r4::base::shape::ShapeSampleContext;
 use pbrt_r4::prelude::*;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 
 fn rectangular_patch() -> Shape {
@@ -24,6 +25,40 @@ fn rectangular_patch() -> Shape {
     .unwrap()
     .pop()
     .unwrap()
+}
+
+fn image_weighted_rectangular_patch(filename: &str) -> Shape {
+    let mut params = ParameterDictionary::new();
+    params.add_point(
+        "P",
+        &[
+            -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, -1.0, 1.0, 0.0, 1.0, 1.0, 0.0,
+        ],
+    );
+    params.add_string("emissionfilename", filename);
+
+    let textures: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    Shape::create(
+        "bilinearmesh",
+        &Transform::identity(),
+        &Transform::identity(),
+        false,
+        &params,
+        &textures,
+    )
+    .unwrap()
+    .pop()
+    .unwrap()
+}
+
+fn write_emission_pfm(path: &std::path::Path) {
+    let mut file = std::fs::File::create(path).unwrap();
+    file.write_all(b"PF\n2 2\n-1.0\n").unwrap();
+    for value in [
+        1.0_f32, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ] {
+        file.write_all(&value.to_le_bytes()).unwrap();
+    }
 }
 
 #[test]
@@ -75,4 +110,30 @@ fn rectangular_patch_cosine_warp_sample_and_pdf_agree() {
             "sample_pdf={sample_pdf} evaluated_pdf={evaluated_pdf}"
         );
     }
+}
+
+#[test]
+fn image_weighted_patch_uses_area_sampling_and_matching_pdf() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("emission.pfm");
+    write_emission_pfm(&image_path);
+    let patch = image_weighted_rectangular_patch(image_path.to_str().unwrap());
+    let context = ShapeSampleContext {
+        p: Point3f::new(0.0, 0.0, 2.0),
+        ..Default::default()
+    };
+
+    let (sample, sample_pdf) = patch
+        .sample_from(&context, &Point2f::new(0.37, 0.61))
+        .unwrap();
+    let uv = sample.get_uv();
+    assert!(uv.x < 0.5 && uv.y < 0.5, "uv={uv:?}");
+
+    let wi = (sample.get_p() - context.p).normalize();
+    let evaluated_pdf = patch.pdf_from(&context, &wi);
+    assert!(sample_pdf.is_finite() && sample_pdf > 0.0);
+    assert!(
+        (evaluated_pdf - sample_pdf).abs() < 1e-4,
+        "sample_pdf={sample_pdf} evaluated_pdf={evaluated_pdf}"
+    );
 }

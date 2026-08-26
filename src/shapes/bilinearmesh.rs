@@ -9,8 +9,10 @@ use crate::textures::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
+use crate::util::imageio::{read_image_with_encoding, ColorEncoding};
 use crate::util::lowdiscrepancy::*;
 use crate::util::sampling;
+use crate::util::sampling::PiecewiseConstant2D;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::collections::HashMap;
@@ -29,6 +31,7 @@ struct BilinearPatchMeshData {
     uv: Vec<Point2f>,
     vertex_indices: Vec<u32>,
     face_indices: Vec<i32>,
+    image_distribution: Option<PiecewiseConstant2D>,
 }
 
 #[derive(Clone)]
@@ -246,6 +249,30 @@ pub fn create_bilinear_patch_mesh(
     uv: Vec<Point2f>,
     face_indices: Vec<i32>,
 ) -> Result<Vec<BilinearPatch>, PbrtError> {
+    create_bilinear_patch_mesh_with_distribution(
+        o2w,
+        w2o,
+        reverse_orientation,
+        vertex_indices,
+        p,
+        n,
+        uv,
+        face_indices,
+        None,
+    )
+}
+
+fn create_bilinear_patch_mesh_with_distribution(
+    o2w: &Transform,
+    w2o: &Transform,
+    reverse_orientation: bool,
+    vertex_indices: Vec<u32>,
+    p: Vec<Point3f>,
+    n: Vec<Normal3f>,
+    uv: Vec<Point2f>,
+    face_indices: Vec<i32>,
+    image_distribution: Option<PiecewiseConstant2D>,
+) -> Result<Vec<BilinearPatch>, PbrtError> {
     validate_bilinear_mesh_params(&vertex_indices, &p, &n, &uv, &face_indices)?;
 
     let p = p
@@ -271,6 +298,7 @@ pub fn create_bilinear_patch_mesh(
         uv,
         vertex_indices,
         face_indices,
+        image_distribution,
     });
 
     let mut patches = Vec::with_capacity(mesh.vertex_indices.len() / 4);
@@ -677,10 +705,13 @@ impl BilinearPatch {
             Vector3f::cross(&(p01 - p00), &(p11 - p01)).length(),
             Vector3f::cross(&(p11 - p10), &(p11 - p01)).length(),
         ];
-        let uv = if self.is_rectangle() {
-            *u
+        let (uv, uv_pdf) = if let Some(distribution) = &self.mesh.image_distribution {
+            distribution.sample_continuous(u)
+        } else if self.is_rectangle() {
+            (*u, 1.0)
         } else {
-            sample_bilinear(*u, weights)
+            let uv = sample_bilinear(*u, weights);
+            (uv, bilinear_pdf(uv, weights))
         };
 
         let p = interpolate_p(uv, p00, p10, p01, p11);
@@ -707,15 +738,35 @@ impl BilinearPatch {
         }
 
         let p_error = gamma(6.0) * (p00.abs() + p01.abs() + p10.abs() + p11.abs());
-        let pdf = if self.is_rectangle() {
-            1.0 / dndp.length()
+        let st = if self.mesh.uv.is_empty() {
+            uv
         } else {
-            bilinear_pdf(uv, weights) / dndp.length()
+            interpolate_uv(
+                uv,
+                self.mesh.uv[vtx[0] as usize],
+                self.mesh.uv[vtx[1] as usize],
+                self.mesh.uv[vtx[2] as usize],
+                self.mesh.uv[vtx[3] as usize],
+            )
         };
-        Some((Interaction::from_surface_sample(&p, &p_error, &n), pdf))
+        let intr = Interaction::Base(BaseInteraction {
+            p,
+            p_error,
+            n,
+            uv: st,
+            ..Default::default()
+        });
+        Some((intr, uv_pdf / dndp.length()))
     }
 
-    pub fn pdf(&self, _inter: &Interaction) -> Float {
+    pub fn pdf(&self, inter: &Interaction) -> Float {
+        if let Some(distribution) = &self.mesh.image_distribution {
+            let uv = inter.get_uv();
+            let (p00, p10, p01, p11) = self.control_points();
+            let dpdu = patch_dpdu(uv, p00, p10, p01, p11);
+            let dpdv = patch_dpdv(uv, p00, p10, p01, p11);
+            return distribution.pdf(&uv) / Vector3f::cross(&dpdu, &dpdv).length();
+        }
         Float::recip(self.area())
     }
 
@@ -728,7 +779,10 @@ impl BilinearPatch {
         let v11 = (p11 - p_ref).normalize();
         let solid_angle = sampling::spherical_quad_area(&v00, &v10, &v11, &v01);
 
-        if !self.is_rectangle() || solid_angle <= Self::MIN_SPHERICAL_SAMPLE_AREA {
+        if !self.is_rectangle()
+            || self.mesh.image_distribution.is_some()
+            || solid_angle <= Self::MIN_SPHERICAL_SAMPLE_AREA
+        {
             let (mut intr, pdf) = self.sample(u)?;
             intr.set_time(inter.get_time());
             let wi = intr.get_p() - p_ref;
@@ -818,7 +872,10 @@ impl BilinearPatch {
         let v11 = (p11 - p_ref).normalize();
         let solid_angle = sampling::spherical_quad_area(&v00, &v10, &v11, &v01);
 
-        if !self.is_rectangle() || solid_angle <= Self::MIN_SPHERICAL_SAMPLE_AREA {
+        if !self.is_rectangle()
+            || self.mesh.image_distribution.is_some()
+            || solid_angle <= Self::MIN_SPHERICAL_SAMPLE_AREA
+        {
             let pdf = self.pdf(&Interaction::Surface(isect_light.clone()))
                 * Point3f::distance_squared(&p_ref, &isect_light.p)
                 / Vector3f::abs_dot(&isect_light.n, &(-*wi));
@@ -934,7 +991,30 @@ pub fn create_bilinear_mesh_shape(
         face_indices.extend(indices.iter().copied());
     }
 
-    let shapes: Vec<Shape> = create_bilinear_patch_mesh(
+    let emission_filename = params.get_one_string("emissionfilename", "");
+    let image_distribution = if emission_filename.is_empty() {
+        None
+    } else if !uv.is_empty() {
+        log::error!(
+            "\"emissionfilename\" is currently ignored for bilinear patches if \"uv\" coordinates have been provided"
+        );
+        None
+    } else {
+        let (texels, resolution) =
+            read_image_with_encoding(&emission_filename, ColorEncoding::SRgb)?;
+        let width = resolution.x as usize;
+        let height = resolution.y as usize;
+        let mut weights = vec![0.0; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let rgb = texels[(height - 1 - y) * width + x].to_rgb();
+                weights[y * width + x] = (rgb[0] + rgb[1] + rgb[2]) / 3.0;
+            }
+        }
+        Some(PiecewiseConstant2D::new(&weights, width, height))
+    };
+
+    let shapes: Vec<Shape> = create_bilinear_patch_mesh_with_distribution(
         o2w,
         w2o,
         reverse_orientation,
@@ -943,6 +1023,7 @@ pub fn create_bilinear_mesh_shape(
         n,
         uv,
         face_indices,
+        image_distribution,
     )?
     .into_iter()
     .map(Shape::BilinearPatch)

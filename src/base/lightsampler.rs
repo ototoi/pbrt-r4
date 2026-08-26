@@ -232,7 +232,12 @@ pub struct BVHLightSampler {
 
 impl BVHLightSampler {
     pub fn new(base: &IntegratorBase, _max_voxels: usize) -> Self {
-        let lights = base.lights.clone();
+        Self::from_lights(base.lights.clone())
+    }
+
+    /// Construct the sampler from the light list accepted by the v4
+    /// `BVHLightSampler` constructor.
+    pub fn from_lights(lights: Vec<Arc<Light>>) -> Self {
         let light_to_index = build_light_index_map(&lights);
         let mut infinite_lights: Vec<Arc<Light>> = Vec::new();
         let mut bvh_lights: Vec<(usize, LightBounds)> = Vec::new();
@@ -535,7 +540,6 @@ fn evaluate_cost(b: Option<&LightBounds>, parent: &Bounds3f, dim: usize) -> Floa
                 - 2.0 * theta_o * sin_theta_o
                 + lb.cos_theta_o);
 
-    // Return complete cost estimate for LightBounds
     let diagonal = parent.diagonal();
     let kr = max_component(&diagonal) / diagonal[dim];
     lb.phi * m_omega * kr * lb.bounds.surface_area()

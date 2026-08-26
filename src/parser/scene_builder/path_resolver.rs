@@ -5,7 +5,7 @@
 //!
 //! - `spectrum`-typed string params → read the SPD file and add a
 //!   sampled spectrum.
-//! - `filename` / `mapname` / `bsdffile` / `lensfile` / `normalmap` string params →
+//! - `filename` / `emissionfilename` / `mapname` / `bsdffile` / `lensfile` / `normalmap` string params →
 //!   replace with an absolute path.
 
 use crate::paramdict::ParameterDictionary;
@@ -41,10 +41,17 @@ pub fn make_absolute_path(
         }
     }
 
-    // 2) filename / mapname / bsdffile / lensfile / normalmap → replace with an
+    // 2) filename / emissionfilename / mapname / bsdffile / lensfile / normalmap → replace with an
     //    absolute path.
     {
-        let file_path_keys = ["filename", "mapname", "bsdffile", "lensfile", "normalmap"];
+        let file_path_keys = [
+            "filename",
+            "emissionfilename",
+            "mapname",
+            "bsdffile",
+            "lensfile",
+            "normalmap",
+        ];
         let target_keys: Vec<_> = keys
             .iter()
             .filter(|k| {
