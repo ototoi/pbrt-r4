@@ -120,6 +120,7 @@ impl Renderer {
     ) -> Result<(), BackendError> {
         let output = self.render(scene, request)?;
         output.write_to_film(film);
+        film.write_image();
         Ok(())
     }
 
