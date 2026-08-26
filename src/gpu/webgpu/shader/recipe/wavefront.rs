@@ -77,6 +77,12 @@ pub fn build_wavefront() -> ShaderRecipe {
                 dependencies: vec![FragmentId::WavefrontIntersection],
             },
             Fragment {
+                id: FragmentId::WavefrontIndirect,
+                path: "shaders/wavefront/indirect.wgsl",
+                source: include_str!("../../shaders/wavefront/indirect.wgsl"),
+                dependencies: vec![FragmentId::Sampling, FragmentId::WavefrontAbi],
+            },
+            Fragment {
                 id: FragmentId::WavefrontFilm,
                 path: "shaders/wavefront/film.wgsl",
                 source: include_str!("../../shaders/wavefront/film.wgsl"),
@@ -91,6 +97,7 @@ pub fn build_wavefront() -> ShaderRecipe {
             FragmentId::WavefrontMaterial,
             FragmentId::WavefrontDirectLighting,
             FragmentId::WavefrontShadow,
+            FragmentId::WavefrontIndirect,
             FragmentId::WavefrontFilm,
         ],
         stages: vec![
@@ -125,6 +132,10 @@ pub fn build_wavefront() -> ShaderRecipe {
             ShaderStage {
                 id: ShaderStageId::IntersectShadow,
                 entry_point: "intersect_shadow",
+            },
+            ShaderStage {
+                id: ShaderStageId::SampleIndirectBxdf,
+                entry_point: "sample_indirect_bxdf",
             },
             ShaderStage {
                 id: ShaderStageId::UpdateFilm,

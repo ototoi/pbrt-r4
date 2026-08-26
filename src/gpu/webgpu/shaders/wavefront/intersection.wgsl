@@ -30,7 +30,7 @@ fn intersect_closest(@builtin(global_invocation_id) global_id: vec3<u32>) {
         intersection.t,
         intersection.barycentrics.x,
         intersection.barycentrics.y,
-        0.0,
+        ray.hit.w,
     );
     arena.rays[slot_index].indices.y = RAY_STATE_HIT;
     arena.rays[slot_index].indices.z = intersection.instance_custom_data;

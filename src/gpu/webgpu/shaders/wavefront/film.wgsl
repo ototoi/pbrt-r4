@@ -6,7 +6,7 @@ fn update_film(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let ray = arena.rays[slot_index];
     if (ray.indices.y == RAY_STATE_VISIBLE) {
-        output[ray.indices.x] += vec4<f32>(ray.direct_lighting.xyz, 1.0);
+        output[ray.indices.x] += vec4<f32>(ray.radiance.xyz, 1.0);
         return;
     }
 }

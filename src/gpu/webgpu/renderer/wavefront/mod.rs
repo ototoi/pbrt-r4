@@ -74,6 +74,8 @@ pub fn render(
             pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
             pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::IntersectShadow));
             pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
+            pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::SampleIndirectBxdf));
+            pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
             pass.set_pipeline(renderer.pipeline.stage(ShaderStageId::UpdateFilm));
             pass.dispatch_workgroups(dimensions.workgroups, 1, 1);
         }

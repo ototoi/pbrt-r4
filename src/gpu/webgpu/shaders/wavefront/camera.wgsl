@@ -48,4 +48,6 @@ fn generate_camera_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     ).xyz), 0.0);
     arena.rays[pixel_index].hit = vec4<f32>(0.0);
     arena.rays[pixel_index].indices = vec4<u32>(pixel_index, RAY_STATE_ACTIVE, 0u, 0u);
+    arena.rays[pixel_index].throughput = vec4<f32>(1.0, 1.0, 1.0, 0.0);
+    arena.rays[pixel_index].radiance = vec4<f32>(0.0);
 }

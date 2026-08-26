@@ -15,7 +15,8 @@ fn sample_direct_lighting(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let source_count = min(lights[0].flags >> 16u, arrayLength(&lights));
     if (source_count == 0u) {
-        arena.rays[slot_index].indices.y = RAY_STATE_OCCLUDED;
+        arena.rays[slot_index].direct_lighting.w = 0.0;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
         return;
     }
     let light_index = min(
@@ -24,28 +25,31 @@ fn sample_direct_lighting(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
     let light = lights[light_index];
     if (light.kind != 0u) {
-        arena.rays[slot_index].indices.y = RAY_STATE_OCCLUDED;
+        arena.rays[slot_index].direct_lighting.w = 0.0;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
         return;
     }
     let to_light = light.position.xyz - ray.surface_position.xyz;
     let distance_squared = dot(to_light, to_light);
     if (distance_squared == 0.0) {
-        arena.rays[slot_index].indices.y = RAY_STATE_OCCLUDED;
+        arena.rays[slot_index].direct_lighting.w = 0.0;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
         return;
     }
     let distance = sqrt(distance_squared);
     let direction = to_light / distance;
     let cosine = dot(ray.surface_normal.xyz, direction);
     if (cosine <= 0.0) {
-        arena.rays[slot_index].indices.y = RAY_STATE_OCCLUDED;
+        arena.rays[slot_index].direct_lighting.w = 0.0;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
         return;
     }
 
     let radiance = light.intensity.xyz
         * (cosine * f32(source_count) * INV_PI / distance_squared);
     arena.rays[slot_index].direct_lighting = vec4<f32>(
-        ray.material_reflectance.xyz * radiance,
-        0.0,
+        ray.throughput.xyz * ray.material_reflectance.xyz * radiance,
+        1.0,
     );
     let origin = offset_ray_origin(
         ray.surface_position.xyz,

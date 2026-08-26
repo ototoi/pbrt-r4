@@ -29,5 +29,5 @@ fn wavefront_shader_is_composed_from_dedicated_fragments() {
     assert!(shader.stage(ShaderStageId::EvaluateMaterial).is_some());
     assert!(shader.stage(ShaderStageId::SampleDirectLighting).is_some());
     assert!(shader.stage(ShaderStageId::IntersectShadow).is_some());
-    assert_eq!(shader.stages.len(), 9);
+    assert_eq!(shader.stages.len(), 10);
 }

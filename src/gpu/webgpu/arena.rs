@@ -1,7 +1,7 @@
 //! Fixed-slot arena layout for the WebGPU wavefront path.
 
 pub const ARENA_HEADER_SIZE: u32 = 16;
-pub const RAY_WORK_ITEM_STRIDE: u32 = 144;
+pub const RAY_WORK_ITEM_STRIDE: u32 = 176;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArenaLayout {

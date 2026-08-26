@@ -7,6 +7,7 @@ const RAY_STATE_MATERIAL: u32 = 5u;
 const RAY_STATE_SHADOW: u32 = 6u;
 const RAY_STATE_VISIBLE: u32 = 7u;
 const RAY_STATE_OCCLUDED: u32 = 8u;
+const RAY_STATE_BOUNCE: u32 = 9u;
 
 struct RayWorkItem {
     origin: vec4<f32>,
@@ -18,6 +19,8 @@ struct RayWorkItem {
     surface_error: vec4<f32>,
     material_reflectance: vec4<f32>,
     direct_lighting: vec4<f32>,
+    throughput: vec4<f32>,
+    radiance: vec4<f32>,
 };
 
 struct WavefrontArena {

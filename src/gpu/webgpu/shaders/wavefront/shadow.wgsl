@@ -11,7 +11,8 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     if (ray.hit.x <= 0.0) {
-        arena.rays[slot_index].indices.y = RAY_STATE_VISIBLE;
+        arena.rays[slot_index].direct_lighting.w = 0.0;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
         return;
     }
     var query: ray_query;
@@ -23,8 +24,9 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     rayQueryProceed(&query);
     let intersection = rayQueryGetCommittedIntersection(&query);
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
-        arena.rays[slot_index].indices.y = RAY_STATE_VISIBLE;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
     } else {
-        arena.rays[slot_index].indices.y = RAY_STATE_OCCLUDED;
+        arena.rays[slot_index].direct_lighting.w = 0.0;
+        arena.rays[slot_index].indices.y = RAY_STATE_BOUNCE;
     }
 }

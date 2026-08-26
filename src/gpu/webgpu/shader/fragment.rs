@@ -13,6 +13,7 @@ pub enum FragmentId {
     WavefrontMaterial,
     WavefrontDirectLighting,
     WavefrontShadow,
+    WavefrontIndirect,
     WavefrontFilm,
 }
 

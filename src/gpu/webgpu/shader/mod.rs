@@ -11,6 +11,7 @@ pub enum ShaderStageId {
     EvaluateMaterial,
     SampleDirectLighting,
     IntersectShadow,
+    SampleIndirectBxdf,
     UpdateFilm,
 }
 

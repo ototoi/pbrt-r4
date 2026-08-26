@@ -17,6 +17,7 @@ fn handle_escaped_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
             radiance += light.intensity.xyz;
         }
     }
-    arena.rays[slot_index].direct_lighting = vec4<f32>(radiance, 0.0);
+    arena.rays[slot_index].radiance +=
+        vec4<f32>(ray.throughput.xyz * radiance, 0.0);
     arena.rays[slot_index].indices.y = RAY_STATE_VISIBLE;
 }
