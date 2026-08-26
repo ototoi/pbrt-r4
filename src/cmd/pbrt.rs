@@ -1,7 +1,17 @@
 use clap::*;
 
+#[cfg(feature = "webgpu")]
+use pbrt_r4::base::film::Film;
+#[cfg(feature = "webgpu")]
+use pbrt_r4::base::filter::Filter;
 use pbrt_r4::displays::SequentialDisplay;
 use pbrt_r4::displays::TevDisplay;
+#[cfg(feature = "webgpu")]
+use pbrt_r4::gpu::ir::{GpuRenderConfig, GpuRenderRequest};
+#[cfg(feature = "webgpu")]
+use pbrt_r4::gpu::webgpu::{PrepareOptions, Renderer};
+#[cfg(feature = "webgpu")]
+use pbrt_r4::parser::{parse_file, SceneBuilder};
 use pbrt_r4::prelude::*;
 use pbrt_r4::util::image::Image;
 use pbrt_r4::util::imageio::{read_image, write_image};
@@ -128,6 +138,10 @@ struct CommandOptions {
     /// Automatically reduce a number of quality settings to render more quickly.
     #[arg(long, default_value = "false")]
     pub quick: bool,
+
+    /// Render through the WebGPU wavefront backend.
+    #[arg(long, default_value = "false")]
+    pub gpu: bool,
 
     /// Always sample pixels at their centers.
     #[arg(long = "disable-pixel-jitter", default_value = "false")]
@@ -450,6 +464,15 @@ fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError>
 }
 
 fn render_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
+    #[cfg(feature = "webgpu")]
+    if opts.gpu {
+        return render_gpu_scene(input_path, opts);
+    }
+    #[cfg(not(feature = "webgpu"))]
+    if opts.gpu {
+        error!("--gpu requires building pbrt-r4 with --features webgpu");
+        return -1;
+    }
     if !opts.quiet {
         let nthreads = match available_parallelism() {
             Ok(value) => value.get(),
@@ -591,6 +614,89 @@ fn render_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
     println!("\n");
 
     return 0;
+}
+
+#[cfg(feature = "webgpu")]
+fn render_gpu_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
+    let mut builder = SceneBuilder::new();
+    let path = match path_to_string(input_path) {
+        Ok(path) => path,
+        Err(error) => {
+            error!("{:?}", error);
+            return -1;
+        }
+    };
+    if let Err(error) = parse_file(&path, &mut builder) {
+        error!("{}", error);
+        return -1;
+    }
+    if let Some(pixelsamples) = opts.pixelsamples {
+        builder
+            .sampler_params
+            .replace_one_int("integer pixelsamples", pixelsamples.max(1));
+    }
+    if let Some(outfile) = opts.outfile.as_ref() {
+        match path_to_string(outfile) {
+            Ok(path) => builder
+                .film_params
+                .replace_one_string("string filename", &path),
+            Err(error) => {
+                error!("{}", error);
+                return -1;
+            }
+        }
+    }
+    let filter = match Filter::create(&builder.filter_name, &builder.filter_params) {
+        Ok(filter) => filter,
+        Err(error) => {
+            error!("{}", error);
+            return -1;
+        }
+    };
+    let film = match Film::create(&builder.film_name, &builder.film_params, &filter) {
+        Ok(film) => film,
+        Err(error) => {
+            error!("{}", error);
+            return -1;
+        }
+    };
+    let compiled = match builder.build_gpu_ir() {
+        Ok(scene) => scene,
+        Err(error) => {
+            error!("{:?}", error);
+            return -1;
+        }
+    };
+    let mut renderer = match Renderer::new(&PrepareOptions::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => {
+            error!("WebGPU initialization failed: {}", error);
+            return -1;
+        }
+    };
+    let executable = match renderer.prepare(&compiled) {
+        Ok(scene) => scene,
+        Err(error) => {
+            error!("WebGPU scene preparation failed: {}", error);
+            return -1;
+        }
+    };
+    let render = compiled.view().render;
+    let mut render_config = GpuRenderConfig::default();
+    render_config.sampler.samples_per_pixel = render.sampler.samples_per_pixel;
+    let request = match GpuRenderRequest::new(&render_config, 0, render.sampler.samples_per_pixel) {
+        Ok(request) => request,
+        Err(error) => {
+            error!("invalid GPU render request: {:?}", error);
+            return -1;
+        }
+    };
+    let mut film = film.write().unwrap();
+    if let Err(error) = renderer.render_to_film(&executable, &request, &mut film) {
+        error!("WebGPU rendering failed: {}", error);
+        return -1;
+    }
+    0
 }
 
 pub fn main() {
