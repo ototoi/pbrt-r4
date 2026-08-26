@@ -17,6 +17,7 @@ struct RayWorkItem {
     surface_position: vec4<f32>,
     surface_normal: vec4<f32>,
     surface_error: vec4<f32>,
+    surface_uv: vec4<f32>,
     material_reflectance: vec4<f32>,
     direct_lighting: vec4<f32>,
     throughput: vec4<f32>,

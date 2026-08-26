@@ -70,5 +70,13 @@ fn evaluate_surface_interaction(@builtin(global_invocation_id) global_id: vec3<u
     arena.rays[slot_index].surface_normal = vec4<f32>(geometric_normal, 0.0);
     arena.rays[slot_index].surface_error =
         vec4<f32>(transform_position_error(transform, object_position, object_error), 0.0);
+    let uv0 = vertices[primitive.first_vertex + index0].uv.xy;
+    let uv1 = vertices[primitive.first_vertex + index1].uv.xy;
+    let uv2 = vertices[primitive.first_vertex + index2].uv.xy;
+    arena.rays[slot_index].surface_uv = vec4<f32>(
+        barycentrics.x * uv0 + barycentrics.y * uv1 + barycentrics.z * uv2,
+        0.0,
+        0.0,
+    );
     arena.rays[slot_index].indices.y = RAY_STATE_SURFACE;
 }
