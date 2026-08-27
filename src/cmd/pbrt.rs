@@ -203,7 +203,11 @@ struct CommandOptions {
     #[arg(long = "display-server", value_name = "url")]
     pub display_server: Option<String>,
 
-    /// Set Pixelsamples.
+    /// Set the samples per pixel (pbrt-v4-compatible spelling).
+    #[arg(long = "spp", value_name = "num", conflicts_with = "pixelsamples")]
+    pub spp: Option<i32>,
+
+    /// Set Pixelsamples (legacy spelling; used when --spp is not specified).
     #[arg(short = 's', long = "pixelsamples", value_name = "num")]
     pub pixelsamples: Option<i32>,
 
@@ -415,9 +419,9 @@ fn create_integrator(
             builder.instance_uses.len(),
         );
 
-        // Apply CLI overrides (pixelsamples / outfile / cropwindow) directly
+        // Apply CLI overrides (spp/pixelsamples / outfile / cropwindow) directly
         // to the SceneBuilder param dictionaries before realising the scene.
-        if let Some(pixelsamples) = opts.pixelsamples {
+        if let Some(pixelsamples) = opts.spp.or(opts.pixelsamples) {
             let pixelsamples = i32::max(1, pixelsamples);
             builder
                 .sampler_params
