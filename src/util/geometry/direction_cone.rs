@@ -89,7 +89,10 @@ pub fn bound_subtended_directions(b: &Bounds3f, p: &Point3f) -> DirectionCone {
     let (center_v, radius) = b.bounding_sphere();
     let p_center = Point3f::new(center_v.x, center_v.y, center_v.z);
     let d2 = (p_center - *p).length_squared();
-    if d2 < radius * radius {
+    // A zero-distance reference point has no finite center direction, even
+    // for a zero-radius bounding sphere.  For non-degenerate bounds on the
+    // sphere, retain the v4 behavior and construct the cone below.
+    if d2 < radius * radius || d2 == 0.0 {
         return DirectionCone::entire_sphere();
     }
     let w = (p_center - *p).normalize();
