@@ -5,6 +5,7 @@
 pub mod base;
 
 // Math and geometry
+pub mod atomic_double;
 pub mod efloat;
 pub mod geometry;
 pub mod interpolation;
@@ -38,6 +39,7 @@ pub mod misc;
 pub mod tensor;
 
 // Re-exports for convenience
+pub use atomic_double::*;
 pub use base::*;
 pub use distribution::*;
 pub use efloat::*;

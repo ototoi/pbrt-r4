@@ -1,6 +1,6 @@
 use super::film_tile::*;
 use super::pixel_sensor::PixelSensor;
-use super::splat_tile::*;
+use super::splat_tile::{add_atomic_rgb, AtomicRgb};
 use crate::base::filter::Filter;
 use crate::displays::MultipleDisplay;
 use crate::displays::*;
@@ -229,40 +229,8 @@ impl FilmBase {
     }
 }
 
-/// Allocate splat tiles covering `pixel_bounds`. Each Film variant calls
-/// this from its constructor — pbrt-v4 stores `AtomicDouble rgbSplat[3]`
-/// directly on each Pixel, but r4 favors per-tile aggregation for
-/// portability (no stable AtomicF64 in Rust).
-pub fn make_splat_tiles(pixel_bounds: &Bounds2i) -> (Vec<Arc<RwLock<SplatTile>>>, Vector2i) {
-    let w = (pixel_bounds.max.x - pixel_bounds.min.x) as usize;
-    let h = (pixel_bounds.max.y - pixel_bounds.min.y) as usize;
-    let nx = (w + ST_W - 1) / ST_W;
-    let ny = (h + ST_W - 1) / ST_W;
-    let splat_size = Vector2i::new(nx as i32, ny as i32);
-
-    let mut splat_tiles = Vec::with_capacity(nx * ny);
-    for ty in 0..ny {
-        for tx in 0..nx {
-            let x0 = pixel_bounds.min.x as usize + tx * ST_W;
-            let x1 = usize::min(x0 + ST_W, pixel_bounds.max.x as usize);
-            let y0 = pixel_bounds.min.y as usize + ty * ST_W;
-            let y1 = usize::min(y0 + ST_W, pixel_bounds.max.y as usize);
-            let tile_bounds = Bounds2i::new(
-                &Vector2i::new(x0 as i32, y0 as i32),
-                &Vector2i::new(x1 as i32, y1 as i32),
-            );
-            splat_tiles.push(Arc::new(RwLock::new(SplatTile::new(&tile_bounds))));
-        }
-    }
-    (splat_tiles, splat_size)
-}
-
-/// Distribute a single splat sample into the appropriate `SplatTile` for
-/// the variant. Shared between Film variants because the splat-tile
-/// transport is identical regardless of pixel layout.
-pub fn add_splat_into_tiles(
-    splat_tiles: &[Arc<RwLock<SplatTile>>],
-    splat_size: Vector2i,
+pub fn add_splat_into_pixels(
+    splat_pixels: &[AtomicRgb],
     cropped_pixel_bounds: Bounds2i,
     pixel_sensor: &PixelSensor,
     p: &Vector2f,
@@ -278,32 +246,22 @@ pub fn add_splat_into_tiles(
         pi.x - cropped_pixel_bounds.min.x,
         pi.y - cropped_pixel_bounds.min.y,
     );
-    let tx = pi.x as usize / ST_W;
-    let ty = pi.y as usize / ST_W;
     let rgb = match lambda {
         Some(lambda) => pixel_sensor.to_output_rgb_with_wavelengths(v, lambda),
         None => pixel_sensor.to_output_rgb(v),
     };
 
-    let tindex = ty * splat_size.x as usize + tx;
-    debug_assert!(tindex < splat_tiles.len());
-    let mut splat_tile = splat_tiles[tindex].write().unwrap();
-    let x = pi.x as usize - tx * ST_W;
-    let y = pi.y as usize - ty * ST_W;
-
-    splat_tile.pixels[y * ST_W + x][0] += rgb[0];
-    splat_tile.pixels[y * ST_W + x][1] += rgb[1];
-    splat_tile.pixels[y * ST_W + x][2] += rgb[2];
-    splat_tile.dirty = true;
+    let index = pi.y as usize * (cropped_pixel_bounds.max.x - cropped_pixel_bounds.min.x) as usize
+        + pi.x as usize;
+    add_atomic_rgb(&splat_pixels[index], rgb);
 }
 
-/// Packet variant of `add_splat_into_tiles` -- takes a `SampledSpectrum`
+/// Packet variant of `add_splat_into_pixels` -- takes a `SampledSpectrum`
 /// directly. pbrt-v4 `Film::AddSplat(Point2f, SampledSpectrum, lambda)`
 /// pathway. Used by integrators that splat per-wavelength radiance
 /// (LightPathIntegrator, BDPT, etc.) without going through `Spectrum`.
-pub fn add_splat_packet_into_tiles(
-    splat_tiles: &[Arc<RwLock<SplatTile>>],
-    splat_size: Vector2i,
+pub fn add_splat_packet_into_pixels(
+    splat_pixels: &[AtomicRgb],
     cropped_pixel_bounds: Bounds2i,
     pixel_sensor: &PixelSensor,
     filter: &Filter,
@@ -338,14 +296,6 @@ pub fn add_splat_packet_into_tiles(
     );
     let splat_bounds = Bounds2i::new(&p0, &p1).intersect(&cropped_pixel_bounds);
 
-    struct SplatContribution {
-        tile_index: usize,
-        x: usize,
-        y: usize,
-        scale: Float,
-    }
-
-    let mut contributions = Vec::new();
     for pi in &splat_bounds {
         let d = Point2f::new(p.x - pi.x as Float - 0.5, p.y - pi.y as Float - 0.5);
         let wt = filter.evaluate(&d);
@@ -356,77 +306,13 @@ pub fn add_splat_packet_into_tiles(
             pi.x - cropped_pixel_bounds.min.x,
             pi.y - cropped_pixel_bounds.min.y,
         );
-        let tx = local.x as usize / ST_W;
-        let ty = local.y as usize / ST_W;
-        let tindex = ty * splat_size.x as usize + tx;
-        debug_assert!(tindex < splat_tiles.len());
-        contributions.push(SplatContribution {
-            tile_index: tindex,
-            x: local.x as usize - tx * ST_W,
-            y: local.y as usize - ty * ST_W,
-            scale: wt / filter_integral,
-        });
-    }
-    contributions.sort_by_key(|c| c.tile_index);
-
-    let mut i = 0;
-    while i < contributions.len() {
-        let tile_index = contributions[i].tile_index;
-        let mut splat_tile = splat_tiles[tile_index].write().unwrap();
-        while i < contributions.len() && contributions[i].tile_index == tile_index {
-            let c = &contributions[i];
-            let offset = c.y * ST_W + c.x;
-            splat_tile.pixels[offset][0] += c.scale * rgb[0];
-            splat_tile.pixels[offset][1] += c.scale * rgb[1];
-            splat_tile.pixels[offset][2] += c.scale * rgb[2];
-            i += 1;
-        }
-        splat_tile.dirty = true;
-    }
-}
-
-/// Flush any dirty splat tiles into the per-pixel splat buffer. Shared
-/// between Film variants.
-///
-/// `add_splat_packet_into_tiles` already applies the v4 filter footprint
-/// and `filterIntegral` normalization when queueing the per-tile splat.
-pub fn merge_splat_tiles(
-    splat_tiles: &[Arc<RwLock<SplatTile>>],
-    splat_pixels: &mut [[Float; 3]],
-    cropped_pixel_bounds: Bounds2i,
-    splat_scale: Float,
-) {
-    for tile in splat_tiles {
-        let mut tile = tile.write().unwrap();
-        if !tile.dirty {
-            continue;
-        }
-
-        let bounds = tile.pixel_bounds;
-        let x0 = bounds.min.x as usize;
-        let x1 = bounds.max.x as usize;
-        let y0 = bounds.min.y as usize;
-        let y1 = bounds.max.y as usize;
-        let cminx = cropped_pixel_bounds.min.x as usize;
-        let cminy = cropped_pixel_bounds.min.y as usize;
-        let cmaxx = cropped_pixel_bounds.max.x as usize;
-        let width = cmaxx - cminx;
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let sx = x - x0;
-                let sy = y - y0;
-                let src_index = sy * ST_W + sx;
-                let dst_index = (x - cminx) + (y - cminy) * width;
-                for i in 0..3 {
-                    splat_pixels[dst_index][i] += splat_scale * tile.pixels[src_index][i];
-                }
-            }
-        }
-
-        for pixel in &mut tile.pixels {
-            *pixel = [0.0; 3];
-        }
-        tile.dirty = false;
+        let width = (cropped_pixel_bounds.max.x - cropped_pixel_bounds.min.x) as usize;
+        let index = local.y as usize * width + local.x as usize;
+        let scale = wt / filter_integral;
+        add_atomic_rgb(
+            &splat_pixels[index],
+            [scale * rgb[0], scale * rgb[1], scale * rgb[2]],
+        );
     }
 }
 

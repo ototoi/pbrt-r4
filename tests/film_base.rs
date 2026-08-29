@@ -1,8 +1,9 @@
 use pbrt_r4::base::filter::{Filter, GaussianFilter, TriangleFilter};
 use pbrt_r4::film::film_base::{
-    add_splat_packet_into_tiles, make_splat_tiles, normalize_pixel, FilmBase, FilmBaseParameters,
+    add_splat_packet_into_pixels, normalize_pixel, FilmBase, FilmBaseParameters,
 };
 use pbrt_r4::film::pixel_sensor::PixelSensor;
+use pbrt_r4::film::splat_tile::{load_atomic_rgb, new_atomic_rgb_buffer};
 use pbrt_r4::util::base::{Float, Point2i};
 use pbrt_r4::util::geometry::{Bounds2i, Vector2};
 use pbrt_r4::util::spectrum::{SampledSpectrum, SampledWavelengths};
@@ -49,7 +50,7 @@ fn normalize_pixel_preserves_negative_splats_after_scaling() {
 #[test]
 fn add_splat_packet_filters_footprint_and_clamps_sensor_rgb() {
     let bounds = Bounds2i::new(&Point2i::new(0, 0), &Point2i::new(4, 4));
-    let (splat_tiles, splat_size) = make_splat_tiles(&bounds);
+    let splat_pixels = new_atomic_rgb_buffer(bounds.area() as usize);
     let sensor = PixelSensor::create("cie1931", 100.0, 0.0).unwrap();
     let filter = Filter::Triangle(TriangleFilter::new(&Vector2f::new(1.0, 1.0)));
     let lambda = SampledWavelengths::sample_visible(0.37);
@@ -58,9 +59,8 @@ fn add_splat_packet_filters_footprint_and_clamps_sensor_rgb() {
     let max_component = sensor_rgb[0].max(sensor_rgb[1]).max(sensor_rgb[2]);
     let max_sample_luminance = max_component * 0.5;
 
-    add_splat_packet_into_tiles(
-        &splat_tiles,
-        splat_size,
+    add_splat_packet_into_pixels(
+        &splat_pixels,
         bounds,
         &sensor,
         &filter,
@@ -70,10 +70,8 @@ fn add_splat_packet_filters_footprint_and_clamps_sensor_rgb() {
         &lambda,
     );
 
-    let tile = splat_tiles[0].read().unwrap();
-    assert!(tile
-        .pixels
+    assert!(splat_pixels
         .iter()
-        .any(|pixel| pixel.iter().any(|value| *value != 0.0)));
-    assert_eq!(tile.pixels[2 * 4 + 2], [0.0, 0.0, 0.0]);
+        .any(|pixel| load_atomic_rgb(pixel).iter().any(|value| *value != 0.0)));
+    assert_eq!(load_atomic_rgb(&splat_pixels[2 * 4 + 2]), [0.0, 0.0, 0.0]);
 }

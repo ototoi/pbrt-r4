@@ -2,6 +2,7 @@ use crate::base::bxdf::{
     is_non_specular, is_reflective, is_transmissive, TransportMode, BXDF_ALL, BXDF_REFL_TRANS_ALL,
 };
 use crate::base::camera::Camera;
+use crate::base::film::Film;
 use crate::base::light::{is_delta_light, Light, LightType};
 use crate::base::lightsampler::{LightSampleContext, LightSampler};
 use crate::base::medium::sample_t_maj_coefficients;
@@ -960,13 +961,13 @@ fn geometry_term(
 #[allow(clippy::too_many_arguments)]
 fn mis_weight(
     base: &IntegratorBase,
-    camera: &Arc<Camera>,
     light_vertices: &mut [Vertex],
     camera_vertices: &mut [Vertex],
-    sampled: Option<&Vertex>,
+    sampled: Option<Vertex>,
     s: i32,
     t: i32,
     light_sampler: &LightSampler,
+    light_tracing_splat_scale: Float,
 ) -> Float {
     if s + t == 2 {
         return 1.0;
@@ -1000,13 +1001,17 @@ fn mis_weight(
     // Apply sampled vertex for s==1 or t==1.
     if s == 1 {
         if let (Some(sampled), true) = (sampled, s_idx >= 0) {
-            snap.qs = Some(light_vertices[s_idx as usize].clone());
-            light_vertices[s_idx as usize] = sampled.clone();
+            snap.qs = Some(std::mem::replace(
+                &mut light_vertices[s_idx as usize],
+                sampled,
+            ));
         }
     } else if t == 1 {
         if let (Some(sampled), true) = (sampled, t_idx >= 0) {
-            snap.pt = Some(camera_vertices[t_idx as usize].clone());
-            camera_vertices[t_idx as usize] = sampled.clone();
+            snap.pt = Some(std::mem::replace(
+                &mut camera_vertices[t_idx as usize],
+                sampled,
+            ));
         }
     }
 
@@ -1024,18 +1029,18 @@ fn mis_weight(
     if t_idx >= 0 {
         let new_pdf_rev = if s > 0 {
             // qs->PDF(integrator, qsMinus, *pt)
-            let qs = light_vertices[s_idx as usize].clone();
+            let qs = &light_vertices[s_idx as usize];
             let qs_minus = if s_minus >= 0 {
-                Some(light_vertices[s_minus as usize].clone())
+                Some(&light_vertices[s_minus as usize])
             } else {
                 None
             };
-            qs.pdf(base, qs_minus.as_ref(), &camera_vertices[t_idx as usize])
+            qs.pdf(base, qs_minus, &camera_vertices[t_idx as usize])
         } else {
             // pt->PDFLightOrigin(infiniteLights, *ptMinus, lightSampler)
-            let pt = camera_vertices[t_idx as usize].clone();
+            let pt = &camera_vertices[t_idx as usize];
             let pt_minus = if t_minus >= 0 {
-                camera_vertices[t_minus as usize].clone()
+                &camera_vertices[t_minus as usize]
             } else {
                 return restore_snapshot(
                     snap,
@@ -1048,7 +1053,7 @@ fn mis_weight(
                     1.0,
                 );
             };
-            pt.pdf_light_origin(&base.infinite_lights, &pt_minus, light_sampler)
+            pt.pdf_light_origin(&base.infinite_lights, pt_minus, light_sampler)
         };
         snap.pt_pdf_rev = Some(camera_vertices[t_idx as usize].pdf_rev);
         camera_vertices[t_idx as usize].pdf_rev = new_pdf_rev;
@@ -1057,15 +1062,15 @@ fn mis_weight(
     // Update pdf_rev of ptMinus
     if t_minus >= 0 {
         let new_pdf_rev = if s > 0 {
-            let pt = camera_vertices[t_idx as usize].clone();
+            let pt = &camera_vertices[t_idx as usize];
             let qs = if s_idx >= 0 {
-                Some(light_vertices[s_idx as usize].clone())
+                Some(&light_vertices[s_idx as usize])
             } else {
                 None
             };
-            pt.pdf(base, qs.as_ref(), &camera_vertices[t_minus as usize])
+            pt.pdf(base, qs, &camera_vertices[t_minus as usize])
         } else {
-            let pt = camera_vertices[t_idx as usize].clone();
+            let pt = &camera_vertices[t_idx as usize];
             pt.pdf_light(base, &camera_vertices[t_minus as usize])
         };
         snap.pt_minus_pdf_rev = Some(camera_vertices[t_minus as usize].pdf_rev);
@@ -1074,20 +1079,20 @@ fn mis_weight(
 
     // Update pdf_rev of qs and qsMinus
     if s_idx >= 0 {
-        let pt = camera_vertices[t_idx as usize].clone();
+        let pt = &camera_vertices[t_idx as usize];
         let pt_minus = if t_minus >= 0 {
-            Some(camera_vertices[t_minus as usize].clone())
+            Some(&camera_vertices[t_minus as usize])
         } else {
             None
         };
-        let new_pdf_rev = pt.pdf(base, pt_minus.as_ref(), &light_vertices[s_idx as usize]);
+        let new_pdf_rev = pt.pdf(base, pt_minus, &light_vertices[s_idx as usize]);
         snap.qs_pdf_rev = Some(light_vertices[s_idx as usize].pdf_rev);
         light_vertices[s_idx as usize].pdf_rev = new_pdf_rev;
     }
     if s_minus >= 0 {
-        let qs = light_vertices[s_idx as usize].clone();
-        let pt = camera_vertices[t_idx as usize].clone();
-        let new_pdf_rev = qs.pdf(base, Some(&pt), &light_vertices[s_minus as usize]);
+        let qs = &light_vertices[s_idx as usize];
+        let pt = &camera_vertices[t_idx as usize];
+        let new_pdf_rev = qs.pdf(base, Some(pt), &light_vertices[s_minus as usize]);
         snap.qs_minus_pdf_rev = Some(light_vertices[s_minus as usize].pdf_rev);
         light_vertices[s_minus as usize].pdf_rev = new_pdf_rev;
     }
@@ -1098,27 +1103,17 @@ fn mis_weight(
     // light-tracing t=1 path is splatted onto the (crop-window) film, so the MIS
     // weight needs to compensate for the area ratio so that strategies remain
     // commensurable.
-    let film = camera.as_ref().get_film();
-    let splat_scale = {
-        let f = film.read().unwrap();
-        let fr = f.full_resolution();
-        let pb = f.pixel_bounds();
-        let full_area = fr.x as Float * fr.y as Float;
-        let pixel_area = ((pb.max.x - pb.min.x) * (pb.max.y - pb.min.y)) as Float;
-        if pixel_area > 0.0 {
-            full_area / pixel_area
-        } else {
-            1.0
-        }
-    };
-
     let mut sum_ri = 0.0;
     let mut ri: Float = 1.0;
     // Camera-subpath hypothetical strategies
     for i in (1..t).rev() {
         let ip = i as usize;
         ri *= remap0(camera_vertices[ip].pdf_rev) / remap0(camera_vertices[ip].pdf_fwd);
-        let r_use = if i == 1 { ri / splat_scale } else { ri };
+        let r_use = if i == 1 {
+            ri / light_tracing_splat_scale
+        } else {
+            ri
+        };
         if !camera_vertices[ip].delta && !camera_vertices[ip - 1].delta {
             sum_ri += r_use;
         }
@@ -1137,7 +1132,7 @@ fn mis_weight(
         }
     }
     if t == 1 {
-        sum_ri /= splat_scale;
+        sum_ri /= light_tracing_splat_scale;
     }
     let result = 1.0 / (1.0 + sum_ri);
 
@@ -1232,6 +1227,7 @@ pub fn connect_bdpt(
     t: i32,
     light_sampler: &LightSampler,
     sampler: &mut Sampler,
+    light_tracing_splat_scale: Float,
 ) -> (SampledSpectrum, Option<Point2f>) {
     let mut l_pkt = SampledSpectrum::zero();
     let mut p_raster: Option<Point2f> = None;
@@ -1277,15 +1273,7 @@ pub fn connect_bdpt(
                         // splatted contribution by FullRes^2 / PixelBounds.Area()
                         // so that crop-window renders remain commensurable with
                         // the other MIS strategies. See issue #347.
-                        let film = camera.as_ref().get_film();
-                        let f = film.read().unwrap();
-                        let fr = f.full_resolution();
-                        let pb = f.pixel_bounds();
-                        let full_area = fr.x as Float * fr.y as Float;
-                        let pixel_area = ((pb.max.x - pb.min.x) * (pb.max.y - pb.min.y)) as Float;
-                        if pixel_area > 0.0 {
-                            l *= full_area / pixel_area;
-                        }
+                        l *= light_tracing_splat_scale;
                         l_pkt = l;
                         sampled_opt = Some(sampled);
                     }
@@ -1344,8 +1332,8 @@ pub fn connect_bdpt(
         }
     } else {
         // General case
-        let qs = light_vertices[(s - 1) as usize].clone();
-        let pt = camera_vertices[(t - 1) as usize].clone();
+        let qs = &light_vertices[(s - 1) as usize];
+        let pt = &camera_vertices[(t - 1) as usize];
         if qs.is_connectible() && pt.is_connectible() {
             let mut l = qs.beta
                 * qs.f(&pt, TransportMode::Importance)
@@ -1363,13 +1351,13 @@ pub fn connect_bdpt(
     }
     let mis = mis_weight(
         base,
-        camera,
         light_vertices,
         camera_vertices,
-        sampled_opt.as_ref(),
+        sampled_opt,
         s,
         t,
         light_sampler,
+        light_tracing_splat_scale,
     );
     (l_pkt * mis, p_raster)
 }
@@ -1386,6 +1374,7 @@ pub struct BDPTIntegrator {
     regularize: bool,
     light_sample_strategy: String,
     light_sampler: Option<LightSampler>,
+    light_tracing_splat_scale: Float,
 }
 
 impl BDPTIntegrator {
@@ -1399,6 +1388,7 @@ impl BDPTIntegrator {
         regularize: bool,
         pixel_bounds: &Bounds2i,
         light_sample_strategy: &str,
+        light_tracing_splat_scale: Float,
     ) -> Self {
         BDPTIntegrator {
             base: RayIntegratorBase::new(scene, camera, sampler, pixel_bounds),
@@ -1408,6 +1398,7 @@ impl BDPTIntegrator {
             regularize,
             light_sample_strategy: light_sample_strategy.to_string(),
             light_sampler: None,
+            light_tracing_splat_scale,
         }
     }
 }
@@ -1493,6 +1484,7 @@ impl RayIntegrator for BDPTIntegrator {
                     t,
                     light_sampler,
                     sampler,
+                    self.light_tracing_splat_scale,
                 );
                 if l_path.is_black() {
                     continue;
@@ -1501,7 +1493,7 @@ impl RayIntegrator for BDPTIntegrator {
                     l += l_path;
                 } else if let Some(p_film) = p_film_new {
                     let film = self.base.camera.get_film();
-                    film.write().unwrap().add_splat_packet(
+                    film.read().unwrap().add_splat_packet(
                         &Vector2f::new(p_film.x, p_film.y),
                         &l_path,
                         lambda,
@@ -1543,7 +1535,14 @@ pub fn create_bdpt_integrator(
             strategy
         }
     };
-    let pixel_bounds = camera.get_film().read().unwrap().pixel_bounds();
+    let (pixel_bounds, light_tracing_splat_scale) = {
+        let film = camera.get_film();
+        let film = film.read().unwrap();
+        (
+            film.pixel_bounds(),
+            compute_light_tracing_splat_scale(&film),
+        )
+    };
     Ok(Arc::new(RwLock::new(BDPTIntegrator::new(
         scene,
         sampler,
@@ -1554,5 +1553,18 @@ pub fn create_bdpt_integrator(
         regularize,
         &pixel_bounds,
         &light_strategy,
+        light_tracing_splat_scale,
     ))))
+}
+
+pub fn compute_light_tracing_splat_scale(film: &Film) -> Float {
+    let full_resolution = film.full_resolution();
+    let pixel_bounds = film.pixel_bounds();
+    let full_area = full_resolution.x as Float * full_resolution.y as Float;
+    let pixel_area = pixel_bounds.area() as Float;
+    if pixel_area > 0.0 {
+        full_area / pixel_area
+    } else {
+        1.0
+    }
 }
