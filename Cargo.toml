@@ -29,7 +29,7 @@ half = "=2.2.1"
 image = "=0.24.5"
 indicatif = "=0.17.3"
 log = "=0.4.20"
-nanovdb-rs = "=0.0.5"
+nanovdb-rs = { version = "=0.0.5", path = "../nanovdb-rs" }
 nom = "=7.1.1"
 ply-rs = "=0.1.3"
 qoi = "=0.4.1"

@@ -28,7 +28,9 @@ use crate::util::transform::*;
 use rayon::prelude::*;
 use std::sync::Arc;
 
-use nanovdb_rs::{create_sampler1, Grid, GridType, NvdbFile, ReadAccessor, TreeData};
+use nanovdb_rs::{
+    create_sampler1, Grid, GridType, NvdbFile, ReadAccessor, TreeData, ValidatedFloatTree,
+};
 
 /// Select a named `Float` grid from an already-open `.nvdb` file for
 /// `NanoVDBMedium`, keeping the sparse NanoVDB tree alive.
@@ -211,6 +213,7 @@ struct NanoVDBFloatGrid {
     world_to_index: Transform,
     tree_data: TreeData,
     background: f32,
+    validated_tree: Option<ValidatedFloatTree>,
 }
 
 impl NanoVDBFloatGrid {
@@ -221,18 +224,32 @@ impl NanoVDBFloatGrid {
             world_to_index,
             tree_data,
             background,
+            validated_tree: ValidatedFloatTree::new(grid.raw_bytes()),
         })
     }
 
     fn sample(&self, grid: &NanoVDBBuffer, p: &Point3f) -> Float {
         let mut accessor =
             ReadAccessor::with_tree_data(grid.raw_bytes(), self.tree_data, self.background);
-        self.sample_with_accessor(&mut accessor, p)
+        self.sample_with_accessor(&mut accessor, grid.raw_bytes(), p)
     }
 
-    fn sample_with_accessor(&self, accessor: &mut ReadAccessor<'_>, p: &Point3f) -> Float {
+    fn sample_with_accessor(
+        &self,
+        accessor: &mut ReadAccessor<'_>,
+        bytes: &[u8],
+        p: &Point3f,
+    ) -> Float {
         let p_index = self.world_to_index.transform_point(p);
         let p_index = [p_index.x, p_index.y, p_index.z];
+        if let Some(validated_tree) = self.validated_tree {
+            if let Some(value) = validated_tree.sample(
+                bytes,
+                [p_index[0] as f32, p_index[1] as f32, p_index[2] as f32],
+            ) {
+                return NanoVDBMedium::sanitize_density_value(value as Float);
+            }
+        }
         NanoVDBMedium::sanitize_density_value(create_sampler1(accessor).sample_f32([
             p_index[0] as f32,
             p_index[1] as f32,
@@ -485,7 +502,8 @@ impl NanoVDBMedium {
     }
 
     fn density_with_accessor(&self, accessor: &mut ReadAccessor<'_>, p: &Point3f) -> Float {
-        self.density_float_grid.sample_with_accessor(accessor, p)
+        self.density_float_grid
+            .sample_with_accessor(accessor, self.density_grid.raw_bytes(), p)
     }
 
     #[allow(dead_code)]
