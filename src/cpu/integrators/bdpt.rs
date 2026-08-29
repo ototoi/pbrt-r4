@@ -963,7 +963,7 @@ fn mis_weight(
     base: &IntegratorBase,
     light_vertices: &mut [Vertex],
     camera_vertices: &mut [Vertex],
-    sampled: Option<&Vertex>,
+    sampled: Option<Vertex>,
     s: i32,
     t: i32,
     light_sampler: &LightSampler,
@@ -1001,13 +1001,17 @@ fn mis_weight(
     // Apply sampled vertex for s==1 or t==1.
     if s == 1 {
         if let (Some(sampled), true) = (sampled, s_idx >= 0) {
-            snap.qs = Some(light_vertices[s_idx as usize].clone());
-            light_vertices[s_idx as usize] = sampled.clone();
+            snap.qs = Some(std::mem::replace(
+                &mut light_vertices[s_idx as usize],
+                sampled,
+            ));
         }
     } else if t == 1 {
         if let (Some(sampled), true) = (sampled, t_idx >= 0) {
-            snap.pt = Some(camera_vertices[t_idx as usize].clone());
-            camera_vertices[t_idx as usize] = sampled.clone();
+            snap.pt = Some(std::mem::replace(
+                &mut camera_vertices[t_idx as usize],
+                sampled,
+            ));
         }
     }
 
@@ -1349,7 +1353,7 @@ pub fn connect_bdpt(
         base,
         light_vertices,
         camera_vertices,
-        sampled_opt.as_ref(),
+        sampled_opt,
         s,
         t,
         light_sampler,
