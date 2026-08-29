@@ -1501,7 +1501,7 @@ impl RayIntegrator for BDPTIntegrator {
                     l += l_path;
                 } else if let Some(p_film) = p_film_new {
                     let film = self.base.camera.get_film();
-                    film.write().unwrap().add_splat_packet(
+                    film.read().unwrap().add_splat_packet(
                         &Vector2f::new(p_film.x, p_film.y),
                         &l_path,
                         lambda,
