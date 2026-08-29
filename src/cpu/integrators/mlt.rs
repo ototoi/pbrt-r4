@@ -24,12 +24,30 @@ use crate::util::sampling::Distribution1D;
 use crate::util::spectrum::*;
 
 use rayon::prelude::*;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 const CAMERA_STREAM_INDEX: u64 = 0;
 const LIGHT_STREAM_INDEX: u64 = 1;
 const CONNECTION_STREAM_INDEX: u64 = 2;
 const N_SAMPLE_STREAMS: u64 = 3;
+const DEFAULT_DISPLAY_UPDATE_INTERVAL_MS: u64 = 250;
+const DISPLAY_TIME_CHECK_INTERVAL_MUTATIONS: i64 = 256;
+
+fn display_update_interval() -> Duration {
+    const ENV_NAME: &str = "PBRT_DISPLAY_UPDATE_INTERVAL_MS";
+    match std::env::var(ENV_NAME) {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(milliseconds) if milliseconds > 0 => Duration::from_millis(milliseconds),
+            _ => {
+                log::warn!("Ignoring invalid {ENV_NAME}={value:?}; expected a positive integer");
+                Duration::from_millis(DEFAULT_DISPLAY_UPDATE_INTERVAL_MS)
+            }
+        },
+        Err(_) => Duration::from_millis(DEFAULT_DISPLAY_UPDATE_INTERVAL_MS),
+    }
+}
 
 pub struct MLTIntegrator {
     base: IntegratorBase,
@@ -280,119 +298,118 @@ impl Integrator for MLTIntegrator {
         let sample_bounds = film.read().unwrap().sample_bounds();
         let n_total_mutations = sample_bounds.area() as i64 * self.mutations_per_pixel as i64;
 
-        // ----- Markov chain pass (parallel over chains, broken into
-        //       rounds for live-display updates) -----
-        // pbrt-v4 (integrators.cpp:2647-2708) wraps the chain loop in
-        // `ParallelFor(0, nChains, ...)`. r4 splits that into
-        // `N_ROUNDS` sequential rounds; each round runs
-        // `n_chains / N_ROUNDS` chains in parallel, and the round
-        // boundary is where we flush `splat_tiles` into `splat_pixels`
-        // and ping the registered displays. Since
-        // `merge_splat_tiles` clears each tile after copying it to
-        // `splat_pixels` with the given scale, calling
-        // `merge_splats(b/mpp)` multiple times with the same scale
-        // yields exactly the same `splat_pixels` as a single
-        // end-of-render call.
+        // Follow all Markov chains in one parallel pass, as in pbrt-v4.
+        // Display updates are time-driven and opportunistically performed by
+        // one worker; they never divide the chain work into rounds or add a
+        // global barrier.
         let pixel_bounds = film.read().unwrap().pixel_bounds();
         let splat_scale = b / self.mutations_per_pixel as Float;
 
         let n_chains = self.n_chains;
-        const N_ROUNDS_TARGET: i32 = 10;
-        let n_rounds = N_ROUNDS_TARGET.min(n_chains.max(1));
-
         let max_depth = self.max_depth;
         let mpp = self.mutations_per_pixel;
         let sigma = self.sigma;
         let lsp = self.large_step_probability;
         let bootstrap_distrib = &bootstrap_distrib;
         let film = &film;
+        let display_enabled = !film.read().unwrap().base().display_is_empty();
+        let display_update_interval = display_update_interval();
+        let display_update_gate = Mutex::new(Instant::now());
+        let finished_chains = AtomicI32::new(0);
 
-        for round in 0..n_rounds {
-            let chain_lo = ((round as i64) * n_chains as i64 / n_rounds as i64) as i32;
-            let chain_hi = (((round + 1) as i64) * n_chains as i64 / n_rounds as i64) as i32;
-            (chain_lo..chain_hi).into_par_iter().for_each_init(
-                || MemoryArena::new(),
-                |chain_scratch, i| {
-                    let n_chain_mutations = ((i + 1) as i64 * n_total_mutations / n_chains as i64)
-                        .min(n_total_mutations)
-                        - (i as i64 * n_total_mutations / n_chains as i64);
+        (0..n_chains).into_par_iter().for_each_init(
+            || MemoryArena::new(),
+            |chain_scratch, i| {
+                let n_chain_mutations = ((i + 1) as i64 * n_total_mutations / n_chains as i64)
+                    .min(n_total_mutations)
+                    - (i as i64 * n_total_mutations / n_chains as i64);
 
-                    // pbrt-v4 (integrators.cpp:2655): `RNG rng(i)` →
-                    // `SetSequence(i, MixBits(i))`.
-                    let mut rng = RNG::new();
-                    rng.set_sequence(i as u64);
-                    let u_bootstrap = rng.uniform_float();
-                    let (bootstrap_index, _pdf, _) = bootstrap_distrib.sample_discrete(u_bootstrap);
-                    let depth = (bootstrap_index as i32) % (max_depth + 1);
+                // pbrt-v4 (integrators.cpp:2655): `RNG rng(i)` →
+                // `SetSequence(i, MixBits(i))`.
+                let mut rng = RNG::new();
+                rng.set_sequence(i as u64);
+                let u_bootstrap = rng.uniform_float();
+                let (bootstrap_index, _pdf, _) = bootstrap_distrib.sample_discrete(u_bootstrap);
+                let depth = (bootstrap_index as i32) % (max_depth + 1);
 
-                    let mlt = MLTSampler::new(
-                        mpp as u32,
-                        bootstrap_index as u64,
-                        sigma,
-                        lsp,
-                        N_SAMPLE_STREAMS,
-                    );
-                    let mut sampler_wrapper = Sampler::MLT(mlt);
-                    let (mut l_current, mut p_current, mut lambda_current) =
+                let mlt = MLTSampler::new(
+                    mpp as u32,
+                    bootstrap_index as u64,
+                    sigma,
+                    lsp,
+                    N_SAMPLE_STREAMS,
+                );
+                let mut sampler_wrapper = Sampler::MLT(mlt);
+                let (mut l_current, mut p_current, mut lambda_current) =
+                    self.l(&light_sampler, chain_scratch, &mut sampler_wrapper, depth);
+
+                // Hold one read lock for the whole chain; the splat path uses
+                // interior mutability per tile so concurrent chains can splat
+                // and one worker can merge pending splats for display.
+                let film_read = film.read().unwrap();
+                for mutation_index in 0..n_chain_mutations {
+                    sampler_wrapper.start_iteration();
+                    let (l_proposed, p_proposed, lambda_proposed) =
                         self.l(&light_sampler, chain_scratch, &mut sampler_wrapper, depth);
+                    let c_proposed = MLTIntegrator::c(&l_proposed, &lambda_proposed);
+                    let c_current = MLTIntegrator::c(&l_current, &lambda_current);
+                    // pbrt-v4 (integrators.cpp:2683):
+                    // `accept = std::min<Float>(1, cProposed / cCurrent)`.
+                    // `c_current == 0` yields `inf`, `min(1, inf) == 1`.
+                    let accept = Float::min(1.0, c_proposed / c_current);
 
-                    // Hold one read lock for the whole chain; the splat
-                    // path uses interior mutability per-tile so
-                    // concurrent chains can splat in parallel.
-                    let film_read = film.read().unwrap();
-                    for _ in 0..n_chain_mutations {
-                        sampler_wrapper.start_iteration();
-                        let (l_proposed, p_proposed, lambda_proposed) =
-                            self.l(&light_sampler, chain_scratch, &mut sampler_wrapper, depth);
-                        let c_proposed = MLTIntegrator::c(&l_proposed, &lambda_proposed);
-                        let c_current = MLTIntegrator::c(&l_current, &lambda_current);
-                        // pbrt-v4 (integrators.cpp:2683):
-                        // `accept = std::min<Float>(1, cProposed / cCurrent)`.
-                        // `c_current == 0` yields `inf`, `min(1, inf) == 1`.
-                        let accept = Float::min(1.0, c_proposed / c_current);
-
-                        // Splat both proposals (pbrt-v4 integrators.cpp:2685-2687).
-                        if accept > 0.0 {
-                            let scaled = l_proposed * (accept / c_proposed);
-                            film_read.add_splat_packet(
-                                &Vector2f::new(p_proposed.x, p_proposed.y),
-                                &scaled,
-                                &lambda_proposed,
-                            );
-                        }
-                        {
-                            let scaled = l_current * ((1.0 - accept) / c_current);
-                            film_read.add_splat_packet(
-                                &Vector2f::new(p_current.x, p_current.y),
-                                &scaled,
-                                &lambda_current,
-                            );
-                        }
-
-                        if rng.uniform_float() < accept {
-                            p_current = p_proposed;
-                            l_current = l_proposed;
-                            lambda_current = lambda_proposed;
-                            sampler_wrapper.accept();
-                        } else {
-                            sampler_wrapper.reject();
-                        }
-                        chain_scratch.reset();
+                    // Splat both proposals (pbrt-v4 integrators.cpp:2685-2687).
+                    if accept > 0.0 {
+                        let scaled = l_proposed * (accept / c_proposed);
+                        film_read.add_splat_packet(
+                            &Vector2f::new(p_proposed.x, p_proposed.y),
+                            &scaled,
+                            &lambda_proposed,
+                        );
                     }
-                    drop(film_read);
-                },
-            );
+                    {
+                        let scaled = l_current * ((1.0 - accept) / c_current);
+                        film_read.add_splat_packet(
+                            &Vector2f::new(p_current.x, p_current.y),
+                            &scaled,
+                            &lambda_current,
+                        );
+                    }
 
-            // All chains in this round have completed, so no read lock
-            // is held on `film`. Flush in-flight splats and push a
-            // preview to the displays.
-            let f = film.read().unwrap();
-            f.merge_splats(splat_scale);
-            f.update_display(&pixel_bounds);
-        }
+                    if rng.uniform_float() < accept {
+                        p_current = p_proposed;
+                        l_current = l_proposed;
+                        lambda_current = lambda_proposed;
+                        sampler_wrapper.accept();
+                    } else {
+                        sampler_wrapper.reject();
+                    }
+                    chain_scratch.reset();
+
+                    if display_enabled
+                        && mutation_index % DISPLAY_TIME_CHECK_INTERVAL_MUTATIONS == 0
+                    {
+                        if let Ok(mut last_update) = display_update_gate.try_lock() {
+                            if last_update.elapsed() >= display_update_interval {
+                                film_read.merge_splats(splat_scale);
+                                let finished = finished_chains.load(Ordering::Relaxed) as Float;
+                                let finished_pixel_mutations =
+                                    finished / n_chains as Float * mpp as Float;
+                                let preview_scale =
+                                    mpp as Float / Float::max(1.0, finished_pixel_mutations);
+                                film_read.update_display_scale(&pixel_bounds, preview_scale);
+                                *last_update = Instant::now();
+                            }
+                        }
+                    }
+                }
+                finished_chains.fetch_add(1, Ordering::Relaxed);
+            },
+        );
 
         let f = film.read().unwrap();
         f.merge_splats(splat_scale);
+        f.update_display(&pixel_bounds);
         f.render_end();
         f.write_image();
     }
