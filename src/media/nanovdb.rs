@@ -30,20 +30,9 @@ use std::sync::Arc;
 
 use nanovdb_rs::{create_sampler1, Grid, GridType, NvdbFile, ReadAccessor, TreeData};
 
-/// Open the named `Float` grid from a `.nvdb` file for `NanoVDBMedium`,
-/// keeping the sparse NanoVDB tree alive.
-fn read_grid(filename: &str, grid_name: &str) -> Option<NanoVDBBuffer> {
-    if filename.is_empty() {
-        return None;
-    }
-    let file = match NvdbFile::open(filename) {
-        Ok(f) => Arc::new(f),
-        Err(e) => {
-            log::warn!("nanovdb: open {} failed: {}", filename, e);
-            return None;
-        }
-    };
-
+/// Select a named `Float` grid from an already-open `.nvdb` file for
+/// `NanoVDBMedium`, keeping the sparse NanoVDB tree alive.
+fn find_grid(file: &Arc<NvdbFile>, filename: &str, grid_name: &str) -> Option<NanoVDBBuffer> {
     let grid_idx = file
         .grids()
         .iter()
@@ -75,7 +64,33 @@ fn read_grid(filename: &str, grid_name: &str) -> Option<NanoVDBBuffer> {
         ny,
         nz,
     );
-    Some(NanoVDBBuffer::new(file, grid_idx))
+    Some(NanoVDBBuffer::new(Arc::clone(file), grid_idx))
+}
+
+/// Open a `.nvdb` file once and select its density and optional temperature
+/// grids for `NanoVDBMedium`.
+fn read_grids(
+    filename: &str,
+    density_name: &str,
+    temperature_name: &str,
+) -> Option<(NanoVDBBuffer, Option<NanoVDBBuffer>)> {
+    if filename.is_empty() {
+        return None;
+    }
+    let file = match NvdbFile::open(filename) {
+        Ok(file) => Arc::new(file),
+        Err(e) => {
+            log::warn!("nanovdb: open {} failed: {}", filename, e);
+            return None;
+        }
+    };
+    let density_grid = find_grid(&file, filename, density_name)?;
+    let temperature_grid = if temperature_name.is_empty() {
+        None
+    } else {
+        find_grid(&file, filename, temperature_name)
+    };
+    Some((density_grid, temperature_grid))
 }
 
 /// Backing storage for a NanoVDB grid. This mirrors pbrt-v4's
@@ -304,12 +319,9 @@ impl NanoVDBMedium {
         let temperature_scale = parameters.get_one_float("temperaturescale", 1.0);
         if !filename.is_empty() {
             if !dense_storage {
-                if let Some(density_grid) = read_grid(&filename, &grid_name) {
-                    let temperature_grid = if temperature_name.is_empty() {
-                        None
-                    } else {
-                        read_grid(&filename, &temperature_name)
-                    };
+                if let Some((density_grid, temperature_grid)) =
+                    read_grids(&filename, &grid_name, &temperature_name)
+                {
                     return Self::new(
                         render_from_medium,
                         &sigma_a,
