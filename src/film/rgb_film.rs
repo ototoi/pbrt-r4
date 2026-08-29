@@ -1,6 +1,6 @@
 use super::film_base::{
-    add_splat_into_tiles, add_splat_packet_into_tiles, make_splat_tiles, merge_splat_tiles,
-    normalize_pixel, FilmBase, FilmBaseParameters,
+    add_splat_into_pixels, add_splat_packet_into_pixels, normalize_pixel, FilmBase,
+    FilmBaseParameters,
 };
 use super::film_tile::FilmTile;
 use super::splat_tile::*;
@@ -10,15 +10,15 @@ use crate::util::geometry::*;
 use crate::util::image::Image;
 use crate::util::imageio::*;
 use crate::util::spectrum::*;
+use crate::util::AtomicDouble;
 
 use log::*;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Mutex;
 
 /// Per-pixel storage for `RGBFilm`. Mirrors pbrt-v4's
 /// `RGBFilm::Pixel { rgbSum[3], weightSum, rgbSplat[3] }` (see
-/// src/pbrt/film.h). The splat channel is held in a separate per-tile
-/// buffer (see [[feedback_atomic_float_tiling]]) instead of an
-/// `AtomicDouble` per-pixel, so it does not live inside this struct.
+/// src/pbrt/film.h). The splat channel is held in a separate per-pixel
+/// `AtomicDouble` buffer, matching pbrt-v4's `rgbSplat` storage.
 #[derive(Debug, Default, Copy, Clone)]
 pub struct RGBPixel {
     pub rgb_sum: [Float; 3],
@@ -37,9 +37,8 @@ impl RGBPixel {
 pub struct RGBFilm {
     base: FilmBase,
     pixels: Mutex<Vec<RGBPixel>>,
-    splat_pixels: Mutex<Vec<[Float; 3]>>,
-    splat_tiles: Vec<Arc<RwLock<SplatTile>>>,
-    splat_size: Vector2i,
+    splat_pixels: Vec<[AtomicDouble; 3]>,
+    splat_scale: AtomicDouble,
     scale: Float,
     max_sample_luminance: Float,
 }
@@ -51,16 +50,14 @@ impl RGBFilm {
         let max_sample_luminance = p.max_sample_luminance;
 
         let pixels = vec![RGBPixel::zero(); pixel_bounds.area() as usize];
-        let splat_pixels = vec![[0.0; 3]; pixel_bounds.area() as usize];
-        let (splat_tiles, splat_size) = make_splat_tiles(&pixel_bounds);
+        let splat_pixels = new_atomic_rgb_buffer(pixel_bounds.area() as usize);
 
         let base = FilmBase::new(&p);
         Self {
             base,
             pixels: Mutex::new(pixels),
-            splat_pixels: Mutex::new(splat_pixels),
-            splat_tiles,
-            splat_size,
+            splat_pixels,
+            splat_scale: AtomicDouble::new(1.0),
             scale,
             max_sample_luminance,
         }
@@ -101,13 +98,8 @@ impl RGBFilm {
     }
 
     pub fn merge_splats(&self, splat_scale: Float) {
-        let mut splat_pixels = self.splat_pixels.lock().unwrap();
-        merge_splat_tiles(
-            &self.splat_tiles,
-            &mut splat_pixels,
-            self.base.cropped_pixel_bounds(),
-            splat_scale,
-        );
+        self.splat_scale
+            .store(splat_scale as f64, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn add_splat(&mut self, p: &Vector2f, v: &Spectrum) {
@@ -141,9 +133,8 @@ impl RGBFilm {
         v: &Spectrum,
         lambda: Option<&SampledWavelengths>,
     ) {
-        add_splat_into_tiles(
-            &self.splat_tiles,
-            self.splat_size,
+        add_splat_into_pixels(
+            &self.splat_pixels,
             self.base.cropped_pixel_bounds(),
             self.base.pixel_sensor_ref(),
             p,
@@ -154,9 +145,8 @@ impl RGBFilm {
 
     /// pbrt-v4 `Film::AddSplat(Point2f, SampledSpectrum, SampledWavelengths)`.
     pub fn add_splat_packet(&self, p: &Vector2f, v: &SampledSpectrum, lambda: &SampledWavelengths) {
-        add_splat_packet_into_tiles(
-            &self.splat_tiles,
-            self.splat_size,
+        add_splat_packet_into_pixels(
+            &self.splat_pixels,
             self.base.cropped_pixel_bounds(),
             self.base.pixel_sensor_ref(),
             self.base.filter(),
@@ -185,10 +175,9 @@ impl RGBFilm {
         for pixel in &mut *pixels {
             *pixel = RGBPixel::zero();
         }
-        let mut splat_pixels = self.splat_pixels.lock().unwrap();
-        for pixel in &mut *splat_pixels {
-            *pixel = [0.0; 3];
-        }
+        clear_atomic_rgb_buffer(&self.splat_pixels);
+        self.splat_scale
+            .store(1.0, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn update_display(&self, bounds: &Bounds2i) {
@@ -215,7 +204,7 @@ impl RGBFilm {
         let theight = ty1 - ty0;
         let mut buffer = vec![0.0; 3 * twidth * theight];
         let pixels = self.pixels.lock().unwrap();
-        let splat_pixels = self.splat_pixels.lock().unwrap();
+        let splat_scale = self.splat_scale.load(std::sync::atomic::Ordering::Relaxed) as Float;
         for y in ty0..ty1 {
             for x in tx0..tx1 {
                 let p = Vector2i::from((x as i32, y as i32));
@@ -223,8 +212,8 @@ impl RGBFilm {
                 let c = normalize_pixel(
                     pixels[src_index].rgb_sum,
                     pixels[src_index].filter_weight_sum,
-                    &splat_pixels[src_index],
-                    scale,
+                    &load_atomic_rgb(&self.splat_pixels[src_index]),
+                    scale * splat_scale,
                 );
                 let by = y - ty0;
                 let bx = x - tx0;
@@ -279,13 +268,13 @@ impl RGBFilm {
         let area = pixel_bounds.area() as usize;
         let mut rgb = vec![0.0; 3 * area];
         let pixels = self.pixels.lock().unwrap();
-        let splat_pixels = self.splat_pixels.lock().unwrap();
+        let splat_scale = self.splat_scale.load(std::sync::atomic::Ordering::Relaxed) as Float;
         for offset in 0..pixels.len() {
             let c = normalize_pixel(
                 pixels[offset].rgb_sum,
                 pixels[offset].filter_weight_sum,
-                &splat_pixels[offset],
-                self.scale,
+                &load_atomic_rgb(&self.splat_pixels[offset]),
+                self.scale * splat_scale,
             );
             rgb[3 * offset] = c[0];
             rgb[3 * offset + 1] = c[1];
