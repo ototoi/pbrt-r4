@@ -1024,18 +1024,18 @@ fn mis_weight(
     if t_idx >= 0 {
         let new_pdf_rev = if s > 0 {
             // qs->PDF(integrator, qsMinus, *pt)
-            let qs = light_vertices[s_idx as usize].clone();
+            let qs = &light_vertices[s_idx as usize];
             let qs_minus = if s_minus >= 0 {
-                Some(light_vertices[s_minus as usize].clone())
+                Some(&light_vertices[s_minus as usize])
             } else {
                 None
             };
-            qs.pdf(base, qs_minus.as_ref(), &camera_vertices[t_idx as usize])
+            qs.pdf(base, qs_minus, &camera_vertices[t_idx as usize])
         } else {
             // pt->PDFLightOrigin(infiniteLights, *ptMinus, lightSampler)
-            let pt = camera_vertices[t_idx as usize].clone();
+            let pt = &camera_vertices[t_idx as usize];
             let pt_minus = if t_minus >= 0 {
-                camera_vertices[t_minus as usize].clone()
+                &camera_vertices[t_minus as usize]
             } else {
                 return restore_snapshot(
                     snap,
@@ -1048,7 +1048,7 @@ fn mis_weight(
                     1.0,
                 );
             };
-            pt.pdf_light_origin(&base.infinite_lights, &pt_minus, light_sampler)
+            pt.pdf_light_origin(&base.infinite_lights, pt_minus, light_sampler)
         };
         snap.pt_pdf_rev = Some(camera_vertices[t_idx as usize].pdf_rev);
         camera_vertices[t_idx as usize].pdf_rev = new_pdf_rev;
@@ -1057,15 +1057,15 @@ fn mis_weight(
     // Update pdf_rev of ptMinus
     if t_minus >= 0 {
         let new_pdf_rev = if s > 0 {
-            let pt = camera_vertices[t_idx as usize].clone();
+            let pt = &camera_vertices[t_idx as usize];
             let qs = if s_idx >= 0 {
-                Some(light_vertices[s_idx as usize].clone())
+                Some(&light_vertices[s_idx as usize])
             } else {
                 None
             };
-            pt.pdf(base, qs.as_ref(), &camera_vertices[t_minus as usize])
+            pt.pdf(base, qs, &camera_vertices[t_minus as usize])
         } else {
-            let pt = camera_vertices[t_idx as usize].clone();
+            let pt = &camera_vertices[t_idx as usize];
             pt.pdf_light(base, &camera_vertices[t_minus as usize])
         };
         snap.pt_minus_pdf_rev = Some(camera_vertices[t_minus as usize].pdf_rev);
@@ -1074,20 +1074,20 @@ fn mis_weight(
 
     // Update pdf_rev of qs and qsMinus
     if s_idx >= 0 {
-        let pt = camera_vertices[t_idx as usize].clone();
+        let pt = &camera_vertices[t_idx as usize];
         let pt_minus = if t_minus >= 0 {
-            Some(camera_vertices[t_minus as usize].clone())
+            Some(&camera_vertices[t_minus as usize])
         } else {
             None
         };
-        let new_pdf_rev = pt.pdf(base, pt_minus.as_ref(), &light_vertices[s_idx as usize]);
+        let new_pdf_rev = pt.pdf(base, pt_minus, &light_vertices[s_idx as usize]);
         snap.qs_pdf_rev = Some(light_vertices[s_idx as usize].pdf_rev);
         light_vertices[s_idx as usize].pdf_rev = new_pdf_rev;
     }
     if s_minus >= 0 {
-        let qs = light_vertices[s_idx as usize].clone();
-        let pt = camera_vertices[t_idx as usize].clone();
-        let new_pdf_rev = qs.pdf(base, Some(&pt), &light_vertices[s_minus as usize]);
+        let qs = &light_vertices[s_idx as usize];
+        let pt = &camera_vertices[t_idx as usize];
+        let new_pdf_rev = qs.pdf(base, Some(pt), &light_vertices[s_minus as usize]);
         snap.qs_minus_pdf_rev = Some(light_vertices[s_minus as usize].pdf_rev);
         light_vertices[s_minus as usize].pdf_rev = new_pdf_rev;
     }
@@ -1344,8 +1344,8 @@ pub fn connect_bdpt(
         }
     } else {
         // General case
-        let qs = light_vertices[(s - 1) as usize].clone();
-        let pt = camera_vertices[(t - 1) as usize].clone();
+        let qs = &light_vertices[(s - 1) as usize];
+        let pt = &camera_vertices[(t - 1) as usize];
         if qs.is_connectible() && pt.is_connectible() {
             let mut l = qs.beta
                 * qs.f(&pt, TransportMode::Importance)
