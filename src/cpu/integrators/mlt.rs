@@ -6,7 +6,8 @@ use crate::base::camera::{Camera, CameraSample};
 use crate::base::lightsampler::LightSampler;
 use crate::base::sampler::Sampler;
 use crate::cpu::integrators::bdpt::{
-    connect_bdpt, generate_camera_subpath, generate_light_subpath, Vertex,
+    compute_light_tracing_splat_scale, connect_bdpt, generate_camera_subpath,
+    generate_light_subpath, Vertex,
 };
 use crate::cpu::integrators::*;
 use crate::film::Film;
@@ -42,6 +43,7 @@ pub struct MLTIntegrator {
     regularize: bool,
     light_sample_strategy: String,
     light_sampler: Option<LightSampler>,
+    light_tracing_splat_scale: Float,
 }
 
 impl MLTIntegrator {
@@ -57,6 +59,7 @@ impl MLTIntegrator {
         large_step_probability: Float,
         regularize: bool,
         light_sample_strategy: &str,
+        light_tracing_splat_scale: Float,
     ) -> Self {
         Self {
             base: IntegratorBase::from_scene(scene),
@@ -70,6 +73,7 @@ impl MLTIntegrator {
             regularize,
             light_sample_strategy: light_sample_strategy.to_string(),
             light_sampler: None,
+            light_tracing_splat_scale,
         }
     }
 
@@ -200,6 +204,7 @@ impl MLTIntegrator {
             t,
             light_sampler,
             sampler_wrapper,
+            self.light_tracing_splat_scale,
         );
 
         let l_scaled = l_path * (n_strategies as Float);
@@ -420,6 +425,11 @@ pub fn create_mlt_integrator(
             strategy
         }
     };
+    let light_tracing_splat_scale = {
+        let film = camera.get_film();
+        let film = film.read().unwrap();
+        compute_light_tracing_splat_scale(&film)
+    };
     Ok(Arc::new(RwLock::new(MLTIntegrator::new(
         scene,
         camera.clone(),
@@ -431,5 +441,6 @@ pub fn create_mlt_integrator(
         large_step_probability,
         regularize,
         &light_strategy,
+        light_tracing_splat_scale,
     ))))
 }

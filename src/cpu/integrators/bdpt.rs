@@ -2,6 +2,7 @@ use crate::base::bxdf::{
     is_non_specular, is_reflective, is_transmissive, TransportMode, BXDF_ALL, BXDF_REFL_TRANS_ALL,
 };
 use crate::base::camera::Camera;
+use crate::base::film::Film;
 use crate::base::light::{is_delta_light, Light, LightType};
 use crate::base::lightsampler::{LightSampleContext, LightSampler};
 use crate::base::medium::sample_t_maj_coefficients;
@@ -960,13 +961,13 @@ fn geometry_term(
 #[allow(clippy::too_many_arguments)]
 fn mis_weight(
     base: &IntegratorBase,
-    camera: &Arc<Camera>,
     light_vertices: &mut [Vertex],
     camera_vertices: &mut [Vertex],
     sampled: Option<&Vertex>,
     s: i32,
     t: i32,
     light_sampler: &LightSampler,
+    light_tracing_splat_scale: Float,
 ) -> Float {
     if s + t == 2 {
         return 1.0;
@@ -1098,27 +1099,17 @@ fn mis_weight(
     // light-tracing t=1 path is splatted onto the (crop-window) film, so the MIS
     // weight needs to compensate for the area ratio so that strategies remain
     // commensurable.
-    let film = camera.as_ref().get_film();
-    let splat_scale = {
-        let f = film.read().unwrap();
-        let fr = f.full_resolution();
-        let pb = f.pixel_bounds();
-        let full_area = fr.x as Float * fr.y as Float;
-        let pixel_area = ((pb.max.x - pb.min.x) * (pb.max.y - pb.min.y)) as Float;
-        if pixel_area > 0.0 {
-            full_area / pixel_area
-        } else {
-            1.0
-        }
-    };
-
     let mut sum_ri = 0.0;
     let mut ri: Float = 1.0;
     // Camera-subpath hypothetical strategies
     for i in (1..t).rev() {
         let ip = i as usize;
         ri *= remap0(camera_vertices[ip].pdf_rev) / remap0(camera_vertices[ip].pdf_fwd);
-        let r_use = if i == 1 { ri / splat_scale } else { ri };
+        let r_use = if i == 1 {
+            ri / light_tracing_splat_scale
+        } else {
+            ri
+        };
         if !camera_vertices[ip].delta && !camera_vertices[ip - 1].delta {
             sum_ri += r_use;
         }
@@ -1137,7 +1128,7 @@ fn mis_weight(
         }
     }
     if t == 1 {
-        sum_ri /= splat_scale;
+        sum_ri /= light_tracing_splat_scale;
     }
     let result = 1.0 / (1.0 + sum_ri);
 
@@ -1232,6 +1223,7 @@ pub fn connect_bdpt(
     t: i32,
     light_sampler: &LightSampler,
     sampler: &mut Sampler,
+    light_tracing_splat_scale: Float,
 ) -> (SampledSpectrum, Option<Point2f>) {
     let mut l_pkt = SampledSpectrum::zero();
     let mut p_raster: Option<Point2f> = None;
@@ -1277,15 +1269,7 @@ pub fn connect_bdpt(
                         // splatted contribution by FullRes^2 / PixelBounds.Area()
                         // so that crop-window renders remain commensurable with
                         // the other MIS strategies. See issue #347.
-                        let film = camera.as_ref().get_film();
-                        let f = film.read().unwrap();
-                        let fr = f.full_resolution();
-                        let pb = f.pixel_bounds();
-                        let full_area = fr.x as Float * fr.y as Float;
-                        let pixel_area = ((pb.max.x - pb.min.x) * (pb.max.y - pb.min.y)) as Float;
-                        if pixel_area > 0.0 {
-                            l *= full_area / pixel_area;
-                        }
+                        l *= light_tracing_splat_scale;
                         l_pkt = l;
                         sampled_opt = Some(sampled);
                     }
@@ -1363,13 +1347,13 @@ pub fn connect_bdpt(
     }
     let mis = mis_weight(
         base,
-        camera,
         light_vertices,
         camera_vertices,
         sampled_opt.as_ref(),
         s,
         t,
         light_sampler,
+        light_tracing_splat_scale,
     );
     (l_pkt * mis, p_raster)
 }
@@ -1386,6 +1370,7 @@ pub struct BDPTIntegrator {
     regularize: bool,
     light_sample_strategy: String,
     light_sampler: Option<LightSampler>,
+    light_tracing_splat_scale: Float,
 }
 
 impl BDPTIntegrator {
@@ -1399,6 +1384,7 @@ impl BDPTIntegrator {
         regularize: bool,
         pixel_bounds: &Bounds2i,
         light_sample_strategy: &str,
+        light_tracing_splat_scale: Float,
     ) -> Self {
         BDPTIntegrator {
             base: RayIntegratorBase::new(scene, camera, sampler, pixel_bounds),
@@ -1408,6 +1394,7 @@ impl BDPTIntegrator {
             regularize,
             light_sample_strategy: light_sample_strategy.to_string(),
             light_sampler: None,
+            light_tracing_splat_scale,
         }
     }
 }
@@ -1493,6 +1480,7 @@ impl RayIntegrator for BDPTIntegrator {
                     t,
                     light_sampler,
                     sampler,
+                    self.light_tracing_splat_scale,
                 );
                 if l_path.is_black() {
                     continue;
@@ -1543,7 +1531,14 @@ pub fn create_bdpt_integrator(
             strategy
         }
     };
-    let pixel_bounds = camera.get_film().read().unwrap().pixel_bounds();
+    let (pixel_bounds, light_tracing_splat_scale) = {
+        let film = camera.get_film();
+        let film = film.read().unwrap();
+        (
+            film.pixel_bounds(),
+            compute_light_tracing_splat_scale(&film),
+        )
+    };
     Ok(Arc::new(RwLock::new(BDPTIntegrator::new(
         scene,
         sampler,
@@ -1554,5 +1549,18 @@ pub fn create_bdpt_integrator(
         regularize,
         &pixel_bounds,
         &light_strategy,
+        light_tracing_splat_scale,
     ))))
+}
+
+pub fn compute_light_tracing_splat_scale(film: &Film) -> Float {
+    let full_resolution = film.full_resolution();
+    let pixel_bounds = film.pixel_bounds();
+    let full_area = full_resolution.x as Float * full_resolution.y as Float;
+    let pixel_area = pixel_bounds.area() as Float;
+    if pixel_area > 0.0 {
+        full_area / pixel_area
+    } else {
+        1.0
+    }
 }
