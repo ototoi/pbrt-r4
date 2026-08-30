@@ -29,7 +29,7 @@ use rayon::prelude::*;
 use std::sync::Arc;
 
 use nanovdb_rs::{
-    create_sampler1, Grid, GridType, NvdbFile, ReadAccessor, TreeData, ValidatedFloatTree,
+    create_sampler1, Grid, GridType, NvdbFile, ReadAccessor, TreeData, ValidatedFloatTreeCache,
 };
 
 /// Select a named `Float` grid from an already-open `.nvdb` file for
@@ -213,7 +213,7 @@ struct NanoVDBFloatGrid {
     world_to_index: Transform,
     tree_data: TreeData,
     background: f32,
-    validated_tree: Option<ValidatedFloatTree>,
+    validated_tree: Option<ValidatedFloatTreeCache>,
 }
 
 impl NanoVDBFloatGrid {
@@ -224,7 +224,7 @@ impl NanoVDBFloatGrid {
             world_to_index,
             tree_data,
             background,
-            validated_tree: ValidatedFloatTree::new(grid.raw_bytes()),
+            validated_tree: ValidatedFloatTreeCache::new(grid.raw_bytes()),
         })
     }
 
