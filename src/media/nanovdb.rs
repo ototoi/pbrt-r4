@@ -423,52 +423,56 @@ impl NanoVDBMedium {
         let mut values = vec![0.0; (res[0] * res[1] * res[2]) as usize];
         let bytes = density_grid.raw_bytes();
         let (bmin, bmax) = density_grid.index_bbox();
-        values.par_iter_mut().enumerate().for_each(|(index, out)| {
-            let x = index as i32 % res[0];
-            let y = (index as i32 / res[0]) % res[1];
-            let z = index as i32 / (res[0] * res[1]);
-
-            let p0 = bounds.lerp(&Vector3f::new(
-                x as Float / res[0] as Float,
-                y as Float / res[1] as Float,
-                z as Float / res[2] as Float,
-            ));
-            let p1 = bounds.lerp(&Vector3f::new(
-                (x + 1) as Float / res[0] as Float,
-                (y + 1) as Float / res[1] as Float,
-                (z + 1) as Float / res[2] as Float,
-            ));
-            let i0 = density_float_grid.world_to_index.transform_point(&p0);
-            let i1 = density_float_grid.world_to_index.transform_point(&p1);
-            let bounds_for_axis = |axis: usize| {
-                let lo = Float::min(i0[axis], i1[axis]) - 1.0;
-                let hi = Float::max(i0[axis], i1[axis]) + 1.0;
-                (
-                    i32::clamp(lo as i32, bmin[axis], bmax[axis]),
-                    i32::clamp(hi as i32, bmin[axis], bmax[axis]),
+        values.par_iter_mut().enumerate().for_each_init(
+            || {
+                ReadAccessor::with_tree_data(
+                    bytes,
+                    density_float_grid.tree_data,
+                    density_float_grid.background,
                 )
-            };
-            let (x0, x1) = bounds_for_axis(0);
-            let (y0, y1) = bounds_for_axis(1);
-            let (z0, z1) = bounds_for_axis(2);
-            let mut accessor = ReadAccessor::with_tree_data(
-                bytes,
-                density_float_grid.tree_data,
-                density_float_grid.background,
-            );
-            let mut max_value = 0.0;
-            for iz in z0..=z1 {
-                for iy in y0..=y1 {
-                    for ix in x0..=x1 {
-                        let v = accessor.get_value([ix, iy, iz]) as Float;
-                        if v.is_finite() && v > max_value {
-                            max_value = v;
+            },
+            |accessor, (index, out)| {
+                let x = index as i32 % res[0];
+                let y = (index as i32 / res[0]) % res[1];
+                let z = index as i32 / (res[0] * res[1]);
+
+                let p0 = bounds.lerp(&Vector3f::new(
+                    x as Float / res[0] as Float,
+                    y as Float / res[1] as Float,
+                    z as Float / res[2] as Float,
+                ));
+                let p1 = bounds.lerp(&Vector3f::new(
+                    (x + 1) as Float / res[0] as Float,
+                    (y + 1) as Float / res[1] as Float,
+                    (z + 1) as Float / res[2] as Float,
+                ));
+                let i0 = density_float_grid.world_to_index.transform_point(&p0);
+                let i1 = density_float_grid.world_to_index.transform_point(&p1);
+                let bounds_for_axis = |axis: usize| {
+                    let lo = Float::min(i0[axis], i1[axis]) - 1.0;
+                    let hi = Float::max(i0[axis], i1[axis]) + 1.0;
+                    (
+                        i32::clamp(lo as i32, bmin[axis], bmax[axis]),
+                        i32::clamp(hi as i32, bmin[axis], bmax[axis]),
+                    )
+                };
+                let (x0, x1) = bounds_for_axis(0);
+                let (y0, y1) = bounds_for_axis(1);
+                let (z0, z1) = bounds_for_axis(2);
+                let mut max_value = 0.0;
+                for iz in z0..=z1 {
+                    for iy in y0..=y1 {
+                        for ix in x0..=x1 {
+                            let v = accessor.get_value([ix, iy, iz]) as Float;
+                            if v.is_finite() && v > max_value {
+                                max_value = v;
+                            }
                         }
                     }
                 }
-            }
-            *out = max_value;
-        });
+                *out = max_value;
+            },
+        );
         MajorantGrid::new(bounds, res, Arc::from(values))
     }
 
