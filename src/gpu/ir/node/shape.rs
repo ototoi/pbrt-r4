@@ -1,14 +1,13 @@
-use super::types::Vec2;
-use super::types::Vec3;
+use super::types::Vec2f;
+use super::types::Vec3f;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
-    pub positions: Vec<Vec3>,
+    pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
-    pub normals: Option<Vec<Vec3>>,
-    pub tangents: Option<Vec<Vec3>>,
-    pub uvs: Option<Vec<Vec2>>,
-    pub face_indices: Option<Vec<u32>>,
+    pub normals: Option<Vec<Vec3f>>,
+    pub tangents: Option<Vec<Vec3f>>,
+    pub uvs: Option<Vec<Vec2f>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +20,6 @@ pub struct SphereShape {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
-    TriangleMesh(TriangleMeshShape),
-    Sphere(SphereShape),
+    TriangleMesh(Box<TriangleMeshShape>),
+    Sphere(Box<SphereShape>),
 }
