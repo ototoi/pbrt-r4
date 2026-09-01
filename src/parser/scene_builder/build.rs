@@ -209,6 +209,11 @@ impl SceneBuilder {
         .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))
     }
 
+    /// Realise the accumulated entities directly into an `Integrator` on GPU.
+    pub fn build_gpu(&self) -> Result<Arc<RwLock<dyn Integrator>>, PbrtError> {
+        return Err(PbrtError::error("GPU build not implemented yet"));
+    }
+
     // ===== Phase helpers ====================================================
 
     fn scene_build_thread_pool() -> Result<Option<ThreadPool>, PbrtError> {

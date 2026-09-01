@@ -219,6 +219,14 @@ struct CommandOptions {
     #[arg(short = 'k', long = "sequential-display", value_name = "dir")]
     pub sequential_display: Option<PathBuf>,
 
+    /// Use GPU for rendering.
+    #[arg(long, default_value = "false")]
+    pub use_gpu: bool,
+
+    /// Use Wavefront for rendering.
+    #[arg(long, default_value = "false")]
+    pub use_wavefront: bool,
+
     #[arg(value_name = "filename.pbrt")]
     pub pbrtfile: Option<Vec<PathBuf>>,
 }
@@ -442,9 +450,15 @@ fn create_integrator(
             let values: Vec<Float> = cropwindow.iter().map(|v| *v as Float).collect();
             builder.film_params.replace_floats("cropwindow", &values);
         }
-
         return builder.build();
     }
+}
+
+fn create_gpu_integrator(
+    input_path: &Path,
+    opts: &CommandOptions,
+) -> Result<Arc<RwLock<dyn Integrator>>, PbrtError> {
+    return Err(PbrtError::error("GPU integrator not implemented yet"));
 }
 
 fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError> {
@@ -452,6 +466,140 @@ fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError>
     tev.connect(hostname)?;
     Ok(Arc::new(RwLock::new(tev)))
 }
+
+fn write_mse_image(integrator: &Arc<RwLock<dyn Integrator>>) -> Result<(), PbrtError> {
+     let options = PbrtOptions::get();
+    if options.mse_reference_image.is_some() || options.mse_reference_output.is_some() {
+        let (reference_path, output_path) = match (
+            options.mse_reference_image.as_deref(),
+            options.mse_reference_output.as_deref(),
+        ) {
+            (Some(reference), Some(output)) => (reference, output),
+            _ => {
+                return Err(PbrtError::error(
+                    "MSE comparison requires both reference image and output paths.",
+                ));
+            }
+        };
+        let rendered = {
+            let integrator = integrator.read().unwrap();
+            let camera = integrator.get_camera();
+            let film = camera.get_film();
+            let film = film.read().unwrap();
+            film.to_image()?
+        };
+        let (reference_texels, reference_resolution) = read_image(reference_path)?;
+        let reference = Image::new(reference_resolution, reference_texels);
+        if rendered.resolution() != reference.resolution() {
+            let msg = format!(
+                "MSE reference resolution {:?} does not match rendered resolution {:?}.",
+                reference.resolution(),
+                rendered.resolution()
+            );
+            return Err(PbrtError::error(&msg));
+        }
+        let mse = rendered.mse(&reference);
+        let values = mse.to_rgb();
+        println!(
+            "MSE vs {}: R={} G={} B={} average={}",
+            reference_path,
+            values[0],
+            values[1],
+            values[2],
+            mse.average()
+        );
+        let mut error_pixels = Vec::with_capacity(rendered.texels().len() * 3);
+        for (a, b) in rendered.texels().iter().zip(reference.texels()) {
+            let ar = a.to_rgb();
+            let br = b.to_rgb();
+            for c in 0..3 {
+                let delta = ar[c] - br[c];
+                error_pixels.push(delta * delta);
+            }
+        }
+        let bounds = Bounds2i::from(((0, 0), (reference_resolution.x, reference_resolution.y)));
+        write_image(output_path, &error_pixels, &bounds, &reference_resolution)?;
+    }
+    Ok(())
+}
+
+fn render_cpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError> {
+    let integrator = create_integrator(input_path, opts)?;
+    if let Some(hostname) = opts.display_server.as_ref() {
+        match create_display(hostname) {
+            Ok(display) => {
+                let integrator = integrator.read().unwrap();
+                integrator.add_display(&display);
+            }
+            Err(e) => {
+                warn!("{}", e);
+            }
+        }
+    }
+    if let Some(out_dir) = opts.sequential_display.as_ref() {
+        std::fs::create_dir_all(out_dir)?;
+        let display: Arc<RwLock<dyn Display>> = Arc::new(RwLock::new(SequentialDisplay::new(
+            &out_dir.to_string_lossy(),
+        )));
+        let integrator = integrator.read().unwrap();
+        integrator.add_display(&display);
+    }
+
+    {
+        let mut integrator = integrator.write().unwrap();
+        integrator.render();
+    }
+
+    {
+        write_mse_image(&integrator)?;
+    }
+    
+    return Ok(());
+}
+
+fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError> {
+    let integrator = create_gpu_integrator(input_path, opts)?;
+    if let Some(hostname) = opts.display_server.as_ref() {
+        match create_display(hostname) {
+            Ok(display) => {
+                let integrator = integrator.read().unwrap();
+                integrator.add_display(&display);
+            }
+            Err(e) => {
+                warn!("{}", e);
+            }
+        }
+    }
+
+    if let Some(out_dir) = opts.sequential_display.as_ref() {
+        std::fs::create_dir_all(out_dir)?;
+        let display: Arc<RwLock<dyn Display>> = Arc::new(RwLock::new(SequentialDisplay::new(
+            &out_dir.to_string_lossy(),
+        )));
+        let integrator = integrator.read().unwrap();
+        integrator.add_display(&display);
+    }
+
+    {
+        let mut integrator = integrator.write().unwrap();
+        integrator.render();
+    }
+
+    //{
+    //    write_mse_image(&integrator)?;
+    //}
+
+    return Ok(());
+}
+
+fn render_device(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError> {
+    if opts.use_gpu || opts.use_wavefront {
+        render_gpu(input_path, opts)
+    } else {
+        render_cpu(input_path, opts)
+    }
+}
+
 
 fn render_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
     if !opts.quiet {
@@ -479,118 +627,10 @@ fn render_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
         println!();
     }
 
-    let r = create_integrator(input_path, opts);
-    match r {
-        Ok(integrator) => {
-            if let Some(hostname) = opts.display_server.as_ref() {
-                match create_display(hostname) {
-                    Ok(display) => {
-                        let integrator = integrator.as_ref().read().unwrap();
-                        let camera = integrator.get_camera();
-                        let film = camera.as_ref().get_film();
-                        let f = film.as_ref().read().unwrap();
-                        f.add_display(&display);
-                    }
-                    Err(e) => {
-                        warn!("{}", e);
-                    }
-                }
-            }
-            if let Some(out_dir) = opts.sequential_display.as_ref() {
-                if let Err(e) = std::fs::create_dir_all(out_dir) {
-                    error!("Failed to create sequential display directory: {}", e);
-                    return -1;
-                }
-                let display: Arc<RwLock<dyn Display>> = Arc::new(RwLock::new(
-                    SequentialDisplay::new(&out_dir.to_string_lossy()),
-                ));
-                let integrator = integrator.as_ref().read().unwrap();
-                let camera = integrator.get_camera();
-                let film = camera.as_ref().get_film();
-                let f = film.as_ref().read().unwrap();
-                f.add_display(&display);
-            }
-
-            {
-                let mut integrator = integrator.as_ref().write().unwrap();
-                integrator.render();
-            }
-
-            let options = PbrtOptions::get();
-            if options.mse_reference_image.is_some() || options.mse_reference_output.is_some() {
-                let (reference_path, output_path) = match (
-                    options.mse_reference_image.as_deref(),
-                    options.mse_reference_output.as_deref(),
-                ) {
-                    (Some(reference), Some(output)) => (reference, output),
-                    _ => {
-                        error!("MSE comparison requires both reference image and output paths.");
-                        return -1;
-                    }
-                };
-                let rendered = {
-                    let integrator = integrator.as_ref().read().unwrap();
-                    let camera = integrator.get_camera();
-                    let film = camera.as_ref().get_film();
-                    let film = film.as_ref().read().unwrap();
-                    match film.to_image() {
-                        Ok(image) => image,
-                        Err(error) => {
-                            error!("MSE comparison failed: {}", error);
-                            return -1;
-                        }
-                    }
-                };
-                let (reference_texels, reference_resolution) = match read_image(reference_path) {
-                    Ok(image) => image,
-                    Err(error) => {
-                        error!("Failed to read MSE reference image: {}", error);
-                        return -1;
-                    }
-                };
-                let reference = Image::new(reference_resolution, reference_texels);
-                if rendered.resolution() != reference.resolution() {
-                    error!(
-                        "MSE reference resolution {:?} does not match rendered resolution {:?}.",
-                        reference.resolution(),
-                        rendered.resolution()
-                    );
-                    return -1;
-                }
-                let mse = rendered.mse(&reference);
-                let values = mse.to_rgb();
-                println!(
-                    "MSE vs {}: R={} G={} B={} average={}",
-                    reference_path,
-                    values[0],
-                    values[1],
-                    values[2],
-                    mse.average()
-                );
-                let mut error_pixels = Vec::with_capacity(rendered.texels().len() * 3);
-                for (a, b) in rendered.texels().iter().zip(reference.texels()) {
-                    let ar = a.to_rgb();
-                    let br = b.to_rgb();
-                    for c in 0..3 {
-                        let delta = ar[c] - br[c];
-                        error_pixels.push(delta * delta);
-                    }
-                }
-                let bounds =
-                    Bounds2i::from(((0, 0), (reference_resolution.x, reference_resolution.y)));
-                if let Err(error) =
-                    write_image(output_path, &error_pixels, &bounds, &reference_resolution)
-                {
-                    error!("Failed to write MSE image: {}", error);
-                    return -1;
-                }
-            }
-        }
-        Err(e) => {
-            let msg = format!("{}", e);
-            error!("{}", msg);
-            return -1;
-        }
+    if let Err(e) = render_device(input_path, opts) {
+        let msg = format!("{}", e);
+        error!("{}", msg);
+        return -1;
     }
     println!("\n");
 
