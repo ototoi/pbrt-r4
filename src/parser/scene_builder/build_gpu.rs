@@ -1,6 +1,6 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
-use crate::gpu::ir::flat::Scene as FlatScene;
+use crate::gpu::ir::flat::{flatten_node, Scene as FlatScene};
 use crate::gpu::ir::node::{
     node_ref_to_json_string, tessellate_shapes, triangle_mesh_from_params, Accelerator,
     AcceleratorComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
@@ -299,10 +299,8 @@ impl SceneBuilder {
         Ok(Arc::new(RwLock::new(node)))
     }
 
-    pub fn lower_node_to_flat(&self, _node: Arc<RwLock<Node>>) -> Result<FlatScene, PbrtError> {
-        Err(PbrtError::error(
-            "GPU Node IR to Flat IR is not implemented yet",
-        ))
+    pub fn lower_node_to_flat(&self, node: Arc<RwLock<Node>>) -> Result<FlatScene, PbrtError> {
+        flatten_node(node)
     }
 }
 
