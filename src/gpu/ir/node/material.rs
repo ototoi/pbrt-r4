@@ -1,6 +1,8 @@
-#[derive(Clone, Debug, PartialEq)]
+use crate::paramdict::ParameterDictionary;
+
+#[derive(Clone)]
 pub struct Material {
     pub name: String,
     pub kind: String,
-    // should be a reference to
+    pub params: ParameterDictionary,
 }

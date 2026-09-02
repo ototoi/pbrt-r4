@@ -1,9 +1,7 @@
-#[derive(Clone, Debug, PartialEq)]
-pub struct PerspectiveCamera {
-    pub fov: f32,
-}
+use crate::paramdict::ParameterDictionary;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Camera {
-    Perspective(PerspectiveCamera),
+#[derive(Clone)]
+pub struct Camera {
+    pub params: ParameterDictionary,
+    pub medium: String,
 }

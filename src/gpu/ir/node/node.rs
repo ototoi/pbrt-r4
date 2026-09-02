@@ -1,14 +1,15 @@
 use super::component::Component;
 use super::transform::Transform;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-#[derive(Clone, Debug, PartialEq)]
+pub type NodeRef = Arc<RwLock<Node>>;
+
 pub struct Node {
     pub name: String,
     pub transform: Transform,
     pub components: Vec<Component>,
-    pub children: Vec<Arc<Node>>,
+    pub children: Vec<NodeRef>,
 }
 
 impl Node {
@@ -21,7 +22,11 @@ impl Node {
         }
     }
 
-    pub fn add_child(&mut self, child: Arc<Node>) {
+    pub fn add_child(&mut self, child: NodeRef) {
         self.children.push(child);
+    }
+
+    pub fn add_component(&mut self, component: Component) {
+        self.components.push(component);
     }
 }
