@@ -6,4 +6,3 @@ pub struct Vec3f(pub [f32; 3]);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vec4f(pub [f32; 4]);
-

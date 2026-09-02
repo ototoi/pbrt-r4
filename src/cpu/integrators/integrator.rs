@@ -15,13 +15,13 @@ use crate::base::camera::Camera;
 use crate::base::light::Light;
 use crate::base::medium::sample_t_maj;
 use crate::cpu::primitive::*;
+use crate::displays::Display;
 use crate::interaction::{Interaction, ShapeIntersection};
 use crate::scene::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
 use crate::util::rng::RNG;
 use crate::util::spectrum::*;
-use crate::displays::Display;
 
 use std::sync::Arc;
 use std::sync::RwLock;
