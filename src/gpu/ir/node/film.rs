@@ -1,8 +1,7 @@
 use crate::paramdict::ParameterDictionary;
 
 #[derive(Clone)]
-pub struct Material {
+pub struct Film {
     pub name: String,
-    pub kind: String,
     pub params: ParameterDictionary,
 }

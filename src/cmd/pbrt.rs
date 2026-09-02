@@ -456,9 +456,14 @@ fn create_integrator(
 
 fn create_gpu_integrator(
     input_path: &Path,
-    opts: &CommandOptions,
+    _opts: &CommandOptions,
 ) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
-    return Err(PbrtError::error("GPU integrator not implemented yet"));
+    // Temporary debug path: print the Node IR before and after tessellation
+    // while the GPU integrator is still incomplete.
+    let mut builder = SceneBuilder::new();
+    let path = path_to_string(input_path)?;
+    parse_file(&path, &mut builder)?;
+    builder.build_gpu()
 }
 
 fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError> {
