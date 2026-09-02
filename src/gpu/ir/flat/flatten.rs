@@ -2,10 +2,13 @@ use super::{
     identity_transform, multiply_transform, Camera, Geometry, Instance, Material, Scene, Transform,
     Vertex, Viewport,
 };
-use crate::gpu::ir::node::{Component, NodeRef, Shape, TriangleMeshShape};
+use crate::gpu::ir::node::{
+    Component, Material as NodeMaterial, NodeRef, Shape, TriangleMeshShape,
+};
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
@@ -36,9 +39,10 @@ struct FlatBuilder {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     geometries: Vec<Geometry>,
+    geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     materials: Vec<Material>,
-    source_materials: Vec<Arc<crate::gpu::ir::node::Material>>,
+    source_materials: Vec<Arc<NodeMaterial>>,
 }
 
 fn flatten_node_ref(
@@ -82,7 +86,7 @@ fn flatten_node_ref(
                 Component::Film(component) => Some(component.film.clone()),
                 _ => None,
             });
-        for component in &node.components {
+        for (component_index, component) in node.components.iter().enumerate() {
             match component {
                 Component::Shape(component) => {
                     let shape = match &component.shape {
@@ -100,7 +104,7 @@ fn flatten_node_ref(
                             node.name
                         ))
                     })?;
-                    shapes.push((shape, material));
+                    shapes.push((component_index, shape, material));
                 }
                 Component::Instance(component) => {
                     instances.push((
@@ -133,17 +137,7 @@ fn flatten_node_ref(
         builder.viewport = Some(Viewport { resolution });
     }
     if let Some(camera) = camera {
-        let mut fov = camera.params.get_one_float("fov", 90.0) as f32;
-        let halffov = camera.params.get_one_float("halffov", -1.0) as f32;
-        if halffov > 0.0 {
-            fov = 2.0 * halffov;
-        }
-        if !fov.is_finite() || fov <= 0.0 || fov >= 180.0 {
-            return Err(PbrtError::error(&format!(
-                "Camera node \"{}\" has an invalid field of view.",
-                name
-            )));
-        }
+        let fov = camera.params.get_one_float("fov", 90.0) as f32;
         if builder.camera.is_some() {
             return Err(PbrtError::error(
                 "Multiple cameras were found while flattening GPU Node IR.",
@@ -158,8 +152,14 @@ fn flatten_node_ref(
             screen_window: screen_window(&camera.params, viewport.resolution)?,
         });
     }
-    for (shape, material) in shapes {
-        append_shape(&name, &shape, &material, &world_transform, builder)?;
+    for (component_index, shape, material) in shapes {
+        let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
+        let material = material_index(&material, builder)?;
+        builder.instances.push(Instance {
+            geometry,
+            transform: world_transform,
+            material,
+        });
     }
     for (target, instance_transform) in instances {
         let target_parent = multiply_transform(&world_transform, &instance_transform.matrix);
@@ -210,11 +210,6 @@ fn screen_window(
         "frameaspectratio",
         resolution[0] as f32 / resolution[1] as f32,
     ) as f32;
-    if !frame.is_finite() || frame <= 0.0 {
-        return Err(PbrtError::error(
-            "Camera frameaspectratio must be positive and finite.",
-        ));
-    }
     if frame > 1.0 {
         Ok([-frame, frame, -1.0, 1.0])
     } else {
@@ -222,13 +217,18 @@ fn screen_window(
     }
 }
 
-fn append_shape(
+fn geometry_index(
+    node_key: usize,
+    component_index: usize,
     node_name: &str,
     shape: &TriangleMeshShape,
-    source_material: &Arc<crate::gpu::ir::node::Material>,
-    transform: &Transform,
     builder: &mut FlatBuilder,
-) -> Result<(), PbrtError> {
+) -> Result<u32, PbrtError> {
+    let key = (node_key, component_index);
+    if let Some(&geometry) = builder.geometries_by_shape.get(&key) {
+        return Ok(geometry);
+    }
+
     let vertex_count = u32::try_from(shape.positions.len()).map_err(|_| {
         PbrtError::error(&format!(
             "Too many vertices in shape node \"{}\".",
@@ -310,17 +310,12 @@ fn append_shape(
         first_index,
         index_count,
     });
-    let material = material_index(source_material, builder)?;
-    builder.instances.push(Instance {
-        geometry,
-        transform: *transform,
-        material,
-    });
-    Ok(())
+    builder.geometries_by_shape.insert(key, geometry);
+    Ok(geometry)
 }
 
 fn material_index(
-    source_material: &Arc<crate::gpu::ir::node::Material>,
+    source_material: &Arc<NodeMaterial>,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
     if let Some(index) = builder

@@ -1,6 +1,6 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
-use crate::gpu::ir::flat::{flatten_node, Scene as FlatScene};
+use crate::gpu::ir::flat::flatten_node;
 use crate::gpu::ir::node::{
     node_ref_to_json_string, tessellate_shapes, triangle_mesh_from_params, Accelerator,
     AcceleratorComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
@@ -28,7 +28,7 @@ impl SceneBuilder {
             return Err(PbrtError::error(error));
         }
 
-        // Create the IR node for the scene. This is a placeholder for future implementation.
+        // Build the declarative GPU Node IR for the scene.
         let ir_node = self.build_gpu_ir_node()?;
         match node_ref_to_json_string(&ir_node) {
             Ok(json) => println!("GPU Node IR before tessellation:\n{json}"),
@@ -48,7 +48,7 @@ impl SceneBuilder {
         }
 
         // Lower the IR node to a flat scene representation.
-        let flat_scene = self.lower_node_to_flat(ir_node)?;
+        let flat_scene = flatten_node(ir_node)?;
 
         // Create the WavefrontPathIntegrator from the flat scene.
         let integrator = WavefrontPathIntegrator::create(flat_scene)?;
@@ -297,10 +297,6 @@ impl SceneBuilder {
             },
         }));
         Ok(Arc::new(RwLock::new(node)))
-    }
-
-    pub fn lower_node_to_flat(&self, node: Arc<RwLock<Node>>) -> Result<FlatScene, PbrtError> {
-        flatten_node(node)
     }
 }
 
