@@ -457,7 +457,7 @@ fn create_integrator(
 fn create_gpu_integrator(
     input_path: &Path,
     opts: &CommandOptions,
-) -> Result<Arc<RwLock<dyn Integrator>>, PbrtError> {
+) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
     return Err(PbrtError::error("GPU integrator not implemented yet"));
 }
 
@@ -468,7 +468,7 @@ fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError>
 }
 
 fn write_mse_image(integrator: &Arc<RwLock<dyn Integrator>>) -> Result<(), PbrtError> {
-     let options = PbrtOptions::get();
+    let options = PbrtOptions::get();
     if options.mse_reference_image.is_some() || options.mse_reference_output.is_some() {
         let (reference_path, output_path) = match (
             options.mse_reference_image.as_deref(),
@@ -553,7 +553,7 @@ fn render_cpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
     {
         write_mse_image(&integrator)?;
     }
-    
+
     return Ok(());
 }
 
@@ -582,7 +582,7 @@ fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
 
     {
         let mut integrator = integrator.write().unwrap();
-        integrator.render();
+        integrator.render()?;
     }
 
     //{
@@ -599,7 +599,6 @@ fn render_device(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtErr
         render_cpu(input_path, opts)
     }
 }
-
 
 fn render_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
     if !opts.quiet {

@@ -1,2 +1,2 @@
-pub mod node;
 pub mod flat;
+pub mod node;

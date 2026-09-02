@@ -5,3 +5,5 @@ pub mod node;
 pub mod shape;
 pub mod transform;
 pub mod types;
+
+pub use node::*;
