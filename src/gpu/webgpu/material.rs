@@ -23,4 +23,14 @@ impl MaterialKind {
             ))),
         }
     }
+
+    pub fn from_debug_environment() -> Result<Self, PbrtError> {
+        match std::env::var("PBRT_R4_GPU_DEBUG_MATERIAL") {
+            Ok(kind) => Self::from_flat(&kind),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Normal),
+            Err(std::env::VarError::NotUnicode(_)) => Err(PbrtError::error(
+                "PBRT_R4_GPU_DEBUG_MATERIAL must be valid UTF-8.",
+            )),
+        }
+    }
 }

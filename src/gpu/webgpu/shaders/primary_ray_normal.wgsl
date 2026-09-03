@@ -14,6 +14,8 @@ struct CameraUniform {
 
 struct Vertex {
     position: vec4<f32>,
+    uv: vec2<f32>,
+    _padding: vec2<u32>,
 };
 
 struct Geometry {
@@ -145,10 +147,16 @@ fn shade_normal(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material.kind_tag == MATERIAL_KIND_NORMAL) {
         framebuffer[pixel_index] = vec4<f32>(normal * 0.5 + vec3<f32>(0.5), 1.0);
     } else if (material.kind_tag == MATERIAL_KIND_UV) {
+        let barycentric_1 = hit.barycentric.x;
+        let barycentric_2 = hit.barycentric.y;
+        let barycentric_0 = 1.0 - barycentric_1 - barycentric_2;
+        let uv = vertices[i0].uv * barycentric_0
+            + vertices[i1].uv * barycentric_1
+            + vertices[i2].uv * barycentric_2;
         framebuffer[pixel_index] = vec4<f32>(
-            f32(hit.primitive_index & 1u),
-            hit.barycentric.x,
-            hit.barycentric.y,
+            uv.x,
+            uv.y,
+            0.0,
             1.0,
         );
     } else {
