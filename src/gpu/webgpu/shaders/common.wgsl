@@ -26,6 +26,7 @@ struct ViewportUniform {
 struct Vertex {
     position: vec4<f32>,
     normal: vec4<f32>,
+    tangent: vec4<f32>,
     uv: vec2<f32>,
     _padding: vec2<u32>,
 };
@@ -42,6 +43,7 @@ struct Instance {
     material: u32,
     _padding: vec2<u32>,
     world_from_object: mat4x4<f32>,
+    normal_from_object: mat4x4<f32>,
 };
 
 struct RayWorkItem {

@@ -5,8 +5,8 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, row_major_to_columns, validate_affine, viewport_uniform, Geometry, Instance,
-    PointLight, Vertex, ViewportUniform,
+    camera_uniform, inverse_transpose_linear, row_major_to_columns, viewport_uniform, Geometry,
+    Instance, PointLight, Vertex, ViewportUniform,
 };
 use super::acceleration::{self, Acceleration};
 use super::material::MaterialKind;
@@ -56,12 +56,13 @@ impl Scene {
                         "Flat instance {index} references an invalid material."
                     )));
                 }
-                validate_affine(instance.transform, &format!("Flat instance {index}"))?;
+                let label = format!("Flat instance {index}");
                 Ok(Instance {
                     geometry: instance.geometry,
                     material: instance.material,
                     padding: [0; 2],
                     world_from_object: row_major_to_columns(instance.transform),
+                    normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -206,6 +207,13 @@ fn convert_geometry(
                     "Flat vertex UV contains a non-finite value.",
                 ));
             }
+            if !vertex.normal.iter().all(|value| value.is_finite())
+                || !vertex.tangent.iter().all(|value| value.is_finite())
+            {
+                return Err(PbrtError::error(
+                    "Flat vertex normal or tangent contains a non-finite value.",
+                ));
+            }
             Ok(Vertex {
                 position: [
                     vertex.position[0],
@@ -214,6 +222,7 @@ fn convert_geometry(
                     1.0,
                 ],
                 normal: [vertex.normal[0], vertex.normal[1], vertex.normal[2], 0.0],
+                tangent: [vertex.tangent[0], vertex.tangent[1], vertex.tangent[2], 0.0],
                 uv: vertex.uv,
                 padding: [0; 2],
             })
