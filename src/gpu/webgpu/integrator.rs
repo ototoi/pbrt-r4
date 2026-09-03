@@ -10,6 +10,7 @@ use crate::util::error::PbrtError;
 use super::abi::{CameraUniform, WORKGROUP_SIZE};
 use super::context::Context;
 use super::film::Film;
+use super::material::MaterialKind;
 use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
@@ -30,7 +31,8 @@ impl WavefrontPathIntegrator {
         let context = Context::new()?;
         let device = &context.device;
         let queue = &context.queue;
-        let scene = Scene::from_flat(device, queue, flat_scene)?;
+        let mut scene = Scene::from_flat(device, queue, flat_scene)?;
+        scene.replace_material_kind(queue, MaterialKind::from_debug_environment()?);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),

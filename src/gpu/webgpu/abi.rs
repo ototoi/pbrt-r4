@@ -21,6 +21,8 @@ pub struct CameraUniform {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 4],
+    pub uv: [f32; 2],
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]

@@ -102,7 +102,7 @@ impl Scene {
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material SBO"),
             contents: cast_slice(&materials),
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let acceleration = acceleration::build(
             device,
@@ -152,6 +152,11 @@ fn convert_geometry(
                     "Flat vertex position contains a non-finite value.",
                 ));
             }
+            if !vertex.uv.iter().all(|value| value.is_finite()) {
+                return Err(PbrtError::error(
+                    "Flat vertex UV contains a non-finite value.",
+                ));
+            }
             Ok(Vertex {
                 position: [
                     vertex.position[0],
@@ -159,6 +164,8 @@ fn convert_geometry(
                     vertex.position[2],
                     1.0,
                 ],
+                uv: vertex.uv,
+                padding: [0; 2],
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
