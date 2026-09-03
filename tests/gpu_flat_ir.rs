@@ -3,8 +3,8 @@ use std::sync::{Arc, RwLock};
 use pbrt_r4::gpu::ir::flat::flatten_node;
 use pbrt_r4::gpu::ir::node::{
     Camera, CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance,
-    InstanceComponent, Material, MaterialComponent, Node, Shape, ShapeComponent, Transform,
-    TriangleMeshShape,
+    InstanceComponent, Material, MaterialComponent, Node, Output, OutputComponent, Shape,
+    ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
 
@@ -41,6 +41,11 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
 }
 
 fn add_camera_and_film(root: &mut Node, camera_params: pbrt_r4::paramdict::ParameterDictionary) {
+    root.add_component(Component::Output(OutputComponent {
+        output: Output {
+            filename: "test.exr".to_string(),
+        },
+    }));
     let mut camera = Node::new("camera");
     camera.add_component(Component::Camera(CameraComponent {
         camera: Camera {
@@ -123,6 +128,11 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 #[test]
 fn flatten_node_preserves_explicit_camera_screen_window() {
     let mut root = Node::new("root");
+    root.add_component(Component::Output(OutputComponent {
+        output: Output {
+            filename: "test.exr".to_string(),
+        },
+    }));
     let mut camera = Node::new("camera");
     let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);

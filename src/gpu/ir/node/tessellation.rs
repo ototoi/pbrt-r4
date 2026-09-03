@@ -70,7 +70,18 @@ fn sphere_to_mesh(sphere: &SphereShape) -> TriangleMeshShape {
             let b = a + 1;
             let c = a + (phi_segments + 1) as u32;
             let d = c + 1;
-            indices.extend_from_slice(&[a, c, b, b, c, d]);
+            if y == 0 {
+                // All vertices in the first row are the north pole. Use one
+                // of them as the fan center instead of connecting two pole
+                // vertices, which would produce a zero-area triangle.
+                indices.extend_from_slice(&[a, c, d]);
+            } else if y + 1 == theta_segments {
+                // The last row is the south pole. As above, emit only the
+                // non-degenerate triangle for this side of the fan.
+                indices.extend_from_slice(&[a, c, b]);
+            } else {
+                indices.extend_from_slice(&[a, c, b, b, c, d]);
+            }
         }
     }
     TriangleMeshShape {

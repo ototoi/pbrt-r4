@@ -15,6 +15,9 @@ pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     let mut builder = FlatBuilder::default();
     let mut stack = Vec::new();
     flatten_node_ref(&root, &identity_transform(), &mut builder, &mut stack)?;
+    let output = builder
+        .output
+        .ok_or_else(|| PbrtError::error("No output was found while flattening GPU Node IR."))?;
     let camera = builder
         .camera
         .ok_or_else(|| PbrtError::error("No camera was found while flattening GPU Node IR."))?;
@@ -24,6 +27,7 @@ pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     Ok(Scene {
         camera,
         viewport,
+        output,
         vertices: builder.vertices,
         indices: builder.indices,
         geometries: builder.geometries,
@@ -42,6 +46,7 @@ struct FlatBuilder {
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     materials: Vec<Material>,
+    output: Option<super::Output>,
     source_materials: Vec<Arc<NodeMaterial>>,
 }
 
@@ -59,7 +64,7 @@ fn flatten_node_ref(
     }
     stack.push(node_key);
 
-    let (name, local_transform, camera, film, shapes, instances, children) = {
+    let (name, local_transform, camera, film, output, shapes, instances, children) = {
         let node = node_ref
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -84,6 +89,13 @@ fn flatten_node_ref(
             .iter()
             .find_map(|component| match component {
                 Component::Film(component) => Some(component.film.clone()),
+                _ => None,
+            });
+        let output = node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                Component::Output(component) => Some(component.output.clone()),
                 _ => None,
             });
         for (component_index, component) in node.components.iter().enumerate() {
@@ -120,6 +132,7 @@ fn flatten_node_ref(
             node.transform.matrix,
             camera,
             film,
+            output,
             shapes,
             instances,
             node.children.clone(),
@@ -127,6 +140,24 @@ fn flatten_node_ref(
     };
 
     let world_transform = multiply_transform(parent_transform, &local_transform);
+    if let Some(output) = output {
+        if stack.len() != 1 {
+            return Err(PbrtError::error(
+                "Output component must be attached to the GPU root node.",
+            ));
+        }
+        if builder
+            .output
+            .replace(super::Output {
+                filename: output.filename,
+            })
+            .is_some()
+        {
+            return Err(PbrtError::error(
+                "Multiple output components were found while flattening GPU Node IR.",
+            ));
+        }
+    }
     if let Some(film) = film {
         let resolution = viewport_resolution(&film.params)?;
         if builder.viewport.is_some() {
