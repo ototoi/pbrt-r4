@@ -16,6 +16,7 @@
 //! switched at the CLI level.
 
 pub mod build;
+pub mod build_gpu;
 pub mod parse_target_impl;
 pub mod path_resolver;
 pub mod scene_entity;
