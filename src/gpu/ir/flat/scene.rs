@@ -1,9 +1,10 @@
-use super::{Camera, Geometry, Instance, Material, Vertex, Viewport};
+use super::{Camera, Geometry, Instance, Material, Output, Vertex, Viewport};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
     pub camera: Camera,
     pub viewport: Viewport,
+    pub output: Output,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,

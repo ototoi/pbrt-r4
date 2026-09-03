@@ -1,0 +1,26 @@
+use pbrt_r4::gpu::webgpu::abi::{
+    row_major_to_columns, CameraUniform, Geometry, HitRecord, Instance, Material, RayWorkItem,
+    Vertex,
+};
+
+#[test]
+fn webgpu_matrices_are_uploaded_as_column_major() {
+    let matrix = row_major_to_columns([
+        0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+    ]);
+    assert_eq!(matrix[0], [0.0, 4.0, 8.0, 12.0]);
+    assert_eq!(matrix[1], [1.0, 5.0, 9.0, 13.0]);
+    assert_eq!(matrix[2], [2.0, 6.0, 10.0, 14.0]);
+    assert_eq!(matrix[3], [3.0, 7.0, 11.0, 15.0]);
+}
+
+#[test]
+fn webgpu_storage_struct_sizes_match_shader_layout() {
+    assert_eq!(std::mem::size_of::<CameraUniform>(), 144);
+    assert_eq!(std::mem::size_of::<Vertex>(), 16);
+    assert_eq!(std::mem::size_of::<Geometry>(), 16);
+    assert_eq!(std::mem::size_of::<Instance>(), 80);
+    assert_eq!(std::mem::size_of::<Material>(), 16);
+    assert_eq!(std::mem::size_of::<RayWorkItem>(), 48);
+    assert_eq!(std::mem::size_of::<HitRecord>(), 32);
+}

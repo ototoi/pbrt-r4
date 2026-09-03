@@ -7,6 +7,7 @@ use super::integrator::Integrator;
 use super::light::Light;
 use super::material::Material;
 use super::medium::Medium;
+use super::output::Output;
 use super::sampler::Sampler;
 use super::scene::Scene;
 use super::shape::Shape;
@@ -41,6 +42,11 @@ pub struct FilterComponent {
 #[derive(Clone)]
 pub struct FilmComponent {
     pub film: Film,
+}
+
+#[derive(Clone)]
+pub struct OutputComponent {
+    pub output: Output,
 }
 
 #[derive(Clone)]
@@ -81,6 +87,7 @@ pub enum Component {
     Filter(FilterComponent),
     Camera(CameraComponent),
     Film(FilmComponent),
+    Output(OutputComponent),
     Shape(ShapeComponent),
     Material(MaterialComponent),
     Light(LightComponent),

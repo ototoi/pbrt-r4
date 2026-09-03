@@ -5,9 +5,9 @@ use crate::gpu::ir::node::{
     node_ref_to_json_string, tessellate_shapes, triangle_mesh_from_params, Accelerator,
     AcceleratorComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
     FilterComponent, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Sampler,
-    SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture,
-    TextureKind as NodeTextureKind, Transform,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
+    OutputComponent, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
+    SphereShape, Texture, TextureKind as NodeTextureKind, Transform,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::util::error::PbrtError;
@@ -60,6 +60,11 @@ impl SceneBuilder {
         root_node.add_component(Component::Scene(SceneComponent {
             scene: Scene {
                 textures: self.build_texture_resources(),
+            },
+        }));
+        root_node.add_component(Component::Output(OutputComponent {
+            output: Output {
+                filename: self.film_params.get_one_string("filename", "pbrt.exr"),
             },
         }));
         root_node.add_component(Component::Sampler(SamplerComponent {
@@ -136,17 +141,23 @@ impl SceneBuilder {
 
     fn build_camera_node(&self) -> NodeRef {
         let mut node = Node::new("camera");
-        node.transform = node_transform(&self.camera_to_world.to_transform());
+        // `camera_to_world` is historically named but stores pbrt's
+        // cameraFromWorld transform. GPU Node IR stores the camera-to-world
+        // transform, matching the transform used to generate world-space rays.
+        let camera_to_world = self.camera_to_world.to_transform().inverse();
+        node.transform = node_transform(&camera_to_world);
         node.add_component(Component::Camera(CameraComponent {
             camera: Camera {
                 params: self.camera_params.clone(),
                 medium: String::new(),
             },
         }));
+        let mut film_params = self.film_params.clone();
+        film_params.remove_parameter("filename");
         node.add_component(Component::Film(FilmComponent {
             film: Film {
                 name: self.film_name.clone(),
-                params: self.film_params.clone(),
+                params: film_params,
             },
         }));
         Arc::new(RwLock::new(node))

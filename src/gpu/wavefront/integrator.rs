@@ -23,7 +23,7 @@ mod _impl {
             Err(PbrtError::error("GPU integrator not implemented yet"))
         }
 
-        pub fn add_display(&self, _display: &Arc<RwLock<dyn Display>>) {
+        pub fn add_display(&mut self, _display: &Arc<RwLock<dyn Display>>) {
             // No-op
         }
     }

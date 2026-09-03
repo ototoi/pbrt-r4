@@ -66,6 +66,10 @@ fn component_to_json(component: &Component) -> Value {
         Component::Film(component) => {
             named_params_to_json("Film", &component.film.name, &component.film.params)
         }
+        Component::Output(component) => json!({
+            "type": "Output",
+            "filename": component.output.filename,
+        }),
         Component::Shape(component) => shape_to_json(&component.shape),
         Component::Material(component) => json!({
             "type": "Material",

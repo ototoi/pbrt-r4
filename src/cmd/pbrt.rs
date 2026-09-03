@@ -456,13 +456,18 @@ fn create_integrator(
 
 fn create_gpu_integrator(
     input_path: &Path,
-    _opts: &CommandOptions,
+    opts: &CommandOptions,
 ) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
-    // Temporary debug path: print the Node IR before and after tessellation
-    // while the GPU integrator is still incomplete.
+    // Keep the Node IR dump while validating the initial GPU backend lowering.
     let mut builder = SceneBuilder::new();
     let path = path_to_string(input_path)?;
     parse_file(&path, &mut builder)?;
+    if let Some(outfile) = opts.outfile.as_ref() {
+        let outfile = path_to_string(outfile.as_path())?;
+        builder
+            .film_params
+            .replace_one_string("string filename", &outfile);
+    }
     builder.build_gpu()
 }
 
@@ -567,7 +572,7 @@ fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
     if let Some(hostname) = opts.display_server.as_ref() {
         match create_display(hostname) {
             Ok(display) => {
-                let integrator = integrator.read().unwrap();
+                let mut integrator = integrator.write().unwrap();
                 integrator.add_display(&display);
             }
             Err(e) => {
@@ -581,7 +586,7 @@ fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
         let display: Arc<RwLock<dyn Display>> = Arc::new(RwLock::new(SequentialDisplay::new(
             &out_dir.to_string_lossy(),
         )));
-        let integrator = integrator.read().unwrap();
+        let mut integrator = integrator.write().unwrap();
         integrator.add_display(&display);
     }
 
