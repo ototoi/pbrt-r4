@@ -1,10 +1,17 @@
 use crate::util::error::PbrtError;
 
+use super::shader;
+
 pub struct Pipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub generate_primary_rays: wgpu::ComputePipeline,
     pub intersect_primary_rays: wgpu::ComputePipeline,
-    pub shade_normal: wgpu::ComputePipeline,
+    pub prepare_sample: wgpu::ComputePipeline,
+    pub shade_surface: wgpu::ComputePipeline,
+    pub intersect_shadow: wgpu::ComputePipeline,
+    pub finish_shadow: wgpu::ComputePipeline,
+    pub sample_diffuse_bounce: wgpu::ComputePipeline,
+    pub accumulate_sample: wgpu::ComputePipeline,
 }
 
 impl Pipeline {
@@ -14,36 +21,32 @@ impl Pipeline {
             label: Some("pbrt-r4 primary-ray bind group layout"),
             entries: &[
                 buffer_entry(0, wgpu::BufferBindingType::Uniform),
+                buffer_entry(1, wgpu::BufferBindingType::Uniform),
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::AccelerationStructure {
                         vertex_return: false,
                     },
                     count: None,
                 },
-                storage_entry(2, true),
                 storage_entry(3, true),
                 storage_entry(4, true),
                 storage_entry(5, true),
                 storage_entry(6, true),
-                storage_entry(7, false),
+                storage_entry(7, true),
                 storage_entry(8, false),
                 storage_entry(9, false),
+                storage_entry(10, false),
             ],
-        });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("pbrt-r4 primary-ray-normal shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "shaders/primary_ray_normal.wgsl"
-            ))),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pbrt-r4 primary-ray pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
-        let compute = |label, entry_point| {
+        let compute = |label, stage_source, entry_point| {
+            let shader = shader::create_module(device, label, stage_source);
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
@@ -57,13 +60,44 @@ impl Pipeline {
             bind_group_layout,
             generate_primary_rays: compute(
                 "pbrt-r4 generate primary rays",
+                include_str!("shaders/generate_primary_rays.wgsl"),
                 "generate_primary_rays",
             ),
             intersect_primary_rays: compute(
                 "pbrt-r4 intersect primary rays",
+                include_str!("shaders/intersect_primary_rays.wgsl"),
                 "intersect_primary_rays",
             ),
-            shade_normal: compute("pbrt-r4 shade normal", "shade_normal"),
+            prepare_sample: compute(
+                "pbrt-r4 prepare sample",
+                include_str!("shaders/prepare_sample.wgsl"),
+                "prepare_sample",
+            ),
+            shade_surface: compute(
+                "pbrt-r4 shade surface",
+                include_str!("shaders/shade_surface.wgsl"),
+                "shade_surface",
+            ),
+            intersect_shadow: compute(
+                "pbrt-r4 intersect shadow",
+                include_str!("shaders/intersect_shadow.wgsl"),
+                "intersect_shadow",
+            ),
+            finish_shadow: compute(
+                "pbrt-r4 finish shadow",
+                include_str!("shaders/finish_shadow.wgsl"),
+                "finish_shadow",
+            ),
+            sample_diffuse_bounce: compute(
+                "pbrt-r4 sample diffuse bounce",
+                include_str!("shaders/sample_diffuse_bounce.wgsl"),
+                "sample_diffuse_bounce",
+            ),
+            accumulate_sample: compute(
+                "pbrt-r4 accumulate sample",
+                include_str!("shaders/accumulate_sample.wgsl"),
+                "accumulate_sample",
+            ),
         };
         if let Some(error) = pollster::block_on(error_scope.pop()) {
             return Err(PbrtError::error(&format!(

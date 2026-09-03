@@ -1,20 +1,35 @@
 use super::{
-    identity_transform, multiply_transform, Camera, Geometry, Instance, Material, Scene, Transform,
-    Vertex, Viewport,
+    identity_transform, multiply_transform, Camera, Geometry, Instance, Material, PointLight,
+    RenderSettings, Scene, Transform, Vertex, Viewport,
 };
 use crate::gpu::ir::node::{
-    Component, Material as NodeMaterial, NodeRef, Shape, TriangleMeshShape,
+    Component, Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
+    Sampler as NodeSampler, Shape, TriangleMeshShape,
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
+use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
+    flatten_node_with_material_override(root, None)
+}
+
+pub fn flatten_node_with_material_override(
+    root: NodeRef,
+    material_kind: Option<&str>,
+) -> Result<Scene, PbrtError> {
     let mut builder = FlatBuilder::default();
     let mut stack = Vec::new();
-    flatten_node_ref(&root, &identity_transform(), &mut builder, &mut stack)?;
+    flatten_node_ref(
+        &root,
+        &identity_transform(),
+        &mut builder,
+        &mut stack,
+        material_kind,
+    )?;
     let output = builder
         .output
         .ok_or_else(|| PbrtError::error("No output was found while flattening GPU Node IR."))?;
@@ -24,10 +39,13 @@ pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     let viewport = builder
         .viewport
         .ok_or_else(|| PbrtError::error("No film was found while flattening GPU Node IR."))?;
+    let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     Ok(Scene {
         camera,
         viewport,
         output,
+        render_settings,
+        point_lights: builder.point_lights,
         vertices: builder.vertices,
         indices: builder.indices,
         geometries: builder.geometries,
@@ -48,6 +66,9 @@ struct FlatBuilder {
     materials: Vec<Material>,
     output: Option<super::Output>,
     source_materials: Vec<Arc<NodeMaterial>>,
+    sampler: Option<NodeSampler>,
+    integrator: Option<NodeIntegrator>,
+    point_lights: Vec<PointLight>,
 }
 
 fn flatten_node_ref(
@@ -55,6 +76,7 @@ fn flatten_node_ref(
     parent_transform: &Transform,
     builder: &mut FlatBuilder,
     stack: &mut Vec<usize>,
+    material_kind: Option<&str>,
 ) -> Result<(), PbrtError> {
     let node_key = Arc::as_ptr(node_ref) as usize;
     if stack.contains(&node_key) {
@@ -64,7 +86,19 @@ fn flatten_node_ref(
     }
     stack.push(node_key);
 
-    let (name, local_transform, camera, film, output, shapes, instances, children) = {
+    let (
+        name,
+        local_transform,
+        camera,
+        film,
+        output,
+        sampler,
+        integrator,
+        light,
+        shapes,
+        instances,
+        children,
+    ) = {
         let node = node_ref
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -96,6 +130,27 @@ fn flatten_node_ref(
             .iter()
             .find_map(|component| match component {
                 Component::Output(component) => Some(component.output.clone()),
+                _ => None,
+            });
+        let sampler = node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                Component::Sampler(component) => Some(component.sampler.clone()),
+                _ => None,
+            });
+        let integrator = node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                Component::Integrator(component) => Some(component.integrator.clone()),
+                _ => None,
+            });
+        let light = node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                Component::Light(component) => Some(component.light.clone()),
                 _ => None,
             });
         for (component_index, component) in node.components.iter().enumerate() {
@@ -133,6 +188,9 @@ fn flatten_node_ref(
             camera,
             film,
             output,
+            sampler,
+            integrator,
+            light,
             shapes,
             instances,
             node.children.clone(),
@@ -140,6 +198,17 @@ fn flatten_node_ref(
     };
 
     let world_transform = multiply_transform(parent_transform, &local_transform);
+    if let Some(sampler) = sampler {
+        register_root_component(&mut builder.sampler, sampler, stack.len(), "Sampler")?;
+    }
+    if let Some(integrator) = integrator {
+        register_root_component(
+            &mut builder.integrator,
+            integrator,
+            stack.len(),
+            "Integrator",
+        )?;
+    }
     if let Some(output) = output {
         if stack.len() != 1 {
             return Err(PbrtError::error(
@@ -183,9 +252,14 @@ fn flatten_node_ref(
             screen_window: screen_window(&camera.params, viewport.resolution)?,
         });
     }
+    if let Some(light) = light {
+        builder
+            .point_lights
+            .push(point_light(&light, &world_transform, &name)?);
+    }
     for (component_index, shape, material) in shapes {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
-        let material = material_index(&material, builder)?;
+        let material = material_index(&material, builder, material_kind)?;
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
@@ -194,14 +268,144 @@ fn flatten_node_ref(
     }
     for (target, instance_transform) in instances {
         let target_parent = multiply_transform(&world_transform, &instance_transform.matrix);
-        flatten_node_ref(&target, &target_parent, builder, stack)?;
+        flatten_node_ref(&target, &target_parent, builder, stack, material_kind)?;
     }
     for child in children {
-        flatten_node_ref(&child, &world_transform, builder, stack)?;
+        flatten_node_ref(&child, &world_transform, builder, stack, material_kind)?;
     }
 
     stack.pop();
     Ok(())
+}
+
+fn register_root_component<T>(
+    destination: &mut Option<T>,
+    value: T,
+    depth: usize,
+    kind: &str,
+) -> Result<(), PbrtError> {
+    if depth != 1 {
+        return Err(PbrtError::error(&format!(
+            "{kind} component must be attached to the GPU root node."
+        )));
+    }
+    if destination.replace(value).is_some() {
+        return Err(PbrtError::error(&format!(
+            "Multiple {kind} components were found while flattening GPU Node IR."
+        )));
+    }
+    Ok(())
+}
+
+fn render_settings(
+    sampler: &Option<NodeSampler>,
+    integrator: &Option<NodeIntegrator>,
+) -> Result<RenderSettings, PbrtError> {
+    let sampler = sampler.as_ref();
+    let integrator = integrator.as_ref();
+    if let Some(sampler) = sampler {
+        if sampler.name != "independent" {
+            log::warn!(
+                "GPU sampler '{}' is not implemented; falling back to independent sampler.",
+                sampler.name
+            );
+        }
+    }
+    if let Some(integrator) = integrator {
+        if integrator.name != "path" && integrator.name != "volpath" {
+            return Err(PbrtError::error(&format!(
+                "Unsupported GPU integrator: {}.",
+                integrator.name
+            )));
+        }
+    }
+    let samples_per_pixel = sampler
+        .map(|sampler| sampler.params.get_one_int("pixelsamples", 4))
+        .unwrap_or(4);
+    let max_depth = integrator
+        .map(|integrator| integrator.params.get_one_int("maxdepth", 5))
+        .unwrap_or(5);
+    let seed = sampler
+        .map(|sampler| sampler.params.get_one_int("seed", 0))
+        .unwrap_or(0);
+    if samples_per_pixel <= 0 || max_depth < 0 || seed < 0 {
+        return Err(PbrtError::error(
+            "GPU render settings must have positive samples and non-negative depth/seed.",
+        ));
+    }
+    Ok(RenderSettings {
+        samples_per_pixel: u32::try_from(samples_per_pixel)
+            .map_err(|_| PbrtError::error("GPU samples per pixel do not fit in u32."))?,
+        max_depth: u32::try_from(max_depth)
+            .map_err(|_| PbrtError::error("GPU max depth does not fit in u32."))?,
+        seed: u32::try_from(seed).map_err(|_| PbrtError::error("GPU seed does not fit in u32."))?,
+    })
+}
+
+fn point_light(
+    light: &NodeLight,
+    parent_transform: &Transform,
+    node_name: &str,
+) -> Result<PointLight, PbrtError> {
+    if light.name != "point" {
+        return Err(PbrtError::error(&format!(
+            "Unsupported GPU light \"{}\" on node \"{}\".",
+            light.name, node_name
+        )));
+    }
+    let from = light.params.get_one_point("from", &[0.0, 0.0, 0.0]);
+    if from.len() != 3 || !from.iter().all(|value| value.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "Point light on node \"{}\" has an invalid from parameter.",
+            node_name
+        )));
+    }
+    let light_transform = multiply_transform(parent_transform, &light.transform.matrix);
+    let position = transform_point(
+        &light_transform,
+        [from[0] as f32, from[1] as f32, from[2] as f32],
+    );
+    let white = Spectrum::from(1.0);
+    let intensity = light
+        .params
+        .get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
+    let photometric = spectrum_to_photometric(&intensity);
+    let mut scale = light.params.get_one_float("scale", 1.0);
+    if photometric > 0.0 {
+        scale /= photometric;
+    }
+    let power = light.params.get_one_float("power", -1.0);
+    if power > 0.0 {
+        scale *= power / (4.0 * std::f32::consts::PI);
+    }
+    let rgb = intensity.to_rgb();
+    let intensity = [
+        (rgb[0] * scale) as f32,
+        (rgb[1] * scale) as f32,
+        (rgb[2] * scale) as f32,
+    ];
+    if !position
+        .iter()
+        .chain(intensity.iter())
+        .all(|value| value.is_finite())
+    {
+        return Err(PbrtError::error(&format!(
+            "Point light on node \"{}\" contains a non-finite value.",
+            node_name
+        )));
+    }
+    Ok(PointLight {
+        position,
+        intensity,
+    })
+}
+
+fn transform_point(matrix: &Transform, point: [f32; 3]) -> [f32; 3] {
+    [
+        matrix[0] * point[0] + matrix[1] * point[1] + matrix[2] * point[2] + matrix[3],
+        matrix[4] * point[0] + matrix[5] * point[1] + matrix[6] * point[2] + matrix[7],
+        matrix[8] * point[0] + matrix[9] * point[1] + matrix[10] * point[2] + matrix[11],
+    ]
 }
 
 fn viewport_resolution(params: &ParameterDictionary) -> Result<[u32; 2], PbrtError> {
@@ -348,6 +552,7 @@ fn geometry_index(
 fn material_index(
     source_material: &Arc<NodeMaterial>,
     builder: &mut FlatBuilder,
+    material_kind: Option<&str>,
 ) -> Result<u32, PbrtError> {
     if let Some(index) = builder
         .source_materials
@@ -362,7 +567,7 @@ fn material_index(
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
     builder.materials.push(Material {
-        kind: source_material.kind.clone(),
+        kind: material_kind.unwrap_or(&source_material.kind).to_string(),
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)

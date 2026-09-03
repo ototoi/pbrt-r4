@@ -1,0 +1,45 @@
+@compute @workgroup_size(8, 8, 1)
+fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
+        return;
+    }
+    let pixel_index = global_id.y * viewport.width + global_id.x;
+    let ray_index = current_ray_index(pixel_index);
+    let ray = rays[ray_index];
+    let surface = surfaces[pixel_index];
+    if (ray.is_active == 0u || surface.hit == 0u) {
+        return;
+    }
+    let material_kind = load_material_kind(surface.material);
+    if (material_kind != MATERIAL_KIND_DIFFUSE) {
+        return;
+    }
+    framebuffer[pixel_index] = vec4<f32>(
+        framebuffer[pixel_index].xyz + ray.throughput.xyz * surface.direct.xyz,
+        1.0,
+    );
+
+    let normal = surface.normal.xyz;
+    let tangent = make_tangent(normal);
+    let bitangent = cross(normal, tangent);
+    let u = vec2<f32>(random01(pixel_index, 3u), random01(pixel_index, 4u));
+    let radius = sqrt(u.x);
+    let phi = 2.0 * PI * u.y;
+    let local = vec3<f32>(
+        radius * cos(phi),
+        radius * sin(phi),
+        sqrt(max(0.0, 1.0 - u.x)),
+    );
+    let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
+    let next_index = pixel_index + select(0u, pixel_count(), (ray.depth & 1u) == 0u);
+    rays[next_index] = RayWorkItem(
+        vec4<f32>(surface.position.xyz + normal * RAY_EPSILON, 1.0),
+        vec4<f32>(direction, 0.0),
+        ray.throughput * vec4<f32>(0.5, 0.5, 0.5, 0.0),
+        pixel_index,
+        ray.depth + 1u,
+        1u,
+        0u,
+    );
+    rays[ray_index].is_active = 0u;
+}

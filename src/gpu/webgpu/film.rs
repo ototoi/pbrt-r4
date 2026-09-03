@@ -14,6 +14,7 @@ pub struct Film {
     readback: wgpu::Buffer,
     display: MultipleDisplay,
     pixels: Vec<f32>,
+    pixel_count: u64,
 }
 
 impl Film {
@@ -21,14 +22,17 @@ impl Film {
         let pixel_count = u64::from(resolution[0])
             .checked_mul(u64::from(resolution[1]))
             .ok_or_else(|| PbrtError::error("WebGPU film resolution overflowed."))?;
-        let byte_size = pixel_count
+        let pixel_byte_size = pixel_count
             .checked_mul(4 * std::mem::size_of::<f32>() as u64)
             .ok_or_else(|| PbrtError::error("WebGPU framebuffer size overflowed."))?;
+        let framebuffer_size = pixel_byte_size
+            .checked_mul(2)
+            .ok_or_else(|| PbrtError::error("WebGPU Film accumulation size overflowed."))?;
         Ok(Self {
             resolution,
             framebuffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 framebuffer"),
-                size: byte_size,
+                size: framebuffer_size,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -36,12 +40,13 @@ impl Film {
             }),
             readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 framebuffer readback"),
-                size: byte_size,
+                size: pixel_byte_size,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
             display: MultipleDisplay::new(),
             pixels: vec![0.0; pixel_count as usize * 3],
+            pixel_count,
         })
     }
 
@@ -51,7 +56,7 @@ impl Film {
 
     pub fn start(&mut self) -> Result<(), PbrtError> {
         self.display.start(
-            "pbrt-r4 WebGPU primary-ray normal",
+            "pbrt-r4 WebGPU diffuse",
             &[self.resolution[0] as usize, self.resolution[1] as usize],
             &["R", "G", "B"],
         )
@@ -64,14 +69,23 @@ impl Film {
     pub fn copy_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_buffer_to_buffer(
             &self.framebuffer,
-            0,
+            self.pixel_count * 4 * std::mem::size_of::<f32>() as u64,
             &self.readback,
             0,
             self.readback.size(),
         );
     }
 
-    pub fn readback(&mut self, device: &wgpu::Device) -> Result<(), PbrtError> {
+    pub fn readback(
+        &mut self,
+        device: &wgpu::Device,
+        completed_samples: u32,
+    ) -> Result<(), PbrtError> {
+        if completed_samples == 0 {
+            return Err(PbrtError::error(
+                "WebGPU Film cannot read back zero samples.",
+            ));
+        }
         let slice = self.readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -96,7 +110,9 @@ impl Film {
         let values = bytemuck::try_cast_slice::<u8, f32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU framebuffer readback was not f32-aligned."))?;
         for (source, destination) in values.chunks_exact(4).zip(self.pixels.chunks_exact_mut(3)) {
-            destination.copy_from_slice(&source[..3]);
+            for (source, destination) in source[..3].iter().zip(destination.iter_mut()) {
+                *destination = *source / completed_samples as f32;
+            }
         }
         drop(mapped);
         self.readback.unmap();

@@ -3,8 +3,9 @@ use std::sync::{Arc, RwLock};
 use pbrt_r4::gpu::ir::flat::flatten_node;
 use pbrt_r4::gpu::ir::node::{
     Camera, CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance,
-    InstanceComponent, Material, MaterialComponent, Node, Output, OutputComponent, Shape,
-    ShapeComponent, Transform, TriangleMeshShape,
+    InstanceComponent, Integrator as NodeIntegrator, IntegratorComponent, Light as NodeLight,
+    LightComponent, Material, MaterialComponent, Node, Output, OutputComponent,
+    Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
 
@@ -229,4 +230,75 @@ fn flatten_node_composes_parent_and_child_transforms() {
     assert_eq!(scene.instances[0].transform[3], 1.0);
     assert_eq!(scene.instances[0].transform[7], 2.0);
     assert_eq!(scene.instances[0].transform[11], 3.0);
+}
+
+#[test]
+fn flatten_node_extracts_render_settings_and_point_lights() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut sampler_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    sampler_params.add_int("integer pixelsamples", 8);
+    sampler_params.add_int("integer seed", 13);
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "independent".to_string(),
+            params: sampler_params,
+        },
+    }));
+    let mut integrator_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    integrator_params.add_int("integer maxdepth", 3);
+    root.add_component(Component::Integrator(IntegratorComponent {
+        integrator: NodeIntegrator {
+            name: "path".to_string(),
+            params: integrator_params,
+        },
+    }));
+    let mut light_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    light_params.add_point("point from", &[1.0, 2.0, 3.0]);
+    light_params.add_rgb("rgb I", &[2.0, 2.0, 2.0]);
+    let mut light = Node::new("point");
+    light.add_component(Component::Light(LightComponent {
+        light: NodeLight {
+            name: "point".to_string(),
+            params: light_params,
+            transform: Transform::default(),
+            medium: String::new(),
+        },
+    }));
+    root.add_child(Arc::new(RwLock::new(light)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.samples_per_pixel, 8);
+    assert_eq!(scene.render_settings.max_depth, 3);
+    assert_eq!(scene.render_settings.seed, 13);
+    assert_eq!(scene.point_lights.len(), 1);
+    assert_eq!(scene.point_lights[0].position, [1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn flatten_node_ignores_explicit_diffuse_reflectance_for_now() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_rgb("rgb reflectance", &[0.5, 0.5, 0.5]);
+    }
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root)))
+        .expect("reflectance is currently ignored by the GPU material representation");
+    assert_eq!(scene.materials[0].kind, "diffuse");
 }
