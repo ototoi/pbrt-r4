@@ -17,6 +17,8 @@ pub use crate::cpu::lightdistrib::*;
 pub use crate::displays::*;
 pub use crate::film::*;
 pub use crate::filters::*;
+pub use crate::gpu::ir::*;
+pub use crate::gpu::wavefront::*;
 pub use crate::interaction::*;
 pub use crate::lights::*;
 pub use crate::media::*;
