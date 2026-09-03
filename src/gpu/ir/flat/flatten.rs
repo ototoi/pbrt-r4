@@ -3,8 +3,8 @@ use super::{
     RenderSettings, Scene, Transform, Vertex, Viewport,
 };
 use crate::gpu::ir::node::{
-    Component, Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
-    Sampler as NodeSampler, Shape, TriangleMeshShape,
+    complete_triangle_attributes, Component, Integrator as NodeIntegrator, Light as NodeLight,
+    Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape, TriangleMeshShape,
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
@@ -165,6 +165,7 @@ fn flatten_node_ref(
                             )));
                         }
                     };
+                    let shape = complete_triangle_attributes(shape, &node.name)?;
                     let material = material.clone().ok_or_else(|| {
                         PbrtError::error(&format!(
                             "Shape node \"{}\" has no Material component.",

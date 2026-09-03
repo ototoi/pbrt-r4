@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use pbrt_r4::gpu::ir::node::triangle_mesh_from_params;
 use pbrt_r4::gpu::ir::node::{
     node_ref_to_json, tessellate_shapes, Camera, CameraComponent, Component, Material,
     MaterialComponent, Node, Shape, ShapeComponent, SphereShape,
@@ -230,6 +231,19 @@ end_header
             })
     });
     assert_eq!(shape_node, Some((3, 3, true, true)));
+}
+
+#[test]
+fn malformed_mesh_attribute_is_rejected_in_node_ir() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_point("P", &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    params.add_int("indices", 0);
+    params.add_int("indices", 1);
+    params.add_int("indices", 2);
+    params.add_point("N", &[0.0, 0.0, 1.0]);
+
+    let error = triangle_mesh_from_params("trianglemesh", &params).unwrap_err();
+    assert!(error.to_string().contains("attribute \"N\""));
 }
 
 #[test]
