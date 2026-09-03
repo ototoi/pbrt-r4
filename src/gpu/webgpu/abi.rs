@@ -32,6 +32,7 @@ pub struct ViewportUniform {
 pub struct Vertex {
     pub position: [f32; 4],
     pub normal: [f32; 4],
+    pub tangent: [f32; 4],
     pub uv: [f32; 2],
     pub padding: [u32; 2],
 }
@@ -52,6 +53,7 @@ pub struct Instance {
     pub material: u32,
     pub padding: [u32; 2],
     pub world_from_object: [[f32; 4]; 4],
+    pub normal_from_object: [[f32; 4]; 4],
 }
 
 #[repr(C)]
@@ -216,6 +218,39 @@ pub fn row_major_to_columns(matrix: [f32; 16]) -> [[f32; 4]; 4] {
         [matrix[2], matrix[6], matrix[10], matrix[14]],
         [matrix[3], matrix[7], matrix[11], matrix[15]],
     ]
+}
+
+pub fn inverse_transpose_linear(
+    matrix: [f32; 16],
+    label: &str,
+) -> Result<[[f32; 4]; 4], PbrtError> {
+    validate_affine(matrix, label)?;
+    let [a, b, c, _, d, e, f, _, g, h, i, _, _, _, _, _] = matrix;
+    let determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if !determinant.is_finite() || determinant == 0.0 {
+        return Err(PbrtError::error(&format!(
+            "{label} transform has a singular linear part."
+        )));
+    }
+    let inverse_determinant = 1.0 / determinant;
+    Ok(row_major_to_columns([
+        (e * i - f * h) * inverse_determinant,
+        (f * g - d * i) * inverse_determinant,
+        (d * h - e * g) * inverse_determinant,
+        0.0,
+        (c * h - b * i) * inverse_determinant,
+        (a * i - c * g) * inverse_determinant,
+        (b * g - a * h) * inverse_determinant,
+        0.0,
+        (b * f - c * e) * inverse_determinant,
+        (c * d - a * f) * inverse_determinant,
+        (a * e - b * d) * inverse_determinant,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ]))
 }
 
 pub fn validate_affine(matrix: [f32; 16], label: &str) -> Result<(), PbrtError> {
