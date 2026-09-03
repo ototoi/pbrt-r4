@@ -23,11 +23,18 @@ impl Context {
             ));
         }
 
+        let adapter_limits = adapter.limits();
+        let mut required_limits =
+            wgpu::Limits::default().using_minimum_supported_acceleration_structure_values();
+        // Keep the default limits for portability, but do not unnecessarily cap
+        // large scene buffers at wgpu's conservative default binding size.
+        required_limits.max_buffer_size = adapter_limits.max_buffer_size;
+        required_limits.max_storage_buffer_binding_size =
+            adapter_limits.max_storage_buffer_binding_size;
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("pbrt-r4 primary-ray device"),
             required_features: wgpu::Features::EXPERIMENTAL_RAY_QUERY,
-            required_limits: wgpu::Limits::default()
-                .using_minimum_supported_acceleration_structure_values(),
+            required_limits,
             experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,

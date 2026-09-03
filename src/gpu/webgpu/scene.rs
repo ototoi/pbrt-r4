@@ -5,7 +5,8 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, row_major_to_columns, validate_affine, Geometry, Instance, Vertex,
+    camera_uniform, row_major_to_columns, validate_affine, viewport_uniform, Geometry, Instance,
+    PointLight, Vertex, ViewportUniform,
 };
 use super::acceleration::{self, Acceleration};
 use super::material::MaterialKind;
@@ -13,6 +14,7 @@ use super::output::Output;
 
 pub struct Scene {
     pub camera: super::abi::CameraUniform,
+    pub viewport: ViewportUniform,
     pub output: Output,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -22,6 +24,8 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<super::abi::Material>,
+    pub point_lights: Vec<PointLight>,
+    pub render_settings: flat::RenderSettings,
     pub acceleration: Acceleration,
 }
 
@@ -36,7 +40,6 @@ impl Scene {
                 "WebGPU output filename must not be empty.",
             ));
         }
-        let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let (vertices, geometries, indices) = convert_geometry(&flat)?;
         let instances = flat
             .instances
@@ -62,16 +65,46 @@ impl Scene {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // The first implementation deliberately renders the debug Normal view. Flat IR
-        // material strings remain available for later backend material lowering.
         let materials = flat
             .materials
             .iter()
-            .map(|_| super::abi::Material {
-                kind_tag: MaterialKind::Normal.tag(),
-                padding: [0; 3],
+            .map(|material| {
+                Ok(super::abi::Material {
+                    kind_tag: MaterialKind::from_flat(&material.kind)?.tag(),
+                    padding: [0; 3],
+                })
+            })
+            .collect::<Result<Vec<_>, PbrtError>>()?;
+        let point_lights = flat
+            .point_lights
+            .iter()
+            .map(|light| PointLight {
+                position: [light.position[0], light.position[1], light.position[2], 1.0],
+                intensity: [
+                    light.intensity[0],
+                    light.intensity[1],
+                    light.intensity[2],
+                    0.0,
+                ],
             })
             .collect::<Vec<_>>();
+        let material_words = std::mem::size_of::<super::abi::Material>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU material ABI is not word-aligned."))?;
+        let light_words = std::mem::size_of::<PointLight>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU point-light ABI is not word-aligned."))?;
+        let material_words_total = materials
+            .len()
+            .checked_mul(material_words)
+            .ok_or_else(|| PbrtError::error("WebGPU material buffer size overflowed."))?;
+        let camera = camera_uniform(&flat.camera, &flat.viewport)?;
+        let viewport = viewport_uniform(
+            &flat.viewport,
+            &flat.render_settings,
+            materials.len(),
+            point_lights.len(),
+        )?;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
         {
             return Err(PbrtError::error(
@@ -99,9 +132,22 @@ impl Scene {
             contents: cast_slice(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let mut material_light_data = Vec::<u32>::with_capacity(
+            material_words_total
+                .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
+                    PbrtError::error("WebGPU point-light buffer size overflowed.")
+                })?)
+                .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
+        );
+        for material in &materials {
+            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
+        }
+        for light in &point_lights {
+            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
+        }
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 material SBO"),
-            contents: cast_slice(&materials),
+            label: Some("pbrt-r4 material and point-light SBO"),
+            contents: cast_slice(&material_light_data),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let acceleration = acceleration::build(
@@ -115,6 +161,7 @@ impl Scene {
         )?;
         Ok(Self {
             camera,
+            viewport,
             output: Output::from_flat(flat.output),
             vertex_buffer,
             index_buffer,
@@ -124,6 +171,8 @@ impl Scene {
             geometries,
             instances,
             materials,
+            point_lights,
+            render_settings: flat.render_settings,
             acceleration,
         })
     }
@@ -164,6 +213,7 @@ fn convert_geometry(
                     vertex.position[2],
                     1.0,
                 ],
+                normal: [vertex.normal[0], vertex.normal[1], vertex.normal[2], 0.0],
                 uv: vertex.uv,
                 padding: [0; 2],
             })

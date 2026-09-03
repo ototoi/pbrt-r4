@@ -6,8 +6,9 @@ use wgpu::util::DeviceExt;
 use crate::displays::Display;
 use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
+use crate::util::misc::ProgressReporter;
 
-use super::abi::{CameraUniform, WORKGROUP_SIZE};
+use super::abi::WORKGROUP_SIZE;
 use super::context::Context;
 use super::film::Film;
 use super::material::MaterialKind;
@@ -18,16 +19,25 @@ use super::scene::Scene;
 pub struct WavefrontPathIntegrator {
     context: Context,
     scene: Scene,
-    _camera_buffer: wgpu::Buffer,
-    _queues: Queues,
+    camera_buffer: wgpu::Buffer,
+    viewport_buffer: wgpu::Buffer,
+    queues: Queues,
     film: Film,
     pipeline: Pipeline,
     bind_group: wgpu::BindGroup,
     rendered: bool,
+    show_progress: bool,
 }
 
 impl WavefrontPathIntegrator {
     pub fn create(flat_scene: flat::Scene) -> Result<Self, PbrtError> {
+        Self::create_with_progress(flat_scene, false)
+    }
+
+    pub fn create_with_progress(
+        flat_scene: flat::Scene,
+        show_progress: bool,
+    ) -> Result<Self, PbrtError> {
         let context = Context::new()?;
         let device = &context.device;
         let queue = &context.queue;
@@ -38,9 +48,14 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.camera),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let pixel_count = u64::from(scene.camera.width) * u64::from(scene.camera.height);
-        let queues = Queues::new(device, pixel_count);
-        let film = Film::new(device, [scene.camera.width, scene.camera.height])?;
+        let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 viewport UBO"),
+            contents: bytes_of(&scene.viewport),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
+        let queues = Queues::new(device, pixel_count)?;
+        let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
         let pipeline = Pipeline::new(device)?;
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pbrt-r4 primary-ray bind group"),
@@ -52,29 +67,35 @@ impl WavefrontPathIntegrator {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
+                    resource: viewport_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
                     resource: wgpu::BindingResource::AccelerationStructure(
                         &scene.acceleration.tlas,
                     ),
                 },
-                buffer_entry(2, &scene.vertex_buffer),
-                buffer_entry(3, &scene.index_buffer),
-                buffer_entry(4, &scene.geometry_buffer),
-                buffer_entry(5, &scene.instance_buffer),
-                buffer_entry(6, &scene.material_buffer),
-                buffer_entry(7, &queues.rays),
-                buffer_entry(8, &queues.hits),
-                buffer_entry(9, &film.framebuffer),
+                buffer_entry(3, &scene.vertex_buffer),
+                buffer_entry(4, &scene.index_buffer),
+                buffer_entry(5, &scene.geometry_buffer),
+                buffer_entry(6, &scene.instance_buffer),
+                buffer_entry(7, &scene.material_buffer),
+                buffer_entry(8, &queues.rays),
+                buffer_entry(9, &queues.surfaces),
+                buffer_entry(10, &film.framebuffer),
             ],
         });
         Ok(Self {
             context,
             scene,
-            _camera_buffer: camera_buffer,
-            _queues: queues,
+            camera_buffer,
+            viewport_buffer,
+            queues,
             film,
             pipeline,
             bind_group,
             rendered: false,
+            show_progress,
         })
     }
 
@@ -91,46 +112,107 @@ impl WavefrontPathIntegrator {
         if let Err(error) = self.film.start() {
             log::warn!("WebGPU Film display start failed: {error}");
         }
-        let workgroups_x = self.camera().width.div_ceil(WORKGROUP_SIZE);
-        let workgroups_y = self.camera().height.div_ceil(WORKGROUP_SIZE);
+        let workgroups_x = self.scene.viewport.width.div_ceil(WORKGROUP_SIZE);
+        let workgroups_y = self.scene.viewport.height.div_ceil(WORKGROUP_SIZE);
+        let samples_per_pixel = self.scene.render_settings.samples_per_pixel;
+        let mut reporter = self.show_progress.then(|| {
+            ProgressReporter::new(samples_per_pixel as usize, &self.scene.output.filename)
+        });
+        for sample_index in 0..samples_per_pixel {
+            self.scene.viewport.sample_index = sample_index;
+            self.context.queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytes_of(&self.scene.viewport),
+            );
+            let mut encoder =
+                self.context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("pbrt-r4 diffuse command encoder"),
+                    });
+            if sample_index == 0 {
+                self.film.clear(&mut encoder);
+            }
+            dispatch(
+                &mut encoder,
+                &self.pipeline.prepare_sample,
+                &self.bind_group,
+                workgroups_x,
+                workgroups_y,
+            );
+            dispatch(
+                &mut encoder,
+                &self.pipeline.generate_primary_rays,
+                &self.bind_group,
+                workgroups_x,
+                workgroups_y,
+            );
+            for depth in 0..=self.scene.render_settings.max_depth {
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.intersect_primary_rays,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.shade_surface,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                if depth < self.scene.render_settings.max_depth {
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.intersect_shadow,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.finish_shadow,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_diffuse_bounce,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                }
+            }
+            dispatch(
+                &mut encoder,
+                &self.pipeline.accumulate_sample,
+                &self.bind_group,
+                workgroups_x,
+                workgroups_y,
+            );
+            self.context.queue.submit(Some(encoder.finish()));
+            if let Some(reporter) = reporter.as_mut() {
+                reporter.update(1);
+            }
+        }
         let mut encoder =
             self.context
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("pbrt-r4 primary-ray command encoder"),
+                    label: Some("pbrt-r4 diffuse readback encoder"),
                 });
-        self.film.clear(&mut encoder);
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("pbrt-r4 generate primary rays pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.pipeline.generate_primary_rays);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("pbrt-r4 intersect primary rays pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.pipeline.intersect_primary_rays);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("pbrt-r4 shade normal pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.pipeline.shade_normal);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
         self.film.copy_to_readback(&mut encoder);
         self.context.queue.submit(Some(encoder.finish()));
         self.context.wait()?;
-        self.film.readback(&self.context.device)?;
+        self.film
+            .readback(&self.context.device, samples_per_pixel)?;
+        if let Some(reporter) = reporter.as_mut() {
+            reporter.done();
+        }
         if let Err(error) = self.film.update_display() {
             log::warn!("WebGPU Film display update failed: {error}");
         }
@@ -145,10 +227,6 @@ impl WavefrontPathIntegrator {
     pub fn replace_material_kind(&mut self, kind: super::material::MaterialKind) {
         self.scene.replace_material_kind(&self.context.queue, kind);
     }
-
-    fn camera(&self) -> &CameraUniform {
-        &self.scene.camera
-    }
 }
 
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -156,4 +234,20 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
         binding,
         resource: buffer.as_entire_binding(),
     }
+}
+
+fn dispatch(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::ComputePipeline,
+    bind_group: &wgpu::BindGroup,
+    workgroups_x: u32,
+    workgroups_y: u32,
+) {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+    pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
 }
