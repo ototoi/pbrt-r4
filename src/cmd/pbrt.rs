@@ -211,6 +211,10 @@ struct CommandOptions {
     #[arg(short = 's', long = "pixelsamples", value_name = "num")]
     pub pixelsamples: Option<i32>,
 
+    /// Set the maximum path depth.
+    #[arg(long = "maxdepth", value_name = "num")]
+    pub maxdepth: Option<i32>,
+
     /// Quick full resolution.
     #[arg(long, default_value = "false")]
     pub quick_full_resolution: bool,
@@ -435,6 +439,11 @@ fn create_integrator(
                 .sampler_params
                 .replace_one_int("integer pixelsamples", pixelsamples);
         }
+        if let Some(maxdepth) = opts.maxdepth {
+            builder
+                .integrator_params
+                .replace_one_int("integer maxdepth", i32::max(0, maxdepth));
+        }
         if let Some(outfile) = opts.outfile.as_ref() {
             let outfile = path_to_string(outfile.as_path())?;
             builder
@@ -468,7 +477,12 @@ fn create_gpu_integrator(
             .film_params
             .replace_one_string("string filename", &outfile);
     }
-    builder.build_gpu()
+    if let Some(maxdepth) = opts.maxdepth {
+        builder
+            .integrator_params
+            .replace_one_int("integer maxdepth", i32::max(0, maxdepth));
+    }
+    builder.build_gpu_with_progress(!opts.quiet)
 }
 
 fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError> {

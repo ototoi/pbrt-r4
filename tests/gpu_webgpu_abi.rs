@@ -1,6 +1,6 @@
 use pbrt_r4::gpu::webgpu::abi::{
-    row_major_to_columns, CameraUniform, Geometry, HitRecord, Instance, Material, RayWorkItem,
-    Vertex,
+    row_major_to_columns, CameraUniform, Geometry, Instance, Material, PointLight, RayWorkItem,
+    SurfaceWorkItem, Vertex, ViewportUniform,
 };
 
 #[test]
@@ -16,11 +16,13 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
-    assert_eq!(std::mem::size_of::<CameraUniform>(), 144);
-    assert_eq!(std::mem::size_of::<Vertex>(), 32);
+    assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
+    assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
+    assert_eq!(std::mem::size_of::<Vertex>(), 48);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 80);
     assert_eq!(std::mem::size_of::<Material>(), 16);
-    assert_eq!(std::mem::size_of::<RayWorkItem>(), 48);
-    assert_eq!(std::mem::size_of::<HitRecord>(), 32);
+    assert_eq!(std::mem::size_of::<RayWorkItem>(), 64);
+    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 128);
+    assert_eq!(std::mem::size_of::<PointLight>(), 32);
 }
