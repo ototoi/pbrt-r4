@@ -31,7 +31,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;
-    let transformed_normal = (instance.world_from_object * vec4<f32>(object_normal, 0.0)).xyz;
+    let transformed_normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
     var normal = geometric_normal;
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);

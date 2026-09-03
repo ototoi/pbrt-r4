@@ -2,9 +2,9 @@ use std::sync::{Arc, RwLock};
 
 use pbrt_r4::gpu::ir::flat::flatten_node;
 use pbrt_r4::gpu::ir::node::{
-    Camera, CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance,
-    InstanceComponent, Integrator as NodeIntegrator, IntegratorComponent, Light as NodeLight,
-    LightComponent, Material, MaterialComponent, Node, Output, OutputComponent,
+    complete_triangle_attributes, Camera, CameraComponent, Component, Film, FilmComponent,
+    Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator, IntegratorComponent,
+    Light as NodeLight, LightComponent, Material, MaterialComponent, Node, Output, OutputComponent,
     Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
@@ -301,4 +301,58 @@ fn flatten_node_ignores_explicit_diffuse_reflectance_for_now() {
     let scene = flatten_node(Arc::new(RwLock::new(root)))
         .expect("reflectance is currently ignored by the GPU material representation");
     assert_eq!(scene.materials[0].kind, "diffuse");
+}
+
+#[test]
+fn flatten_node_completes_missing_mesh_attributes() {
+    let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.normals = None;
+        mesh.tangents = None;
+        mesh.uvs = None;
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.vertices.len(), 3);
+    assert_eq!(scene.vertices[0].normal, [0.0, 0.0, 1.0]);
+    assert_eq!(scene.vertices[0].uv, [0.0, 0.0]);
+    assert_eq!(scene.vertices[1].uv, [1.0, 0.0]);
+    assert_eq!(scene.vertices[2].uv, [0.0, 1.0]);
+    assert!(scene.vertices.iter().all(|vertex| {
+        vertex.tangent.iter().all(|value| value.is_finite()) && vertex.tangent[0].abs() > 0.9
+    }));
+}
+
+#[test]
+fn missing_normals_expand_shared_vertices_per_triangle() {
+    let mesh = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([1.0, 1.0, 0.0]),
+            Vec3f([0.0, 1.0, 1.0]),
+        ],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        normals: None,
+        tangents: None,
+        uvs: None,
+    };
+
+    let completed = complete_triangle_attributes(mesh, "shared").unwrap();
+    assert_eq!(completed.positions.len(), 6);
+    assert_eq!(completed.indices, vec![0, 1, 2, 3, 4, 5]);
+    assert_ne!(
+        completed.normals.as_ref().unwrap()[0],
+        completed.normals.as_ref().unwrap()[3]
+    );
 }
