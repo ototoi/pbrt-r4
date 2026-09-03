@@ -1,6 +1,6 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
-use crate::gpu::ir::flat::flatten_node;
+use crate::gpu::ir::flat::flatten_node_with_material_override;
 use crate::gpu::ir::node::{
     node_ref_to_json_string, tessellate_shapes, triangle_mesh_from_params, Accelerator,
     AcceleratorComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
@@ -21,6 +21,13 @@ use std::sync::{Arc, RwLock};
 impl SceneBuilder {
     /// Realise the accumulated entities directly into an `Integrator` on GPU.
     pub fn build_gpu(&self) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
+        self.build_gpu_with_progress(false)
+    }
+
+    pub fn build_gpu_with_progress(
+        &self,
+        show_progress: bool,
+    ) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
         if let Some(error) = self.import_errors.first() {
             return Err(PbrtError::error(error));
         }
@@ -48,10 +55,12 @@ impl SceneBuilder {
         }
 
         // Lower the IR node to a flat scene representation.
-        let flat_scene = flatten_node(ir_node)?;
+        let debug_material_kind = std::env::var("PBRT_R4_GPU_DEBUG_MATERIAL").ok();
+        let flat_scene =
+            flatten_node_with_material_override(ir_node, debug_material_kind.as_deref())?;
 
         // Create the WavefrontPathIntegrator from the flat scene.
-        let integrator = WavefrontPathIntegrator::create(flat_scene)?;
+        let integrator = WavefrontPathIntegrator::create_with_progress(flat_scene, show_progress)?;
         return Ok(Arc::new(RwLock::new(integrator)));
     }
 

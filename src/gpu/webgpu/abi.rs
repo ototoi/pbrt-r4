@@ -12,15 +12,26 @@ pub const RAY_T_MAX: f32 = f32::MAX;
 pub struct CameraUniform {
     pub camera_to_world: [[f32; 4]; 4],
     pub raster_to_camera: [[f32; 4]; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ViewportUniform {
     pub width: u32,
     pub height: u32,
-    pub padding: [u32; 2],
+    pub sample_index: u32,
+    pub max_depth: u32,
+    pub seed: u32,
+    pub light_data_offset: u32,
+    pub light_count: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 4],
+    pub normal: [f32; 4],
     pub uv: [f32; 2],
     pub padding: [u32; 2],
 }
@@ -55,18 +66,37 @@ pub struct Material {
 pub struct RayWorkItem {
     pub origin: [f32; 4],
     pub direction: [f32; 4],
+    pub throughput: [f32; 4],
     pub pixel_index: u32,
-    pub padding: [u32; 3],
+    pub depth: u32,
+    pub is_active: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct HitRecord {
+pub struct SurfaceWorkItem {
     pub t: f32,
     pub hit: u32,
     pub instance_custom_data: u32,
     pub primitive_index: u32,
     pub barycentric: [f32; 4],
+    pub position: [f32; 4],
+    pub normal: [f32; 4],
+    pub shadow_origin: [f32; 4],
+    pub shadow_direction: [f32; 4],
+    pub shadow_t: f32,
+    pub shadow_visible: u32,
+    pub material: u32,
+    pub flags: u32,
+    pub direct: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PointLight {
+    pub position: [f32; 4],
+    pub intensity: [f32; 4],
 }
 
 pub fn camera_uniform(
@@ -77,6 +107,11 @@ pub fn camera_uniform(
     if width == 0 || height == 0 {
         return Err(PbrtError::error(
             "WebGPU viewport resolution must be positive.",
+        ));
+    }
+    if u64::from(width) * u64::from(height) > u64::from(u32::MAX) {
+        return Err(PbrtError::error(
+            "WebGPU viewport pixel count must fit in u32.",
         ));
     }
     if !camera.fov.is_finite() || camera.fov <= 0.0 || camera.fov >= 180.0 {
@@ -111,8 +146,10 @@ pub fn camera_uniform(
             "WebGPU camera fov produced a non-finite tangent.",
         ));
     }
+    // `screen_window` already incorporates the frame aspect ratio. Do not
+    // apply the viewport aspect ratio a second time here.
+    let dx = (xmax - xmin) / width as f32;
     let dy = (ymax - ymin) / height as f32;
-    let dx = dy * width as f32 / height as f32;
     let raster_to_camera = row_major_to_columns([
         dx * tan_half_fov,
         0.0,
@@ -134,9 +171,41 @@ pub fn camera_uniform(
     Ok(CameraUniform {
         camera_to_world,
         raster_to_camera,
+    })
+}
+
+pub fn viewport_uniform(
+    viewport: &flat::Viewport,
+    settings: &flat::RenderSettings,
+    material_count: usize,
+    light_count: usize,
+) -> Result<ViewportUniform, PbrtError> {
+    let [width, height] = viewport.resolution;
+    if width == 0 || height == 0 {
+        return Err(PbrtError::error(
+            "WebGPU viewport resolution must be positive.",
+        ));
+    }
+    if u64::from(width) * u64::from(height) > u64::from(u32::MAX) {
+        return Err(PbrtError::error(
+            "WebGPU viewport pixel count must fit in u32.",
+        ));
+    }
+    let light_count = u32::try_from(light_count)
+        .map_err(|_| PbrtError::error("WebGPU point light count does not fit in u32."))?;
+    let light_data_offset = material_count
+        .checked_mul(std::mem::size_of::<Material>() / std::mem::size_of::<u32>())
+        .and_then(|offset| u32::try_from(offset).ok())
+        .ok_or_else(|| PbrtError::error("WebGPU material/light buffer offset overflowed."))?;
+    Ok(ViewportUniform {
         width,
         height,
-        padding: [0; 2],
+        sample_index: 0,
+        max_depth: settings.max_depth,
+        seed: settings.seed,
+        light_count,
+        light_data_offset,
+        padding: 0,
     })
 }
 
