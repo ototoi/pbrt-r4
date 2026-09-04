@@ -44,13 +44,14 @@ impl WavefrontPathIntegrator {
         let context = Context::new()?;
         let device = &context.device;
         let queue = &context.queue;
+        let has_debug_material_override = std::env::var_os("PBRT_R4_GPU_DEBUG_MATERIAL").is_some();
         let debug_material = MaterialKind::from_debug_environment()?;
-        if !matches!(debug_material, MaterialKind::Diffuse) {
+        if has_debug_material_override {
             for material in &mut flat_scene.materials {
                 material.kind = match debug_material {
                     MaterialKind::Normal => "normal".to_string(),
                     MaterialKind::Uv => "uv".to_string(),
-                    MaterialKind::Diffuse => unreachable!(),
+                    MaterialKind::Diffuse => "diffuse".to_string(),
                 };
             }
         }
