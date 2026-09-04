@@ -20,7 +20,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
-    let u = vec2<f32>(random01(pixel_index, 3u), random01(pixel_index, 4u));
+    let u = vec2<f32>(random01(pixel_index, 5u, ray.depth), random01(pixel_index, 6u, ray.depth));
     let radius = sqrt(u.x);
     let phi = 2.0 * PI * u.y;
     var local = vec3<f32>(
