@@ -55,7 +55,7 @@ struct RayWorkItem {
     throughput: vec4<f32>,
     pixel_index: u32,
     depth: u32,
-    is_active: u32,
+    _padding: u32,
     prev_pdf: f32,
 };
 
@@ -328,7 +328,7 @@ fn store_ray(base: u32, ray: RayWorkItem) {
     atomicStore(&wavefront_queue[base + 11u], bitcast<u32>(ray.throughput.w));
     atomicStore(&wavefront_queue[base + 12u], ray.pixel_index);
     atomicStore(&wavefront_queue[base + 13u], ray.depth);
-    atomicStore(&wavefront_queue[base + 14u], ray.is_active);
+    atomicStore(&wavefront_queue[base + 14u], ray._padding);
     atomicStore(&wavefront_queue[base + 15u], bitcast<u32>(ray.prev_pdf));
 }
 
