@@ -24,7 +24,7 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let total_area = load_area_total(instance.area_light);
         let light_pdf = light_pmf_for_area(instance.area_light)
             * dot(ray.origin.xyz - surface.position.xyz, ray.origin.xyz - surface.position.xyz)
-            / (max(abs(dot(surface.normal.xyz, -ray.direction.xyz)), 1e-7) * total_area);
+            / (max(abs(dot(surface.geometric_normal.xyz, -ray.direction.xyz)), 1e-7) * total_area);
         weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
     }
     store_sample_radiance(pixel_index, load_sample_radiance(pixel_index)
