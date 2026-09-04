@@ -185,7 +185,7 @@ fn shadow_ray_count() -> u32 {
     return atomicLoad(&wavefront_queue[SHADOW_COUNT]);
 }
 
-const SHADOW_WORDS: u32 = 16u;
+const SHADOW_WORDS: u32 = 20u;
 
 fn shadow_ray_word(index: u32, word: u32) -> u32 {
     return shadow_data_offset() + index * SHADOW_WORDS + word;
@@ -197,21 +197,23 @@ fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, 
         atomicStore(&wavefront_queue[shadow_ray_word(index, 0u)], bitcast<u32>(origin.x));
         atomicStore(&wavefront_queue[shadow_ray_word(index, 1u)], bitcast<u32>(origin.y));
         atomicStore(&wavefront_queue[shadow_ray_word(index, 2u)], bitcast<u32>(origin.z));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 3u)], bitcast<u32>(direction.x));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 4u)], bitcast<u32>(direction.y));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 5u)], bitcast<u32>(direction.z));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 6u)], bitcast<u32>(t));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 7u)], bitcast<u32>(direct.x));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 8u)], bitcast<u32>(direct.y));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 9u)], bitcast<u32>(direct.z));
-        atomicStore(&wavefront_queue[shadow_ray_word(index, 12u)], pixel_index);
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 4u)], bitcast<u32>(direction.x));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 5u)], bitcast<u32>(direction.y));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 6u)], bitcast<u32>(direction.z));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 7u)], 0u);
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 8u)], bitcast<u32>(t));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 12u)], bitcast<u32>(direct.x));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 13u)], bitcast<u32>(direct.y));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 14u)], bitcast<u32>(direct.z));
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 15u)], 0u);
+        atomicStore(&wavefront_queue[shadow_ray_word(index, 16u)], pixel_index);
     } else {
         atomicStore(&wavefront_queue[SHADOW_OVERFLOW], 1u);
     }
 }
 
 fn load_shadow_pixel(index: u32) -> u32 {
-    return atomicLoad(&wavefront_queue[shadow_ray_word(index, 12u)]);
+    return atomicLoad(&wavefront_queue[shadow_ray_word(index, 16u)]);
 }
 
 fn load_shadow_vec3(index: u32, word: u32) -> vec3<f32> {
@@ -223,11 +225,11 @@ fn load_shadow_vec3(index: u32, word: u32) -> vec3<f32> {
 }
 
 fn load_shadow_t(index: u32) -> f32 {
-    return bitcast<f32>(atomicLoad(&wavefront_queue[shadow_ray_word(index, 6u)]));
+    return bitcast<f32>(atomicLoad(&wavefront_queue[shadow_ray_word(index, 8u)]));
 }
 
 fn load_shadow_direct(index: u32) -> vec3<f32> {
-    return load_shadow_vec3(index, 7u);
+    return load_shadow_vec3(index, 12u);
 }
 
 fn classification_word(base: u32, index: u32) -> u32 {

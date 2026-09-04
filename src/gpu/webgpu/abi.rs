@@ -81,11 +81,11 @@ pub struct RayWorkItem {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ShadowRayWorkItem {
-    pub origin: [f32; 3],
-    pub direction: [f32; 3],
+    pub origin: [f32; 4],
+    pub direction: [f32; 4],
     pub max_t: f32,
-    pub direct: [f32; 3],
-    pub padding: [u32; 2],
+    pub padding: [u32; 3],
+    pub direct: [f32; 4],
     pub pixel_index: u32,
     pub reserved: [u32; 3],
 }
