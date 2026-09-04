@@ -35,7 +35,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
     let next_ray = RayWorkItem(
-        vec4<f32>(surface.position.xyz + normal * RAY_EPSILON, 1.0),
+        vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, normal), 1.0),
         vec4<f32>(direction, 0.0),
         ray.throughput * vec4<f32>(0.5, 0.5, 0.5, 0.0),
         pixel_index,

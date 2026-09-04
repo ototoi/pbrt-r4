@@ -2,6 +2,7 @@ enable wgpu_ray_query;
 
 const RAY_T_MAX: f32 = 3.402823466e+38;
 const RAY_EPSILON: f32 = 0.0001;
+const MACHINE_EPSILON: f32 = 1.1920929e-7;
 const PI: f32 = 3.141592653589793;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
@@ -66,6 +67,7 @@ struct SurfaceWorkItem {
     primitive_index: u32,
     barycentric: vec4<f32>,
     position: vec4<f32>,
+    position_error: vec4<f32>,
     normal: vec4<f32>,
     shadow_origin: vec4<f32>,
     shadow_direction: vec4<f32>,
@@ -446,6 +448,15 @@ fn sample_uniform_light(pixel_index: u32) -> LightSelection {
         hash_u32(viewport.seed ^ pixel_index ^ viewport.sample_index) % viewport.light_count,
         1.0 / f32(viewport.light_count),
     );
+}
+
+fn gamma(n: f32) -> f32 {
+    return (n * MACHINE_EPSILON) / (1.0 - n * MACHINE_EPSILON);
+}
+
+fn offset_ray_origin(position: vec3<f32>, error: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    let offset = normal * dot(abs(normal), error);
+    return position + select(-offset, offset, dot(offset, normal) >= 0.0);
 }
 
 fn make_tangent(normal: vec3<f32>) -> vec3<f32> {

@@ -87,6 +87,7 @@ pub struct SurfaceWorkItem {
     pub primitive_index: u32,
     pub barycentric: [f32; 4],
     pub position: [f32; 4],
+    pub position_error: [f32; 4],
     pub normal: [f32; 4],
     pub shadow_origin: [f32; 4],
     pub shadow_direction: [f32; 4],
