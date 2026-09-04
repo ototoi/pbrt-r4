@@ -103,6 +103,7 @@ pub struct SurfaceWorkItem {
     pub normal: [f32; 4],
     pub material: u32,
     pub flags: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]
