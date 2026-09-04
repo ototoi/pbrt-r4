@@ -2,10 +2,11 @@ use std::sync::{Arc, RwLock};
 
 use pbrt_r4::gpu::ir::flat::flatten_node;
 use pbrt_r4::gpu::ir::node::{
-    complete_triangle_attributes, Camera, CameraComponent, Component, Film, FilmComponent,
-    Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator, IntegratorComponent,
-    Light as NodeLight, LightComponent, Material, MaterialComponent, Node, Output, OutputComponent,
-    Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
+    complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
+    CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
+    Integrator as NodeIntegrator, IntegratorComponent, Light as NodeLight, LightComponent,
+    Material, MaterialComponent, Node, Output, OutputComponent, Sampler as NodeSampler,
+    SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
 
@@ -124,6 +125,35 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
+}
+
+#[test]
+fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
+    area.write()
+        .unwrap()
+        .add_component(Component::AreaLight(AreaLightComponent {
+            area_light: NodeAreaLight {
+                name: "diffuse".to_string(),
+                params: Default::default(),
+            },
+        }));
+    root.add_child(area);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].area_light, 0);
+    assert_eq!(scene.area_lights.len(), 1);
+    assert_eq!(scene.area_lights[0].instance, 0);
+    assert_eq!(scene.lights.len(), 1);
+    assert_eq!(scene.lights[0].payload, 0);
+    assert_eq!(
+        scene.lights[0].kind,
+        pbrt_r4::gpu::ir::flat::LightKind::Area
+    );
 }
 
 #[test]

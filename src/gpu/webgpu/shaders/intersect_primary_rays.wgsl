@@ -3,9 +3,12 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
-    let ray_index = current_ray_index(pixel_index);
-    let ray = rays[ray_index];
+    let ray_index = global_id.y * viewport.width + global_id.x;
+    if (ray_index >= atomicLoad(&current_ray_queue_state.count)) {
+        return;
+    }
+    let ray = current_ray_queue[ray_index];
+    let pixel_index = ray.pixel_index;
     if (ray.is_active == 0u) {
         surfaces[pixel_index].hit = 0u;
         return;

@@ -3,13 +3,16 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
-    let ray_index = current_ray_index(pixel_index);
-    let ray = rays[ray_index];
+    let ray_index = global_id.y * viewport.width + global_id.x;
+    if (ray_index >= atomicLoad(&current_ray_queue_state.count)) {
+        return;
+    }
+    let ray = current_ray_queue[ray_index];
+    let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     if (ray.is_active == 0u || surface.hit == 0u) {
         if (ray.is_active != 0u) {
-            rays[ray_index].is_active = 0u;
+            current_ray_queue[ray_index].is_active = 0u;
         }
         return;
     }
@@ -47,14 +50,14 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind == MATERIAL_KIND_NORMAL) {
         framebuffer[pixel_index] = vec4<f32>(geometric_normal * 0.5 + vec3<f32>(0.5), 1.0);
         surfaces[pixel_index].flags = 1u;
-        rays[ray_index].is_active = 0u;
+        current_ray_queue[ray_index].is_active = 0u;
         return;
     }
     if (material_kind == MATERIAL_KIND_UV) {
         let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
         framebuffer[pixel_index] = vec4<f32>(uv.x, uv.y, 0.0, 1.0);
         surfaces[pixel_index].flags = 1u;
-        rays[ray_index].is_active = 0u;
+        current_ray_queue[ray_index].is_active = 0u;
         return;
     }
     if (material_kind != MATERIAL_KIND_DIFFUSE

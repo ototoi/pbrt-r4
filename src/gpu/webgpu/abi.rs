@@ -6,6 +6,8 @@ use crate::util::error::PbrtError;
 pub const WORKGROUP_SIZE: u32 = 8;
 pub const RAY_T_MIN: f32 = 0.0;
 pub const RAY_T_MAX: f32 = f32::MAX;
+pub const LIGHT_KIND_POINT: u32 = 0;
+pub const LIGHT_KIND_AREA: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -99,6 +101,53 @@ pub struct SurfaceWorkItem {
 pub struct PointLight {
     pub position: [f32; 4],
     pub intensity: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightRecord {
+    pub kind: u32,
+    pub payload: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct AreaLight {
+    pub instance: u32,
+    pub two_sided: u32,
+    pub emission: [f32; 4],
+    pub total_area: f32,
+    pub triangle_distribution_offset: u32,
+    pub triangle_distribution_count: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct QueueState {
+    pub count: u32,
+    pub capacity: u32,
+    pub overflow: u32,
+    pub padding: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PixelSampleState {
+    pub radiance: [f32; 4],
+    pub pixel_index: u32,
+    pub sample_index: u32,
+    pub error: u32,
+    pub padding: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TriangleDistributionEntry {
+    pub primitive: u32,
+    pub cdf: f32,
+    pub padding: [u32; 2],
 }
 
 pub fn camera_uniform(

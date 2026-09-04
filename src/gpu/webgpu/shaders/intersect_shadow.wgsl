@@ -3,9 +3,12 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
-    let ray_index = current_ray_index(pixel_index);
-    if (rays[ray_index].is_active == 0u || surfaces[pixel_index].shadow_t <= 0.0) {
+    let ray_index = global_id.y * viewport.width + global_id.x;
+    if (ray_index >= atomicLoad(&current_ray_queue_state.count)) {
+        return;
+    }
+    let pixel_index = current_ray_queue[ray_index].pixel_index;
+    if (current_ray_queue[ray_index].is_active == 0u || surfaces[pixel_index].shadow_t <= 0.0) {
         return;
     }
     let surface = surfaces[pixel_index];
