@@ -90,7 +90,19 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let distance = sqrt(distance_squared);
     let wi = to_light / distance;
-    let cosine = max(dot(surface.normal.xyz, wi), 0.0);
+    // pbrt-v4 semantics: DiffuseBxDF::f returns R/pi only when wo and wi lie
+    // in the same hemisphere of the shading frame (SameHemisphere), and
+    // SampleLd weights it with AbsDot(wi, shading.n). This keeps diffuse
+    // lighting correct even when the mesh shading normals are globally
+    // inverted (e.g. loopsubdiv limit normals wind opposite to the faces).
+    let shading_n = surface.normal.xyz;
+    let wo = -ray.direction.xyz;
+    let cos_wo = dot(shading_n, wo);
+    let cos_wi = dot(shading_n, wi);
+    if (cos_wo * cos_wi <= 0.0) {
+        return;
+    }
+    let cosine = abs(cos_wi);
     if (cosine == 0.0) {
         return;
     }
@@ -105,7 +117,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let direct = light_radiance * (1.0 / PI) * cosine / sampled_light_pdf * mis_weight;
     append_shadow_ray(
         pixel_index,
-        offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.normal.xyz),
+        offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, wi),
         wi,
         distance - dot(abs(wi), surface.position_error.xyz),
         direct,
