@@ -74,7 +74,7 @@ pub struct RayWorkItem {
     pub throughput: [f32; 4],
     pub pixel_index: u32,
     pub depth: u32,
-    pub is_active: u32,
+    pub padding: u32,
     pub prev_pdf: f32,
 }
 

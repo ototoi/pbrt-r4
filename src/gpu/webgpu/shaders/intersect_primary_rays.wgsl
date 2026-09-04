@@ -9,10 +9,6 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
-    if (ray.is_active == 0u) {
-        surfaces[pixel_index].hit = 0u;
-        return;
-    }
     var query: ray_query;
     rayQueryInitialize(
         &query,

@@ -10,7 +10,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    if (ray.is_active == 0u || surface.hit == 0u) {
+    if (surface.hit == 0u || surface.flags != 0u) {
         return;
     }
     let material_kind = load_material_kind(surface.material);
@@ -41,7 +41,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.throughput * vec4<f32>(0.5, 0.5, 0.5, 0.0),
         pixel_index,
         ray.depth + 1u,
-        1u,
+        0u,
         next_pdf,
     );
     let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
