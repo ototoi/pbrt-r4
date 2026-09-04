@@ -51,8 +51,6 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     append_material_eval(pixel_index);
 
     if (material_kind == MATERIAL_KIND_DIFFUSE && instance.area_light != 0xffffffffu) {
-        framebuffer[pixel_index] = framebuffer[pixel_index]
-            + ray.throughput * load_area_emission(instance.area_light);
         append_hit_area_light(pixel_index);
     }
 

@@ -9,6 +9,7 @@ pub struct Pipeline {
     pub handle_escaped: wgpu::ComputePipeline,
     pub prepare_sample: wgpu::ComputePipeline,
     pub shade_surface: wgpu::ComputePipeline,
+    pub handle_emissive: wgpu::ComputePipeline,
     pub evaluate_materials: wgpu::ComputePipeline,
     pub intersect_shadow: wgpu::ComputePipeline,
     pub finish_shadow: wgpu::ComputePipeline,
@@ -88,6 +89,11 @@ impl Pipeline {
                 "pbrt-r4 shade surface",
                 include_str!("shaders/shade_surface.wgsl"),
                 "shade_surface",
+            ),
+            handle_emissive: compute(
+                "pbrt-r4 handle emissive",
+                include_str!("shaders/handle_emissive.wgsl"),
+                "handle_emissive",
             ),
             evaluate_materials: compute(
                 "pbrt-r4 evaluate materials",
