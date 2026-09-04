@@ -42,8 +42,6 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
     surfaces[pixel_index].material = instance.material;
     surfaces[pixel_index].flags = 0u;
-    surfaces[pixel_index].direct = vec4<f32>(0.0);
-    surfaces[pixel_index].shadow_visible = 0u;
     append_material_eval(pixel_index);
 
     if (material_kind == MATERIAL_KIND_DIFFUSE && instance.area_light != 0xffffffffu) {

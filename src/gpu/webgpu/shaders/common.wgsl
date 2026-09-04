@@ -68,13 +68,8 @@ struct SurfaceWorkItem {
     position: vec4<f32>,
     position_error: vec4<f32>,
     normal: vec4<f32>,
-    shadow_origin: vec4<f32>,
-    shadow_direction: vec4<f32>,
-    shadow_t: f32,
-    shadow_visible: u32,
     material: u32,
     flags: u32,
-    direct: vec4<f32>,
 };
 
 struct PointLight {
@@ -229,6 +224,10 @@ fn load_shadow_vec3(index: u32, word: u32) -> vec3<f32> {
 
 fn load_shadow_t(index: u32) -> f32 {
     return bitcast<f32>(atomicLoad(&wavefront_queue[shadow_ray_word(index, 6u)]));
+}
+
+fn load_shadow_direct(index: u32) -> vec3<f32> {
+    return load_shadow_vec3(index, 7u);
 }
 
 fn classification_word(base: u32, index: u32) -> u32 {
