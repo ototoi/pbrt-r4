@@ -8,6 +8,7 @@ const GENERATE_PRIMARY_RAYS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
+const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
 #[test]
 fn shadow_direction_is_loaded_from_its_vec4_aligned_queue_slot() {
@@ -54,4 +55,17 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
 fn primary_rays_initialize_depth_zero_sample_state() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
+}
+
+#[test]
+fn random_samples_are_independent_across_pixel_sample_and_depth() {
+    let random01 = COMMON_SHADER
+        .split("fn random01(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn generate_ray_samples").next())
+        .expect("random01 must be defined before generate_ray_samples");
+
+    assert!(random01.contains("pixel_index"));
+    assert!(random01.contains("viewport.sample_index"));
+    assert!(random01.contains("dimension + depth * 8u"));
 }
