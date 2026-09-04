@@ -8,7 +8,10 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let pixel_index = load_shadow_pixel(ray_index);
-    if (surfaces[pixel_index].shadow_t <= 0.0) {
+    let shadow_origin = load_shadow_vec3(ray_index, 0u);
+    let shadow_direction = load_shadow_vec3(ray_index, 3u);
+    let shadow_t = load_shadow_t(ray_index);
+    if (shadow_t <= 0.0) {
         return;
     }
     let surface = surfaces[pixel_index];
@@ -20,9 +23,9 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             0u,
             0xffu,
             0.0,
-            surface.shadow_t,
-            surface.shadow_origin.xyz,
-            surface.shadow_direction.xyz,
+            shadow_t,
+            shadow_origin,
+            shadow_direction,
         ),
     );
     while (rayQueryProceed(&query)) {

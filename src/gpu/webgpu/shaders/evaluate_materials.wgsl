@@ -105,5 +105,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     surfaces[pixel_index].shadow_direction = vec4<f32>(wi, 0.0);
     surfaces[pixel_index].shadow_t = distance - dot(abs(wi), surface.position_error.xyz);
     surfaces[pixel_index].direct = vec4<f32>(direct, 0.0);
-    append_shadow_ray(pixel_index);
+    append_shadow_ray(
+        pixel_index,
+        offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.normal.xyz),
+        wi,
+        distance - dot(abs(wi), surface.position_error.xyz),
+        direct,
+    );
 }
