@@ -1,7 +1,7 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AreaLight, CameraUniform, Geometry, Instance,
-    LightRecord, Material, PixelSampleState, PointLight, QueueState, RayWorkItem, SurfaceWorkItem,
-    Vertex, ViewportUniform,
+    LightRecord, Material, PixelSampleState, PointLight, QueueState, RayWorkItem,
+    ShadowRayWorkItem, SurfaceWorkItem, Vertex, ViewportUniform,
 };
 
 #[test]
@@ -24,6 +24,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Instance>(), 144);
     assert_eq!(std::mem::size_of::<Material>(), 16);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 64);
+    assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 64);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 88);
     assert_eq!(std::mem::size_of::<PointLight>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
