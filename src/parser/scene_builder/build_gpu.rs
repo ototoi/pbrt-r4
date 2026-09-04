@@ -2,13 +2,13 @@ use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
 use crate::gpu::ir::flat::flatten_node_with_material_override;
 use crate::gpu::ir::node::{
-    node_ref_to_json_string, tessellate_shapes, triangle_mesh_from_params, Accelerator,
-    AcceleratorComponent, AreaLight as NodeAreaLight, AreaLightComponent, Camera, CameraComponent,
-    Component, Film, FilmComponent, Filter, FilterComponent, Instance, InstanceComponent,
-    Integrator, IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
-    MediumComponent, Node, NodeRef, Output, OutputComponent, Sampler, SamplerComponent, Scene,
-    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureKind as NodeTextureKind,
-    Transform,
+    loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
+    triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
+    AreaLightComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
+    FilterComponent, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
+    OutputComponent, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
+    SphereShape, Texture, TextureKind as NodeTextureKind, Transform,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::util::error::PbrtError;
@@ -241,6 +241,12 @@ impl SceneBuilder {
             })),
             "trianglemesh" | "plymesh" => {
                 match triangle_mesh_from_params(shape.base.name.as_str(), params)? {
+                    Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
+                    None => return Ok(None),
+                }
+            }
+            "loopsubdiv" => {
+                match loop_subdiv_mesh_from_params(params, shape.reverse_orientation)? {
                     Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
                     None => return Ok(None),
                 }

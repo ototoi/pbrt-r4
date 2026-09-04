@@ -1,8 +1,11 @@
 use super::types::Vec2f;
 use super::types::Vec3f;
+use crate::base::shape::Shape as CpuShape;
 use crate::paramdict::ParameterDictionary;
+use crate::shapes::LoopSubdiv;
 use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
+use crate::util::transform::Transform as CpuTransform;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
@@ -71,6 +74,65 @@ pub fn triangle_mesh_from_params(
         normals: node_vec3_attribute(params, "N", vertex_count)?,
         tangents: node_vec3_attribute(params, "S", vertex_count)?,
         uvs: node_vec2_attribute(params, "uv", vertex_count)?,
+    }))
+}
+
+/// Converts the CPU Loop Subdivision result into the Node IR mesh form.
+///
+/// The CPU implementation creates one `Triangle` value per output face, but
+/// all of those values share a single `TriangleMesh`. The GPU IR stores that
+/// shared mesh once instead of creating one Node IR shape per face.
+pub fn loop_subdiv_mesh_from_params(
+    params: &ParameterDictionary,
+    reverse_orientation: bool,
+) -> Result<Option<TriangleMeshShape>, PbrtError> {
+    let identity = CpuTransform::identity();
+    let triangles = LoopSubdiv::create(&identity, &identity, reverse_orientation, params)?;
+    let Some(CpuShape::Triangle(first_triangle)) = triangles.first() else {
+        return Ok(None);
+    };
+    let mesh = &first_triangle.mesh;
+    let positions = mesh
+        .p
+        .iter()
+        .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
+        .collect();
+    let normals = if mesh.n.len() == mesh.p.len() {
+        Some(
+            mesh.n
+                .iter()
+                .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let tangents = if mesh.s.len() == mesh.p.len() {
+        Some(
+            mesh.s
+                .iter()
+                .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let uvs = if mesh.uv.len() == mesh.p.len() {
+        Some(
+            mesh.uv
+                .iter()
+                .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    Ok(Some(TriangleMeshShape {
+        positions,
+        indices: mesh.vertex_indices.clone(),
+        normals,
+        tangents,
+        uvs,
     }))
 }
 
