@@ -70,6 +70,7 @@ struct SurfaceWorkItem {
     position: vec4<f32>,
     position_error: vec4<f32>,
     normal: vec4<f32>,
+    geometric_normal: vec4<f32>,
     material: u32,
     flags: u32,
     _padding: vec2<u32>,
@@ -517,9 +518,9 @@ fn gamma(n: f32) -> f32 {
     return (n * MACHINE_EPSILON) / (1.0 - n * MACHINE_EPSILON);
 }
 
-fn offset_ray_origin(position: vec3<f32>, error: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+fn offset_ray_origin(position: vec3<f32>, error: vec3<f32>, normal: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
     let offset = normal * dot(abs(normal), error);
-    return position + select(-offset, offset, dot(offset, normal) >= 0.0);
+    return position + select(-offset, offset, dot(direction, normal) >= 0.0);
 }
 
 fn make_tangent(normal: vec3<f32>) -> vec3<f32> {

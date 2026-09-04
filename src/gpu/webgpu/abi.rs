@@ -103,6 +103,7 @@ pub struct SurfaceWorkItem {
     pub position: [f32; 4],
     pub position_error: [f32; 4],
     pub normal: [f32; 4],
+    pub geometric_normal: [f32; 4],
     pub material: u32,
     pub flags: u32,
     pub padding: [u32; 2],

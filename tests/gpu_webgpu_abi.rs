@@ -25,7 +25,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Material>(), 16);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
-    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 96);
+    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 112);
     assert_eq!(std::mem::size_of::<PointLight>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(std::mem::size_of::<AreaLight>(), 48);
@@ -64,9 +64,10 @@ fn webgpu_work_item_field_offsets_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(SurfaceWorkItem, position), 32);
     assert_eq!(std::mem::offset_of!(SurfaceWorkItem, position_error), 48);
     assert_eq!(std::mem::offset_of!(SurfaceWorkItem, normal), 64);
-    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, material), 80);
-    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, flags), 84);
-    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, padding), 88);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, geometric_normal), 80);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, material), 96);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, flags), 100);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, padding), 104);
 }
 
 #[test]
