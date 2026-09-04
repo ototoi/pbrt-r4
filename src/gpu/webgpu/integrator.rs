@@ -220,8 +220,14 @@ impl WavefrontPathIntegrator {
                     label: Some("pbrt-r4 diffuse readback encoder"),
                 });
         self.film.copy_to_readback(&mut encoder);
+        self.queues.copy_state_to_readback(&mut encoder);
         self.context.queue.submit(Some(encoder.finish()));
         self.context.wait()?;
+        if self.queues.read_overflow(&self.context.device)? {
+            return Err(PbrtError::error(
+                "WebGPU wavefront queue capacity was exceeded.",
+            ));
+        }
         self.film
             .readback(&self.context.device, samples_per_pixel)?;
         if let Some(reporter) = reporter.as_mut() {
