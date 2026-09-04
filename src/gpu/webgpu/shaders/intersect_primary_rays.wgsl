@@ -24,6 +24,7 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let intersection = rayQueryGetCommittedIntersection(&query);
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
         surfaces[pixel_index].hit = 0u;
+        append_escaped_ray(pixel_index);
     } else {
         surfaces[pixel_index].t = intersection.t;
         surfaces[pixel_index].hit = 1u;

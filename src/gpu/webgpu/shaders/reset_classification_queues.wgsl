@@ -5,5 +5,7 @@ fn reset_classification_queues(@builtin(global_invocation_id) global_id: vec3<u3
         atomicStore(&wavefront_queue[MATERIAL_OVERFLOW], 0u);
         atomicStore(&wavefront_queue[HIT_AREA_COUNT], 0u);
         atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[ESCAPED_COUNT], 0u);
+        atomicStore(&wavefront_queue[ESCAPED_OVERFLOW], 0u);
     }
 }
