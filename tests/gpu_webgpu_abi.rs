@@ -34,6 +34,42 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
 }
 
 #[test]
+fn webgpu_work_item_field_offsets_match_shader_layout() {
+    assert_eq!(std::mem::offset_of!(RayWorkItem, origin), 0);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, direction), 16);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, throughput), 32);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, pixel_index), 48);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, depth), 52);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, inv_w_u), 56);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, inv_w_l), 60);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, prev_pdf), 64);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, padding), 68);
+
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, origin), 0);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, direction), 16);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, max_t), 32);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, padding), 36);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, direct), 48);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, pixel_index), 64);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, reserved), 68);
+
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, t), 0);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, hit), 4);
+    assert_eq!(
+        std::mem::offset_of!(SurfaceWorkItem, instance_custom_data),
+        8
+    );
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, primitive_index), 12);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, barycentric), 16);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, position), 32);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, position_error), 48);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, normal), 64);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, material), 80);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, flags), 84);
+    assert_eq!(std::mem::offset_of!(SurfaceWorkItem, padding), 88);
+}
+
+#[test]
 fn webgpu_storage_array_strides_are_16_byte_aligned() {
     for size in [
         std::mem::size_of::<Vertex>(),

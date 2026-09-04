@@ -8,8 +8,8 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let pixel_index = load_shadow_pixel(ray_index);
-    let shadow_origin = load_shadow_vec3(ray_index, 0u);
-    let shadow_direction = load_shadow_vec3(ray_index, 3u);
+    let shadow_origin = load_shadow_origin(ray_index);
+    let shadow_direction = load_shadow_direction(ray_index);
     let shadow_t = load_shadow_t(ray_index);
     if (shadow_t <= 0.0) {
         return;
