@@ -508,8 +508,9 @@ fn sample_uniform_light(pixel_index: u32, depth: u32) -> LightSelection {
     if (viewport.light_count == 0u) {
         return LightSelection(0u, 0.0);
     }
+    let selector = random01(pixel_index, 2u, depth);
     return LightSelection(
-        hash_u32(viewport.seed ^ pixel_index ^ viewport.sample_index ^ (depth * 0x632be59bu)) % viewport.light_count,
+        min(u32(selector * f32(viewport.light_count)), viewport.light_count - 1u),
         1.0 / f32(viewport.light_count),
     );
 }
