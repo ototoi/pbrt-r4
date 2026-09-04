@@ -25,6 +25,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let light_kind = load_light_kind(light_index);
     let light_payload = load_light_payload(light_index);
     var light_position = vec3<f32>(0.0);
+    var light_error = vec3<f32>(0.0);
+    var light_normal = vec3<f32>(0.0);
     var light_radiance = vec3<f32>(0.0);
     var sampled_light_pdf = light_selection.pmf;
     if (light_kind == LIGHT_KIND_POINT) {
@@ -62,7 +64,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let p2 = (area_instance.world_from_object * vertices[i2].position).xyz;
         light_position = p0 * b0 + p1 * b1 + p2 * b2;
         light_radiance = load_area_emission(light_payload).xyz;
-        var light_normal = normalize(cross(p1 - p0, p2 - p0));
+        light_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
+        light_normal = normalize(cross(p1 - p0, p2 - p0));
         if ((area_instance.orientation_flags & 1u) != 0u) {
             light_normal = -light_normal;
         }
@@ -118,11 +121,26 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
     }
     let direct = light_radiance * (1.0 / PI) * cosine / sampled_light_pdf * mis_weight;
+    let shadow_origin = offset_ray_origin(
+        surface.position.xyz,
+        surface.position_error.xyz,
+        surface.geometric_normal.xyz,
+        wi,
+    );
+    var shadow_target = light_position;
+    if (light_kind == LIGHT_KIND_AREA) {
+        shadow_target = offset_ray_origin(light_position, light_error, light_normal, -wi);
+    }
+    let shadow_vector = shadow_target - shadow_origin;
+    let shadow_distance = length(shadow_vector);
+    if (shadow_distance <= 0.0) {
+        return;
+    }
     append_shadow_ray(
         pixel_index,
-        offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, wi),
-        wi,
-        distance - dot(abs(wi), surface.position_error.xyz),
+        shadow_origin,
+        shadow_vector / shadow_distance,
+        shadow_distance,
         direct,
     );
 }
