@@ -26,7 +26,7 @@ pub struct ViewportUniform {
     pub seed: u32,
     pub light_data_offset: u32,
     pub light_count: u32,
-    pub padding: u32,
+    pub area_light_data_offset: u32,
 }
 
 #[repr(C)]
@@ -53,7 +53,8 @@ pub struct Geometry {
 pub struct Instance {
     pub geometry: u32,
     pub material: u32,
-    pub padding: [u32; 2],
+    pub area_light: u32,
+    pub padding: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
 }
@@ -230,6 +231,7 @@ pub fn viewport_uniform(
     settings: &flat::RenderSettings,
     material_count: usize,
     light_count: usize,
+    area_light_data_offset: usize,
 ) -> Result<ViewportUniform, PbrtError> {
     let [width, height] = viewport.resolution;
     if width == 0 || height == 0 {
@@ -256,7 +258,9 @@ pub fn viewport_uniform(
         seed: settings.seed,
         light_count,
         light_data_offset,
-        padding: 0,
+        area_light_data_offset: u32::try_from(area_light_data_offset).map_err(|_| {
+            PbrtError::error("WebGPU area-light buffer offset does not fit in u32.")
+        })?,
     })
 }
 

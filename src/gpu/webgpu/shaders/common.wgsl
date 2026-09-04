@@ -6,6 +6,7 @@ const PI: f32 = 3.141592653589793;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
+const LIGHT_KIND_AREA: u32 = 1u;
 
 struct CameraUniform {
     camera_to_world: mat4x4<f32>,
@@ -20,7 +21,7 @@ struct ViewportUniform {
     seed: u32,
     light_data_offset: u32,
     light_count: u32,
-    _padding: u32,
+    area_light_data_offset: u32,
 };
 
 struct Vertex {
@@ -41,7 +42,8 @@ struct Geometry {
 struct Instance {
     geometry: u32,
     material: u32,
-    _padding: vec2<u32>,
+    area_light: u32,
+    _padding: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
 };
@@ -102,31 +104,106 @@ var<storage, read> instances: array<Instance>;
 @group(0) @binding(7)
 var<storage, read> material_light_data: array<u32>;
 @group(0) @binding(8)
-var<storage, read_write> rays: array<RayWorkItem>;
-@group(0) @binding(9)
 var<storage, read_write> surfaces: array<SurfaceWorkItem>;
-@group(0) @binding(10)
+@group(0) @binding(9)
 var<storage, read_write> framebuffer: array<vec4<f32>>;
-@group(0) @binding(14)
-var<storage, read_write> camera_ray_queue_state: QueueState;
-@group(0) @binding(15)
-var<storage, read_write> current_ray_queue_state: QueueState;
-@group(0) @binding(16)
-var<storage, read_write> next_ray_queue_state: QueueState;
-@group(0) @binding(17)
-var<storage, read_write> shadow_ray_queue_state: QueueState;
-@group(0) @binding(18)
-var<storage, read_write> escaped_ray_queue_state: QueueState;
-@group(0) @binding(19)
-var<storage, read_write> hit_area_light_queue_state: QueueState;
-@group(0) @binding(20)
-var<storage, read_write> material_eval_queue_state: QueueState;
-@group(0) @binding(21)
-var<storage, read_write> camera_ray_queue: array<RayWorkItem>;
-@group(0) @binding(22)
-var<storage, read_write> current_ray_queue: array<RayWorkItem>;
-@group(0) @binding(23)
-var<storage, read_write> next_ray_queue: array<RayWorkItem>;
+@group(0) @binding(10)
+var<storage, read_write> wavefront_queue: array<atomic<u32>>;
+
+const CURRENT_COUNT: u32 = 0u;
+const CURRENT_OVERFLOW: u32 = 2u;
+const NEXT_COUNT: u32 = 4u;
+const NEXT_OVERFLOW: u32 = 6u;
+const RAY_DATA_OFFSET: u32 = 16u;
+const RAY_WORDS: u32 = 16u;
+
+fn current_ray_count() -> u32 {
+    return atomicLoad(&wavefront_queue[CURRENT_COUNT]);
+}
+
+fn next_ray_count() -> u32 {
+    return atomicLoad(&wavefront_queue[NEXT_COUNT]);
+}
+
+fn current_ray_word(index: u32, word: u32) -> u32 {
+    return RAY_DATA_OFFSET + index * RAY_WORDS + word;
+}
+
+fn next_ray_word(index: u32, word: u32) -> u32 {
+    return RAY_DATA_OFFSET + pixel_count() * RAY_WORDS + index * RAY_WORDS + word;
+}
+
+fn load_ray(base: u32) -> RayWorkItem {
+    return RayWorkItem(
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 0u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 1u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 2u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 3u])),
+        ),
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 4u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 5u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 6u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 7u])),
+        ),
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 8u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 9u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 10u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 11u])),
+        ),
+        atomicLoad(&wavefront_queue[base + 12u]),
+        atomicLoad(&wavefront_queue[base + 13u]),
+        atomicLoad(&wavefront_queue[base + 14u]),
+        atomicLoad(&wavefront_queue[base + 15u]),
+    );
+}
+
+fn store_ray(base: u32, ray: RayWorkItem) {
+    atomicStore(&wavefront_queue[base + 0u], bitcast<u32>(ray.origin.x));
+    atomicStore(&wavefront_queue[base + 1u], bitcast<u32>(ray.origin.y));
+    atomicStore(&wavefront_queue[base + 2u], bitcast<u32>(ray.origin.z));
+    atomicStore(&wavefront_queue[base + 3u], bitcast<u32>(ray.origin.w));
+    atomicStore(&wavefront_queue[base + 4u], bitcast<u32>(ray.direction.x));
+    atomicStore(&wavefront_queue[base + 5u], bitcast<u32>(ray.direction.y));
+    atomicStore(&wavefront_queue[base + 6u], bitcast<u32>(ray.direction.z));
+    atomicStore(&wavefront_queue[base + 7u], bitcast<u32>(ray.direction.w));
+    atomicStore(&wavefront_queue[base + 8u], bitcast<u32>(ray.throughput.x));
+    atomicStore(&wavefront_queue[base + 9u], bitcast<u32>(ray.throughput.y));
+    atomicStore(&wavefront_queue[base + 10u], bitcast<u32>(ray.throughput.z));
+    atomicStore(&wavefront_queue[base + 11u], bitcast<u32>(ray.throughput.w));
+    atomicStore(&wavefront_queue[base + 12u], ray.pixel_index);
+    atomicStore(&wavefront_queue[base + 13u], ray.depth);
+    atomicStore(&wavefront_queue[base + 14u], ray.is_active);
+    atomicStore(&wavefront_queue[base + 15u], ray._padding);
+}
+
+fn load_current_ray(index: u32) -> RayWorkItem {
+    return load_ray(current_ray_word(index, 0u));
+}
+
+fn load_next_ray(index: u32) -> RayWorkItem {
+    return load_ray(next_ray_word(index, 0u));
+}
+
+fn store_current_ray(index: u32, ray: RayWorkItem) {
+    store_ray(current_ray_word(index, 0u), ray);
+}
+
+fn store_next_ray(index: u32, ray: RayWorkItem) {
+    store_ray(next_ray_word(index, 0u), ray);
+}
+
+fn load_area_emission(index: u32) -> vec4<f32> {
+    let base = viewport.area_light_data_offset + index * 12u;
+    return vec4<f32>(
+        bitcast<f32>(material_light_data[base + 2u]),
+        bitcast<f32>(material_light_data[base + 3u]),
+        bitcast<f32>(material_light_data[base + 4u]),
+        0.0,
+    );
+}
 
 fn pixel_count() -> u32 {
     return viewport.width * viewport.height;
@@ -152,13 +229,6 @@ fn load_point_light(index: u32) -> PointLight {
             bitcast<f32>(material_light_data[base + 7u]),
         ),
     );
-}
-
-fn current_ray_index(pixel_index: u32) -> u32 {
-    if (rays[pixel_index].is_active != 0u) {
-        return pixel_index;
-    }
-    return pixel_index + pixel_count();
 }
 
 fn hash_u32(value: u32) -> u32 {
