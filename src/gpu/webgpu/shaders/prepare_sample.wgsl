@@ -23,6 +23,9 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     store_sample_radiance(pixel_index, vec4<f32>(0.0));
     store_sample_metadata(pixel_index);
+    for (var word = 8u; word < SAMPLE_STATE_WORDS; word++) {
+        atomicStore(&wavefront_queue[sample_state_word(pixel_index, word)], 0u);
+    }
     surfaces[pixel_index].hit = 0u;
     surfaces[pixel_index].flags = 0u;
 }
