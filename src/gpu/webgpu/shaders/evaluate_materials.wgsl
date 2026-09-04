@@ -20,12 +20,13 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (ray.is_active == 0u || ray.depth >= viewport.max_depth || viewport.light_count == 0u) {
         return;
     }
-    let light_index = hash_u32(viewport.seed ^ pixel_index ^ viewport.sample_index) % viewport.light_count;
+    let light_selection = sample_uniform_light(pixel_index);
+    let light_index = light_selection.index;
     let light_kind = load_light_kind(light_index);
     let light_payload = load_light_payload(light_index);
     var light_position = vec3<f32>(0.0);
     var light_radiance = vec3<f32>(0.0);
-    var sampled_light_pdf = 1.0 / f32(viewport.light_count);
+    var sampled_light_pdf = light_selection.pmf;
     if (light_kind == LIGHT_KIND_POINT) {
         let light = load_point_light(light_payload);
         light_position = light.position.xyz;
