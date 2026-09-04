@@ -39,13 +39,13 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(evaluate.contains("let samples = load_ray_samples(pixel_index);"));
     assert!(evaluate.contains("sample_uniform_light(samples.direct.x)"));
     assert!(evaluate.contains("let selector = samples.direct.y;"));
-    assert!(evaluate.contains("let su = sqrt(samples.direct.z);"));
-    assert!(evaluate.contains("let bv = samples.direct.w;"));
+    assert!(evaluate.contains("let su = sqrt(remapped_selector);"));
+    assert!(evaluate.contains("let bv = samples.direct.z;"));
     assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
 
     let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
-    assert!(bounce.contains("let u = vec2<f32>(samples.indirect.z, samples.indirect.w);"));
-    assert!(bounce.contains("if (samples.indirect.y < q)"));
+    assert!(bounce.contains("let u = vec2<f32>(samples.indirect.y, samples.indirect.z);"));
+    assert!(bounce.contains("if (samples.indirect.w < q)"));
     assert!(bounce.contains("generate_ray_samples(pixel_index, ray.depth + 1u)"));
     assert!(!SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("random01("));
 }

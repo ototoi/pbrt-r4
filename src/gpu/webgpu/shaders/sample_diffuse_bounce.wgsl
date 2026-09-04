@@ -21,7 +21,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
-    let u = vec2<f32>(samples.indirect.z, samples.indirect.w);
+    let u = vec2<f32>(samples.indirect.y, samples.indirect.z);
     let radius = sqrt(u.x);
     let phi = 2.0 * PI * u.y;
     var local = vec3<f32>(
@@ -46,7 +46,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
             0.0,
         ) / max(ray.inv_w_u, 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
-        if (samples.indirect.y < q) {
+        if (samples.indirect.w < q) {
             return;
         }
         next_throughput = next_throughput / max(1.0 - q, 1e-7);
