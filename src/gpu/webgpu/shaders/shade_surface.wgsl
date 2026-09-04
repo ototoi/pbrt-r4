@@ -28,7 +28,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let b0 = 1.0 - b1 - b2;
     let position = ray.origin.xyz + ray.direction.xyz * surface.t;
     surfaces[pixel_index].position_error = vec4<f32>(abs(position) * gamma(3.0), 0.0);
-    let geometric_normal = normalize(cross(p1 - p0, p2 - p0));
+    var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;
