@@ -97,7 +97,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (light_kind == LIGHT_KIND_POINT) {
         light_radiance = light_radiance / distance_squared;
     }
-    let direct = light_radiance * (0.5 / PI) * cosine / sampled_light_pdf;
+    let bsdf_pdf = cosine / PI;
+    let mis_weight = 1.0;
+    if (light_kind == LIGHT_KIND_AREA) {
+        mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
+    }
+    let direct = light_radiance * (0.5 / PI) * cosine / sampled_light_pdf * mis_weight;
     append_shadow_ray(
         pixel_index,
         offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.normal.xyz),
