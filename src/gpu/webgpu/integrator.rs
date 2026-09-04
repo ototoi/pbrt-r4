@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
@@ -15,6 +16,8 @@ use super::material::MaterialKind;
 use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
+
+const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct WavefrontPathIntegrator {
     context: Context,
@@ -118,6 +121,7 @@ impl WavefrontPathIntegrator {
         let mut reporter = self.show_progress.then(|| {
             ProgressReporter::new(samples_per_pixel as usize, &self.scene.output.filename)
         });
+        let mut last_display_update = Instant::now();
         for sample_index in 0..samples_per_pixel {
             self.scene.viewport.sample_index = sample_index;
             self.context.queue.write_buffer(
@@ -209,6 +213,33 @@ impl WavefrontPathIntegrator {
                 workgroups_y,
             );
             self.context.queue.submit(Some(encoder.finish()));
+            let completed_samples = sample_index + 1;
+            if !self.film.has_no_display()
+                && (last_display_update.elapsed() >= DEFAULT_DISPLAY_UPDATE_INTERVAL
+                    || completed_samples == samples_per_pixel)
+            {
+                let mut display_encoder =
+                    self.context
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("pbrt-r4 WebGPU display readback encoder"),
+                        });
+                self.film.copy_to_readback(&mut display_encoder);
+                self.queues.copy_state_to_readback(&mut display_encoder);
+                self.context.queue.submit(Some(display_encoder.finish()));
+                self.context.wait()?;
+                if self.queues.read_overflow(&self.context.device)? {
+                    return Err(PbrtError::error(
+                        "WebGPU wavefront queue capacity was exceeded.",
+                    ));
+                }
+                self.film
+                    .readback(&self.context.device, completed_samples)?;
+                if let Err(error) = self.film.update_display() {
+                    log::warn!("WebGPU Film display update failed: {error}");
+                }
+                last_display_update = Instant::now();
+            }
             if let Some(reporter) = reporter.as_mut() {
                 reporter.update(1);
             }

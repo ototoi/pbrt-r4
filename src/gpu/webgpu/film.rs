@@ -54,6 +54,10 @@ impl Film {
         self.display.add_display(display);
     }
 
+    pub fn has_no_display(&self) -> bool {
+        self.display.is_empty()
+    }
+
     pub fn start(&mut self) -> Result<(), PbrtError> {
         self.display.start(
             "pbrt-r4 WebGPU diffuse",
