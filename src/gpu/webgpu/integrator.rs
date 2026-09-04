@@ -266,9 +266,9 @@ impl WavefrontPathIntegrator {
                 self.queues.copy_state_to_readback(&mut display_encoder);
                 self.context.queue.submit(Some(display_encoder.finish()));
                 self.context.wait()?;
-                if self.queues.read_overflow(&self.context.device)? {
+                if self.queues.read_error(&self.context.device)? {
                     return Err(PbrtError::error(
-                        "WebGPU wavefront queue capacity was exceeded.",
+                        "WebGPU wavefront rendering reported an error.",
                     ));
                 }
                 self.film.readback(&self.context.device)?;
@@ -291,9 +291,9 @@ impl WavefrontPathIntegrator {
         self.queues.copy_state_to_readback(&mut encoder);
         self.context.queue.submit(Some(encoder.finish()));
         self.context.wait()?;
-        if self.queues.read_overflow(&self.context.device)? {
+        if self.queues.read_error(&self.context.device)? {
             return Err(PbrtError::error(
-                "WebGPU wavefront queue capacity was exceeded.",
+                "WebGPU wavefront rendering reported an error.",
             ));
         }
         self.film.readback(&self.context.device)?;
