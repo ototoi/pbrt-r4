@@ -21,7 +21,7 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         pixel_index,
         0u,
         1u,
-        0u,
+        0.0,
     );
     let current_queue_index = atomicAdd(&wavefront_queue[CURRENT_COUNT], 1u);
     if (current_queue_index >= pixel_count()) {

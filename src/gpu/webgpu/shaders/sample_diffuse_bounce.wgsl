@@ -34,6 +34,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         sqrt(max(0.0, 1.0 - u.x)),
     );
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
+    let next_pdf = max(dot(normal, direction), 0.0) / PI;
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, normal), 1.0),
         vec4<f32>(direction, 0.0),
@@ -41,7 +42,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         pixel_index,
         ray.depth + 1u,
         1u,
-        0u,
+        next_pdf,
     );
     let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
     if (next_index >= pixel_count()) {
