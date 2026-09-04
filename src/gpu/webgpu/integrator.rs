@@ -83,6 +83,19 @@ impl WavefrontPathIntegrator {
                 buffer_entry(8, &queues.rays),
                 buffer_entry(9, &queues.surfaces),
                 buffer_entry(10, &film.framebuffer),
+                buffer_entry(11, &scene.light_record_buffer),
+                buffer_entry(12, &scene.area_light_buffer),
+                buffer_entry(13, &scene.triangle_distribution_buffer),
+                buffer_entry(14, &queues.camera_rays.state),
+                buffer_entry(15, &queues.current_rays.state),
+                buffer_entry(16, &queues.next_rays.state),
+                buffer_entry(17, &queues.shadow_rays.state),
+                buffer_entry(18, &queues.escaped_rays.state),
+                buffer_entry(19, &queues.hit_area_lights.state),
+                buffer_entry(20, &queues.material_evals.state),
+                buffer_entry(21, &queues.camera_rays.items),
+                buffer_entry(22, &queues.current_rays.items),
+                buffer_entry(23, &queues.next_rays.items),
             ],
         });
         Ok(Self {
@@ -181,6 +194,20 @@ impl WavefrontPathIntegrator {
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_diffuse_bounce,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.swap_ray_queues,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.reset_next_ray_queue,
                         &self.bind_group,
                         workgroups_x,
                         workgroups_y,

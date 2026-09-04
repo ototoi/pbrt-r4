@@ -84,6 +84,11 @@ fn component_to_json(component: &Component) -> Value {
             "params": params_to_json(&component.light.params),
             "transform": component.light.transform.matrix,
         }),
+        Component::AreaLight(component) => json!({
+            "type": "AreaLight",
+            "name": component.area_light.name,
+            "params": params_to_json(&component.area_light.params),
+        }),
         Component::Medium(component) => json!({
             "type": "Medium",
             "name": component.medium.name,

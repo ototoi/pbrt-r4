@@ -11,6 +11,8 @@ pub struct Pipeline {
     pub intersect_shadow: wgpu::ComputePipeline,
     pub finish_shadow: wgpu::ComputePipeline,
     pub sample_diffuse_bounce: wgpu::ComputePipeline,
+    pub swap_ray_queues: wgpu::ComputePipeline,
+    pub reset_next_ray_queue: wgpu::ComputePipeline,
     pub accumulate_sample: wgpu::ComputePipeline,
 }
 
@@ -38,6 +40,19 @@ impl Pipeline {
                 storage_entry(8, false),
                 storage_entry(9, false),
                 storage_entry(10, false),
+                storage_entry(11, true),
+                storage_entry(12, true),
+                storage_entry(13, true),
+                storage_entry(14, false),
+                storage_entry(15, false),
+                storage_entry(16, false),
+                storage_entry(17, false),
+                storage_entry(18, false),
+                storage_entry(19, false),
+                storage_entry(20, false),
+                storage_entry(21, false),
+                storage_entry(22, false),
+                storage_entry(23, false),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -92,6 +107,16 @@ impl Pipeline {
                 "pbrt-r4 sample diffuse bounce",
                 include_str!("shaders/sample_diffuse_bounce.wgsl"),
                 "sample_diffuse_bounce",
+            ),
+            swap_ray_queues: compute(
+                "pbrt-r4 swap ray queues",
+                include_str!("shaders/swap_ray_queues.wgsl"),
+                "swap_ray_queues",
+            ),
+            reset_next_ray_queue: compute(
+                "pbrt-r4 reset next ray queue",
+                include_str!("shaders/reset_next_ray_queue.wgsl"),
+                "reset_next_ray_queue",
             ),
             accumulate_sample: compute(
                 "pbrt-r4 accumulate sample",

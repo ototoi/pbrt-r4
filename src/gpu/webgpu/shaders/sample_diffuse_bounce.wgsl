@@ -3,9 +3,12 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
-    let ray_index = current_ray_index(pixel_index);
-    let ray = rays[ray_index];
+    let ray_index = global_id.y * viewport.width + global_id.x;
+    if (ray_index >= atomicLoad(&current_ray_queue_state.count)) {
+        return;
+    }
+    let ray = current_ray_queue[ray_index];
+    let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     if (ray.is_active == 0u || surface.hit == 0u) {
         return;
@@ -31,8 +34,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         sqrt(max(0.0, 1.0 - u.x)),
     );
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
-    let next_index = pixel_index + select(0u, pixel_count(), (ray.depth & 1u) == 0u);
-    rays[next_index] = RayWorkItem(
+    let next_ray = RayWorkItem(
         vec4<f32>(surface.position.xyz + normal * RAY_EPSILON, 1.0),
         vec4<f32>(direction, 0.0),
         ray.throughput * vec4<f32>(0.5, 0.5, 0.5, 0.0),
@@ -41,5 +43,11 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1u,
         0u,
     );
-    rays[ray_index].is_active = 0u;
+    let next_index = atomicAdd(&next_ray_queue_state.count, 1u);
+    if (next_index >= next_ray_queue_state.capacity) {
+        atomicStore(&next_ray_queue_state.overflow, 1u);
+        return;
+    }
+    next_ray_queue[next_index] = next_ray;
+    rays[pixel_index] = next_ray;
 }

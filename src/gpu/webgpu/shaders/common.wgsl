@@ -78,6 +78,13 @@ struct PointLight {
     intensity: vec4<f32>,
 };
 
+struct QueueState {
+    count: atomic<u32>,
+    capacity: u32,
+    overflow: atomic<u32>,
+    _padding: u32,
+};
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 @group(0) @binding(1)
@@ -100,6 +107,26 @@ var<storage, read_write> rays: array<RayWorkItem>;
 var<storage, read_write> surfaces: array<SurfaceWorkItem>;
 @group(0) @binding(10)
 var<storage, read_write> framebuffer: array<vec4<f32>>;
+@group(0) @binding(14)
+var<storage, read_write> camera_ray_queue_state: QueueState;
+@group(0) @binding(15)
+var<storage, read_write> current_ray_queue_state: QueueState;
+@group(0) @binding(16)
+var<storage, read_write> next_ray_queue_state: QueueState;
+@group(0) @binding(17)
+var<storage, read_write> shadow_ray_queue_state: QueueState;
+@group(0) @binding(18)
+var<storage, read_write> escaped_ray_queue_state: QueueState;
+@group(0) @binding(19)
+var<storage, read_write> hit_area_light_queue_state: QueueState;
+@group(0) @binding(20)
+var<storage, read_write> material_eval_queue_state: QueueState;
+@group(0) @binding(21)
+var<storage, read_write> camera_ray_queue: array<RayWorkItem>;
+@group(0) @binding(22)
+var<storage, read_write> current_ray_queue: array<RayWorkItem>;
+@group(0) @binding(23)
+var<storage, read_write> next_ray_queue: array<RayWorkItem>;
 
 fn pixel_count() -> u32 {
     return viewport.width * viewport.height;

@@ -1,10 +1,12 @@
 use super::{
-    identity_transform, multiply_transform, Camera, Geometry, Instance, Material, PointLight,
-    RenderSettings, Scene, Transform, Vertex, Viewport,
+    identity_transform, multiply_transform, AreaLight, Camera, Geometry, Instance, LightKind,
+    LightRecord, Material, PointLight, RenderSettings, Scene, Transform, Vertex, Viewport,
+    INVALID_INDEX,
 };
 use crate::gpu::ir::node::{
-    complete_triangle_attributes, Component, Integrator as NodeIntegrator, Light as NodeLight,
-    Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape, TriangleMeshShape,
+    complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
+    Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
+    Sampler as NodeSampler, Shape, TriangleMeshShape,
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
@@ -46,6 +48,8 @@ pub fn flatten_node_with_material_override(
         output,
         render_settings,
         point_lights: builder.point_lights,
+        area_lights: builder.area_lights,
+        lights: builder.lights,
         vertices: builder.vertices,
         indices: builder.indices,
         geometries: builder.geometries,
@@ -69,6 +73,8 @@ struct FlatBuilder {
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     point_lights: Vec<PointLight>,
+    area_lights: Vec<AreaLight>,
+    lights: Vec<LightRecord>,
 }
 
 fn flatten_node_ref(
@@ -153,6 +159,13 @@ fn flatten_node_ref(
                 Component::Light(component) => Some(component.light.clone()),
                 _ => None,
             });
+        let area_light = node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                Component::AreaLight(component) => Some(component.area_light.clone()),
+                _ => None,
+            });
         for (component_index, component) in node.components.iter().enumerate() {
             match component {
                 Component::Shape(component) => {
@@ -172,7 +185,7 @@ fn flatten_node_ref(
                             node.name
                         ))
                     })?;
-                    shapes.push((component_index, shape, material));
+                    shapes.push((component_index, shape, material, area_light.clone()));
                 }
                 Component::Instance(component) => {
                     instances.push((
@@ -254,17 +267,42 @@ fn flatten_node_ref(
         });
     }
     if let Some(light) = light {
+        let point_light_index = u32::try_from(builder.point_lights.len())
+            .map_err(|_| PbrtError::error("The flattened GPU point-light table exceeds u32."))?;
         builder
             .point_lights
             .push(point_light(&light, &world_transform, &name)?);
+        builder.lights.push(LightRecord {
+            kind: LightKind::Point,
+            payload: point_light_index,
+        });
     }
-    for (component_index, shape, material) in shapes {
+    for (component_index, shape, material, area_light) in shapes {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
         let material = material_index(&material, builder, material_kind)?;
+        let instance_index = u32::try_from(builder.instances.len())
+            .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
+        let area_light_handle = if let Some(area_light) = area_light {
+            let area_light_index = u32::try_from(builder.area_lights.len())
+                .map_err(|_| PbrtError::error("The flattened GPU area-light table exceeds u32."))?;
+            let light_handle = u32::try_from(builder.lights.len())
+                .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
+            builder
+                .area_lights
+                .push(area_light_record(&area_light, instance_index, &name)?);
+            builder.lights.push(LightRecord {
+                kind: LightKind::Area,
+                payload: area_light_index,
+            });
+            light_handle
+        } else {
+            INVALID_INDEX
+        };
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
             material,
+            area_light: area_light_handle,
         });
     }
     for (target, instance_transform) in instances {
@@ -398,6 +436,56 @@ fn point_light(
     Ok(PointLight {
         position,
         intensity,
+    })
+}
+
+fn area_light_record(
+    light: &NodeAreaLight,
+    instance: u32,
+    node_name: &str,
+) -> Result<AreaLight, PbrtError> {
+    if light.name != "diffuse" {
+        return Err(PbrtError::error(&format!(
+            "Unsupported GPU area light \"{}\" on node \"{}\".",
+            light.name, node_name
+        )));
+    }
+    if light.params.has_parameter("filename") {
+        return Err(PbrtError::error(&format!(
+            "Textured GPU area light on node \"{}\" is not implemented.",
+            node_name
+        )));
+    }
+    let white = Spectrum::from(1.0);
+    let emission_spectrum =
+        light
+            .params
+            .get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
+    let photometric = spectrum_to_photometric(&emission_spectrum);
+    let mut scale = light.params.get_one_float("scale", 1.0);
+    if photometric > 0.0 {
+        scale /= photometric;
+    }
+    let power = light.params.get_one_float("power", -1.0);
+    if power > 0.0 {
+        scale *= power / (4.0 * std::f32::consts::PI);
+    }
+    let rgb = emission_spectrum.to_rgb();
+    let emission = [
+        (rgb[0] * scale) as f32,
+        (rgb[1] * scale) as f32,
+        (rgb[2] * scale) as f32,
+    ];
+    if !emission.iter().all(|value| value.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "GPU area light on node \"{}\" contains a non-finite emission value.",
+            node_name
+        )));
+    }
+    Ok(AreaLight {
+        instance,
+        emission,
+        two_sided: light.params.get_one_bool("twosided", false),
     })
 }
 
