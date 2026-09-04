@@ -518,9 +518,48 @@ fn gamma(n: f32) -> f32 {
     return (n * MACHINE_EPSILON) / (1.0 - n * MACHINE_EPSILON);
 }
 
+fn next_float_up(value: f32) -> f32 {
+    if (value == 0.0) {
+        return bitcast<f32>(1u);
+    }
+    let bits = bitcast<u32>(value);
+    if (value < 0.0) {
+        return bitcast<f32>(bits - 1u);
+    }
+    return bitcast<f32>(bits + 1u);
+}
+
+fn next_float_down(value: f32) -> f32 {
+    if (value == 0.0) {
+        return bitcast<f32>(0x80000001u);
+    }
+    let bits = bitcast<u32>(value);
+    if (value > 0.0) {
+        return bitcast<f32>(bits - 1u);
+    }
+    return bitcast<f32>(bits + 1u);
+}
+
 fn offset_ray_origin(position: vec3<f32>, error: vec3<f32>, normal: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
     let offset = normal * dot(abs(normal), error);
-    return position + select(-offset, offset, dot(direction, normal) >= 0.0);
+    let signed_offset = select(-offset, offset, dot(direction, normal) >= 0.0);
+    var result = position + signed_offset;
+    if (signed_offset.x > 0.0) {
+        result.x = next_float_up(result.x);
+    } else if (signed_offset.x < 0.0) {
+        result.x = next_float_down(result.x);
+    }
+    if (signed_offset.y > 0.0) {
+        result.y = next_float_up(result.y);
+    } else if (signed_offset.y < 0.0) {
+        result.y = next_float_down(result.y);
+    }
+    if (signed_offset.z > 0.0) {
+        result.z = next_float_up(result.z);
+    } else if (signed_offset.z < 0.0) {
+        result.z = next_float_down(result.z);
+    }
+    return result;
 }
 
 fn make_tangent(normal: vec3<f32>) -> vec3<f32> {
