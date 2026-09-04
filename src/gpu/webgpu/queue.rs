@@ -28,7 +28,7 @@ impl Queues {
                     PbrtError::error("WebGPU pixel sample state size overflowed.")
                 })?,
             )
-            .and_then(|size| size.checked_add(pixel_count.checked_mul(32)?))
+            .and_then(|size| size.checked_add(pixel_count.checked_mul(40)?))
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
         let wavefront_words = wavefront_words
             .checked_add(
