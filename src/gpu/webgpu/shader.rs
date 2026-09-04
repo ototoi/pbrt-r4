@@ -8,7 +8,8 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
     device.create_shader_module(descriptor)
 }
 
-fn compose_source(stage_source: &str) -> String {
+#[doc(hidden)]
+pub fn compose_source(stage_source: &str) -> String {
     let mut source = String::with_capacity(COMMON_SHADER.len() + stage_source.len() + 1);
     source.push_str(COMMON_SHADER);
     source.push('\n');

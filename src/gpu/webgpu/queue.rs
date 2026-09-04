@@ -3,6 +3,92 @@ use bytemuck::{Pod, Zeroable};
 use super::abi::SurfaceWorkItem;
 use crate::util::error::PbrtError;
 
+pub const QUEUE_STATE_WORDS: u64 = 24;
+const SAMPLE_STATE_WORDS: u64 = 8;
+const RAY_WORDS: u64 = 20;
+const SHADOW_WORDS: u64 = 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackedWavefrontLayout {
+    pub sample_state_offset_words: u64,
+    pub ray_data_offset_words: u64,
+    pub shadow_data_offset_words: u64,
+    pub material_data_offset_words: u64,
+    pub hit_area_data_offset_words: u64,
+    pub escaped_data_offset_words: u64,
+    pub total_words: u64,
+}
+
+impl PackedWavefrontLayout {
+    pub fn state_readback_size_bytes(&self) -> u64 {
+        QUEUE_STATE_WORDS * std::mem::size_of::<u32>() as u64
+    }
+
+    pub fn wavefront_size_bytes(&self) -> Result<u64, PbrtError> {
+        self.total_words
+            .checked_mul(std::mem::size_of::<u32>() as u64)
+            .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))
+    }
+}
+
+pub fn packed_wavefront_layout(
+    pixel_count: u64,
+    max_depth: u32,
+) -> Result<PackedWavefrontLayout, PbrtError> {
+    u32::try_from(pixel_count)
+        .map_err(|_| PbrtError::error("WebGPU pixel count does not fit shader u32 offsets."))?;
+    let classification_capacity = pixel_count
+        .checked_mul(
+            u64::from(max_depth)
+                .checked_add(1)
+                .ok_or_else(|| PbrtError::error("WebGPU classification depth overflowed."))?,
+        )
+        .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
+    let sample_state_offset_words = QUEUE_STATE_WORDS;
+    let ray_data_offset_words = sample_state_offset_words
+        .checked_add(
+            pixel_count
+                .checked_mul(SAMPLE_STATE_WORDS)
+                .ok_or_else(|| PbrtError::error("WebGPU pixel sample state size overflowed."))?,
+        )
+        .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
+    let shadow_data_offset_words = ray_data_offset_words
+        .checked_add(
+            pixel_count
+                .checked_mul(RAY_WORDS * 2)
+                .ok_or_else(|| PbrtError::error("WebGPU ray queue size overflowed."))?,
+        )
+        .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
+    let material_data_offset_words = shadow_data_offset_words
+        .checked_add(
+            pixel_count
+                .checked_mul(SHADOW_WORDS)
+                .ok_or_else(|| PbrtError::error("WebGPU shadow queue size overflowed."))?,
+        )
+        .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
+    let hit_area_data_offset_words = material_data_offset_words
+        .checked_add(classification_capacity)
+        .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
+    let escaped_data_offset_words = hit_area_data_offset_words
+        .checked_add(classification_capacity)
+        .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
+    let total_words = escaped_data_offset_words
+        .checked_add(classification_capacity)
+        .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
+    u32::try_from(total_words).map_err(|_| {
+        PbrtError::error("WebGPU packed wavefront queue does not fit shader u32 offsets.")
+    })?;
+    Ok(PackedWavefrontLayout {
+        sample_state_offset_words,
+        ray_data_offset_words,
+        shadow_data_offset_words,
+        material_data_offset_words,
+        hit_area_data_offset_words,
+        escaped_data_offset_words,
+        total_words,
+    })
+}
+
 pub struct Queues {
     pub surfaces: wgpu::Buffer,
     pub wavefront: wgpu::Buffer,
@@ -14,33 +100,8 @@ impl Queues {
         let surface_size = pixel_count
             .checked_mul(std::mem::size_of::<SurfaceWorkItem>() as u64)
             .ok_or_else(|| PbrtError::error("WebGPU surface queue size overflowed."))?;
-        // The packed queue contains per-pixel state and two RayWorkItem arrays preceded by eight
-        // u32 words for the current/next counters and overflow flags.
-        let classification_capacity =
-            pixel_count
-                .checked_mul(u64::from(max_depth).checked_add(1).ok_or_else(|| {
-                    PbrtError::error("WebGPU classification queue depth overflowed.")
-                })?)
-                .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
-        let wavefront_words = 24u64
-            .checked_add(
-                pixel_count.checked_mul(8).ok_or_else(|| {
-                    PbrtError::error("WebGPU pixel sample state size overflowed.")
-                })?,
-            )
-            .and_then(|size| size.checked_add(pixel_count.checked_mul(40)?))
-            .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
-        let wavefront_words = wavefront_words
-            .checked_add(
-                pixel_count
-                    .checked_mul(20)
-                    .ok_or_else(|| PbrtError::error("WebGPU shadow queue size overflowed."))?,
-            )
-            .and_then(|size| size.checked_add(classification_capacity.checked_mul(3)?))
-            .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
-        let wavefront_size = wavefront_words
-            .checked_mul(std::mem::size_of::<u32>() as u64)
-            .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
+        let layout = packed_wavefront_layout(pixel_count, max_depth)?;
+        let wavefront_size = layout.wavefront_size_bytes()?;
         let _capacity = u32::try_from(pixel_count)
             .map_err(|_| PbrtError::error("WebGPU queue capacity does not fit in u32."))?;
         Ok(Self {
@@ -58,7 +119,7 @@ impl Queues {
             }),
             state_readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 wavefront queue state readback"),
-                size: 80,
+                size: layout.state_readback_size_bytes(),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -66,7 +127,13 @@ impl Queues {
     }
 
     pub fn copy_state_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_buffer_to_buffer(&self.wavefront, 0, &self.state_readback, 0, 80);
+        encoder.copy_buffer_to_buffer(
+            &self.wavefront,
+            0,
+            &self.state_readback,
+            0,
+            QUEUE_STATE_WORDS * std::mem::size_of::<u32>() as u64,
+        );
     }
 
     pub fn read_error(&self, device: &wgpu::Device) -> Result<bool, PbrtError> {
