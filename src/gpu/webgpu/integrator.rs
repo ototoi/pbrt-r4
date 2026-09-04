@@ -38,14 +38,24 @@ impl WavefrontPathIntegrator {
     }
 
     pub fn create_with_progress(
-        flat_scene: flat::Scene,
+        mut flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
         let context = Context::new()?;
         let device = &context.device;
         let queue = &context.queue;
+        let debug_material = MaterialKind::from_debug_environment()?;
+        if !matches!(debug_material, MaterialKind::Diffuse) {
+            for material in &mut flat_scene.materials {
+                material.kind = match debug_material {
+                    MaterialKind::Normal => "normal".to_string(),
+                    MaterialKind::Uv => "uv".to_string(),
+                    MaterialKind::Diffuse => unreachable!(),
+                };
+            }
+        }
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
-        scene.replace_material_kind(queue, MaterialKind::from_debug_environment()?);
+        scene.replace_material_kind(queue, debug_material);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
