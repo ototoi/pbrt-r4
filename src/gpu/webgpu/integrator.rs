@@ -243,7 +243,8 @@ impl WavefrontPathIntegrator {
                 workgroups_y,
             );
             self.context.queue.submit(Some(encoder.finish()));
-            let completed_samples = sample_index + 1;
+            self.film.complete_sample()?;
+            let completed_samples = self.film.completed_samples();
             if !self.film.has_no_display()
                 && (last_display_update.elapsed() >= DEFAULT_DISPLAY_UPDATE_INTERVAL
                     || completed_samples == samples_per_pixel)
@@ -263,8 +264,7 @@ impl WavefrontPathIntegrator {
                         "WebGPU wavefront queue capacity was exceeded.",
                     ));
                 }
-                self.film
-                    .readback(&self.context.device, completed_samples)?;
+                self.film.readback(&self.context.device)?;
                 if let Err(error) = self.film.update_display() {
                     log::warn!("WebGPU Film display update failed: {error}");
                 }
@@ -289,8 +289,7 @@ impl WavefrontPathIntegrator {
                 "WebGPU wavefront queue capacity was exceeded.",
             ));
         }
-        self.film
-            .readback(&self.context.device, samples_per_pixel)?;
+        self.film.readback(&self.context.device)?;
         if let Some(reporter) = reporter.as_mut() {
             reporter.done();
         }
