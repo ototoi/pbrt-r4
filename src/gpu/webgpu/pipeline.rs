@@ -13,6 +13,7 @@ pub struct Pipeline {
     pub sample_diffuse_bounce: wgpu::ComputePipeline,
     pub swap_ray_queues: wgpu::ComputePipeline,
     pub reset_next_ray_queue: wgpu::ComputePipeline,
+    pub reset_shadow_queue: wgpu::ComputePipeline,
     pub accumulate_sample: wgpu::ComputePipeline,
 }
 
@@ -104,6 +105,11 @@ impl Pipeline {
                 "pbrt-r4 reset next ray queue",
                 include_str!("shaders/reset_next_ray_queue.wgsl"),
                 "reset_next_ray_queue",
+            ),
+            reset_shadow_queue: compute(
+                "pbrt-r4 reset shadow queue",
+                include_str!("shaders/reset_shadow_queue.wgsl"),
+                "reset_shadow_queue",
             ),
             accumulate_sample: compute(
                 "pbrt-r4 accumulate sample",
