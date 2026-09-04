@@ -192,6 +192,13 @@ impl WavefrontPathIntegrator {
                 );
                 dispatch(
                     &mut encoder,
+                    &self.pipeline.handle_emissive,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
                     &self.pipeline.evaluate_materials,
                     &self.bind_group,
                     workgroups_x,

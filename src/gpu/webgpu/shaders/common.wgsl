@@ -203,6 +203,14 @@ fn append_hit_area_light(pixel_index: u32) {
     }
 }
 
+fn hit_area_light_count() -> u32 {
+    return atomicLoad(&wavefront_queue[HIT_AREA_COUNT]);
+}
+
+fn load_hit_area_pixel(index: u32) -> u32 {
+    return atomicLoad(&wavefront_queue[classification_word(classification_capacity(), index)]);
+}
+
 fn escaped_data_offset() -> u32 {
     return SHADOW_DATA_OFFSET
         + pixel_count() * RAY_WORDS * 2u
