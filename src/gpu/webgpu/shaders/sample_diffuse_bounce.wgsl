@@ -38,6 +38,8 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.depth + 1u,
         ray.inv_w_u * next_pdf,
         next_pdf,
+        ray.inv_w_l * next_pdf,
+        vec3<u32>(0u, 0u, 0u),
     );
     let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
     if (next_index >= pixel_count()) {

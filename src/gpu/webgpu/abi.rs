@@ -75,7 +75,9 @@ pub struct RayWorkItem {
     pub pixel_index: u32,
     pub depth: u32,
     pub inv_w_u: f32,
+    pub inv_w_l: f32,
     pub prev_pdf: f32,
+    pub padding: [u32; 3],
 }
 
 #[repr(C)]
