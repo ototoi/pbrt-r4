@@ -4,6 +4,7 @@ use crate::util::error::PbrtError;
 pub enum MaterialKind {
     Normal,
     Uv,
+    Diffuse,
     Lambert,
 }
 
@@ -12,7 +13,7 @@ impl MaterialKind {
         match self {
             Self::Normal => 0,
             Self::Uv => 1,
-            Self::Lambert => 2,
+            Self::Diffuse | Self::Lambert => 2,
         }
     }
 
@@ -20,7 +21,7 @@ impl MaterialKind {
         match kind {
             "normal" => Ok(Self::Normal),
             "uv" => Ok(Self::Uv),
-            "diffuse" => Ok(Self::Lambert),
+            "diffuse" => Ok(Self::Diffuse),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
