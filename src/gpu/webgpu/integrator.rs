@@ -57,7 +57,7 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count)?;
+        let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
         let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
         let pipeline = Pipeline::new(device)?;
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
