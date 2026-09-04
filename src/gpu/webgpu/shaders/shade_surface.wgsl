@@ -77,7 +77,10 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let light_index = hash_u32(viewport.seed ^ pixel_index ^ viewport.sample_index) % viewport.light_count;
-    let light = load_point_light(light_index);
+    if (load_light_kind(light_index) != LIGHT_KIND_POINT) {
+        return;
+    }
+    let light = load_point_light(load_light_payload(light_index));
     let to_light = light.position.xyz - position;
     let distance_squared = dot(to_light, to_light);
     if (distance_squared <= 0.0) {
