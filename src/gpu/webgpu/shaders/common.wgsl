@@ -123,6 +123,7 @@ const HIT_AREA_COUNT: u32 = 16u;
 const HIT_AREA_OVERFLOW: u32 = 18u;
 const ESCAPED_COUNT: u32 = 20u;
 const ESCAPED_OVERFLOW: u32 = 22u;
+const RENDER_ERROR: u32 = 23u;
 const RAY_WORDS: u32 = 16u;
 const SAMPLE_STATE_OFFSET: u32 = 24u;
 const SAMPLE_STATE_WORDS: u32 = 8u;
@@ -145,6 +146,11 @@ fn load_sample_radiance(pixel_index: u32) -> vec4<f32> {
 }
 
 fn store_sample_radiance(pixel_index: u32, radiance: vec4<f32>) {
+    if (radiance.x != radiance.x || radiance.y != radiance.y || radiance.z != radiance.z
+        || radiance.w != radiance.w || abs(radiance.x) > RAY_T_MAX || abs(radiance.y) > RAY_T_MAX
+        || abs(radiance.z) > RAY_T_MAX || abs(radiance.w) > RAY_T_MAX) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+    }
     atomicStore(&wavefront_queue[sample_state_word(pixel_index, 0u)], bitcast<u32>(radiance.x));
     atomicStore(&wavefront_queue[sample_state_word(pixel_index, 1u)], bitcast<u32>(radiance.y));
     atomicStore(&wavefront_queue[sample_state_word(pixel_index, 2u)], bitcast<u32>(radiance.z));

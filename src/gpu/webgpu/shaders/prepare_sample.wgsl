@@ -17,6 +17,9 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
         atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 0u);
         atomicStore(&wavefront_queue[ESCAPED_COUNT], 0u);
         atomicStore(&wavefront_queue[ESCAPED_OVERFLOW], 0u);
+        if (viewport.sample_index == 0u) {
+            atomicStore(&wavefront_queue[RENDER_ERROR], 0u);
+        }
     }
     store_sample_radiance(pixel_index, vec4<f32>(0.0));
     store_sample_metadata(pixel_index);

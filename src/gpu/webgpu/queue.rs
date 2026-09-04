@@ -65,7 +65,7 @@ impl Queues {
         encoder.copy_buffer_to_buffer(&self.wavefront, 0, &self.state_readback, 0, 80);
     }
 
-    pub fn read_overflow(&self, device: &wgpu::Device) -> Result<bool, PbrtError> {
+    pub fn read_error(&self, device: &wgpu::Device) -> Result<bool, PbrtError> {
         let slice = self.state_readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -89,7 +89,8 @@ impl Queues {
         })?;
         let words = bytemuck::try_cast_slice::<u8, u32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU queue-state readback was not u32-aligned."))?;
-        let overflowed = words.get(2).copied().unwrap_or(0) != 0
+        let errored = words.get(23).copied().unwrap_or(0) != 0
+            || words.get(2).copied().unwrap_or(0) != 0
             || words.get(6).copied().unwrap_or(0) != 0
             || words.get(10).copied().unwrap_or(0) != 0
             || words.get(14).copied().unwrap_or(0) != 0
@@ -97,7 +98,7 @@ impl Queues {
             || words.get(22).copied().unwrap_or(0) != 0;
         drop(mapped);
         self.state_readback.unmap();
-        Ok(overflowed)
+        Ok(errored)
     }
 }
 
