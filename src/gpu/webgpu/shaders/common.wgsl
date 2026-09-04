@@ -1,7 +1,6 @@
 enable wgpu_ray_query;
 
 const RAY_T_MAX: f32 = 3.402823466e+38;
-const RAY_EPSILON: f32 = 0.0001;
 const MACHINE_EPSILON: f32 = 1.1920929e-7;
 const PI: f32 = 3.141592653589793;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
