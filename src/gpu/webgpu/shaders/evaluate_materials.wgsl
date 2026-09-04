@@ -42,7 +42,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (distribution_count == 0u || total_area <= 0.0) {
             return;
         }
-        let selector = random01(pixel_index, 2u, ray.depth);
+        let selector = random01(pixel_index, 3u, ray.depth);
         var triangle_index = 0u;
         for (var i = 0u; i < distribution_count; i++) {
             if (selector <= load_triangle_cdf(distribution_offset, i)) {
@@ -54,8 +54,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let i0 = area_geometry.vertex_offset + indices[first_index];
         let i1 = area_geometry.vertex_offset + indices[first_index + 1u];
         let i2 = area_geometry.vertex_offset + indices[first_index + 2u];
-        let su = sqrt(random01(pixel_index, 3u, ray.depth));
-        let bv = random01(pixel_index, 4u, ray.depth);
+        let su = sqrt(random01(pixel_index, 4u, ray.depth));
+        let bv = random01(pixel_index, 5u, ray.depth);
         let b0 = 1.0 - su;
         let b1 = su * (1.0 - bv);
         let b2 = su * bv;
