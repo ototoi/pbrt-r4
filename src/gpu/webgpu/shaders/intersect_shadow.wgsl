@@ -14,7 +14,6 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (shadow_t <= 0.0) {
         return;
     }
-    let surface = surfaces[pixel_index];
     let shadow_direct = load_shadow_direct(ray_index);
     var query: ray_query;
     rayQueryInitialize(
