@@ -44,9 +44,9 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.throughput,
         pixel_index,
         ray.depth + 1u,
-        ray.inv_w_u * next_pdf,
+        ray.inv_w_u,
+        ray.inv_w_u / max(next_pdf, 1e-7),
         next_pdf,
-        ray.inv_w_l * next_pdf,
         vec3<u32>(0u, 0u, 0u),
     );
     let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
