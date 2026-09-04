@@ -17,7 +17,7 @@ impl Queues {
         // The packed queue contains two RayWorkItem arrays preceded by eight
         // u32 words for the current/next counters and overflow flags.
         let wavefront_words = 16u64
-            .checked_add(pixel_count.checked_mul(32).ok_or_else(|| {
+            .checked_add(pixel_count.checked_mul(33).ok_or_else(|| {
                 PbrtError::error("WebGPU packed wavefront queue size overflowed.")
             })?)
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
@@ -76,8 +76,9 @@ impl Queues {
         })?;
         let words = bytemuck::try_cast_slice::<u8, u32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU queue-state readback was not u32-aligned."))?;
-        let overflowed =
-            words.get(2).copied().unwrap_or(0) != 0 || words.get(6).copied().unwrap_or(0) != 0;
+        let overflowed = words.get(2).copied().unwrap_or(0) != 0
+            || words.get(6).copied().unwrap_or(0) != 0
+            || words.get(10).copied().unwrap_or(0) != 0;
         drop(mapped);
         self.state_readback.unmap();
         Ok(overflowed)

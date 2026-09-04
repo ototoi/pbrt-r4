@@ -153,6 +153,15 @@ impl WavefrontPathIntegrator {
                 workgroups_y,
             );
             for depth in 0..=self.scene.render_settings.max_depth {
+                if depth != 0 {
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.reset_shadow_queue,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                }
                 dispatch(
                     &mut encoder,
                     &self.pipeline.intersect_primary_rays,

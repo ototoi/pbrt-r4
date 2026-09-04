@@ -115,8 +115,11 @@ const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
 const NEXT_COUNT: u32 = 4u;
 const NEXT_OVERFLOW: u32 = 6u;
+const SHADOW_COUNT: u32 = 8u;
+const SHADOW_OVERFLOW: u32 = 10u;
 const RAY_DATA_OFFSET: u32 = 16u;
 const RAY_WORDS: u32 = 16u;
+const SHADOW_DATA_OFFSET: u32 = 16u;
 
 fn current_ray_count() -> u32 {
     return atomicLoad(&wavefront_queue[CURRENT_COUNT]);
@@ -124,6 +127,27 @@ fn current_ray_count() -> u32 {
 
 fn next_ray_count() -> u32 {
     return atomicLoad(&wavefront_queue[NEXT_COUNT]);
+}
+
+fn shadow_ray_count() -> u32 {
+    return atomicLoad(&wavefront_queue[SHADOW_COUNT]);
+}
+
+fn shadow_ray_word(index: u32) -> u32 {
+    return SHADOW_DATA_OFFSET + pixel_count() * RAY_WORDS * 2u + index;
+}
+
+fn append_shadow_ray(pixel_index: u32) {
+    let index = atomicAdd(&wavefront_queue[SHADOW_COUNT], 1u);
+    if (index < pixel_count()) {
+        atomicStore(&wavefront_queue[shadow_ray_word(index)], pixel_index);
+    } else {
+        atomicStore(&wavefront_queue[SHADOW_OVERFLOW], 1u);
+    }
+}
+
+fn load_shadow_pixel(index: u32) -> u32 {
+    return atomicLoad(&wavefront_queue[shadow_ray_word(index)]);
 }
 
 fn current_ray_word(index: u32, word: u32) -> u32 {
