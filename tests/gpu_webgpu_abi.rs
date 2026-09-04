@@ -25,12 +25,27 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Material>(), 16);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 64);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
-    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 88);
+    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 96);
     assert_eq!(std::mem::size_of::<PointLight>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(std::mem::size_of::<AreaLight>(), 48);
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
     assert_eq!(std::mem::size_of::<PixelSampleState>(), 32);
+}
+
+#[test]
+fn webgpu_storage_array_strides_are_16_byte_aligned() {
+    for size in [
+        std::mem::size_of::<Vertex>(),
+        std::mem::size_of::<Geometry>(),
+        std::mem::size_of::<Instance>(),
+        std::mem::size_of::<RayWorkItem>(),
+        std::mem::size_of::<ShadowRayWorkItem>(),
+        std::mem::size_of::<SurfaceWorkItem>(),
+        std::mem::size_of::<PixelSampleState>(),
+    ] {
+        assert_eq!(size % 16, 0, "storage stride {size} is not 16-byte aligned");
+    }
 }
 
 #[test]
