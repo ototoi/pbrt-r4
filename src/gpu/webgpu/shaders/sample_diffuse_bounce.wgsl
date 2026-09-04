@@ -33,7 +33,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, normal), 1.0),
         vec4<f32>(direction, 0.0),
-        ray.throughput * vec4<f32>(0.5, 0.5, 0.5, 0.0),
+        ray.throughput,
         pixel_index,
         ray.depth + 1u,
         ray.inv_w_u * next_pdf,
