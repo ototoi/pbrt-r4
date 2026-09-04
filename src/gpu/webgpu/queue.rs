@@ -31,7 +31,11 @@ impl Queues {
             .and_then(|size| size.checked_add(pixel_count.checked_mul(32)?))
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
         let wavefront_words = wavefront_words
-            .checked_add(pixel_count)
+            .checked_add(
+                pixel_count
+                    .checked_mul(16)
+                    .ok_or_else(|| PbrtError::error("WebGPU shadow queue size overflowed."))?,
+            )
             .and_then(|size| size.checked_add(classification_capacity.checked_mul(3)?))
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
         let wavefront_size = wavefront_words
