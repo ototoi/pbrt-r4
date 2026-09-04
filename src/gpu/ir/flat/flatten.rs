@@ -10,7 +10,7 @@ use crate::gpu::ir::node::{
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
-use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use crate::util::spectrum::{Spectrum, SpectrumType};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -408,11 +408,11 @@ fn point_light(
     let intensity = light
         .params
         .get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
-    let photometric = spectrum_to_photometric(&intensity);
+    // See the area-light emission note below: the v4 photometric division
+    // cancels the illuminant scale carried by the spectral Sample(). Since we
+    // emit the nominal RGB from `to_rgb()`, dividing by the photometric here
+    // would darken the light by ~photometric (~107x for a white illuminant).
     let mut scale = light.params.get_one_float("scale", 1.0);
-    if photometric > 0.0 {
-        scale /= photometric;
-    }
     let power = light.params.get_one_float("power", -1.0);
     if power > 0.0 {
         scale *= power / (4.0 * std::f32::consts::PI);
@@ -461,11 +461,15 @@ fn area_light_record(
         light
             .params
             .get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
-    let photometric = spectrum_to_photometric(&emission_spectrum);
+    // pbrt-v4 divides `scale` by SpectrumToPhotometric(L) (lights.cpp:910),
+    // but that normalization exactly cancels the illuminant's photometric
+    // scale carried by `L->Sample(lambda)` when the emitted spectrum is
+    // converted back to RGB. Because we emit the nominal RGB from
+    // `to_rgb()` directly (which already excludes that factor), applying the
+    // photometric division here would darken the light by ~photometric
+    // (~107x for a white illuminant). So the RGB emission is just the user
+    // `scale` times the nominal RGB.
     let mut scale = light.params.get_one_float("scale", 1.0);
-    if photometric > 0.0 {
-        scale /= photometric;
-    }
     let power = light.params.get_one_float("power", -1.0);
     if power > 0.0 {
         scale *= power / (4.0 * std::f32::consts::PI);
