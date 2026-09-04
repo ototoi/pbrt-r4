@@ -4,10 +4,10 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let ray_index = global_id.y * viewport.width + global_id.x;
-    if (ray_index >= atomicLoad(&current_ray_queue_state.count)) {
+    if (ray_index >= current_ray_count()) {
         return;
     }
-    let ray = current_ray_queue[ray_index];
+    let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     if (ray.is_active == 0u) {
         surfaces[pixel_index].hit = 0u;

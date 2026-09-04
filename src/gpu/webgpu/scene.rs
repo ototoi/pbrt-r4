@@ -66,7 +66,8 @@ impl Scene {
                 Ok(Instance {
                     geometry: instance.geometry,
                     material: instance.material,
-                    padding: [0; 2],
+                    area_light: resolve_area_light_index(instance.area_light, &flat)?,
+                    padding: 0,
                     world_from_object: row_major_to_columns(instance.transform),
                     normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
                 })
@@ -168,6 +169,9 @@ impl Scene {
         let light_words = std::mem::size_of::<PointLight>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU point-light ABI is not word-aligned."))?;
+        let area_light_words = std::mem::size_of::<AreaLight>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU area-light ABI is not word-aligned."))?;
         let material_words_total = materials
             .len()
             .checked_mul(material_words)
@@ -178,6 +182,11 @@ impl Scene {
             &flat.render_settings,
             materials.len(),
             point_lights.len(),
+            material_words_total
+                .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
+                    PbrtError::error("WebGPU point-light buffer size overflowed.")
+                })?)
+                .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?,
         )?;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
         {
@@ -211,12 +220,16 @@ impl Scene {
                 .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
                     PbrtError::error("WebGPU point-light buffer size overflowed.")
                 })?)
+                .and_then(|size| size.checked_add(area_lights.len().checked_mul(area_light_words)?))
                 .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
         );
         for material in &materials {
             material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
         }
         for light in &point_lights {
+            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
+        }
+        for light in &area_lights {
             material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -297,6 +310,27 @@ impl Scene {
             bytemuck::cast_slice(&self.materials),
         );
     }
+}
+
+fn resolve_area_light_index(handle: u32, flat: &flat::Scene) -> Result<u32, PbrtError> {
+    if handle == flat::INVALID_INDEX {
+        return Ok(flat::INVALID_INDEX);
+    }
+    let record = flat
+        .lights
+        .get(handle as usize)
+        .ok_or_else(|| PbrtError::error("Flat instance references an invalid light handle."))?;
+    if record.kind != flat::LightKind::Area {
+        return Err(PbrtError::error(
+            "Flat instance area-light handle does not reference an area light.",
+        ));
+    }
+    if record.payload as usize >= flat.area_lights.len() {
+        return Err(PbrtError::error(
+            "Flat instance area-light record references an invalid area light.",
+        ));
+    }
+    Ok(record.payload)
 }
 
 fn convert_geometry(
