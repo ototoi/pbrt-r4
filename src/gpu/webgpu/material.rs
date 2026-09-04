@@ -22,6 +22,7 @@ impl MaterialKind {
             "normal" => Ok(Self::Normal),
             "uv" => Ok(Self::Uv),
             "diffuse" => Ok(Self::Diffuse),
+            "lambert" => Ok(Self::Lambert),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
