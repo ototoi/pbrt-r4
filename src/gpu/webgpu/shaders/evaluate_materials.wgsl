@@ -98,13 +98,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_radiance = light_radiance / distance_squared;
     }
     let direct = light_radiance * (0.5 / PI) * cosine / sampled_light_pdf;
-    surfaces[pixel_index].shadow_origin = vec4<f32>(
-        offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.normal.xyz),
-        1.0,
-    );
-    surfaces[pixel_index].shadow_direction = vec4<f32>(wi, 0.0);
-    surfaces[pixel_index].shadow_t = distance - dot(abs(wi), surface.position_error.xyz);
-    surfaces[pixel_index].direct = vec4<f32>(direct, 0.0);
     append_shadow_ray(
         pixel_index,
         offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.normal.xyz),

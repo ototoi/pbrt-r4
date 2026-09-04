@@ -89,13 +89,8 @@ pub struct SurfaceWorkItem {
     pub position: [f32; 4],
     pub position_error: [f32; 4],
     pub normal: [f32; 4],
-    pub shadow_origin: [f32; 4],
-    pub shadow_direction: [f32; 4],
-    pub shadow_t: f32,
-    pub shadow_visible: u32,
     pub material: u32,
     pub flags: u32,
-    pub direct: [f32; 4],
 }
 
 #[repr(C)]
