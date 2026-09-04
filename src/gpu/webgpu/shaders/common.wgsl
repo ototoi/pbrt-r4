@@ -88,6 +88,11 @@ struct QueueState {
     _padding: u32,
 };
 
+struct LightSelection {
+    index: u32,
+    pmf: f32,
+};
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 @group(0) @binding(1)
@@ -431,6 +436,16 @@ fn random01(pixel_index: u32, dimension: u32) -> f32 {
         ^ (viewport.sample_index * 0x85ebca6bu)
         ^ (dimension * 0xc2b2ae35u);
     return f32(hash_u32(value) & 0x00ffffffu) / 16777216.0;
+}
+
+fn sample_uniform_light(pixel_index: u32) -> LightSelection {
+    if (viewport.light_count == 0u) {
+        return LightSelection(0u, 0.0);
+    }
+    return LightSelection(
+        hash_u32(viewport.seed ^ pixel_index ^ viewport.sample_index) % viewport.light_count,
+        1.0 / f32(viewport.light_count),
+    );
 }
 
 fn make_tangent(normal: vec3<f32>) -> vec3<f32> {
