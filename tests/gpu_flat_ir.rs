@@ -31,6 +31,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
                 Vec2f([0.0, 1.0]),
             ]),
         })),
+        reverse_orientation: false,
     }));
     node.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {
@@ -220,6 +221,23 @@ fn flatten_node_shares_geometry_across_instances() {
 }
 
 #[test]
+fn flatten_node_preserves_shape_reverse_orientation() {
+    let mut root = Node::new("root");
+    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    let shape = triangle_node("reversed", "matte", [0.0, 0.0, 0.0]);
+    if let Component::Shape(component) = &mut shape.write().unwrap().components[0] {
+        component.reverse_orientation = true;
+    }
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert!(scene.instances[0].reverse_orientation);
+}
+
+#[test]
 fn flatten_node_requires_tessellated_shapes() {
     let mut root = Node::new("root");
     let mut shape = Node::new("sphere");
@@ -227,6 +245,7 @@ fn flatten_node_requires_tessellated_shapes() {
         shape: Shape::Sphere(Box::new(pbrt_r4::gpu::ir::node::SphereShape {
             params: Default::default(),
         })),
+        reverse_orientation: false,
     }));
     shape.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {

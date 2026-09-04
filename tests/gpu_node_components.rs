@@ -32,6 +32,7 @@ fn node_components_wrap_declarative_resources() {
         shape: Shape::Sphere(Box::new(SphereShape {
             params: sphere_params,
         })),
+        reverse_orientation: false,
     });
     let material_component = Component::Material(MaterialComponent {
         material: Arc::clone(&material),
@@ -107,6 +108,7 @@ fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
             shape: Shape::Sphere(Box::new(SphereShape {
                 params: Default::default(),
             })),
+            reverse_orientation: false,
         }));
     let mut root = Node::new("root");
     root.add_child(child);
@@ -116,6 +118,7 @@ fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
     let child = root.children[0].read().unwrap();
     let Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(mesh),
+        ..
     }) = &child.components[0]
     else {
         panic!("sphere was not tessellated to a triangle mesh");
@@ -137,6 +140,7 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
             shape: Shape::Sphere(Box::new(SphereShape {
                 params: Default::default(),
             })),
+            reverse_orientation: false,
         }));
     let mut root = Node::new("root");
     root.add_child(child);
@@ -146,6 +150,7 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
     let child = root.children[0].read().unwrap();
     let Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(mesh),
+        ..
     }) = &child.components[0]
     else {
         panic!("sphere was not tessellated to a triangle mesh");
@@ -221,6 +226,7 @@ end_header
             .find_map(|component| match component {
                 Component::Shape(ShapeComponent {
                     shape: Shape::TriangleMesh(mesh),
+                    ..
                 }) => Some((
                     mesh.positions.len(),
                     mesh.indices.len(),

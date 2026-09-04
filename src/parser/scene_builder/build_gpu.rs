@@ -255,7 +255,10 @@ impl SceneBuilder {
         };
         let mut node = Node::new(&shape.base.name);
         node.transform = node_transform(&shape.render_from_object.primary());
-        node.add_component(Component::Shape(ShapeComponent { shape: shape_value }));
+        node.add_component(Component::Shape(ShapeComponent {
+            shape: shape_value,
+            reverse_orientation: shape.reverse_orientation,
+        }));
 
         // Object definitions are shared by ObjectInstance and must not create
         // one AreaLight per definition. The occurrence-specific light is a

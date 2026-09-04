@@ -62,7 +62,10 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let p2 = (area_instance.world_from_object * vertices[i2].position).xyz;
         light_position = p0 * b0 + p1 * b1 + p2 * b2;
         light_radiance = load_area_emission(light_payload).xyz;
-        let light_normal = normalize(cross(p1 - p0, p2 - p0));
+        var light_normal = normalize(cross(p1 - p0, p2 - p0));
+        if ((area_instance.orientation_flags & 1u) != 0u) {
+            light_normal = -light_normal;
+        }
         let area_to_light = light_position - surface.position.xyz;
         let area_distance_squared = dot(area_to_light, area_to_light);
         if (area_distance_squared <= 0.0) {

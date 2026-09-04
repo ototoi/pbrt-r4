@@ -37,6 +37,13 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);
     }
+    if ((instance.orientation_flags & 1u) != 0u) {
+        geometric_normal = -geometric_normal;
+        normal = -normal;
+    }
+    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
+        normal = -normal;
+    }
     let material_kind = load_material_kind(instance.material);
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);

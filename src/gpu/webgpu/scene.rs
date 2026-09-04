@@ -68,7 +68,8 @@ impl Scene {
                     geometry: instance.geometry,
                     material: instance.material,
                     area_light: resolve_area_light_index(instance.area_light, &flat)?,
-                    padding: 0,
+                    orientation_flags: u32::from(instance.reverse_orientation)
+                        | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
                     world_from_object: row_major_to_columns(instance.transform),
                     normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
                 })
