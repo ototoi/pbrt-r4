@@ -9,6 +9,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
+    let samples = load_ray_samples(pixel_index);
     let surface = surfaces[pixel_index];
     if (surface.hit == 0u || surface.flags != 0u) {
         return;
@@ -20,7 +21,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
-    let u = vec2<f32>(random01(pixel_index, 6u, ray.depth), random01(pixel_index, 7u, ray.depth));
+    let u = vec2<f32>(samples.indirect.z, samples.indirect.w);
     let radius = sqrt(u.x);
     let phi = 2.0 * PI * u.y;
     var local = vec3<f32>(
@@ -45,7 +46,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
             0.0,
         ) / max(ray.inv_w_u, 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
-        if (random01(pixel_index, 8u, ray.depth) < q) {
+        if (samples.indirect.y < q) {
             return;
         }
         next_throughput = next_throughput / max(1.0 - q, 1e-7);
@@ -66,5 +67,6 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         atomicStore(&wavefront_queue[NEXT_OVERFLOW], 1u);
         return;
     }
+    store_ray_samples(pixel_index, generate_ray_samples(pixel_index, ray.depth + 1u));
     store_next_ray(next_index, next_ray);
 }

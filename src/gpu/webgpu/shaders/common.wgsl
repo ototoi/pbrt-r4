@@ -49,6 +49,11 @@ struct Instance {
     normal_from_object: mat4x4<f32>,
 };
 
+struct RaySamples {
+    direct: vec4<f32>,
+    indirect: vec4<f32>,
+};
+
 struct RayWorkItem {
     origin: vec4<f32>,
     direction: vec4<f32>,
@@ -168,6 +173,34 @@ fn store_sample_metadata(pixel_index: u32) {
     atomicStore(&wavefront_queue[sample_state_word(pixel_index, 5u)], viewport.sample_index);
     atomicStore(&wavefront_queue[sample_state_word(pixel_index, 6u)], 0u);
     atomicStore(&wavefront_queue[sample_state_word(pixel_index, 7u)], 0u);
+}
+
+fn load_ray_samples(pixel_index: u32) -> RaySamples {
+    return RaySamples(
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 8u)])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 9u)])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 10u)])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 11u)])),
+        ),
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 12u)])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 13u)])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 14u)])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 15u)])),
+        ),
+    );
+}
+
+fn store_ray_samples(pixel_index: u32, samples: RaySamples) {
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 8u)], bitcast<u32>(samples.direct.x));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 9u)], bitcast<u32>(samples.direct.y));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 10u)], bitcast<u32>(samples.direct.z));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 11u)], bitcast<u32>(samples.direct.w));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 12u)], bitcast<u32>(samples.indirect.x));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 13u)], bitcast<u32>(samples.indirect.y));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 14u)], bitcast<u32>(samples.indirect.z));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 15u)], bitcast<u32>(samples.indirect.w));
 }
 
 fn shadow_data_offset() -> u32 {
@@ -504,11 +537,27 @@ fn random01(pixel_index: u32, dimension: u32, depth: u32) -> f32 {
     return f32(hash_u32(value) & 0x00ffffffu) / 16777216.0;
 }
 
-fn sample_uniform_light(pixel_index: u32, depth: u32) -> LightSelection {
+fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
+    return RaySamples(
+        vec4<f32>(
+            random01(pixel_index, 2u, depth),
+            random01(pixel_index, 3u, depth),
+            random01(pixel_index, 4u, depth),
+            0.0,
+        ),
+        vec4<f32>(
+            random01(pixel_index, 5u, depth),
+            random01(pixel_index, 6u, depth),
+            random01(pixel_index, 7u, depth),
+            random01(pixel_index, 8u, depth),
+        ),
+    );
+}
+
+fn sample_uniform_light(selector: f32) -> LightSelection {
     if (viewport.light_count == 0u) {
         return LightSelection(0u, 0.0);
     }
-    let selector = random01(pixel_index, 2u, depth);
     return LightSelection(
         min(u32(selector * f32(viewport.light_count)), viewport.light_count - 1u),
         1.0 / f32(viewport.light_count),
