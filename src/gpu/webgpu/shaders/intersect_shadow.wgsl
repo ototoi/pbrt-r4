@@ -32,5 +32,6 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         surfaces[pixel_index].shadow_visible = 1u;
     } else {
         surfaces[pixel_index].shadow_visible = 2u;
+        surfaces[pixel_index].direct = vec4<f32>(0.0);
     }
 }

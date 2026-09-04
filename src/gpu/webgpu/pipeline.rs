@@ -12,7 +12,6 @@ pub struct Pipeline {
     pub handle_emissive: wgpu::ComputePipeline,
     pub evaluate_materials: wgpu::ComputePipeline,
     pub intersect_shadow: wgpu::ComputePipeline,
-    pub finish_shadow: wgpu::ComputePipeline,
     pub sample_diffuse_bounce: wgpu::ComputePipeline,
     pub swap_ray_queues: wgpu::ComputePipeline,
     pub reset_next_ray_queue: wgpu::ComputePipeline,
@@ -104,11 +103,6 @@ impl Pipeline {
                 "pbrt-r4 intersect shadow",
                 include_str!("shaders/intersect_shadow.wgsl"),
                 "intersect_shadow",
-            ),
-            finish_shadow: compute(
-                "pbrt-r4 finish shadow",
-                include_str!("shaders/finish_shadow.wgsl"),
-                "finish_shadow",
             ),
             sample_diffuse_bounce: compute(
                 "pbrt-r4 sample diffuse bounce",
