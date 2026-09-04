@@ -5,6 +5,7 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let pixel_index = global_id.y * viewport.width + global_id.x;
     let jitter = vec2<f32>(random01(pixel_index, 0u, 0u), random01(pixel_index, 1u, 0u));
+    store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));
     let pixel = vec4<f32>(
         f32(global_id.x) + jitter.x - 0.5,
         f32(global_id.y) + jitter.y - 0.5,
