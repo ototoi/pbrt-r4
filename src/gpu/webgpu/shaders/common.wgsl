@@ -7,6 +7,7 @@ const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
 const LIGHT_KIND_AREA: u32 = 1u;
+const LIGHT_KIND_POINT: u32 = 0u;
 
 struct CameraUniform {
     camera_to_world: mat4x4<f32>,
@@ -214,7 +215,7 @@ fn load_material_kind(index: u32) -> u32 {
 }
 
 fn load_point_light(index: u32) -> PointLight {
-    let base = viewport.light_data_offset + index * 8u;
+    let base = viewport.light_data_offset + viewport.light_count * 4u + index * 8u;
     return PointLight(
         vec4<f32>(
             bitcast<f32>(material_light_data[base]),
@@ -229,6 +230,14 @@ fn load_point_light(index: u32) -> PointLight {
             bitcast<f32>(material_light_data[base + 7u]),
         ),
     );
+}
+
+fn load_light_kind(index: u32) -> u32 {
+    return material_light_data[viewport.light_data_offset + index * 4u];
+}
+
+fn load_light_payload(index: u32) -> u32 {
+    return material_light_data[viewport.light_data_offset + index * 4u + 1u];
 }
 
 fn hash_u32(value: u32) -> u32 {

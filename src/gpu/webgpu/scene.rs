@@ -169,6 +169,9 @@ impl Scene {
         let light_words = std::mem::size_of::<PointLight>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU point-light ABI is not word-aligned."))?;
+        let light_record_words = std::mem::size_of::<LightRecord>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU light-record ABI is not word-aligned."))?;
         let area_light_words = std::mem::size_of::<AreaLight>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU area-light ABI is not word-aligned."))?;
@@ -181,11 +184,17 @@ impl Scene {
             &flat.viewport,
             &flat.render_settings,
             materials.len(),
-            point_lights.len(),
+            light_records.len(),
             material_words_total
-                .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
-                    PbrtError::error("WebGPU point-light buffer size overflowed.")
-                })?)
+                .checked_add(
+                    light_records
+                        .len()
+                        .checked_mul(light_record_words)
+                        .ok_or_else(|| {
+                            PbrtError::error("WebGPU light-record buffer offset overflowed.")
+                        })?,
+                )
+                .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
                 .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?,
         )?;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
@@ -217,14 +226,23 @@ impl Scene {
         });
         let mut material_light_data = Vec::<u32>::with_capacity(
             material_words_total
-                .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
-                    PbrtError::error("WebGPU point-light buffer size overflowed.")
-                })?)
+                .checked_add(
+                    light_records
+                        .len()
+                        .checked_mul(light_record_words)
+                        .ok_or_else(|| {
+                            PbrtError::error("WebGPU light-record buffer size overflowed.")
+                        })?,
+                )
+                .and_then(|size| size.checked_add(point_lights.len().checked_mul(light_words)?))
                 .and_then(|size| size.checked_add(area_lights.len().checked_mul(area_light_words)?))
                 .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
         );
         for material in &materials {
             material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
+        }
+        for record in &light_records {
+            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(record)));
         }
         for light in &point_lights {
             material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));

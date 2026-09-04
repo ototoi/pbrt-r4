@@ -245,7 +245,7 @@ pub fn viewport_uniform(
         ));
     }
     let light_count = u32::try_from(light_count)
-        .map_err(|_| PbrtError::error("WebGPU point light count does not fit in u32."))?;
+        .map_err(|_| PbrtError::error("WebGPU light count does not fit in u32."))?;
     let light_data_offset = material_count
         .checked_mul(std::mem::size_of::<Material>() / std::mem::size_of::<u32>())
         .and_then(|offset| u32::try_from(offset).ok())
