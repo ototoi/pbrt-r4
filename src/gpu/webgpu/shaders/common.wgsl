@@ -117,9 +117,17 @@ const NEXT_COUNT: u32 = 4u;
 const NEXT_OVERFLOW: u32 = 6u;
 const SHADOW_COUNT: u32 = 8u;
 const SHADOW_OVERFLOW: u32 = 10u;
-const RAY_DATA_OFFSET: u32 = 16u;
+const MATERIAL_COUNT: u32 = 12u;
+const MATERIAL_OVERFLOW: u32 = 14u;
+const HIT_AREA_COUNT: u32 = 16u;
+const HIT_AREA_OVERFLOW: u32 = 18u;
+const RAY_DATA_OFFSET: u32 = 24u;
 const RAY_WORDS: u32 = 16u;
-const SHADOW_DATA_OFFSET: u32 = 16u;
+const SHADOW_DATA_OFFSET: u32 = 24u;
+
+fn classification_capacity() -> u32 {
+    return pixel_count() * (viewport.max_depth + 1u);
+}
 
 fn current_ray_count() -> u32 {
     return atomicLoad(&wavefront_queue[CURRENT_COUNT]);
@@ -148,6 +156,31 @@ fn append_shadow_ray(pixel_index: u32) {
 
 fn load_shadow_pixel(index: u32) -> u32 {
     return atomicLoad(&wavefront_queue[shadow_ray_word(index)]);
+}
+
+fn classification_word(base: u32, index: u32) -> u32 {
+    return SHADOW_DATA_OFFSET + pixel_count() * RAY_WORDS * 2u + pixel_count() + base + index;
+}
+
+fn append_material_eval(pixel_index: u32) {
+    let index = atomicAdd(&wavefront_queue[MATERIAL_COUNT], 1u);
+    if (index < classification_capacity()) {
+        atomicStore(&wavefront_queue[classification_word(0u, index)], pixel_index);
+    } else {
+        atomicStore(&wavefront_queue[MATERIAL_OVERFLOW], 1u);
+    }
+}
+
+fn append_hit_area_light(pixel_index: u32) {
+    let index = atomicAdd(&wavefront_queue[HIT_AREA_COUNT], 1u);
+    if (index < classification_capacity()) {
+        atomicStore(
+            &wavefront_queue[classification_word(classification_capacity(), index)],
+            pixel_index,
+        );
+    } else {
+        atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 1u);
+    }
 }
 
 fn current_ray_word(index: u32, word: u32) -> u32 {

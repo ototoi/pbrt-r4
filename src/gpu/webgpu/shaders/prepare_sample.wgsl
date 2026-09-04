@@ -11,6 +11,10 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
         atomicStore(&wavefront_queue[NEXT_OVERFLOW], 0u);
         atomicStore(&wavefront_queue[SHADOW_COUNT], 0u);
         atomicStore(&wavefront_queue[SHADOW_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[MATERIAL_COUNT], 0u);
+        atomicStore(&wavefront_queue[MATERIAL_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[HIT_AREA_COUNT], 0u);
+        atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 0u);
     }
     framebuffer[pixel_index] = vec4<f32>(0.0);
     surfaces[pixel_index].hit = 0u;

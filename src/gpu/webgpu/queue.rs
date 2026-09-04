@@ -10,16 +10,24 @@ pub struct Queues {
 }
 
 impl Queues {
-    pub fn new(device: &wgpu::Device, pixel_count: u64) -> Result<Self, PbrtError> {
+    pub fn new(device: &wgpu::Device, pixel_count: u64, max_depth: u32) -> Result<Self, PbrtError> {
         let surface_size = pixel_count
             .checked_mul(std::mem::size_of::<SurfaceWorkItem>() as u64)
             .ok_or_else(|| PbrtError::error("WebGPU surface queue size overflowed."))?;
         // The packed queue contains two RayWorkItem arrays preceded by eight
         // u32 words for the current/next counters and overflow flags.
-        let wavefront_words = 16u64
-            .checked_add(pixel_count.checked_mul(33).ok_or_else(|| {
+        let classification_capacity =
+            pixel_count
+                .checked_mul(u64::from(max_depth).checked_add(1).ok_or_else(|| {
+                    PbrtError::error("WebGPU classification queue depth overflowed.")
+                })?)
+                .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
+        let wavefront_words = 24u64
+            .checked_add(pixel_count.checked_mul(32).ok_or_else(|| {
                 PbrtError::error("WebGPU packed wavefront queue size overflowed.")
             })?)
+            .and_then(|size| size.checked_add(pixel_count))
+            .and_then(|size| size.checked_add(classification_capacity.checked_mul(2)?))
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
         let wavefront_size = wavefront_words
             .checked_mul(std::mem::size_of::<u32>() as u64)
@@ -41,7 +49,7 @@ impl Queues {
             }),
             state_readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 wavefront queue state readback"),
-                size: 32,
+                size: 80,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -49,7 +57,7 @@ impl Queues {
     }
 
     pub fn copy_state_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_buffer_to_buffer(&self.wavefront, 0, &self.state_readback, 0, 32);
+        encoder.copy_buffer_to_buffer(&self.wavefront, 0, &self.state_readback, 0, 80);
     }
 
     pub fn read_overflow(&self, device: &wgpu::Device) -> Result<bool, PbrtError> {
@@ -78,7 +86,9 @@ impl Queues {
             .map_err(|_| PbrtError::error("WebGPU queue-state readback was not u32-aligned."))?;
         let overflowed = words.get(2).copied().unwrap_or(0) != 0
             || words.get(6).copied().unwrap_or(0) != 0
-            || words.get(10).copied().unwrap_or(0) != 0;
+            || words.get(10).copied().unwrap_or(0) != 0
+            || words.get(14).copied().unwrap_or(0) != 0
+            || words.get(18).copied().unwrap_or(0) != 0;
         drop(mapped);
         self.state_readback.unmap();
         Ok(overflowed)
