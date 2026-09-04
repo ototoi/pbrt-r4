@@ -17,9 +17,9 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
         return;
     }
-    framebuffer[pixel_index] = vec4<f32>(
-        framebuffer[pixel_index].xyz + ray.throughput.xyz * surface.direct.xyz,
-        1.0,
+    store_sample_radiance(
+        pixel_index,
+        vec4<f32>(load_sample_radiance(pixel_index).xyz + ray.throughput.xyz * surface.direct.xyz, 1.0),
     );
 
     let normal = surface.normal.xyz;

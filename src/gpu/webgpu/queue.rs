@@ -14,7 +14,7 @@ impl Queues {
         let surface_size = pixel_count
             .checked_mul(std::mem::size_of::<SurfaceWorkItem>() as u64)
             .ok_or_else(|| PbrtError::error("WebGPU surface queue size overflowed."))?;
-        // The packed queue contains two RayWorkItem arrays preceded by eight
+        // The packed queue contains per-pixel state and two RayWorkItem arrays preceded by eight
         // u32 words for the current/next counters and overflow flags.
         let classification_capacity =
             pixel_count
@@ -23,10 +23,15 @@ impl Queues {
                 })?)
                 .ok_or_else(|| PbrtError::error("WebGPU classification queue size overflowed."))?;
         let wavefront_words = 24u64
-            .checked_add(pixel_count.checked_mul(32).ok_or_else(|| {
-                PbrtError::error("WebGPU packed wavefront queue size overflowed.")
-            })?)
-            .and_then(|size| size.checked_add(pixel_count))
+            .checked_add(
+                pixel_count.checked_mul(8).ok_or_else(|| {
+                    PbrtError::error("WebGPU pixel sample state size overflowed.")
+                })?,
+            )
+            .and_then(|size| size.checked_add(pixel_count.checked_mul(32)?))
+            .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
+        let wavefront_words = wavefront_words
+            .checked_add(pixel_count)
             .and_then(|size| size.checked_add(classification_capacity.checked_mul(3)?))
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
         let wavefront_size = wavefront_words

@@ -123,9 +123,44 @@ const HIT_AREA_COUNT: u32 = 16u;
 const HIT_AREA_OVERFLOW: u32 = 18u;
 const ESCAPED_COUNT: u32 = 20u;
 const ESCAPED_OVERFLOW: u32 = 22u;
-const RAY_DATA_OFFSET: u32 = 24u;
 const RAY_WORDS: u32 = 16u;
-const SHADOW_DATA_OFFSET: u32 = 24u;
+const SAMPLE_STATE_OFFSET: u32 = 24u;
+const SAMPLE_STATE_WORDS: u32 = 8u;
+
+fn sample_state_word(pixel_index: u32, word: u32) -> u32 {
+    return SAMPLE_STATE_OFFSET + pixel_index * SAMPLE_STATE_WORDS + word;
+}
+
+fn ray_data_offset() -> u32 {
+    return SAMPLE_STATE_OFFSET + pixel_count() * SAMPLE_STATE_WORDS;
+}
+
+fn load_sample_radiance(pixel_index: u32) -> vec4<f32> {
+    return vec4<f32>(
+        bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 0u)])),
+        bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 1u)])),
+        bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 2u)])),
+        bitcast<f32>(atomicLoad(&wavefront_queue[sample_state_word(pixel_index, 3u)])),
+    );
+}
+
+fn store_sample_radiance(pixel_index: u32, radiance: vec4<f32>) {
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 0u)], bitcast<u32>(radiance.x));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 1u)], bitcast<u32>(radiance.y));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 2u)], bitcast<u32>(radiance.z));
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 3u)], bitcast<u32>(radiance.w));
+}
+
+fn store_sample_metadata(pixel_index: u32) {
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 4u)], pixel_index);
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 5u)], viewport.sample_index);
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 6u)], 0u);
+    atomicStore(&wavefront_queue[sample_state_word(pixel_index, 7u)], 0u);
+}
+
+fn shadow_data_offset() -> u32 {
+    return ray_data_offset() + pixel_count() * RAY_WORDS * 2u;
+}
 
 fn classification_capacity() -> u32 {
     return pixel_count() * (viewport.max_depth + 1u);
@@ -144,7 +179,7 @@ fn shadow_ray_count() -> u32 {
 }
 
 fn shadow_ray_word(index: u32) -> u32 {
-    return SHADOW_DATA_OFFSET + pixel_count() * RAY_WORDS * 2u + index;
+    return shadow_data_offset() + index;
 }
 
 fn append_shadow_ray(pixel_index: u32) {
@@ -161,7 +196,7 @@ fn load_shadow_pixel(index: u32) -> u32 {
 }
 
 fn classification_word(base: u32, index: u32) -> u32 {
-    return SHADOW_DATA_OFFSET + pixel_count() * RAY_WORDS * 2u + pixel_count() + base + index;
+    return shadow_data_offset() + pixel_count() + base + index;
 }
 
 fn append_material_eval(pixel_index: u32) {
@@ -212,7 +247,7 @@ fn load_hit_area_pixel(index: u32) -> u32 {
 }
 
 fn escaped_data_offset() -> u32 {
-    return SHADOW_DATA_OFFSET
+    return shadow_data_offset()
         + pixel_count() * RAY_WORDS * 2u
         + pixel_count()
         + classification_capacity() * 2u;
@@ -232,11 +267,11 @@ fn append_escaped_ray(pixel_index: u32) {
 }
 
 fn current_ray_word(index: u32, word: u32) -> u32 {
-    return RAY_DATA_OFFSET + index * RAY_WORDS + word;
+    return ray_data_offset() + index * RAY_WORDS + word;
 }
 
 fn next_ray_word(index: u32, word: u32) -> u32 {
-    return RAY_DATA_OFFSET + pixel_count() * RAY_WORDS + index * RAY_WORDS + word;
+    return ray_data_offset() + pixel_count() * RAY_WORDS + index * RAY_WORDS + word;
 }
 
 fn load_ray(base: u32) -> RayWorkItem {
