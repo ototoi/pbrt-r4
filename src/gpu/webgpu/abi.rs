@@ -54,7 +54,7 @@ pub struct Instance {
     pub geometry: u32,
     pub material: u32,
     pub area_light: u32,
-    pub padding: u32,
+    pub orientation_flags: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
 }

@@ -44,7 +44,7 @@ struct Instance {
     geometry: u32,
     material: u32,
     area_light: u32,
-    _padding: u32,
+    orientation_flags: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
 };

@@ -185,7 +185,13 @@ fn flatten_node_ref(
                             node.name
                         ))
                     })?;
-                    shapes.push((component_index, shape, material, area_light.clone()));
+                    shapes.push((
+                        component_index,
+                        shape,
+                        material,
+                        area_light.clone(),
+                        component.reverse_orientation,
+                    ));
                 }
                 Component::Instance(component) => {
                     instances.push((
@@ -277,7 +283,7 @@ fn flatten_node_ref(
             payload: point_light_index,
         });
     }
-    for (component_index, shape, material, area_light) in shapes {
+    for (component_index, shape, material, area_light, reverse_orientation) in shapes {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
         let material = material_index(&material, builder, material_kind)?;
         let instance_index = u32::try_from(builder.instances.len())
@@ -303,6 +309,7 @@ fn flatten_node_ref(
             transform: world_transform,
             material,
             area_light: area_light_handle,
+            reverse_orientation,
         });
     }
     for (target, instance_transform) in instances {

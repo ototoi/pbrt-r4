@@ -6,4 +6,5 @@ pub struct Instance {
     pub transform: Transform,
     pub material: u32,
     pub area_light: u32,
+    pub reverse_orientation: bool,
 }

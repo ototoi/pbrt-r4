@@ -58,6 +58,7 @@ pub struct CameraComponent {
 #[derive(Clone)]
 pub struct ShapeComponent {
     pub shape: Shape,
+    pub reverse_orientation: bool,
 }
 
 #[derive(Clone)]
