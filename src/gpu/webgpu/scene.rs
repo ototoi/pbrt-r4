@@ -10,6 +10,7 @@ use super::abi::{
     ViewportUniform, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
+use super::light::build_triangle_cdf;
 use super::material::MaterialKind;
 use super::output::Output;
 
@@ -578,28 +579,17 @@ fn build_triangle_distributions(
                 "WebGPU area light {area_index} has no valid triangles."
             )));
         }
-        let mut cumulative = 0.0f32;
-        let mut previous_cdf = 0.0f32;
-        for (entry_index, (primitive, area)) in areas.iter().enumerate() {
-            cumulative += *area / total_area;
-            let cdf = if entry_index + 1 == areas.len() {
-                1.0
-            } else {
-                cumulative
-            };
-            if !cdf.is_finite() || (entry_index > 0 && cdf <= previous_cdf) {
-                return Err(PbrtError::error(&format!(
-                    "WebGPU area light {area_index} triangle CDF is not strictly increasing."
-                )));
-            }
+        let (cdf_total_area, cdf) = build_triangle_cdf(&areas).map_err(|error| {
+            PbrtError::error(&format!("WebGPU area light {area_index}: {error}"))
+        })?;
+        for (primitive, cdf) in cdf {
             distributions.push(TriangleDistributionEntry {
-                primitive: *primitive,
+                primitive,
                 cdf,
                 padding: [0; 2],
             });
-            previous_cdf = cdf;
         }
-        area_light.total_area = total_area;
+        area_light.total_area = cdf_total_area;
         area_light.triangle_distribution_offset = distribution_offset;
         area_light.triangle_distribution_count = u32::try_from(areas.len()).map_err(|_| {
             PbrtError::error("WebGPU triangle distribution count does not fit in u32.")
