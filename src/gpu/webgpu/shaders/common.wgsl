@@ -132,7 +132,7 @@ const RENDER_ERROR: u32 = 23u;
 const QUEUE_STATE_WORDS: u32 = 24u;
 const RAY_WORDS: u32 = 20u;
 const SAMPLE_STATE_OFFSET: u32 = QUEUE_STATE_WORDS;
-const SAMPLE_STATE_WORDS: u32 = 8u;
+const SAMPLE_STATE_WORDS: u32 = 16u;
 
 fn sample_state_word(pixel_index: u32, word: u32) -> u32 {
     return SAMPLE_STATE_OFFSET + pixel_index * SAMPLE_STATE_WORDS + word;

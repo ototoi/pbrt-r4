@@ -6,14 +6,14 @@ fn packed_wavefront_regions_follow_the_shader_layout() {
 
     assert_eq!(QUEUE_STATE_WORDS, 24);
     assert_eq!(layout.sample_state_offset_words, 24);
-    assert_eq!(layout.ray_data_offset_words, 48);
-    assert_eq!(layout.shadow_data_offset_words, 168);
-    assert_eq!(layout.material_data_offset_words, 228);
-    assert_eq!(layout.hit_area_data_offset_words, 237);
-    assert_eq!(layout.escaped_data_offset_words, 246);
-    assert_eq!(layout.total_words, 255);
+    assert_eq!(layout.ray_data_offset_words, 72);
+    assert_eq!(layout.shadow_data_offset_words, 192);
+    assert_eq!(layout.material_data_offset_words, 252);
+    assert_eq!(layout.hit_area_data_offset_words, 261);
+    assert_eq!(layout.escaped_data_offset_words, 270);
+    assert_eq!(layout.total_words, 279);
     assert_eq!(layout.state_readback_size_bytes(), 96);
-    assert_eq!(layout.wavefront_size_bytes().unwrap(), 1020);
+    assert_eq!(layout.wavefront_size_bytes().unwrap(), 1116);
 }
 
 #[test]
