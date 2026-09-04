@@ -8,12 +8,14 @@ pub struct Pipeline {
     pub intersect_primary_rays: wgpu::ComputePipeline,
     pub prepare_sample: wgpu::ComputePipeline,
     pub shade_surface: wgpu::ComputePipeline,
+    pub evaluate_materials: wgpu::ComputePipeline,
     pub intersect_shadow: wgpu::ComputePipeline,
     pub finish_shadow: wgpu::ComputePipeline,
     pub sample_diffuse_bounce: wgpu::ComputePipeline,
     pub swap_ray_queues: wgpu::ComputePipeline,
     pub reset_next_ray_queue: wgpu::ComputePipeline,
     pub reset_shadow_queue: wgpu::ComputePipeline,
+    pub reset_classification_queues: wgpu::ComputePipeline,
     pub accumulate_sample: wgpu::ComputePipeline,
 }
 
@@ -81,6 +83,11 @@ impl Pipeline {
                 include_str!("shaders/shade_surface.wgsl"),
                 "shade_surface",
             ),
+            evaluate_materials: compute(
+                "pbrt-r4 evaluate materials",
+                include_str!("shaders/evaluate_materials.wgsl"),
+                "evaluate_materials",
+            ),
             intersect_shadow: compute(
                 "pbrt-r4 intersect shadow",
                 include_str!("shaders/intersect_shadow.wgsl"),
@@ -110,6 +117,11 @@ impl Pipeline {
                 "pbrt-r4 reset shadow queue",
                 include_str!("shaders/reset_shadow_queue.wgsl"),
                 "reset_shadow_queue",
+            ),
+            reset_classification_queues: compute(
+                "pbrt-r4 reset classification queues",
+                include_str!("shaders/reset_classification_queues.wgsl"),
+                "reset_classification_queues",
             ),
             accumulate_sample: compute(
                 "pbrt-r4 accumulate sample",

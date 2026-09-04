@@ -171,6 +171,24 @@ fn append_material_eval(pixel_index: u32) {
     }
 }
 
+fn material_eval_count() -> u32 {
+    return atomicLoad(&wavefront_queue[MATERIAL_COUNT]);
+}
+
+fn load_material_eval_pixel(index: u32) -> u32 {
+    return atomicLoad(&wavefront_queue[classification_word(0u, index)]);
+}
+
+fn find_current_ray_for_pixel(pixel_index: u32) -> u32 {
+    let count = current_ray_count();
+    for (var index = 0u; index < count; index++) {
+        if (load_current_ray(index).pixel_index == pixel_index) {
+            return index;
+        }
+    }
+    return 0xffffffffu;
+}
+
 fn append_hit_area_light(pixel_index: u32) {
     let index = atomicAdd(&wavefront_queue[HIT_AREA_COUNT], 1u);
     if (index < classification_capacity()) {

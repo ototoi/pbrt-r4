@@ -161,6 +161,13 @@ impl WavefrontPathIntegrator {
                         workgroups_x,
                         workgroups_y,
                     );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.reset_classification_queues,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
                 }
                 dispatch(
                     &mut encoder,
@@ -172,6 +179,13 @@ impl WavefrontPathIntegrator {
                 dispatch(
                     &mut encoder,
                     &self.pipeline.shade_surface,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.evaluate_materials,
                     &self.bind_group,
                     workgroups_x,
                     workgroups_y,
