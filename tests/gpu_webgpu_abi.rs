@@ -24,7 +24,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Instance>(), 144);
     assert_eq!(std::mem::size_of::<Material>(), 16);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 64);
-    assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 64);
+    assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 88);
     assert_eq!(std::mem::size_of::<PointLight>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);

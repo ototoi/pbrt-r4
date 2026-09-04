@@ -33,7 +33,7 @@ impl Queues {
         let wavefront_words = wavefront_words
             .checked_add(
                 pixel_count
-                    .checked_mul(16)
+                    .checked_mul(20)
                     .ok_or_else(|| PbrtError::error("WebGPU shadow queue size overflowed."))?,
             )
             .and_then(|size| size.checked_add(classification_capacity.checked_mul(3)?))
