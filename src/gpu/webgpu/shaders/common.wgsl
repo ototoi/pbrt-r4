@@ -206,6 +206,38 @@ fn load_area_emission(index: u32) -> vec4<f32> {
     );
 }
 
+fn load_area_word(index: u32, word: u32) -> u32 {
+    return material_light_data[viewport.area_light_data_offset + index * 12u + word];
+}
+
+fn load_area_instance(index: u32) -> u32 {
+    return load_area_word(index, 0u);
+}
+
+fn load_area_total(index: u32) -> f32 {
+    return bitcast<f32>(load_area_word(index, 6u));
+}
+
+fn load_area_distribution_offset(index: u32) -> u32 {
+    return load_area_word(index, 7u);
+}
+
+fn load_area_distribution_count(index: u32) -> u32 {
+    return load_area_word(index, 8u);
+}
+
+fn load_area_two_sided(index: u32) -> bool {
+    return load_area_word(index, 1u) != 0u;
+}
+
+fn load_triangle_primitive(offset: u32, index: u32) -> u32 {
+    return material_light_data[offset + index * 4u];
+}
+
+fn load_triangle_cdf(offset: u32, index: u32) -> f32 {
+    return bitcast<f32>(material_light_data[offset + index * 4u + 1u]);
+}
+
 fn pixel_count() -> u32 {
     return viewport.width * viewport.height;
 }

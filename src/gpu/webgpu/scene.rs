@@ -179,23 +179,47 @@ impl Scene {
             .len()
             .checked_mul(material_words)
             .ok_or_else(|| PbrtError::error("WebGPU material buffer size overflowed."))?;
+        let area_light_data_offset = material_words_total
+            .checked_add(
+                light_records
+                    .len()
+                    .checked_mul(light_record_words)
+                    .ok_or_else(|| {
+                        PbrtError::error("WebGPU light-record buffer offset overflowed.")
+                    })?,
+            )
+            .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
+            .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
+        let triangle_distribution_base = area_light_data_offset
+            .checked_add(
+                area_lights
+                    .len()
+                    .checked_mul(area_light_words)
+                    .ok_or_else(|| PbrtError::error("WebGPU area-light buffer size overflowed."))?,
+            )
+            .ok_or_else(|| PbrtError::error("WebGPU triangle distribution offset overflowed."))?;
+        let triangle_distribution_words =
+            std::mem::size_of::<TriangleDistributionEntry>() / std::mem::size_of::<u32>();
+        for area_light in &mut area_lights {
+            if area_light.triangle_distribution_offset != u32::MAX {
+                let offset = usize::try_from(area_light.triangle_distribution_offset)
+                    .map_err(|_| PbrtError::error("Invalid triangle distribution offset."))?
+                    .checked_mul(triangle_distribution_words)
+                    .and_then(|offset| triangle_distribution_base.checked_add(offset))
+                    .and_then(|offset| u32::try_from(offset).ok())
+                    .ok_or_else(|| {
+                        PbrtError::error("WebGPU triangle distribution offset overflowed.")
+                    })?;
+                area_light.triangle_distribution_offset = offset;
+            }
+        }
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(
             &flat.viewport,
             &flat.render_settings,
             materials.len(),
             light_records.len(),
-            material_words_total
-                .checked_add(
-                    light_records
-                        .len()
-                        .checked_mul(light_record_words)
-                        .ok_or_else(|| {
-                            PbrtError::error("WebGPU light-record buffer offset overflowed.")
-                        })?,
-                )
-                .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
-                .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?,
+            area_light_data_offset,
         )?;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
         {
@@ -236,6 +260,13 @@ impl Scene {
                 )
                 .and_then(|size| size.checked_add(point_lights.len().checked_mul(light_words)?))
                 .and_then(|size| size.checked_add(area_lights.len().checked_mul(area_light_words)?))
+                .and_then(|size| {
+                    size.checked_add(
+                        triangle_distributions
+                            .len()
+                            .checked_mul(triangle_distribution_words)?,
+                    )
+                })
                 .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
         );
         for material in &materials {
@@ -250,6 +281,7 @@ impl Scene {
         for light in &area_lights {
             material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
+        material_light_data.extend_from_slice(cast_slice(&triangle_distributions));
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material and point-light SBO"),
             contents: cast_slice(&material_light_data),
