@@ -27,7 +27,7 @@ impl Queues {
                 PbrtError::error("WebGPU packed wavefront queue size overflowed.")
             })?)
             .and_then(|size| size.checked_add(pixel_count))
-            .and_then(|size| size.checked_add(classification_capacity.checked_mul(2)?))
+            .and_then(|size| size.checked_add(classification_capacity.checked_mul(3)?))
             .ok_or_else(|| PbrtError::error("WebGPU packed wavefront queue size overflowed."))?;
         let wavefront_size = wavefront_words
             .checked_mul(std::mem::size_of::<u32>() as u64)
@@ -88,7 +88,8 @@ impl Queues {
             || words.get(6).copied().unwrap_or(0) != 0
             || words.get(10).copied().unwrap_or(0) != 0
             || words.get(14).copied().unwrap_or(0) != 0
-            || words.get(18).copied().unwrap_or(0) != 0;
+            || words.get(18).copied().unwrap_or(0) != 0
+            || words.get(22).copied().unwrap_or(0) != 0;
         drop(mapped);
         self.state_readback.unmap();
         Ok(overflowed)

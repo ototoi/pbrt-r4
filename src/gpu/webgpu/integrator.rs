@@ -178,6 +178,13 @@ impl WavefrontPathIntegrator {
                 );
                 dispatch(
                     &mut encoder,
+                    &self.pipeline.handle_escaped,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
                     &self.pipeline.shade_surface,
                     &self.bind_group,
                     workgroups_x,

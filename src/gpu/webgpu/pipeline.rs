@@ -6,6 +6,7 @@ pub struct Pipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub generate_primary_rays: wgpu::ComputePipeline,
     pub intersect_primary_rays: wgpu::ComputePipeline,
+    pub handle_escaped: wgpu::ComputePipeline,
     pub prepare_sample: wgpu::ComputePipeline,
     pub shade_surface: wgpu::ComputePipeline,
     pub evaluate_materials: wgpu::ComputePipeline,
@@ -72,6 +73,11 @@ impl Pipeline {
                 "pbrt-r4 intersect primary rays",
                 include_str!("shaders/intersect_primary_rays.wgsl"),
                 "intersect_primary_rays",
+            ),
+            handle_escaped: compute(
+                "pbrt-r4 handle escaped rays",
+                include_str!("shaders/handle_escaped.wgsl"),
+                "handle_escaped",
             ),
             prepare_sample: compute(
                 "pbrt-r4 prepare sample",

@@ -121,6 +121,8 @@ const MATERIAL_COUNT: u32 = 12u;
 const MATERIAL_OVERFLOW: u32 = 14u;
 const HIT_AREA_COUNT: u32 = 16u;
 const HIT_AREA_OVERFLOW: u32 = 18u;
+const ESCAPED_COUNT: u32 = 20u;
+const ESCAPED_OVERFLOW: u32 = 22u;
 const RAY_DATA_OFFSET: u32 = 24u;
 const RAY_WORDS: u32 = 16u;
 const SHADOW_DATA_OFFSET: u32 = 24u;
@@ -198,6 +200,26 @@ fn append_hit_area_light(pixel_index: u32) {
         );
     } else {
         atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 1u);
+    }
+}
+
+fn escaped_data_offset() -> u32 {
+    return SHADOW_DATA_OFFSET
+        + pixel_count() * RAY_WORDS * 2u
+        + pixel_count()
+        + classification_capacity() * 2u;
+}
+
+fn escaped_ray_count() -> u32 {
+    return atomicLoad(&wavefront_queue[ESCAPED_COUNT]);
+}
+
+fn append_escaped_ray(pixel_index: u32) {
+    let index = atomicAdd(&wavefront_queue[ESCAPED_COUNT], 1u);
+    if (index < classification_capacity()) {
+        atomicStore(&wavefront_queue[escaped_data_offset() + index], pixel_index);
+    } else {
+        atomicStore(&wavefront_queue[ESCAPED_OVERFLOW], 1u);
     }
 }
 
