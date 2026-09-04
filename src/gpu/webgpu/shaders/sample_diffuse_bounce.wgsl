@@ -23,15 +23,23 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let u = vec2<f32>(random01(pixel_index, 3u), random01(pixel_index, 4u));
     let radius = sqrt(u.x);
     let phi = 2.0 * PI * u.y;
-    let local = vec3<f32>(
+    var local = vec3<f32>(
         radius * cos(phi),
         radius * sin(phi),
         sqrt(max(0.0, 1.0 - u.x)),
     );
+    // pbrt-v4 DiffuseBxDF::Sample_f: sample the cosine hemisphere on the
+    // side of the shading frame that contains wo (`if (wo.z < 0) wi.z *= -1`),
+    // and use AbsCosTheta for the pdf. This bounces outward even when the
+    // mesh shading normals are globally inverted.
+    let wo = -ray.direction.xyz;
+    if (dot(normal, wo) < 0.0) {
+        local.z = -local.z;
+    }
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
-    let next_pdf = max(dot(normal, direction), 0.0) / PI;
+    let next_pdf = abs(dot(normal, direction)) / PI;
     let next_ray = RayWorkItem(
-        vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, normal), 1.0),
+        vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
         ray.throughput,
         pixel_index,
