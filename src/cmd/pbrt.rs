@@ -471,6 +471,11 @@ fn create_gpu_integrator(
     let mut builder = SceneBuilder::new();
     let path = path_to_string(input_path)?;
     parse_file(&path, &mut builder)?;
+    if let Some(pixelsamples) = opts.spp.or(opts.pixelsamples) {
+        builder
+            .sampler_params
+            .replace_one_int("integer pixelsamples", i32::max(1, pixelsamples));
+    }
     if let Some(outfile) = opts.outfile.as_ref() {
         let outfile = path_to_string(outfile.as_path())?;
         builder
