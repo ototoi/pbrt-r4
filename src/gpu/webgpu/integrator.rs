@@ -214,13 +214,6 @@ impl WavefrontPathIntegrator {
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.finish_shadow,
-                        &self.bind_group,
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
                         &self.pipeline.sample_diffuse_bounce,
                         &self.bind_group,
                         workgroups_x,
