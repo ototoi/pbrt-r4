@@ -42,6 +42,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(evaluate.contains("let selector = samples.direct.y;"));
     assert!(evaluate.contains("let su = sqrt(remapped_selector);"));
     assert!(evaluate.contains("let bv = samples.direct.z;"));
+    assert!(evaluate.contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
     assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
 
     let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
