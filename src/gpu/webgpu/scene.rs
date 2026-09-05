@@ -11,6 +11,7 @@ use super::abi::{
 };
 use super::acceleration::{self, Acceleration};
 use super::light::triangle_world_area;
+use super::light_sampler::{resolve_scene_light_sampler, LightSamplerKind};
 use super::material::MaterialKind;
 use super::output::Output;
 
@@ -29,6 +30,7 @@ pub struct Scene {
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
+    pub light_sampler_kind: LightSamplerKind,
     pub render_settings: flat::RenderSettings,
     pub acceleration: Acceleration,
 }
@@ -129,6 +131,7 @@ impl Scene {
                 padding: [0; 2],
             })
             .collect::<Vec<_>>();
+        let light_sampler_kind = resolve_scene_light_sampler(&flat.render_settings, &flat.lights)?;
         for (index, record) in flat.lights.iter().enumerate() {
             match record.kind {
                 flat::LightKind::Point if record.payload as usize >= point_lights.len() => {
@@ -261,6 +264,7 @@ impl Scene {
             point_lights,
             area_lights,
             light_records,
+            light_sampler_kind,
             render_settings: flat.render_settings,
             acceleration,
         })
