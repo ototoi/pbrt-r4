@@ -88,6 +88,17 @@ fn emissive_hit_resolves_the_triangle_light_handle() {
 }
 
 #[test]
+fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
+    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(source.contains(
+        "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
+    ));
+    assert!(source.contains("sample_uniform_triangle_for_context"));
+    assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
+    assert!(source.contains("load_area_distribution_count(light_payload)"));
+}
+
+#[test]
 fn primary_rays_initialize_depth_zero_sample_state() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
