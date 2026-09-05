@@ -59,6 +59,8 @@ struct RayWorkItem {
     direction: vec4<f32>,
     throughput: vec4<f32>,
     prev_position: vec4<f32>,
+    prev_position_error: vec4<f32>,
+    prev_geometric_normal: vec4<f32>,
     prev_shading_normal: vec4<f32>,
     pixel_index: u32,
     depth: u32,
@@ -137,7 +139,7 @@ const ESCAPED_COUNT: u32 = 20u;
 const ESCAPED_OVERFLOW: u32 = 22u;
 const RENDER_ERROR: u32 = 23u;
 const QUEUE_STATE_WORDS: u32 = 24u;
-const RAY_WORDS: u32 = 28u;
+const RAY_WORDS: u32 = 36u;
 const SAMPLE_STATE_OFFSET: u32 = QUEUE_STATE_WORDS;
 const SAMPLE_STATE_WORDS: u32 = 16u;
 
@@ -396,15 +398,27 @@ fn load_ray(base: u32) -> RayWorkItem {
             bitcast<f32>(atomicLoad(&wavefront_queue[base + 18u])),
             bitcast<f32>(atomicLoad(&wavefront_queue[base + 19u])),
         ),
-        atomicLoad(&wavefront_queue[base + 20u]),
-        atomicLoad(&wavefront_queue[base + 21u]),
-        bitcast<f32>(atomicLoad(&wavefront_queue[base + 22u])),
-        bitcast<f32>(atomicLoad(&wavefront_queue[base + 23u])),
-        bitcast<f32>(atomicLoad(&wavefront_queue[base + 24u])),
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 20u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 21u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 22u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 23u])),
+        ),
+        vec4<f32>(
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 24u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 25u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 26u])),
+            bitcast<f32>(atomicLoad(&wavefront_queue[base + 27u])),
+        ),
+        atomicLoad(&wavefront_queue[base + 28u]),
+        atomicLoad(&wavefront_queue[base + 29u]),
+        bitcast<f32>(atomicLoad(&wavefront_queue[base + 30u])),
+        bitcast<f32>(atomicLoad(&wavefront_queue[base + 31u])),
+        bitcast<f32>(atomicLoad(&wavefront_queue[base + 32u])),
         vec3<u32>(
-            atomicLoad(&wavefront_queue[base + 25u]),
-            atomicLoad(&wavefront_queue[base + 26u]),
-            atomicLoad(&wavefront_queue[base + 27u]),
+            atomicLoad(&wavefront_queue[base + 33u]),
+            atomicLoad(&wavefront_queue[base + 34u]),
+            atomicLoad(&wavefront_queue[base + 35u]),
         ),
     );
 }
@@ -426,18 +440,26 @@ fn store_ray(base: u32, ray: RayWorkItem) {
     atomicStore(&wavefront_queue[base + 13u], bitcast<u32>(ray.prev_position.y));
     atomicStore(&wavefront_queue[base + 14u], bitcast<u32>(ray.prev_position.z));
     atomicStore(&wavefront_queue[base + 15u], bitcast<u32>(ray.prev_position.w));
-    atomicStore(&wavefront_queue[base + 16u], bitcast<u32>(ray.prev_shading_normal.x));
-    atomicStore(&wavefront_queue[base + 17u], bitcast<u32>(ray.prev_shading_normal.y));
-    atomicStore(&wavefront_queue[base + 18u], bitcast<u32>(ray.prev_shading_normal.z));
-    atomicStore(&wavefront_queue[base + 19u], bitcast<u32>(ray.prev_shading_normal.w));
-    atomicStore(&wavefront_queue[base + 20u], ray.pixel_index);
-    atomicStore(&wavefront_queue[base + 21u], ray.depth);
-    atomicStore(&wavefront_queue[base + 22u], bitcast<u32>(ray.inv_w_u));
-    atomicStore(&wavefront_queue[base + 23u], bitcast<u32>(ray.inv_w_l));
-    atomicStore(&wavefront_queue[base + 24u], bitcast<u32>(ray.prev_pdf));
-    atomicStore(&wavefront_queue[base + 25u], ray._padding.x);
-    atomicStore(&wavefront_queue[base + 26u], ray._padding.y);
-    atomicStore(&wavefront_queue[base + 27u], ray._padding.z);
+    atomicStore(&wavefront_queue[base + 16u], bitcast<u32>(ray.prev_position_error.x));
+    atomicStore(&wavefront_queue[base + 17u], bitcast<u32>(ray.prev_position_error.y));
+    atomicStore(&wavefront_queue[base + 18u], bitcast<u32>(ray.prev_position_error.z));
+    atomicStore(&wavefront_queue[base + 19u], bitcast<u32>(ray.prev_position_error.w));
+    atomicStore(&wavefront_queue[base + 20u], bitcast<u32>(ray.prev_geometric_normal.x));
+    atomicStore(&wavefront_queue[base + 21u], bitcast<u32>(ray.prev_geometric_normal.y));
+    atomicStore(&wavefront_queue[base + 22u], bitcast<u32>(ray.prev_geometric_normal.z));
+    atomicStore(&wavefront_queue[base + 23u], bitcast<u32>(ray.prev_geometric_normal.w));
+    atomicStore(&wavefront_queue[base + 24u], bitcast<u32>(ray.prev_shading_normal.x));
+    atomicStore(&wavefront_queue[base + 25u], bitcast<u32>(ray.prev_shading_normal.y));
+    atomicStore(&wavefront_queue[base + 26u], bitcast<u32>(ray.prev_shading_normal.z));
+    atomicStore(&wavefront_queue[base + 27u], bitcast<u32>(ray.prev_shading_normal.w));
+    atomicStore(&wavefront_queue[base + 28u], ray.pixel_index);
+    atomicStore(&wavefront_queue[base + 29u], ray.depth);
+    atomicStore(&wavefront_queue[base + 30u], bitcast<u32>(ray.inv_w_u));
+    atomicStore(&wavefront_queue[base + 31u], bitcast<u32>(ray.inv_w_l));
+    atomicStore(&wavefront_queue[base + 32u], bitcast<u32>(ray.prev_pdf));
+    atomicStore(&wavefront_queue[base + 33u], ray._padding.x);
+    atomicStore(&wavefront_queue[base + 34u], ray._padding.y);
+    atomicStore(&wavefront_queue[base + 35u], ray._padding.z);
 }
 
 fn load_current_ray(index: u32) -> RayWorkItem {

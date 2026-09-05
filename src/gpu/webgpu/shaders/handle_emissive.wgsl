@@ -30,6 +30,7 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
             ray.prev_position.xyz,
             ray.prev_shading_normal.xyz,
             surface.geometric_normal.xyz,
+            ray.direction.xyz,
             surface.position.xyz,
             total_area,
         );

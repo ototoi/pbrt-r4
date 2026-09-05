@@ -70,7 +70,9 @@ fn primary_rays_initialize_depth_zero_sample_state() {
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
     assert!(
-        SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.position,\n        vec4<f32>(normal, 0.0),")
+        SAMPLE_DIFFUSE_BOUNCE_SHADER.contains(
+            "surface.position,\n        surface.position_error,\n        surface.geometric_normal,\n        vec4<f32>(normal, 0.0),"
+        )
     );
 }
 
@@ -78,7 +80,24 @@ fn primary_rays_initialize_depth_zero_sample_state() {
 fn emissive_mis_uses_the_unoffset_previous_interaction_context() {
     assert!(HANDLE_EMISSIVE_SHADER.contains("ray.prev_position.xyz"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("ray.prev_shading_normal.xyz"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("ray.direction.xyz"));
     assert!(!HANDLE_EMISSIVE_SHADER.contains("ray.origin.xyz - surface.position.xyz"));
+}
+
+#[test]
+fn bounce_rays_preserve_the_complete_previous_interaction_context() {
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.position,"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.position_error,"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.geometric_normal,"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("vec4<f32>(normal, 0.0),"));
+}
+
+#[test]
+fn triangle_area_fallback_uses_the_v4_folding_map() {
+    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(source.contains("fn sample_uniform_triangle(u: vec2<f32>)"));
+    assert!(source.contains("if (u.x < u.y)"));
+    assert!(!source.contains("let su = sqrt(u.x)"));
 }
 
 #[test]

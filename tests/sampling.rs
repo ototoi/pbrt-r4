@@ -134,6 +134,56 @@ fn spherical_rectangle_sampling_returns_v4_solid_angle_pdf() {
 }
 
 #[test]
+fn spherical_triangle_sampling_and_inverse_agree() {
+    let triangle = [
+        Point3f::new(-1.0, -0.5, 0.0),
+        Point3f::new(1.0, -0.5, 0.0),
+        Point3f::new(0.0, 1.0, 0.0),
+    ];
+    let reference = Point3f::new(0.2, 0.1, 2.0);
+
+    for u in [
+        Point2f::new(0.1, 0.2),
+        Point2f::new(0.4, 0.7),
+        Point2f::new(0.8, 0.3),
+    ] {
+        let (barycentrics, pdf) = sample_spherical_triangle(&triangle, reference, u);
+        let b = barycentrics.expect("the non-degenerate triangle must be sampleable");
+        let sampled_point = triangle[0] * b[0] + triangle[1] * b[1] + triangle[2] * b[2];
+        let wi = (sampled_point - reference).normalize();
+        let recovered = invert_spherical_triangle_sample(&triangle, reference, wi);
+
+        assert!(pdf.is_finite() && pdf > 0.0);
+        assert!((b.iter().sum::<Float>() - 1.0).abs() < 1e-5);
+        assert!(
+            (recovered.x - u.x).abs() < 2e-4,
+            "u={u:?}, recovered={recovered:?}"
+        );
+        assert!(
+            (recovered.y - u.y).abs() < 2e-4,
+            "u={u:?}, recovered={recovered:?}"
+        );
+    }
+}
+
+#[test]
+fn bilinear_warp_sampling_and_pdf_match_v4_reference() {
+    let weights = [0.1, 0.5, 1.5, 3.0];
+    for u in [
+        Point2f::new(0.1, 0.2),
+        Point2f::new(0.4, 0.7),
+        Point2f::new(0.8, 0.3),
+    ] {
+        let warped = sample_bilinear(u, &weights);
+        let recovered = invert_bilinear_sample(warped, &weights);
+        assert!((recovered.x - u.x).abs() < 1e-5);
+        assert!((recovered.y - u.y).abs() < 1e-5);
+        assert!(bilinear_pdf(warped, &weights).is_finite());
+        assert!(bilinear_pdf(warped, &weights) > 0.0);
+    }
+}
+
+#[test]
 fn catmull_rom_sampling_returns_v4_value_and_pdf() {
     let result =
         sample_catmull_rom(&[0.0, 1.0, 2.0], &[1.0, 2.0, 1.0], &[0.0, 1.5, 3.0], 0.5).unwrap();
