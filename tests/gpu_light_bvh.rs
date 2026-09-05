@@ -1,5 +1,6 @@
 use pbrt_r4::gpu::ir::flat::{
-    build_light_bounds, build_light_bvh, LightBVHNode, LightBoundInput, LightKind, LightRecord,
+    build_light_bounds, build_light_bvh, light_bvh_pmf, sample_light_bvh, LightBVHNode,
+    LightBoundInput, LightKind, LightRecord,
 };
 
 fn point_inputs() -> Vec<LightBoundInput> {
@@ -80,4 +81,51 @@ fn mismatched_light_and_bounds_are_rejected() {
         payload: 0,
     }];
     assert!(build_light_bvh(&records, &bounds).is_err());
+}
+
+#[test]
+fn reference_sampling_and_pmf_are_consistent() {
+    let inputs = [
+        LightBoundInput::Point {
+            handle: 0,
+            world_position: [-2.0, 0.0, 2.0],
+            intensity_max: 1.0,
+            scale: 1.0,
+        },
+        LightBoundInput::Point {
+            handle: 1,
+            world_position: [2.0, 0.0, 2.0],
+            intensity_max: 3.0,
+            scale: 1.0,
+        },
+        LightBoundInput::Point {
+            handle: 2,
+            world_position: [0.0, 2.0, 2.0],
+            intensity_max: 2.0,
+            scale: 1.0,
+        },
+    ];
+    let bounds = build_light_bounds(&inputs).unwrap();
+    let records = vec![
+        LightRecord {
+            kind: LightKind::Point,
+            payload: 0,
+        };
+        3
+    ];
+    let bvh = build_light_bvh(&records, &bounds).unwrap();
+    let mut sum = 0.0;
+    for handle in 0..3 {
+        let pmf = light_bvh_pmf(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], handle).unwrap();
+        assert!(pmf > 0.0);
+        sum += pmf;
+    }
+    assert!((sum - 1.0).abs() < 1e-6);
+    let (handle, pmf) = sample_light_bvh(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.5)
+        .unwrap()
+        .unwrap();
+    assert!(pmf > 0.0);
+    assert!(
+        (light_bvh_pmf(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], handle).unwrap() - pmf).abs() < 1e-6
+    );
 }

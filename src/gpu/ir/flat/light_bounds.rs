@@ -150,6 +150,9 @@ impl LightBounds {
         let mut d2 = dot(delta, delta);
         let diagonal_length = dot(diagonal, diagonal).sqrt();
         d2 = d2.max(diagonal_length * 0.5);
+        if d2 <= 0.0 {
+            return Ok(0.0);
+        }
 
         let wi = normalize([center[0] - p[0], center[1] - p[1], center[2] - p[2]])?;
         let mut cos_theta_w = dot(self.direction, wi);
@@ -170,7 +173,7 @@ impl LightBounds {
 
         let mut importance = self.phi * cos_theta_p / d2;
         if dot(n, n) != 0.0 {
-            let cos_theta_i = dot(wi, n).abs();
+            let cos_theta_i = dot(wi, normalize(n)?).abs();
             let sin_theta_i = safe_sqrt(1.0 - cos_theta_i * cos_theta_i);
             importance *= cos_sub_clamped(sin_theta_i, cos_theta_i, sin_theta_b, cos_theta_b);
         }
