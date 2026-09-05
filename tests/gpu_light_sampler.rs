@@ -1,6 +1,7 @@
 use pbrt_r4::gpu::ir::flat::{LightKind, LightRecord, RenderSettings};
 use pbrt_r4::gpu::webgpu::light_sampler::{
-    resolve_light_sampler, resolve_scene_light_sampler, LightSamplerKind,
+    resolve_light_sampler, resolve_scene_light_sampler, CompactLightBounds, LightSamplerKind,
+    LIGHT_BVH_INDEX_MAX,
 };
 
 fn settings(light_sampler: &str) -> RenderSettings {
@@ -70,4 +71,46 @@ fn unimplemented_v4_samplers_are_rejected() {
         let error = resolve_light_sampler(requested, 2).unwrap_err();
         assert!(format!("{error:?}").contains("not implemented"));
     }
+}
+
+#[test]
+fn compact_light_bounds_use_conservative_quantization_and_packed_tags() {
+    let bounds = CompactLightBounds::pack(
+        [-1.0, 0.0, 2.0],
+        [1.0, 2.0, 4.0],
+        [-1.0, 0.0, 2.0],
+        [1.0, 2.0, 4.0],
+        [0.0, 0.0, 1.0],
+        3.0,
+        -1.0,
+        0.0,
+        false,
+    )
+    .unwrap();
+    let words = bounds.to_words(7, true).unwrap();
+
+    assert_eq!(words[0] & 0xffff, 0);
+    assert_eq!((words[2] >> 16) & 0xffff, u32::from(u16::MAX));
+    assert_eq!(words[4], 3.0f32.to_bits());
+    assert_eq!((words[6] >> 31) & 1, 1);
+    assert_eq!(words[6] & 0x7fff_ffff, 7);
+    assert!(bounds.to_words(LIGHT_BVH_INDEX_MAX + 1, false).is_err());
+}
+
+#[test]
+fn compact_light_bounds_handle_degenerate_global_axis() {
+    let bounds = CompactLightBounds::pack(
+        [1.0, 0.0, 0.0],
+        [1.0, 2.0, 1.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 2.0, 1.0],
+        [0.0, 1.0, 0.0],
+        1.0,
+        0.0,
+        0.0,
+        true,
+    )
+    .unwrap();
+    assert_eq!(bounds.q_min[0], 0);
+    assert_eq!(bounds.q_max[0], 0);
 }
