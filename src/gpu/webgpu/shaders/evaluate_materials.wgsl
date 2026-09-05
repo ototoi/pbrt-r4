@@ -21,6 +21,13 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (ray.depth >= viewport.max_depth || viewport.light_count == 0u) {
         return;
     }
+    let wo = -ray.direction.xyz;
+    let light_sample_origin = offset_ray_origin(
+        surface.position.xyz,
+        surface.position_error.xyz,
+        surface.geometric_normal.xyz,
+        wo,
+    );
     let light_selection = sample_uniform_light(samples.direct.x);
     let light_index = light_selection.index;
     let light_kind = load_light_kind(light_index);
@@ -75,7 +82,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if ((area_instance.orientation_flags & 1u) != 0u) {
             light_normal = -light_normal;
         }
-        let area_to_light = light_position - surface.position.xyz;
+        let area_to_light = light_position - light_sample_origin;
         let area_distance_squared = dot(area_to_light, area_to_light);
         if (area_distance_squared <= 0.0) {
             return;
@@ -95,7 +102,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else {
         return;
     }
-    let to_light = light_position - surface.position.xyz;
+    let to_light = light_position - light_sample_origin;
     let distance_squared = dot(to_light, to_light);
     if (distance_squared <= 0.0) {
         return;
@@ -108,7 +115,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // lighting correct even when the mesh shading normals are globally
     // inverted (e.g. loopsubdiv limit normals wind opposite to the faces).
     let shading_n = surface.normal.xyz;
-    let wo = -ray.direction.xyz;
     let cos_wo = dot(shading_n, wo);
     let cos_wi = dot(shading_n, wi);
     if (cos_wo * cos_wi <= 0.0) {
@@ -127,12 +133,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
     }
     let direct = light_radiance * (1.0 / PI) * cosine / sampled_light_pdf * mis_weight;
-    let shadow_origin = offset_ray_origin(
-        surface.position.xyz,
-        surface.position_error.xyz,
-        surface.geometric_normal.xyz,
-        wi,
-    );
+    let shadow_origin = light_sample_origin;
     var shadow_target = light_position;
     if (light_kind == LIGHT_KIND_AREA) {
         shadow_target = offset_ray_origin(light_position, light_error, light_normal, -wi);
