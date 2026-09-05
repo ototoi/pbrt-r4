@@ -68,7 +68,7 @@ fn area_group_unions_triangle_bounds_and_phi() {
 }
 
 #[test]
-fn input_normals_face_forward_without_orientation_flip() {
+fn input_normals_do_not_change_geometric_normal() {
     let bounds = build_light_bounds(&[LightBoundInput::AreaGroup {
         handle: 0,
         triangles: vec![AreaTriangleInput {
@@ -85,7 +85,7 @@ fn input_normals_face_forward_without_orientation_flip() {
 }
 
 #[test]
-fn invalid_input_normals_are_rejected() {
+fn invalid_geometric_normal_is_rejected() {
     let result = build_light_bounds(&[LightBoundInput::AreaGroup {
         handle: 0,
         triangles: vec![AreaTriangleInput {
