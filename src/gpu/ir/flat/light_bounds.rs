@@ -230,6 +230,15 @@ fn light_bounds_for_input(input: LightBoundInput) -> Result<LightBounds, PbrtErr
             two_sided,
         } => {
             validate_emission(emission_max, scale)?;
+            if let Some(normals) = input_normals {
+                for normal in normals {
+                    if !normal.iter().all(|value| value.is_finite()) || dot(normal, normal) == 0.0 {
+                        return Err(PbrtError::error(
+                            "Area light input normal must be finite and non-zero.",
+                        ));
+                    }
+                }
+            }
             let bounds = Bounds3::new(
                 [
                     world_positions[0][0]
