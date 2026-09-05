@@ -9,6 +9,52 @@ pub struct LightBvhInput {
     pub max: [f32; 3],
 }
 
+pub fn point_light_input(handle: u32, position: [f32; 3]) -> Result<LightBvhInput, PbrtError> {
+    if !position.iter().all(|value| value.is_finite()) {
+        return Err(PbrtError::error("Point light position is not finite."));
+    }
+    Ok(LightBvhInput {
+        handle,
+        min: position,
+        max: position,
+    })
+}
+
+pub fn triangle_light_input(
+    handle: u32,
+    object_to_world: [f32; 16],
+    positions: [[f32; 3]; 3],
+) -> Result<LightBvhInput, PbrtError> {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for position in positions {
+        if !position.iter().all(|value| value.is_finite()) {
+            return Err(PbrtError::error(
+                "Area light vertex position is not finite.",
+            ));
+        }
+        let transformed = [
+            object_to_world[0] * position[0]
+                + object_to_world[1] * position[1]
+                + object_to_world[2] * position[2]
+                + object_to_world[3],
+            object_to_world[4] * position[0]
+                + object_to_world[5] * position[1]
+                + object_to_world[6] * position[2]
+                + object_to_world[7],
+            object_to_world[8] * position[0]
+                + object_to_world[9] * position[1]
+                + object_to_world[10] * position[2]
+                + object_to_world[11],
+        ];
+        for axis in 0..3 {
+            min[axis] = min[axis].min(transformed[axis]);
+            max[axis] = max[axis].max(transformed[axis]);
+        }
+    }
+    Ok(LightBvhInput { handle, min, max })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LightBvhNode {
     Leaf { handle: u32, parent: u32 },

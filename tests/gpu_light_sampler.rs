@@ -1,5 +1,7 @@
 use pbrt_r4::gpu::ir::flat::{LightKind, LightRecord, RenderSettings};
-use pbrt_r4::gpu::webgpu::light_bvh::{build_light_bvh, LightBvhInput, LightBvhNode};
+use pbrt_r4::gpu::webgpu::light_bvh::{
+    build_light_bvh, point_light_input, triangle_light_input, LightBvhInput, LightBvhNode,
+};
 use pbrt_r4::gpu::webgpu::light_sampler::{
     resolve_light_sampler, resolve_scene_light_sampler, CompactLightBounds, LightSamplerKind,
     LIGHT_BVH_INDEX_MAX,
@@ -208,4 +210,26 @@ fn light_bvh_packs_links_into_reserved_words() {
     assert_eq!(leaf_words[6] >> 31, 1);
     assert_eq!(leaf_words[6] & 0x7fff_ffff, leaf as u32);
     assert_ne!(leaf_words[7], u32::MAX);
+}
+
+#[test]
+fn light_bvh_inputs_use_world_space_bounds() {
+    let point = point_light_input(4, [2.0, -1.0, 3.0]).unwrap();
+    assert_eq!(point.min, [2.0, -1.0, 3.0]);
+    assert_eq!(point.max, point.min);
+
+    let mut transform = [0.0; 16];
+    transform[0] = 2.0;
+    transform[5] = 3.0;
+    transform[10] = 4.0;
+    transform[15] = 1.0;
+    transform[3] = 10.0;
+    let triangle = triangle_light_input(
+        5,
+        transform,
+        [[-1.0, -1.0, -1.0], [1.0, -1.0, -1.0], [0.0, 1.0, 1.0]],
+    )
+    .unwrap();
+    assert_eq!(triangle.min, [8.0, -3.0, -4.0]);
+    assert_eq!(triangle.max, [12.0, 3.0, 4.0]);
 }
