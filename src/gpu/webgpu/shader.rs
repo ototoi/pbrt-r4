@@ -1,4 +1,5 @@
 const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
+const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
 
 pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> wgpu::ShaderModule {
     let descriptor = wgpu::ShaderModuleDescriptor {
@@ -10,8 +11,12 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
-    let mut source = String::with_capacity(COMMON_SHADER.len() + stage_source.len() + 1);
+    let mut source = String::with_capacity(
+        COMMON_SHADER.len() + TRIANGLE_SAMPLING_SHADER.len() + stage_source.len() + 2,
+    );
     source.push_str(COMMON_SHADER);
+    source.push('\n');
+    source.push_str(TRIANGLE_SAMPLING_SHADER);
     source.push('\n');
     source.push_str(stage_source);
     source

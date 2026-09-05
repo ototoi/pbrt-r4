@@ -43,37 +43,35 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_radiance = light.intensity.xyz;
     } else if (light_kind == LIGHT_KIND_AREA) {
         let area_instance = instances[load_area_instance(light_payload)];
-        let area_geometry = geometries[area_instance.geometry];
         let total_area = load_area_total(light_payload);
         if (total_area <= 0.0) {
             return;
         }
-        let triangle_index = load_area_primitive(light_payload);
-        let first_index = area_geometry.index_offset + triangle_index * 3u;
-        let i0 = area_geometry.vertex_offset + indices[first_index];
-        let i1 = area_geometry.vertex_offset + indices[first_index + 1u];
-        let i2 = area_geometry.vertex_offset + indices[first_index + 2u];
-        let su = sqrt(samples.direct.y);
-        let bv = samples.direct.z;
-        let b0 = 1.0 - su;
-        let b1 = su * (1.0 - bv);
-        let b2 = su * bv;
-        let p0 = (area_instance.world_from_object * vertices[i0].position).xyz;
-        let p1 = (area_instance.world_from_object * vertices[i1].position).xyz;
-        let p2 = (area_instance.world_from_object * vertices[i2].position).xyz;
-        light_position = p0 * b0 + p1 * b1 + p2 * b2;
-        light_radiance = load_area_emission(light_payload).xyz;
-        light_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
-        light_normal = normalize(cross(p1 - p0, p2 - p0));
+        let triangle = load_area_triangle(light_payload);
+        light_normal = normalize(cross(
+            triangle.p1.xyz - triangle.p0.xyz,
+            triangle.p2.xyz - triangle.p0.xyz,
+        ));
         if ((area_instance.orientation_flags & 1u) != 0u) {
             light_normal = -light_normal;
         }
-        let area_to_light = light_position - light_sample_origin;
-        let area_distance_squared = dot(area_to_light, area_to_light);
-        if (area_distance_squared <= 0.0) {
+        let triangle_sample = sample_triangle_for_context(
+            triangle,
+            light_sample_origin,
+            surface.normal.xyz,
+            light_normal,
+            total_area,
+            vec2<f32>(samples.direct.y, samples.direct.z),
+        );
+        if (triangle_sample.w <= 0.0) {
             return;
         }
-        let area_wi = area_to_light / sqrt(area_distance_squared);
+        let b = triangle_sample.xyz;
+        light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
+        light_radiance = load_area_emission(light_payload).xyz;
+        light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)
+            + abs(triangle.p2.xyz * b.z)) * gamma(6.0);
+        let area_wi = normalize(light_position - light_sample_origin);
         let cosine_light = dot(light_normal, -area_wi);
         if (load_area_two_sided(light_payload)) {
             if (abs(cosine_light) == 0.0) {
@@ -82,9 +80,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         } else if (cosine_light <= 0.0) {
             return;
         }
-        sampled_light_pdf = sampled_light_pdf
-            * area_distance_squared
-            / (max(abs(cosine_light), 1e-7) * total_area);
+        sampled_light_pdf = sampled_light_pdf * triangle_sample.w;
     } else {
         return;
     }
