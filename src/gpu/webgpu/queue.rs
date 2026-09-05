@@ -5,7 +5,7 @@ use crate::util::error::PbrtError;
 
 pub const QUEUE_STATE_WORDS: u64 = 24;
 const SAMPLE_STATE_WORDS: u64 = 16;
-const RAY_WORDS: u64 = 20;
+const RAY_WORDS: u64 = 24;
 const SHADOW_WORDS: u64 = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

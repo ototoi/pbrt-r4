@@ -23,7 +23,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 144);
     assert_eq!(std::mem::size_of::<Material>(), 16);
-    assert_eq!(std::mem::size_of::<RayWorkItem>(), 80);
+    assert_eq!(std::mem::size_of::<RayWorkItem>(), 96);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 112);
     assert_eq!(std::mem::size_of::<PointLight>(), 32);
@@ -43,12 +43,13 @@ fn webgpu_work_item_field_offsets_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(RayWorkItem, origin), 0);
     assert_eq!(std::mem::offset_of!(RayWorkItem, direction), 16);
     assert_eq!(std::mem::offset_of!(RayWorkItem, throughput), 32);
-    assert_eq!(std::mem::offset_of!(RayWorkItem, pixel_index), 48);
-    assert_eq!(std::mem::offset_of!(RayWorkItem, depth), 52);
-    assert_eq!(std::mem::offset_of!(RayWorkItem, inv_w_u), 56);
-    assert_eq!(std::mem::offset_of!(RayWorkItem, inv_w_l), 60);
-    assert_eq!(std::mem::offset_of!(RayWorkItem, prev_pdf), 64);
-    assert_eq!(std::mem::offset_of!(RayWorkItem, padding), 68);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, prev_shading_normal), 48);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, pixel_index), 64);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, depth), 68);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, inv_w_u), 72);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, inv_w_l), 76);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, prev_pdf), 80);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, padding), 84);
 
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, origin), 0);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, direction), 16);
