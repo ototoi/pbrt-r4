@@ -8,6 +8,7 @@ const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
+const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
 
 struct CameraUniform {
     camera_to_world: mat4x4<f32>,
@@ -119,6 +120,18 @@ struct QueueState {
 struct LightSelection {
     index: u32,
     pmf: f32,
+};
+
+struct DecodedLightBVHNode {
+    bounds_min: vec3<f32>,
+    bounds_max: vec3<f32>,
+    direction: vec3<f32>,
+    phi: f32,
+    cos_theta_o: f32,
+    cos_theta_e: f32,
+    two_sided: bool,
+    payload: u32,
+    is_leaf: bool,
 };
 
 @group(0) @binding(0)
@@ -610,6 +623,121 @@ fn sample_uniform_light(selector: f32) -> LightSelection {
         min(u32(selector * f32(scene.light_count)), scene.light_count - 1u),
         1.0 / f32(scene.light_count),
     );
+}
+
+fn light_bvh_word(node_index: u32, word: u32) -> u32 {
+    return scene_data[scene.light_bvh_node_offset + node_index * 8u + word];
+}
+
+fn decode_light_bvh_node(node_index: u32) -> DecodedLightBVHNode {
+    let word0 = light_bvh_word(node_index, 0u);
+    let word1 = light_bvh_word(node_index, 1u);
+    let word2 = light_bvh_word(node_index, 2u);
+    let q_min = vec3<u32>(word0 & 0xffffu, word0 >> 16u, word1 & 0xffffu);
+    let q_max = vec3<u32>(word1 >> 16u, word2 & 0xffffu, word2 >> 16u);
+    let all_min = vec3<f32>(
+        bitcast<f32>(scene_data[scene.light_sampler_data_offset]),
+        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 1u]),
+        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 2u]),
+    );
+    let all_max = vec3<f32>(
+        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 4u]),
+        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 5u]),
+        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 6u]),
+    );
+    let extent = all_max - all_min;
+    let bounds_min = all_min + vec3<f32>(q_min) / 65535.0 * extent;
+    let bounds_max = all_min + vec3<f32>(q_max) / 65535.0 * extent;
+    let direction_word = light_bvh_word(node_index, 3u);
+    let encoded = vec2<f32>(
+        f32(direction_word & 0xffffu) / 65535.0 * 2.0 - 1.0,
+        f32(direction_word >> 16u) / 65535.0 * 2.0 - 1.0,
+    );
+    var direction = vec3<f32>(encoded.x, encoded.y, 1.0 - abs(encoded.x) - abs(encoded.y));
+    if (direction.z < 0.0) {
+        direction = vec3<f32>(
+            (1.0 - abs(direction.y)) * select(-1.0, 1.0, direction.x >= 0.0),
+            (1.0 - abs(direction.x)) * select(-1.0, 1.0, direction.y >= 0.0),
+            direction.z,
+        );
+    }
+    direction = normalize(direction);
+    let cosine_word = light_bvh_word(node_index, 5u);
+    let cosine_o = f32(cosine_word & 0x7fffu) / 32767.0 * 2.0 - 1.0;
+    let cosine_e = f32((cosine_word >> 15u) & 0x7fffu) / 32767.0 * 2.0 - 1.0;
+    let payload_word = light_bvh_word(node_index, 6u);
+    return DecodedLightBVHNode(
+        bounds_min,
+        bounds_max,
+        direction,
+        bitcast<f32>(light_bvh_word(node_index, 4u)),
+        cosine_o,
+        cosine_e,
+        (cosine_word & 0x40000000u) != 0u,
+        payload_word & 0x7fffffffu,
+        (payload_word & 0x80000000u) != 0u,
+    );
+}
+
+fn light_bvh_importance(node: DecodedLightBVHNode, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    let center = (node.bounds_min + node.bounds_max) * 0.5;
+    let diagonal = node.bounds_max - node.bounds_min;
+    let delta = p - center;
+    let diagonal_length = length(diagonal);
+    let d2 = max(dot(delta, delta), diagonal_length * 0.5);
+    if (d2 <= 0.0) {
+        return 0.0;
+    }
+    var cosine = dot(node.direction, normalize(center - p));
+    if (node.two_sided) {
+        cosine = abs(cosine);
+    }
+    let normal_cosine = abs(dot(normalize(n), normalize(center - p)));
+    return max(0.0, node.phi * max(cosine, 0.0) * normal_cosine / d2);
+}
+
+fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
+    if (scene.light_bvh_node_count == 0u || scene.light_leaf_count == 0u) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    var node_index = 0u;
+    var pmf = 1.0;
+    var u = min(selector, 0.99999994);
+    for (var iteration = 0u; iteration < scene.light_bvh_node_count; iteration++) {
+        let node = decode_light_bvh_node(node_index);
+        if (node.is_leaf) {
+            return LightSelection(node.payload, pmf);
+        }
+        let left = decode_light_bvh_node(node_index + 1u);
+        let right = decode_light_bvh_node(node.payload);
+        let left_weight = light_bvh_importance(left, p, n);
+        let right_weight = light_bvh_importance(right, p, n);
+        let total = left_weight + right_weight;
+        if (total <= 0.0) {
+            return LightSelection(0xffffffffu, 0.0);
+        }
+        let left_pmf = left_weight / total;
+        if (u < left_pmf) {
+            pmf = pmf * left_pmf;
+            u = u / max(left_pmf, 1e-7);
+            node_index = node_index + 1u;
+        } else {
+            pmf = pmf * (1.0 - left_pmf);
+            u = (u - left_pmf) / max(1.0 - left_pmf, 1e-7);
+            node_index = node.payload;
+        }
+        if (node_index >= scene.light_bvh_node_count) {
+            return LightSelection(0xffffffffu, 0.0);
+        }
+    }
+    return LightSelection(0xffffffffu, 0.0);
+}
+
+fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
+    if (scene.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
+        return sample_light_bvh(selector, p, n);
+    }
+    return sample_uniform_light(selector);
 }
 
 fn gamma(n: f32) -> f32 {
