@@ -28,6 +28,36 @@ pub fn area_triangle_pmf(area: f32, total_area: f32) -> f32 {
     }
 }
 
+/// Select the first CDF entry strictly greater than `u`.
+///
+/// This mirrors the AreaLight CDF search in the WGSL implementation. The
+/// final entry is selected for `u == 1` after clamping to the sampler range.
+pub fn select_area_triangle_cdf(cdf: &[f32], u: f32) -> Option<usize> {
+    if cdf.is_empty()
+        || !u.is_finite()
+        || cdf
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0 || *value > 1.0)
+        || cdf.windows(2).any(|window| window[0] >= window[1])
+        || *cdf.last()? != 1.0
+    {
+        return None;
+    }
+
+    let u = u.clamp(0.0, 0.99999994);
+    let mut first = 0;
+    let mut last = cdf.len();
+    while first < last {
+        let middle = first + (last - first) / 2;
+        if u < cdf[middle] {
+            last = middle;
+        } else {
+            first = middle + 1;
+        }
+    }
+    Some(first.min(cdf.len() - 1))
+}
+
 /// Convert an area-measure density into a solid-angle density.
 pub fn area_pdf_omega(distance_squared: f32, cosine_at_light: f32, total_area: f32) -> f32 {
     if !distance_squared.is_finite()
