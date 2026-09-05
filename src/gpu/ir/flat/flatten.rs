@@ -288,19 +288,34 @@ fn flatten_node_ref(
         let material = material_index(&material, builder, material_kind)?;
         let instance_index = u32::try_from(builder.instances.len())
             .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
-        let area_light_handle = if let Some(area_light) = area_light {
-            let area_light_index = u32::try_from(builder.area_lights.len())
-                .map_err(|_| PbrtError::error("The flattened GPU area-light table exceeds u32."))?;
-            let light_handle = u32::try_from(builder.lights.len())
+        let first_area_light = if let Some(area_light) = area_light {
+            let first_light_handle = u32::try_from(builder.lights.len())
                 .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
-            builder
-                .area_lights
-                .push(area_light_record(&area_light, instance_index, &name)?);
-            builder.lights.push(LightRecord {
-                kind: LightKind::Area,
-                payload: area_light_index,
-            });
-            light_handle
+            let triangle_count = shape.indices.len() / 3;
+            if triangle_count == 0 {
+                return Err(PbrtError::error(&format!(
+                    "Area-light shape node \"{name}\" contains no triangles."
+                )));
+            }
+            for primitive in 0..triangle_count {
+                let area_light_index = u32::try_from(builder.area_lights.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU area-light table exceeds u32.")
+                })?;
+                let primitive = u32::try_from(primitive).map_err(|_| {
+                    PbrtError::error("The flattened GPU area-light primitive exceeds u32.")
+                })?;
+                builder.area_lights.push(area_light_record(
+                    &area_light,
+                    instance_index,
+                    primitive,
+                    &name,
+                )?);
+                builder.lights.push(LightRecord {
+                    kind: LightKind::Area,
+                    payload: area_light_index,
+                });
+            }
+            first_light_handle
         } else {
             INVALID_INDEX
         };
@@ -308,7 +323,7 @@ fn flatten_node_ref(
             geometry,
             transform: world_transform,
             material,
-            area_light: area_light_handle,
+            first_area_light,
             reverse_orientation,
         });
     }
@@ -449,6 +464,7 @@ fn point_light(
 fn area_light_record(
     light: &NodeAreaLight,
     instance: u32,
+    primitive: u32,
     node_name: &str,
 ) -> Result<AreaLight, PbrtError> {
     if light.name != "diffuse" {
@@ -495,6 +511,7 @@ fn area_light_record(
     }
     Ok(AreaLight {
         instance,
+        primitive,
         emission,
         two_sided: light.params.get_one_bool("twosided", false),
     })
