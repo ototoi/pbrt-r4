@@ -1,5 +1,5 @@
 use super::{
-    build_light_bounds, build_light_bvh, identity_transform, multiply_transform, transform_normal,
+    build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
     transform_swaps_handedness, AreaLight, AreaTriangleInput, Camera, Geometry, Instance,
     LightBoundInput, LightKind, LightRecord, Material, PointLight, RenderSettings, Scene,
     Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport,
@@ -306,7 +306,8 @@ fn flatten_node_ref(
             payload: point_light_index,
         });
     }
-    for (component_index, shape, material, area_light, reverse_orientation, input_normals) in shapes
+    for (component_index, shape, material, area_light, reverse_orientation, _input_normals) in
+        shapes
     {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
         let material = material_index(&material, builder, material_kind)?;
@@ -341,22 +342,6 @@ fn flatten_node_ref(
                     transform_point(&world_transform, shape.positions[i1].0),
                     transform_point(&world_transform, shape.positions[i2].0),
                 ];
-                let normals = input_normals.as_ref().map(|normals| {
-                    [
-                        transform_normal(world_transform, normals[i0].0),
-                        transform_normal(world_transform, normals[i1].0),
-                        transform_normal(world_transform, normals[i2].0),
-                    ]
-                });
-                let normals = match normals {
-                    Some([Ok(n0), Ok(n1), Ok(n2)]) => Some([n0, n1, n2]),
-                    Some(_) => {
-                        return Err(PbrtError::error(&format!(
-                            "Area light shape node \"{name}\" has a singular normal transform."
-                        )))
-                    }
-                    None => None,
-                };
                 let area = triangle_area(positions);
                 if !area.is_finite() {
                     return Err(PbrtError::error(&format!(
@@ -367,12 +352,7 @@ fn flatten_node_ref(
                     continue;
                 }
                 let mut geometric_normal = triangle_geometric_normal(positions)?;
-                if let Some(normals) = normals {
-                    let normal_sum = add3(add3(normals[0], normals[1]), normals[2]);
-                    if dot3(geometric_normal, normal_sum) < 0.0 {
-                        geometric_normal = scale3(geometric_normal, -1.0);
-                    }
-                } else if reverse_orientation ^ transform_swaps_handedness(world_transform) {
+                if reverse_orientation ^ transform_swaps_handedness(world_transform) {
                     geometric_normal = scale3(geometric_normal, -1.0);
                 }
                 total_area += area;
@@ -680,10 +660,6 @@ fn triangle_geometric_normal(positions: [[f32; 3]; 3]) -> Result<[f32; 3], PbrtE
         ));
     }
     Ok(scale3(cross, 1.0 / length))
-}
-
-fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
 fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
