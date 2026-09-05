@@ -18,6 +18,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
         return;
     }
+    let reflectance = load_diffuse_reflectance(surface.material);
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
@@ -39,7 +40,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
     let next_pdf = abs(dot(normal, direction)) / PI;
-    var next_throughput = ray.throughput;
+    var next_throughput = ray.throughput * vec4<f32>(reflectance, 1.0);
     if (ray.depth >= 1u) {
         let rr_beta = max(
             max(next_throughput.x, max(next_throughput.y, next_throughput.z)),

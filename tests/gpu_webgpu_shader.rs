@@ -100,6 +100,14 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
 }
 
 #[test]
+fn diffuse_shaders_load_type_specific_reflectance() {
+    assert!(COMMON_SHADER.contains("fn load_diffuse_reflectance(material_index: u32)"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("let reflectance = load_diffuse_reflectance"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * vec4<f32>(reflectance, 1.0)"));
+}
+
+#[test]
 fn primary_rays_initialize_depth_zero_sample_state() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));

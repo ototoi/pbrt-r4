@@ -612,6 +612,15 @@ fn load_diffuse_material(index: u32) -> vec4<f32> {
     );
 }
 
+fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
+    let data_index = load_material_data_index(material_index);
+    if (data_index >= scene.diffuse_material_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return vec3<f32>(0.0);
+    }
+    return load_diffuse_material(data_index).xyz;
+}
+
 fn load_dielectric_eta(index: u32) -> f32 {
     return bitcast<f32>(scene_data[scene.dielectric_material_offset_words + index * 4u]);
 }
