@@ -24,6 +24,7 @@ pub struct WavefrontPathIntegrator {
     scene: Scene,
     camera_buffer: wgpu::Buffer,
     viewport_buffer: wgpu::Buffer,
+    scene_uniform_buffer: wgpu::Buffer,
     queues: Queues,
     film: Film,
     pipeline: Pipeline,
@@ -68,6 +69,11 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.viewport),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let scene_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 scene UBO"),
+            contents: bytes_of(&scene.scene_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
         let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
         let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
@@ -94,10 +100,11 @@ impl WavefrontPathIntegrator {
                 buffer_entry(4, &scene.index_buffer),
                 buffer_entry(5, &scene.geometry_buffer),
                 buffer_entry(6, &scene.instance_buffer),
-                buffer_entry(7, &scene.material_buffer),
+                buffer_entry(7, &scene.scene_data_buffer),
                 buffer_entry(8, &queues.surfaces),
                 buffer_entry(9, &film.framebuffer),
                 buffer_entry(10, &queues.wavefront),
+                buffer_entry(11, &scene_uniform_buffer),
             ],
         });
         Ok(Self {
@@ -105,6 +112,7 @@ impl WavefrontPathIntegrator {
             scene,
             camera_buffer,
             viewport_buffer,
+            scene_uniform_buffer,
             queues,
             film,
             pipeline,

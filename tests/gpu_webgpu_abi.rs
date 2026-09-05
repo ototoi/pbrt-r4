@@ -1,7 +1,8 @@
 use pbrt_r4::gpu::webgpu::abi::{
-    inverse_transpose_linear, row_major_to_columns, AreaLight, CameraUniform, Geometry, Instance,
-    LightRecord, Material, PixelSampleState, PointLight, QueueState, RayWorkItem,
-    ShadowRayWorkItem, SurfaceWorkItem, Vertex, ViewportUniform,
+    inverse_transpose_linear, row_major_to_columns, scene_uniform, AreaLight, CameraUniform,
+    Geometry, Instance, LightRecord, Material, PixelSampleState, PointLight, QueueState,
+    RayWorkItem, SceneUniform, ShadowRayWorkItem, SurfaceWorkItem, Vertex, ViewportUniform,
+    INVALID_INDEX, LIGHT_SAMPLER_KIND_UNIFORM,
 };
 
 #[test]
@@ -16,9 +17,31 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 }
 
 #[test]
+fn scene_uniform_records_absolute_word_offsets() {
+    let uniform = scene_uniform(2, 3, 1, 2, 8, 20, 28, 52).unwrap();
+
+    assert_eq!(uniform.material_offset_words, 0);
+    assert_eq!(uniform.material_count, 2);
+    assert_eq!(uniform.light_record_offset_words, 8);
+    assert_eq!(uniform.light_count, 3);
+    assert_eq!(uniform.point_light_offset_words, 20);
+    assert_eq!(uniform.point_light_count, 1);
+    assert_eq!(uniform.area_light_offset_words, 28);
+    assert_eq!(uniform.area_light_count, 2);
+    assert_eq!(uniform.light_sampler_kind, LIGHT_SAMPLER_KIND_UNIFORM);
+    assert_eq!(uniform.light_sampler_data_offset, INVALID_INDEX);
+    assert_eq!(uniform.light_bvh_node_offset, INVALID_INDEX);
+    assert_eq!(uniform.light_bvh_node_count, 0);
+    assert_eq!(uniform.light_leaf_offset, INVALID_INDEX);
+    assert_eq!(uniform.light_leaf_count, 0);
+    assert_eq!(uniform.scene_data_words, 52);
+}
+
+#[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
+    assert_eq!(std::mem::size_of::<SceneUniform>(), 64);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 144);
@@ -35,6 +58,39 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
 
 #[test]
 fn webgpu_work_item_field_offsets_match_shader_layout() {
+    assert_eq!(std::mem::offset_of!(ViewportUniform, seed), 16);
+    assert_eq!(std::mem::offset_of!(ViewportUniform, padding), 20);
+    assert_eq!(std::mem::offset_of!(SceneUniform, material_offset_words), 0);
+    assert_eq!(std::mem::offset_of!(SceneUniform, material_count), 4);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, light_record_offset_words),
+        8
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_count), 12);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, point_light_offset_words),
+        16
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, point_light_count), 20);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, area_light_offset_words),
+        24
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, area_light_count), 28);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_sampler_kind), 32);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, light_sampler_data_offset),
+        36
+    );
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, light_bvh_node_offset),
+        40
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_bvh_node_count), 44);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_offset), 48);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_count), 52);
+    assert_eq!(std::mem::offset_of!(SceneUniform, scene_data_words), 56);
+    assert_eq!(std::mem::offset_of!(SceneUniform, reserved), 60);
     assert_eq!(std::mem::offset_of!(Instance, first_area_light), 8);
     assert_eq!(std::mem::offset_of!(AreaLight, emission), 8);
     assert_eq!(std::mem::offset_of!(AreaLight, total_area), 24);

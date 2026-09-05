@@ -13,6 +13,21 @@ const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
 #[test]
+fn immutable_scene_metadata_is_separate_from_viewport_state() {
+    let viewport = COMMON_SHADER
+        .split("struct ViewportUniform {")
+        .nth(1)
+        .and_then(|tail| tail.split("};").next())
+        .unwrap();
+    assert!(!viewport.contains("light_count"));
+    assert!(COMMON_SHADER.contains("struct SceneUniform {"));
+    assert!(COMMON_SHADER.contains("@group(0) @binding(11)"));
+    assert!(COMMON_SHADER.contains("var<uniform> scene: SceneUniform;"));
+    assert!(COMMON_SHADER.contains("var<storage, read> scene_data: array<u32>;"));
+    assert!(!COMMON_SHADER.contains("material_light_data"));
+}
+
+#[test]
 fn shadow_direction_is_loaded_from_its_vec4_aligned_queue_slot() {
     let source = compose_source(INTERSECT_SHADOW_SHADER);
 

@@ -44,6 +44,7 @@ impl Pipeline {
                 storage_entry(8, false),
                 storage_entry(9, false),
                 storage_entry(10, false),
+                buffer_entry(11, wgpu::BufferBindingType::Uniform),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

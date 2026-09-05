@@ -8,6 +8,8 @@ pub const RAY_T_MIN: f32 = 0.0;
 pub const RAY_T_MAX: f32 = f32::MAX;
 pub const LIGHT_KIND_POINT: u32 = 0;
 pub const LIGHT_KIND_AREA: u32 = 1;
+pub const LIGHT_SAMPLER_KIND_UNIFORM: u32 = 0;
+pub const INVALID_INDEX: u32 = u32::MAX;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -24,9 +26,28 @@ pub struct ViewportUniform {
     pub sample_index: u32,
     pub max_depth: u32,
     pub seed: u32,
-    pub light_data_offset: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct SceneUniform {
+    pub material_offset_words: u32,
+    pub material_count: u32,
+    pub light_record_offset_words: u32,
     pub light_count: u32,
-    pub area_light_data_offset: u32,
+    pub point_light_offset_words: u32,
+    pub point_light_count: u32,
+    pub area_light_offset_words: u32,
+    pub area_light_count: u32,
+    pub light_sampler_kind: u32,
+    pub light_sampler_data_offset: u32,
+    pub light_bvh_node_offset: u32,
+    pub light_bvh_node_count: u32,
+    pub light_leaf_offset: u32,
+    pub light_leaf_count: u32,
+    pub scene_data_words: u32,
+    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -237,9 +258,6 @@ pub fn camera_uniform(
 pub fn viewport_uniform(
     viewport: &flat::Viewport,
     settings: &flat::RenderSettings,
-    material_count: usize,
-    light_count: usize,
-    area_light_data_offset: usize,
 ) -> Result<ViewportUniform, PbrtError> {
     let [width, height] = viewport.resolution;
     if width == 0 || height == 0 {
@@ -252,23 +270,47 @@ pub fn viewport_uniform(
             "WebGPU viewport pixel count must fit in u32.",
         ));
     }
-    let light_count = u32::try_from(light_count)
-        .map_err(|_| PbrtError::error("WebGPU light count does not fit in u32."))?;
-    let light_data_offset = material_count
-        .checked_mul(std::mem::size_of::<Material>() / std::mem::size_of::<u32>())
-        .and_then(|offset| u32::try_from(offset).ok())
-        .ok_or_else(|| PbrtError::error("WebGPU material/light buffer offset overflowed."))?;
     Ok(ViewportUniform {
         width,
         height,
         sample_index: 0,
         max_depth: settings.max_depth,
         seed: settings.seed,
-        light_count,
-        light_data_offset,
-        area_light_data_offset: u32::try_from(area_light_data_offset).map_err(|_| {
-            PbrtError::error("WebGPU area-light buffer offset does not fit in u32.")
-        })?,
+        padding: [0; 3],
+    })
+}
+
+pub fn scene_uniform(
+    material_count: usize,
+    light_count: usize,
+    point_light_count: usize,
+    area_light_count: usize,
+    light_record_offset_words: usize,
+    point_light_offset_words: usize,
+    area_light_offset_words: usize,
+    scene_data_words: usize,
+) -> Result<SceneUniform, PbrtError> {
+    let to_u32 = |value: usize, label: &str| {
+        u32::try_from(value)
+            .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
+    };
+    Ok(SceneUniform {
+        material_offset_words: 0,
+        material_count: to_u32(material_count, "material count")?,
+        light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
+        light_count: to_u32(light_count, "light count")?,
+        point_light_offset_words: to_u32(point_light_offset_words, "point-light offset")?,
+        point_light_count: to_u32(point_light_count, "point-light count")?,
+        area_light_offset_words: to_u32(area_light_offset_words, "area-light offset")?,
+        area_light_count: to_u32(area_light_count, "area-light count")?,
+        light_sampler_kind: LIGHT_SAMPLER_KIND_UNIFORM,
+        light_sampler_data_offset: INVALID_INDEX,
+        light_bvh_node_offset: INVALID_INDEX,
+        light_bvh_node_count: 0,
+        light_leaf_offset: INVALID_INDEX,
+        light_leaf_count: 0,
+        scene_data_words: to_u32(scene_data_words, "scene-data word count")?,
+        reserved: 0,
     })
 }
 
