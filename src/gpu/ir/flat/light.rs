@@ -22,9 +22,6 @@ pub struct PointLight {
 pub struct AreaLight {
     pub instance: u32,
     pub distribution: TriangleDistributionRange,
-    /// Transitional first primitive for the pre-group WebGPU ABI.
-    /// Removed when the distribution table is packed in Phase C.
-    pub primitive: u32,
     pub emission: [f32; 3],
     pub two_sided: bool,
 }

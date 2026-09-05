@@ -53,7 +53,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     surfaces[pixel_index].flags = 0u;
     append_material_eval(pixel_index);
 
-    if (material_kind == MATERIAL_KIND_DIFFUSE && instance.first_area_light != 0xffffffffu) {
+    if (material_kind == MATERIAL_KIND_DIFFUSE && instance.area_light != 0xffffffffu) {
         append_hit_area_light(pixel_index);
     }
 

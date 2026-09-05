@@ -405,7 +405,6 @@ fn flatten_node_ref(
                     })?,
                     total_area,
                 },
-                primitive: builder.triangle_distributions[distribution_offset as usize].primitive,
                 emission,
                 two_sided,
             });
