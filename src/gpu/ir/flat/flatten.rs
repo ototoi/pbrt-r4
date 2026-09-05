@@ -366,12 +366,20 @@ fn flatten_node_ref(
                 if area <= 0.0 {
                     continue;
                 }
+                let mut geometric_normal = triangle_geometric_normal(positions)?;
+                if let Some(normals) = normals {
+                    let normal_sum = add3(add3(normals[0], normals[1]), normals[2]);
+                    if dot3(geometric_normal, normal_sum) < 0.0 {
+                        geometric_normal = scale3(geometric_normal, -1.0);
+                    }
+                } else if reverse_orientation ^ transform_swaps_handedness(world_transform) {
+                    geometric_normal = scale3(geometric_normal, -1.0);
+                }
                 total_area += area;
                 bound_triangles.push(AreaTriangleInput {
                     world_positions: positions,
-                    input_normals: normals,
-                    reverse_orientation,
-                    transform_swaps_handedness: transform_swaps_handedness(world_transform),
+                    area,
+                    geometric_normal,
                 });
                 entries.push((primitive, area));
             }
@@ -655,6 +663,39 @@ fn triangle_area(positions: [[f32; 3]; 3]) -> f32 {
         edge0[0] * edge1[1] - edge0[1] * edge1[0],
     ];
     0.5 * (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt()
+}
+
+fn triangle_geometric_normal(positions: [[f32; 3]; 3]) -> Result<[f32; 3], PbrtError> {
+    let edge0 = sub3(positions[1], positions[0]);
+    let edge1 = sub3(positions[2], positions[0]);
+    let cross = [
+        edge0[1] * edge1[2] - edge0[2] * edge1[1],
+        edge0[2] * edge1[0] - edge0[0] * edge1[2],
+        edge0[0] * edge1[1] - edge0[1] * edge1[0],
+    ];
+    let length = dot3(cross, cross).sqrt();
+    if !length.is_finite() || length == 0.0 {
+        return Err(PbrtError::error(
+            "Area light triangle geometric normal is invalid.",
+        ));
+    }
+    Ok(scale3(cross, 1.0 / length))
+}
+
+fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn scale3(v: [f32; 3], scale: f32) -> [f32; 3] {
+    [v[0] * scale, v[1] * scale, v[2] * scale]
 }
 
 fn transform_point(matrix: &Transform, point: [f32; 3]) -> [f32; 3] {
