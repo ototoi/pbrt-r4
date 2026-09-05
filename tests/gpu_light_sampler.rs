@@ -1,4 +1,5 @@
 use pbrt_r4::gpu::ir::flat::{LightKind, LightRecord, RenderSettings};
+use pbrt_r4::gpu::webgpu::light_bvh::{build_light_bvh, LightBvhInput, LightBvhNode};
 use pbrt_r4::gpu::webgpu::light_sampler::{
     resolve_light_sampler, resolve_scene_light_sampler, CompactLightBounds, LightSamplerKind,
     LIGHT_BVH_INDEX_MAX,
@@ -113,4 +114,55 @@ fn compact_light_bounds_handle_degenerate_global_axis() {
     .unwrap();
     assert_eq!(bounds.q_min[0], 0);
     assert_eq!(bounds.q_max[0], 0);
+}
+
+#[test]
+fn light_bvh_uses_dfs_parent_and_handle_mapping() {
+    let topology = build_light_bvh(&[
+        LightBvhInput {
+            handle: 0,
+            min: [0.0, 0.0, 0.0],
+            max: [1.0, 1.0, 1.0],
+        },
+        LightBvhInput {
+            handle: 1,
+            min: [4.0, 0.0, 0.0],
+            max: [5.0, 1.0, 1.0],
+        },
+        LightBvhInput {
+            handle: 2,
+            min: [8.0, 0.0, 0.0],
+            max: [9.0, 1.0, 1.0],
+        },
+    ])
+    .unwrap();
+    assert_eq!(topology.nodes.len(), 5);
+    assert_eq!(topology.handle_to_leaf.len(), 3);
+    for (handle, &leaf) in topology.handle_to_leaf.iter().enumerate() {
+        assert!(
+            matches!(topology.nodes[leaf as usize], LightBvhNode::Leaf { handle: h, .. } if h == handle as u32)
+        );
+        if leaf != 0 {
+            assert_ne!(topology.nodes[leaf as usize].parent(), u32::MAX);
+        }
+    }
+    assert!(matches!(topology.nodes[0], LightBvhNode::Interior { .. }));
+}
+
+#[test]
+fn light_bvh_rejects_duplicate_handles() {
+    let error = build_light_bvh(&[
+        LightBvhInput {
+            handle: 3,
+            min: [0.0; 3],
+            max: [1.0; 3],
+        },
+        LightBvhInput {
+            handle: 3,
+            min: [2.0; 3],
+            max: [3.0; 3],
+        },
+    ])
+    .unwrap_err();
+    assert!(format!("{error:?}").contains("unique"));
 }
