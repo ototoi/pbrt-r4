@@ -840,11 +840,30 @@ fn material_index(
     let index = u32::try_from(builder.materials.len()).map_err(|_| {
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
+    let kind = material_kind.unwrap_or(&source_material.kind);
     builder.materials.push(Material {
-        kind: material_kind.unwrap_or(&source_material.kind).to_string(),
+        kind: kind.to_string(),
+        data: material_data(source_material, kind),
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
+}
+
+fn material_data(source_material: &NodeMaterial, kind: &str) -> super::MaterialData {
+    match kind {
+        "diffuse" => {
+            let default_reflectance = Spectrum::from(0.5);
+            let reflectance = source_material
+                .params
+                .get_one_spectrum("reflectance", &default_reflectance)
+                .to_rgb();
+            super::MaterialData::Diffuse(super::DiffuseMaterialData { reflectance })
+        }
+        "dielectric" => super::MaterialData::Dielectric(super::DielectricMaterialData {
+            eta: source_material.params.get_one_float("eta", 1.5) as f32,
+        }),
+        _ => super::MaterialData::Unsupported,
+    }
 }
 
 fn validate_attribute_len<T>(
