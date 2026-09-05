@@ -492,10 +492,12 @@ fn area_light_record(
     // photometric division here would darken the light by ~photometric
     // (~107x for a white illuminant). So the RGB emission is just the user
     // `scale` times the nominal RGB.
-    let mut scale = light.params.get_one_float("scale", 1.0);
+    let scale = light.params.get_one_float("scale", 1.0);
     let power = light.params.get_one_float("power", -1.0);
     if power > 0.0 {
-        scale *= power / (4.0 * std::f32::consts::PI);
+        return Err(PbrtError::error(&format!(
+            "GPU area light power on node \"{node_name}\" is not implemented."
+        )));
     }
     let rgb = emission_spectrum.to_rgb();
     let emission = [
