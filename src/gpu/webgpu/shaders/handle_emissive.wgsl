@@ -25,6 +25,9 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (ray.depth > 0u && ray.prev_pdf > 0.0) {
         var triangle_distribution_index = 0xffffffffu;
         let distribution_count = load_area_distribution_count(area_light);
+        if (distribution_count == 0u || load_area_total(area_light) <= 0.0) {
+            return;
+        }
         for (var i = 0u; i < distribution_count; i++) {
             if (load_area_distribution(area_light, i).primitive == surface.primitive_index) {
                 triangle_distribution_index = i;

@@ -46,7 +46,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_radiance = light.intensity.xyz;
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
-        if (total_area <= 0.0) {
+        let distribution_count = load_area_distribution_count(light_payload);
+        if (total_area <= 0.0 || distribution_count == 0u) {
             return;
         }
         let triangle_selection = select_area_triangle(light_payload, samples.direct.y);
