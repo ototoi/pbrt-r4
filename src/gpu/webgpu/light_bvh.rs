@@ -1,6 +1,6 @@
 use crate::util::error::PbrtError;
 
-use super::light_sampler::LIGHT_BVH_INDEX_MAX;
+use super::light_sampler::{CompactLightBounds, LIGHT_BVH_INDEX_MAX};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightBvhInput {
@@ -31,6 +31,29 @@ impl LightBvhNode {
 pub struct LightBvhTopology {
     pub nodes: Vec<LightBvhNode>,
     pub handle_to_leaf: Vec<u32>,
+}
+
+impl LightBvhTopology {
+    /// Packs one topology entry together with its already-quantized bounds.
+    /// The caller supplies bounds in DFS node order; this method only adds the
+    /// topology links and therefore cannot silently reorder payload data.
+    pub fn pack_node(
+        &self,
+        node_index: usize,
+        bounds: CompactLightBounds,
+    ) -> Result<[u32; 8], PbrtError> {
+        let node = *self
+            .nodes
+            .get(node_index)
+            .ok_or_else(|| PbrtError::error("Light BVH node index is out of range."))?;
+        let (child_or_light_index, is_leaf) = match node {
+            LightBvhNode::Leaf { handle, .. } => (handle, true),
+            LightBvhNode::Interior { right_child, .. } => (right_child, false),
+        };
+        let mut words = bounds.to_words(child_or_light_index, is_leaf)?;
+        words[7] = node.parent();
+        Ok(words)
+    }
 }
 
 pub fn build_light_bvh(inputs: &[LightBvhInput]) -> Result<LightBvhTopology, PbrtError> {

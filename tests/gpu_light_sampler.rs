@@ -166,3 +166,46 @@ fn light_bvh_rejects_duplicate_handles() {
     .unwrap_err();
     assert!(format!("{error:?}").contains("unique"));
 }
+
+#[test]
+fn light_bvh_packs_links_into_reserved_words() {
+    let topology = build_light_bvh(&[
+        LightBvhInput {
+            handle: 0,
+            min: [0.0; 3],
+            max: [1.0; 3],
+        },
+        LightBvhInput {
+            handle: 1,
+            min: [2.0; 3],
+            max: [3.0; 3],
+        },
+    ])
+    .unwrap();
+    let bounds = CompactLightBounds::pack(
+        [0.0; 3],
+        [1.0; 3],
+        [0.0; 3],
+        [1.0; 3],
+        [0.0, 0.0, 1.0],
+        1.0,
+        0.0,
+        0.0,
+        false,
+    )
+    .unwrap();
+    let root = topology.pack_node(0, bounds).unwrap();
+    assert_eq!(root[7], u32::MAX);
+    assert_eq!(root[6] >> 31, 0);
+    let leaf = topology
+        .handle_to_leaf
+        .iter()
+        .position(|&index| index != 0)
+        .unwrap();
+    let leaf_words = topology
+        .pack_node(topology.handle_to_leaf[leaf] as usize, bounds)
+        .unwrap();
+    assert_eq!(leaf_words[6] >> 31, 1);
+    assert_eq!(leaf_words[6] & 0x7fff_ffff, leaf as u32);
+    assert_ne!(leaf_words[7], u32::MAX);
+}
