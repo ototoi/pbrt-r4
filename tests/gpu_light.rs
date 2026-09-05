@@ -1,4 +1,6 @@
-use pbrt_r4::gpu::webgpu::light::{area_pdf_omega, triangle_world_area, uniform_light_pmf};
+use pbrt_r4::gpu::webgpu::light::{
+    area_pdf_omega, area_triangle_pmf, triangle_world_area, uniform_light_pmf,
+};
 
 #[test]
 fn uniform_light_pmf_is_normalized() {
@@ -29,12 +31,22 @@ fn triangle_area_is_computed_after_the_instance_transform() {
 }
 
 #[test]
-fn per_triangle_light_sampling_accounts_for_unequal_areas() {
-    let pmf = uniform_light_pmf(2);
+fn area_triangle_pmf_matches_uniform_area_pdf() {
     let areas = [1.0, 3.0];
-    let expected_integral = areas.into_iter().sum::<f32>();
-    let sampled_estimates = areas.map(|area| 1.0 / (pmf * (1.0 / area)));
-    let expectation = pmf * sampled_estimates.into_iter().sum::<f32>();
+    let total_area = areas.into_iter().sum::<f32>();
+    let pmfs = areas.map(|area| area_triangle_pmf(area, total_area));
 
-    assert!((expectation - expected_integral).abs() < 1e-6);
+    assert!((pmfs.into_iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    for (area, pmf) in areas.into_iter().zip(pmfs) {
+        let conditional_pdf = 1.0 / area;
+        assert!((pmf * conditional_pdf - 1.0 / total_area).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn area_triangle_pmf_rejects_invalid_measurements() {
+    assert_eq!(area_triangle_pmf(0.0, 1.0), 0.0);
+    assert_eq!(area_triangle_pmf(1.0, 0.0), 0.0);
+    assert_eq!(area_triangle_pmf(f32::NAN, 1.0), 0.0);
+    assert_eq!(area_triangle_pmf(1.0, f32::INFINITY), 0.0);
 }
