@@ -48,11 +48,8 @@ fn one_registered_light_forces_uniform() {
 }
 
 #[test]
-fn unknown_name_reports_and_uses_bvh() {
-    assert_eq!(
-        resolve_light_sampler("unknown", 2).unwrap(),
-        LightSamplerKind::Bvh
-    );
+fn unknown_name_is_rejected() {
+    assert!(resolve_light_sampler("unknown", 2).is_err());
 }
 
 #[test]
