@@ -716,13 +716,15 @@ fn light_bvh_importance(node: DecodedLightBVHNode, p: vec3<f32>, n: vec3<f32>) -
         return 0.0;
     }
     let radius = 0.5 * length(diagonal);
-    let to_center = center - p;
-    let center_distance_squared = dot(to_center, to_center);
+    // Match pbrt-v4 LightBounds::importance: wi points from the light
+    // bound's center toward the reference point.
+    let center_to_point = p - center;
+    let center_distance_squared = dot(center_to_point, center_to_point);
     var cos_theta_b = -1.0;
     if (center_distance_squared > radius * radius && center_distance_squared > 0.0) {
         cos_theta_b = sqrt(max(0.0, 1.0 - radius * radius / center_distance_squared));
     }
-    let wi = normalize(to_center);
+    let wi = normalize(center_to_point);
     var cos_theta_w = dot(node.direction, wi);
     if (node.two_sided) {
         cos_theta_w = abs(cos_theta_w);

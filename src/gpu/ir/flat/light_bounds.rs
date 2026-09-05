@@ -154,7 +154,9 @@ impl LightBounds {
             return Ok(0.0);
         }
 
-        let wi = normalize([center[0] - p[0], center[1] - p[1], center[2] - p[2]])?;
+        // Match pbrt-v4 LightBounds::importance: wi points from the light
+        // bound's center toward the reference point.
+        let wi = normalize([p[0] - center[0], p[1] - center[1], p[2] - center[2]])?;
         let mut cos_theta_w = dot(self.direction, wi);
         if self.two_sided {
             cos_theta_w = cos_theta_w.abs();
