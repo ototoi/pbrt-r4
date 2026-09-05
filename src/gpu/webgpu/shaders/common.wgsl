@@ -577,10 +577,22 @@ fn load_light_payload(index: u32) -> u32 {
 }
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
-    if (light_handle >= scene.light_count) {
+    if (light_handle >= scene.light_count || scene.light_leaf_offset == 0xffffffffu) {
         return 0.0;
     }
-    return 1.0 / f32(scene.light_count);
+    if (scene_data[scene.light_leaf_offset + light_handle] == 0xffffffffu) {
+        return 0.0;
+    }
+    var count = 0u;
+    for (var handle = 0u; handle < scene.light_leaf_count; handle++) {
+        if (scene_data[scene.light_leaf_offset + handle] != 0xffffffffu) {
+            count = count + 1u;
+        }
+    }
+    if (count == 0u) {
+        return 0.0;
+    }
+    return 1.0 / f32(count);
 }
 
 fn hash_u32(value: u32) -> u32 {
@@ -616,13 +628,29 @@ fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
 }
 
 fn sample_uniform_light(selector: f32) -> LightSelection {
-    if (scene.light_count == 0u) {
-        return LightSelection(0u, 0.0);
+    if (scene.light_leaf_offset == 0xffffffffu || scene.light_leaf_count == 0u) {
+        return LightSelection(0xffffffffu, 0.0);
     }
-    return LightSelection(
-        min(u32(selector * f32(scene.light_count)), scene.light_count - 1u),
-        1.0 / f32(scene.light_count),
-    );
+    var count = 0u;
+    for (var handle = 0u; handle < scene.light_leaf_count; handle++) {
+        if (scene_data[scene.light_leaf_offset + handle] != 0xffffffffu) {
+            count = count + 1u;
+        }
+    }
+    if (count == 0u) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    let selected = min(u32(min(selector, 0.99999994) * f32(count)), count - 1u);
+    var ordinal = 0u;
+    for (var handle = 0u; handle < scene.light_leaf_count; handle++) {
+        if (scene_data[scene.light_leaf_offset + handle] != 0xffffffffu) {
+            if (ordinal == selected) {
+                return LightSelection(handle, 1.0 / f32(count));
+            }
+            ordinal = ordinal + 1u;
+        }
+    }
+    return LightSelection(0xffffffffu, 0.0);
 }
 
 fn light_bvh_word(node_index: u32, word: u32) -> u32 {
