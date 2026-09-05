@@ -381,8 +381,14 @@ fn flatten_node_ref(
                 )));
             }
             let mut cumulative = 0.0;
+            let mut previous_cdf = 0.0;
             for (primitive, area) in entries {
                 cumulative += area / total_area;
+                if cumulative <= previous_cdf {
+                    return Err(PbrtError::error(&format!(
+                        "Area-light shape node \"{name}\" has indistinguishable adjacent CDF entries after f32 packing."
+                    )));
+                }
                 builder
                     .triangle_distributions
                     .push(TriangleDistributionEntry {
@@ -390,6 +396,7 @@ fn flatten_node_ref(
                         cdf: cumulative,
                         area,
                     });
+                previous_cdf = cumulative;
             }
             if let Some(last) = builder.triangle_distributions.last_mut() {
                 last.cdf = 1.0;
