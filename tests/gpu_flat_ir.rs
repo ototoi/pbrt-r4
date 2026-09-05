@@ -133,24 +133,39 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
-    area.write()
-        .unwrap()
-        .add_component(Component::AreaLight(AreaLightComponent {
+    {
+        let mut node = area.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.positions.push(Vec3f([1.0, 1.0, 0.0]));
+        mesh.indices.extend_from_slice(&[1, 3, 2]);
+        mesh.normals.as_mut().unwrap().push(Vec3f([0.0, 0.0, 1.0]));
+        mesh.uvs.as_mut().unwrap().push(Vec2f([1.0, 1.0]));
+        node.add_component(Component::AreaLight(AreaLightComponent {
             area_light: NodeAreaLight {
                 name: "diffuse".to_string(),
                 params: Default::default(),
             },
         }));
+    }
     root.add_child(area);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
     assert_eq!(scene.instances.len(), 1);
-    assert_eq!(scene.instances[0].area_light, 0);
-    assert_eq!(scene.area_lights.len(), 1);
+    assert_eq!(scene.instances[0].first_area_light, 0);
+    assert_eq!(scene.area_lights.len(), 2);
     assert_eq!(scene.area_lights[0].instance, 0);
-    assert_eq!(scene.lights.len(), 1);
+    assert_eq!(scene.area_lights[0].primitive, 0);
+    assert_eq!(scene.area_lights[1].instance, 0);
+    assert_eq!(scene.area_lights[1].primitive, 1);
+    assert_eq!(scene.lights.len(), 2);
     assert_eq!(scene.lights[0].payload, 0);
+    assert_eq!(scene.lights[1].payload, 1);
     assert_eq!(
         scene.lights[0].kind,
         pbrt_r4::gpu::ir::flat::LightKind::Area

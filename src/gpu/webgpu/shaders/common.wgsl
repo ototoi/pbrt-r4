@@ -43,7 +43,7 @@ struct Geometry {
 struct Instance {
     geometry: u32,
     material: u32,
-    area_light: u32,
+    first_area_light: u32,
     orientation_flags: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
@@ -456,24 +456,12 @@ fn load_area_total(index: u32) -> f32 {
     return bitcast<f32>(load_area_word(index, 6u));
 }
 
-fn load_area_distribution_offset(index: u32) -> u32 {
+fn load_area_primitive(index: u32) -> u32 {
     return load_area_word(index, 7u);
-}
-
-fn load_area_distribution_count(index: u32) -> u32 {
-    return load_area_word(index, 8u);
 }
 
 fn load_area_two_sided(index: u32) -> bool {
     return load_area_word(index, 1u) != 0u;
-}
-
-fn load_triangle_primitive(offset: u32, index: u32) -> u32 {
-    return material_light_data[offset + index * 4u];
-}
-
-fn load_triangle_cdf(offset: u32, index: u32) -> f32 {
-    return bitcast<f32>(material_light_data[offset + index * 4u + 1u]);
 }
 
 fn pixel_count() -> u32 {

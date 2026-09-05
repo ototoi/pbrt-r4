@@ -44,30 +44,16 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else if (light_kind == LIGHT_KIND_AREA) {
         let area_instance = instances[load_area_instance(light_payload)];
         let area_geometry = geometries[area_instance.geometry];
-        let distribution_offset = load_area_distribution_offset(light_payload);
-        let distribution_count = load_area_distribution_count(light_payload);
         let total_area = load_area_total(light_payload);
-        if (distribution_count == 0u || total_area <= 0.0) {
+        if (total_area <= 0.0) {
             return;
         }
-        let selector = samples.direct.y;
-        var triangle_index = 0u;
-        var previous_cdf = 0.0;
-        var remapped_selector = selector;
-        for (var i = 0u; i < distribution_count; i++) {
-            let cdf = load_triangle_cdf(distribution_offset, i);
-            if (selector <= cdf) {
-                triangle_index = load_triangle_primitive(distribution_offset, i);
-                remapped_selector = (selector - previous_cdf) / max(cdf - previous_cdf, 1e-7);
-                break;
-            }
-            previous_cdf = cdf;
-        }
+        let triangle_index = load_area_primitive(light_payload);
         let first_index = area_geometry.index_offset + triangle_index * 3u;
         let i0 = area_geometry.vertex_offset + indices[first_index];
         let i1 = area_geometry.vertex_offset + indices[first_index + 1u];
         let i2 = area_geometry.vertex_offset + indices[first_index + 2u];
-        let su = sqrt(remapped_selector);
+        let su = sqrt(samples.direct.y);
         let bv = samples.direct.z;
         let b0 = 1.0 - su;
         let b1 = su * (1.0 - bv);

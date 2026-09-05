@@ -53,7 +53,7 @@ pub struct Geometry {
 pub struct Instance {
     pub geometry: u32,
     pub material: u32,
-    pub area_light: u32,
+    pub first_area_light: u32,
     pub orientation_flags: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
@@ -131,8 +131,8 @@ pub struct AreaLight {
     pub two_sided: u32,
     pub emission: [f32; 4],
     pub total_area: f32,
-    pub triangle_distribution_offset: u32,
-    pub triangle_distribution_count: u32,
+    pub primitive: u32,
+    pub reserved: u32,
     pub padding: [u32; 3],
 }
 
@@ -153,14 +153,6 @@ pub struct PixelSampleState {
     pub sample_index: u32,
     pub error: u32,
     pub padding: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct TriangleDistributionEntry {
-    pub primitive: u32,
-    pub cdf: f32,
-    pub padding: [u32; 2],
 }
 
 pub fn camera_uniform(

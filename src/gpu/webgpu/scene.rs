@@ -1,4 +1,4 @@
-use bytemuck::{cast_slice, Zeroable};
+use bytemuck::cast_slice;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::ir::flat;
@@ -6,11 +6,10 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, viewport_uniform, AreaLight,
-    Geometry, Instance, LightRecord, PointLight, TriangleDistributionEntry, Vertex,
-    ViewportUniform, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    Geometry, Instance, LightRecord, PointLight, Vertex, ViewportUniform, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
-use super::light::build_triangle_cdf;
 use super::material::MaterialKind;
 use super::output::Output;
 
@@ -29,9 +28,6 @@ pub struct Scene {
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
-    pub area_light_buffer: wgpu::Buffer,
-    pub light_record_buffer: wgpu::Buffer,
-    pub triangle_distribution_buffer: wgpu::Buffer,
     pub render_settings: flat::RenderSettings,
     pub acceleration: Acceleration,
 }
@@ -63,11 +59,12 @@ impl Scene {
                         "Flat instance {index} references an invalid material."
                     )));
                 }
+                validate_instance_area_lights(index, instance, &flat)?;
                 let label = format!("Flat instance {index}");
                 Ok(Instance {
                     geometry: instance.geometry,
                     material: instance.material,
-                    area_light: resolve_area_light_index(instance.area_light, &flat)?,
+                    first_area_light: instance.first_area_light,
                     orientation_flags: u32::from(instance.reverse_orientation)
                         | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
                     world_from_object: row_major_to_columns(instance.transform),
@@ -106,20 +103,18 @@ impl Scene {
                 two_sided: u32::from(light.two_sided),
                 emission: [light.emission[0], light.emission[1], light.emission[2], 0.0],
                 total_area: 0.0,
-                triangle_distribution_offset: u32::MAX,
-                triangle_distribution_count: 0,
+                primitive: light.primitive,
+                reserved: 0,
                 padding: [0; 3],
             })
             .collect::<Vec<_>>();
-        let mut triangle_distributions = Vec::new();
-        build_triangle_distributions(
+        build_area_light_areas(
             &mut area_lights,
             &flat.instances,
             &geometries,
             &flat.geometries,
             &vertices,
             &flat.indices,
-            &mut triangle_distributions,
         )?;
         let light_records = flat
             .lights
@@ -146,23 +141,6 @@ impl Scene {
                     )));
                 }
                 _ => {}
-            }
-        }
-        for (index, instance) in flat.instances.iter().enumerate() {
-            if instance.area_light != flat::INVALID_INDEX {
-                let light = flat
-                    .lights
-                    .get(instance.area_light as usize)
-                    .ok_or_else(|| {
-                        PbrtError::error(&format!(
-                            "Flat instance {index} references an invalid area-light handle."
-                        ))
-                    })?;
-                if light.kind != flat::LightKind::Area {
-                    return Err(PbrtError::error(&format!(
-                        "Flat instance {index} area-light handle does not reference an area light."
-                    )));
-                }
             }
         }
         let material_words = std::mem::size_of::<super::abi::Material>()
@@ -192,29 +170,6 @@ impl Scene {
             )
             .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
             .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
-        let triangle_distribution_base = area_light_data_offset
-            .checked_add(
-                area_lights
-                    .len()
-                    .checked_mul(area_light_words)
-                    .ok_or_else(|| PbrtError::error("WebGPU area-light buffer size overflowed."))?,
-            )
-            .ok_or_else(|| PbrtError::error("WebGPU triangle distribution offset overflowed."))?;
-        let triangle_distribution_words =
-            std::mem::size_of::<TriangleDistributionEntry>() / std::mem::size_of::<u32>();
-        for area_light in &mut area_lights {
-            if area_light.triangle_distribution_offset != u32::MAX {
-                let offset = usize::try_from(area_light.triangle_distribution_offset)
-                    .map_err(|_| PbrtError::error("Invalid triangle distribution offset."))?
-                    .checked_mul(triangle_distribution_words)
-                    .and_then(|offset| triangle_distribution_base.checked_add(offset))
-                    .and_then(|offset| u32::try_from(offset).ok())
-                    .ok_or_else(|| {
-                        PbrtError::error("WebGPU triangle distribution offset overflowed.")
-                    })?;
-                area_light.triangle_distribution_offset = offset;
-            }
-        }
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(
             &flat.viewport,
@@ -262,13 +217,6 @@ impl Scene {
                 )
                 .and_then(|size| size.checked_add(point_lights.len().checked_mul(light_words)?))
                 .and_then(|size| size.checked_add(area_lights.len().checked_mul(area_light_words)?))
-                .and_then(|size| {
-                    size.checked_add(
-                        triangle_distributions
-                            .len()
-                            .checked_mul(triangle_distribution_words)?,
-                    )
-                })
                 .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
         );
         for material in &materials {
@@ -283,43 +231,11 @@ impl Scene {
         for light in &area_lights {
             material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
-        material_light_data.extend_from_slice(cast_slice(&triangle_distributions));
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material and point-light SBO"),
             contents: cast_slice(&material_light_data),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let area_light_storage = if area_lights.is_empty() {
-            vec![AreaLight::zeroed()]
-        } else {
-            area_lights.clone()
-        };
-        let light_record_storage = if light_records.is_empty() {
-            vec![LightRecord::zeroed()]
-        } else {
-            light_records.clone()
-        };
-        let area_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 area-light SBO"),
-            contents: bytemuck::cast_slice(&area_light_storage),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let light_record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 light-record SBO"),
-            contents: bytemuck::cast_slice(&light_record_storage),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let triangle_distribution_storage = if triangle_distributions.is_empty() {
-            vec![TriangleDistributionEntry::zeroed()]
-        } else {
-            triangle_distributions.clone()
-        };
-        let triangle_distribution_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 triangle-distribution SBO"),
-                contents: bytemuck::cast_slice(&triangle_distribution_storage),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
         let acceleration = acceleration::build(
             device,
             queue,
@@ -344,9 +260,6 @@ impl Scene {
             point_lights,
             area_lights,
             light_records,
-            area_light_buffer,
-            light_record_buffer,
-            triangle_distribution_buffer,
             render_settings: flat.render_settings,
             acceleration,
         })
@@ -364,25 +277,54 @@ impl Scene {
     }
 }
 
-fn resolve_area_light_index(handle: u32, flat: &flat::Scene) -> Result<u32, PbrtError> {
-    if handle == flat::INVALID_INDEX {
-        return Ok(flat::INVALID_INDEX);
+fn validate_instance_area_lights(
+    instance_index: usize,
+    instance: &flat::Instance,
+    flat: &flat::Scene,
+) -> Result<(), PbrtError> {
+    if instance.first_area_light == flat::INVALID_INDEX {
+        return Ok(());
     }
-    let record = flat
-        .lights
-        .get(handle as usize)
-        .ok_or_else(|| PbrtError::error("Flat instance references an invalid light handle."))?;
-    if record.kind != flat::LightKind::Area {
+    let geometry = flat
+        .geometries
+        .get(instance.geometry as usize)
+        .ok_or_else(|| PbrtError::error("Flat area-light instance has an invalid geometry."))?;
+    let triangle_count = geometry.index_count / 3;
+    if triangle_count == 0 {
         return Err(PbrtError::error(
-            "Flat instance area-light handle does not reference an area light.",
+            "Flat area-light instance geometry contains no triangles.",
         ));
     }
-    if record.payload as usize >= flat.area_lights.len() {
-        return Err(PbrtError::error(
-            "Flat instance area-light record references an invalid area light.",
-        ));
+    for primitive in 0..triangle_count {
+        let handle = instance
+            .first_area_light
+            .checked_add(primitive)
+            .ok_or_else(|| PbrtError::error("Flat area-light handle overflowed."))?;
+        let record = flat.lights.get(handle as usize).ok_or_else(|| {
+            PbrtError::error(&format!(
+                "Flat instance {instance_index} has an incomplete area-light range."
+            ))
+        })?;
+        if record.kind != flat::LightKind::Area {
+            return Err(PbrtError::error(&format!(
+                "Flat instance {instance_index} area-light range contains a non-area light."
+            )));
+        }
+        let area_light = flat
+            .area_lights
+            .get(record.payload as usize)
+            .ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Flat instance {instance_index} references an invalid area-light payload."
+                ))
+            })?;
+        if area_light.instance as usize != instance_index || area_light.primitive != primitive {
+            return Err(PbrtError::error(&format!(
+                "Flat instance {instance_index} area-light range does not match its triangles."
+            )));
+        }
     }
-    Ok(record.payload)
+    Ok(())
 }
 
 fn convert_geometry(
@@ -492,14 +434,13 @@ fn convert_geometry(
     Ok((vertices, geometries, local_indices))
 }
 
-fn build_triangle_distributions(
+fn build_area_light_areas(
     area_lights: &mut [AreaLight],
     flat_instances: &[flat::Instance],
     geometries: &[Geometry],
     flat_geometries: &[flat::Geometry],
     vertices: &[Vertex],
     flat_indices: &[u32],
-    distributions: &mut Vec<TriangleDistributionEntry>,
 ) -> Result<(), PbrtError> {
     for (area_index, area_light) in area_lights.iter_mut().enumerate() {
         let instance = flat_instances
@@ -524,77 +465,39 @@ fn build_triangle_distributions(
                 "WebGPU area light {area_index} has no source geometry."
             ))
         })?;
-        let triangle_count = usize::try_from(geometry.index_count / 3)
-            .map_err(|_| PbrtError::error("WebGPU triangle count does not fit in usize."))?;
-        let distribution_offset = u32::try_from(distributions.len()).map_err(|_| {
-            PbrtError::error("WebGPU triangle distribution offset does not fit in u32.")
-        })?;
-        let mut areas = Vec::with_capacity(triangle_count);
-        let mut total_area = 0.0f32;
-        for primitive in 0..triangle_count {
-            let index_start = usize::try_from(flat_geometry.first_index)
-                .ok()
-                .and_then(|start| start.checked_add(primitive.checked_mul(3)?))
-                .ok_or_else(|| {
-                    PbrtError::error(&format!(
-                        "WebGPU area light {area_index} triangle index overflowed."
-                    ))
-                })?;
-            let [i0, i1, i2] = flat_indices
-                .get(index_start..index_start + 3)
-                .and_then(|indices| indices.try_into().ok())
-                .ok_or_else(|| {
-                    PbrtError::error(&format!(
-                        "WebGPU area light {area_index} triangle index is out of bounds."
-                    ))
-                })?;
-            let positions = [i0, i1, i2].map(|index| {
-                let vertex = vertices.get(index as usize).ok_or_else(|| {
-                    PbrtError::error(&format!(
-                        "WebGPU area light {area_index} references an invalid vertex."
-                    ))
-                })?;
-                Ok(transform_point(instance.transform, vertex.position))
-            });
-            let [p0, p1, p2] = positions
-                .into_iter()
-                .collect::<Result<Vec<_>, PbrtError>>()?
-                .try_into()
-                .map_err(|_| PbrtError::error("WebGPU triangle position conversion failed."))?;
-            let edge0 = sub(p1, p0);
-            let edge1 = sub(p2, p0);
-            let cross = cross(edge0, edge1);
-            let area = 0.5 * length(cross);
-            if !area.is_finite() || area == 0.0 {
-                continue;
-            }
-            total_area += area;
-            areas.push((
-                u32::try_from(primitive)
-                    .map_err(|_| PbrtError::error("WebGPU primitive index does not fit in u32."))?,
-                area,
-            ));
-        }
-        if areas.is_empty() || !total_area.is_finite() || total_area <= 0.0 {
+        let primitive = usize::try_from(area_light.primitive)
+            .map_err(|_| PbrtError::error("WebGPU primitive index does not fit in usize."))?;
+        if area_light.primitive >= geometry.index_count / 3 {
             return Err(PbrtError::error(&format!(
-                "WebGPU area light {area_index} has no valid triangles."
+                "WebGPU area light {area_index} references an invalid primitive."
             )));
         }
-        let (cdf_total_area, cdf) = build_triangle_cdf(&areas).map_err(|error| {
-            PbrtError::error(&format!("WebGPU area light {area_index}: {error}"))
-        })?;
-        for (primitive, cdf) in cdf {
-            distributions.push(TriangleDistributionEntry {
-                primitive,
-                cdf,
-                padding: [0; 2],
-            });
+        let index_start = usize::try_from(flat_geometry.first_index)
+            .ok()
+            .and_then(|start| start.checked_add(primitive.checked_mul(3)?))
+            .ok_or_else(|| PbrtError::error("WebGPU area-light index overflowed."))?;
+        let [i0, i1, i2] = flat_indices
+            .get(index_start..index_start + 3)
+            .and_then(|indices| indices.try_into().ok())
+            .ok_or_else(|| PbrtError::error("WebGPU area-light index is out of bounds."))?;
+        let mut positions = [[0.0; 3]; 3];
+        for (position, index) in positions.iter_mut().zip([i0, i1, i2]) {
+            let vertex = vertices.get(index as usize).ok_or_else(|| {
+                PbrtError::error("WebGPU area light references an invalid vertex.")
+            })?;
+            *position = transform_point(instance.transform, vertex.position);
         }
-        area_light.total_area = cdf_total_area;
-        area_light.triangle_distribution_offset = distribution_offset;
-        area_light.triangle_distribution_count = u32::try_from(areas.len()).map_err(|_| {
-            PbrtError::error("WebGPU triangle distribution count does not fit in u32.")
-        })?;
+        let area = 0.5
+            * length(cross(
+                sub(positions[1], positions[0]),
+                sub(positions[2], positions[0]),
+            ));
+        if !area.is_finite() || area <= 0.0 {
+            return Err(PbrtError::error(&format!(
+                "WebGPU area light {area_index} has a degenerate primitive."
+            )));
+        }
+        area_light.total_area = area;
     }
     Ok(())
 }

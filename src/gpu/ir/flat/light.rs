@@ -21,6 +21,7 @@ pub struct PointLight {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AreaLight {
     pub instance: u32,
+    pub primitive: u32,
     pub emission: [f32; 3],
     pub two_sided: bool,
 }

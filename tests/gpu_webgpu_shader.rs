@@ -6,6 +6,7 @@ const EVALUATE_MATERIALS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_materials.wgsl");
 const GENERATE_PRIMARY_RAYS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
+const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
@@ -40,8 +41,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
     assert!(evaluate.contains("let samples = load_ray_samples(pixel_index);"));
     assert!(evaluate.contains("sample_uniform_light(samples.direct.x)"));
-    assert!(evaluate.contains("let selector = samples.direct.y;"));
-    assert!(evaluate.contains("let su = sqrt(remapped_selector);"));
+    assert!(evaluate.contains("let su = sqrt(samples.direct.y);"));
     assert!(evaluate.contains("let bv = samples.direct.z;"));
     assert!(evaluate.contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
     assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
@@ -51,6 +51,12 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(bounce.contains("if (samples.indirect.w < q)"));
     assert!(bounce.contains("generate_ray_samples(pixel_index, ray.depth + 1u)"));
     assert!(!SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("random01("));
+}
+
+#[test]
+fn emissive_hit_resolves_the_triangle_light_handle() {
+    assert!(HANDLE_EMISSIVE_SHADER.contains("instance.first_area_light + surface.primitive_index"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("load_light_payload(light_handle)"));
 }
 
 #[test]

@@ -35,6 +35,11 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
 
 #[test]
 fn webgpu_work_item_field_offsets_match_shader_layout() {
+    assert_eq!(std::mem::offset_of!(Instance, first_area_light), 8);
+    assert_eq!(std::mem::offset_of!(AreaLight, emission), 8);
+    assert_eq!(std::mem::offset_of!(AreaLight, total_area), 24);
+    assert_eq!(std::mem::offset_of!(AreaLight, primitive), 28);
+
     assert_eq!(std::mem::offset_of!(RayWorkItem, origin), 0);
     assert_eq!(std::mem::offset_of!(RayWorkItem, direction), 16);
     assert_eq!(std::mem::offset_of!(RayWorkItem, throughput), 32);
