@@ -6,11 +6,11 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
-    viewport_uniform, AreaLight, Geometry, Instance, LightRecord, PointLight, SceneUniform, Vertex,
-    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    viewport_uniform, AreaLight, Geometry, Instance, LightRecord, PointLight, SceneUniform,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
-use super::light::triangle_world_area;
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
@@ -69,7 +69,7 @@ impl Scene {
                 Ok(Instance {
                     geometry: instance.geometry,
                     material: instance.material,
-                    first_area_light: instance.area_light,
+                    area_light: instance.area_light,
                     orientation_flags: u32::from(instance.reverse_orientation)
                         | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
                     world_from_object: row_major_to_columns(instance.transform),
@@ -105,22 +105,13 @@ impl Scene {
             .iter()
             .map(|light| AreaLight {
                 instance: light.instance,
-                two_sided: u32::from(light.two_sided),
-                emission: [light.emission[0], light.emission[1], light.emission[2], 0.0],
-                total_area: 0.0,
-                primitive: light.primitive,
-                reserved: 0,
-                padding: [0; 3],
+                distribution_offset_words: 0,
+                distribution_count: light.distribution.count,
+                total_area: light.distribution.total_area,
+                emission: light.emission,
+                flags: u32::from(light.two_sided),
             })
             .collect::<Vec<_>>();
-        build_area_light_areas(
-            &mut area_lights,
-            &flat.instances,
-            &geometries,
-            &flat.geometries,
-            &vertices,
-            &flat.indices,
-        )?;
         let light_records = flat
             .lights
             .iter()
@@ -164,6 +155,9 @@ impl Scene {
         let area_light_words = std::mem::size_of::<AreaLight>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU area-light ABI is not word-aligned."))?;
+        let distribution_words = std::mem::size_of::<TriangleDistributionEntry>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU distribution ABI is not word-aligned."))?;
         let material_words_total = materials
             .len()
             .checked_mul(material_words)
@@ -179,6 +173,37 @@ impl Scene {
             )
             .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
             .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
+        let distribution_data_offset = area_light_data_offset
+            .checked_add(
+                area_lights
+                    .len()
+                    .checked_mul(area_light_words)
+                    .ok_or_else(|| PbrtError::error("WebGPU area-light buffer size overflowed."))?,
+            )
+            .ok_or_else(|| PbrtError::error("WebGPU distribution buffer offset overflowed."))?;
+        for (area_index, area_light) in area_lights.iter_mut().enumerate() {
+            let flat_area = flat
+                .area_lights
+                .get(area_index)
+                .ok_or_else(|| PbrtError::error("WebGPU area-light table is inconsistent."))?;
+            area_light.distribution_offset_words = to_u32_offset(
+                distribution_data_offset
+                    .checked_add(
+                        usize::try_from(flat_area.distribution.offset)
+                            .map_err(|_| {
+                                PbrtError::error(
+                                    "WebGPU distribution offset does not fit in usize.",
+                                )
+                            })?
+                            .checked_mul(distribution_words)
+                            .ok_or_else(|| {
+                                PbrtError::error("WebGPU distribution offset overflowed.")
+                            })?,
+                    )
+                    .ok_or_else(|| PbrtError::error("WebGPU distribution offset overflowed."))?,
+                "distribution offset",
+            )?;
+        }
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
@@ -231,6 +256,13 @@ impl Scene {
                 )
                 .and_then(|size| size.checked_add(point_lights.len().checked_mul(light_words)?))
                 .and_then(|size| size.checked_add(area_lights.len().checked_mul(area_light_words)?))
+                .and_then(|size| {
+                    size.checked_add(
+                        flat.triangle_distributions
+                            .len()
+                            .checked_mul(distribution_words)?,
+                    )
+                })
                 .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
         );
         for material in &materials {
@@ -244,6 +276,16 @@ impl Scene {
         }
         for light in &area_lights {
             scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
+        }
+        for entry in &flat.triangle_distributions {
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(
+                &TriangleDistributionEntry {
+                    primitive: entry.primitive,
+                    cdf: entry.cdf,
+                    area: entry.area,
+                    reserved: 0,
+                },
+            )));
         }
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let (light_sampler_data_offset, light_bvh_node_offset, light_leaf_offset) =
@@ -424,6 +466,57 @@ fn validate_instance_area_lights(
             "Flat instance {instance_index} area-light range does not match its triangles."
         )));
     }
+    let offset = usize::try_from(area_light.distribution.offset)
+        .map_err(|_| PbrtError::error("Flat area-light distribution offset does not fit usize."))?;
+    let count = usize::try_from(area_light.distribution.count)
+        .map_err(|_| PbrtError::error("Flat area-light distribution count does not fit usize."))?;
+    if count == 0 {
+        return Err(PbrtError::error(&format!(
+            "Flat instance {instance_index} area-light distribution is empty."
+        )));
+    }
+    let end = offset
+        .checked_add(count)
+        .ok_or_else(|| PbrtError::error("Flat area-light distribution range overflowed."))?;
+    let entries = flat
+        .triangle_distributions
+        .get(offset..end)
+        .ok_or_else(|| {
+            PbrtError::error(&format!(
+                "Flat instance {instance_index} area-light distribution range is invalid."
+            ))
+        })?;
+    if !area_light.distribution.total_area.is_finite() || area_light.distribution.total_area <= 0.0
+    {
+        return Err(PbrtError::error(&format!(
+            "Flat instance {instance_index} area-light total area is invalid."
+        )));
+    }
+    let mut previous_cdf = 0.0;
+    let mut area_sum = 0.0;
+    for entry in entries {
+        if entry.primitive >= triangle_count
+            || !entry.area.is_finite()
+            || entry.area <= 0.0
+            || !entry.cdf.is_finite()
+            || entry.cdf < previous_cdf
+            || entry.cdf > 1.0
+        {
+            return Err(PbrtError::error(&format!(
+                "Flat instance {instance_index} has an invalid area-light distribution entry."
+            )));
+        }
+        previous_cdf = entry.cdf;
+        area_sum += entry.area;
+    }
+    if previous_cdf != 1.0
+        || (area_sum - area_light.distribution.total_area).abs()
+            > area_light.distribution.total_area.abs() * 1e-5
+    {
+        return Err(PbrtError::error(&format!(
+            "Flat instance {instance_index} area-light distribution does not match total area."
+        )));
+    }
     Ok(())
 }
 
@@ -532,67 +625,4 @@ fn convert_geometry(
         });
     }
     Ok((vertices, geometries, local_indices))
-}
-
-fn build_area_light_areas(
-    area_lights: &mut [AreaLight],
-    flat_instances: &[flat::Instance],
-    geometries: &[Geometry],
-    flat_geometries: &[flat::Geometry],
-    vertices: &[Vertex],
-    flat_indices: &[u32],
-) -> Result<(), PbrtError> {
-    for (area_index, area_light) in area_lights.iter_mut().enumerate() {
-        let instance = flat_instances
-            .get(area_light.instance as usize)
-            .ok_or_else(|| {
-                PbrtError::error(&format!(
-                    "WebGPU area light {area_index} references an invalid instance."
-                ))
-            })?;
-        let geometry_index = usize::try_from(instance.geometry).map_err(|_| {
-            PbrtError::error(&format!(
-                "WebGPU area light {area_index} has an invalid geometry index."
-            ))
-        })?;
-        let geometry = geometries.get(geometry_index).ok_or_else(|| {
-            PbrtError::error(&format!(
-                "WebGPU area light {area_index} references an invalid geometry."
-            ))
-        })?;
-        let flat_geometry = flat_geometries.get(geometry_index).ok_or_else(|| {
-            PbrtError::error(&format!(
-                "WebGPU area light {area_index} has no source geometry."
-            ))
-        })?;
-        let primitive = usize::try_from(area_light.primitive)
-            .map_err(|_| PbrtError::error("WebGPU primitive index does not fit in usize."))?;
-        if area_light.primitive >= geometry.index_count / 3 {
-            return Err(PbrtError::error(&format!(
-                "WebGPU area light {area_index} references an invalid primitive."
-            )));
-        }
-        let index_start = usize::try_from(flat_geometry.first_index)
-            .ok()
-            .and_then(|start| start.checked_add(primitive.checked_mul(3)?))
-            .ok_or_else(|| PbrtError::error("WebGPU area-light index overflowed."))?;
-        let [i0, i1, i2] = flat_indices
-            .get(index_start..index_start + 3)
-            .and_then(|indices| indices.try_into().ok())
-            .ok_or_else(|| PbrtError::error("WebGPU area-light index is out of bounds."))?;
-        let mut positions = [[0.0; 4]; 3];
-        for (position, index) in positions.iter_mut().zip([i0, i1, i2]) {
-            let vertex = vertices.get(index as usize).ok_or_else(|| {
-                PbrtError::error("WebGPU area light references an invalid vertex.")
-            })?;
-            *position = vertex.position;
-        }
-        area_light.total_area =
-            triangle_world_area(instance.transform, positions).ok_or_else(|| {
-                PbrtError::error(&format!(
-                    "WebGPU area light {area_index} has a degenerate primitive."
-                ))
-            })?;
-    }
-    Ok(())
 }

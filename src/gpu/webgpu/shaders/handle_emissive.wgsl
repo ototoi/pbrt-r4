@@ -7,10 +7,10 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel_index = load_hit_area_pixel(queue_index);
     let surface = surfaces[pixel_index];
     let instance = instances[surface.instance_custom_data];
-    if (instance.first_area_light == 0xffffffffu) {
+    if (instance.area_light == 0xffffffffu) {
         return;
     }
-    let light_handle = instance.first_area_light + surface.primitive_index;
+    let light_handle = instance.area_light + surface.primitive_index;
     let area_light = load_light_payload(light_handle);
     let ray_index = find_current_ray_for_pixel(pixel_index);
     if (ray_index == 0xffffffffu) {
