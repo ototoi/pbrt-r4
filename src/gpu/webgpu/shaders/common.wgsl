@@ -779,6 +779,53 @@ fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection
     return LightSelection(0xffffffffu, 0.0);
 }
 
+fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (light_handle >= scene.light_leaf_count) {
+        return 0.0;
+    }
+    let leaf_index = scene_data[scene.light_leaf_offset + light_handle];
+    if (leaf_index >= scene.light_bvh_node_count) {
+        return 0.0;
+    }
+    var node_index = leaf_index;
+    var pmf = 1.0;
+    for (var iteration = 0u; iteration < scene.light_bvh_node_count; iteration++) {
+        let parent = light_bvh_word(node_index, 7u);
+        if (parent == 0xffffffffu) {
+            return pmf;
+        }
+        if (parent >= scene.light_bvh_node_count) {
+            return 0.0;
+        }
+        let parent_node = decode_light_bvh_node(parent);
+        let left_child = parent + 1u;
+        let left = decode_light_bvh_node(left_child);
+        let right = decode_light_bvh_node(parent_node.payload);
+        let left_weight = light_bvh_importance(left, p, n);
+        let right_weight = light_bvh_importance(right, p, n);
+        let total = left_weight + right_weight;
+        if (total <= 0.0) {
+            return 0.0;
+        }
+        if (node_index == left_child) {
+            pmf = pmf * left_weight / total;
+        } else if (node_index == parent_node.payload) {
+            pmf = pmf * right_weight / total;
+        } else {
+            return 0.0;
+        }
+        node_index = parent;
+    }
+    return 0.0;
+}
+
+fn light_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (scene.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
+        return light_bvh_pmf_for_handle(light_handle, p, n);
+    }
+    return uniform_light_pmf_for_handle(light_handle);
+}
+
 fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
     if (scene.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         return sample_light_bvh(selector, p, n);
