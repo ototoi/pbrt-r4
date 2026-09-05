@@ -51,4 +51,5 @@ fn render_and_validate(scene: &std::path::Path) {
     assert_eq!(resolution.y, 128);
     assert!(!pixels.is_empty());
     assert!(pixels.iter().all(RGBSpectrum::is_valid));
+    assert!(pixels.iter().any(|pixel| !pixel.is_black()));
 }
