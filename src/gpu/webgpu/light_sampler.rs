@@ -169,7 +169,7 @@ pub fn resolve_light_sampler(
     requested: &str,
     registered_light_count: usize,
 ) -> Result<LightSamplerKind, PbrtError> {
-    if registered_light_count == 1 {
+    if registered_light_count <= 1 {
         return Ok(LightSamplerKind::Uniform);
     }
 
@@ -191,4 +191,11 @@ pub fn resolve_scene_light_sampler(
     registered_lights: &[flat::LightRecord],
 ) -> Result<LightSamplerKind, PbrtError> {
     resolve_light_sampler(&settings.light_sampler, registered_lights.len())
+}
+
+pub fn resolve_scene_light_sampler_count(
+    settings: &flat::RenderSettings,
+    sampleable_light_count: usize,
+) -> Result<LightSamplerKind, PbrtError> {
+    resolve_light_sampler(&settings.light_sampler, sampleable_light_count)
 }
