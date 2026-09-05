@@ -183,6 +183,12 @@ fn flatten_node_ref(
                                 node.name
                             )));
                         }
+                        Shape::Disk(_) => {
+                            return Err(PbrtError::error(&format!(
+                                "Shape node \"{}\" must be tessellated before flattening.",
+                                node.name
+                            )));
+                        }
                     };
                     let input_normals = shape.normals.clone();
                     let shape = complete_triangle_attributes(shape, &node.name)?;
