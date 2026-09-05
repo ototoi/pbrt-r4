@@ -245,11 +245,7 @@ impl Scene {
         for light in &area_lights {
             scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
-        let packed_light_bvh = if light_sampler_kind == LightSamplerKind::Bvh {
-            pack_light_bvh(&flat.light_bvh)?
-        } else {
-            None
-        };
+        let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let (light_sampler_data_offset, light_bvh_node_offset, light_leaf_offset) =
             if let Some(packed) = &packed_light_bvh {
                 let header_offset = align_words(scene_data.len(), 8)?;
@@ -286,7 +282,9 @@ impl Scene {
             scene_data.len(),
         )?;
         if let Some(packed) = &packed_light_bvh {
-            scene_uniform.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
+            if light_sampler_kind == LightSamplerKind::Bvh {
+                scene_uniform.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
+            }
             scene_uniform.light_sampler_data_offset =
                 to_u32_offset(light_sampler_data_offset, "light sampler data offset")?;
             scene_uniform.light_bvh_node_offset =
