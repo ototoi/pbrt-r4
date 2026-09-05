@@ -498,16 +498,11 @@ fn load_light_payload(index: u32) -> u32 {
     return material_light_data[viewport.light_data_offset + index * 4u + 1u];
 }
 
-fn light_pmf_for_area(area_index: u32) -> f32 {
-    if (viewport.light_count == 0u) {
+fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
+    if (light_handle >= viewport.light_count) {
         return 0.0;
     }
-    for (var index = 0u; index < viewport.light_count; index++) {
-        if (load_light_kind(index) == LIGHT_KIND_AREA && load_light_payload(index) == area_index) {
-            return 1.0 / f32(viewport.light_count);
-        }
-    }
-    return 0.0;
+    return 1.0 / f32(viewport.light_count);
 }
 
 fn hash_u32(value: u32) -> u32 {

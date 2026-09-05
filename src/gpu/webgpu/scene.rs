@@ -10,6 +10,7 @@ use super::abi::{
     LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
+use super::light::triangle_world_area;
 use super::material::MaterialKind;
 use super::output::Output;
 
@@ -480,48 +481,19 @@ fn build_area_light_areas(
             .get(index_start..index_start + 3)
             .and_then(|indices| indices.try_into().ok())
             .ok_or_else(|| PbrtError::error("WebGPU area-light index is out of bounds."))?;
-        let mut positions = [[0.0; 3]; 3];
+        let mut positions = [[0.0; 4]; 3];
         for (position, index) in positions.iter_mut().zip([i0, i1, i2]) {
             let vertex = vertices.get(index as usize).ok_or_else(|| {
                 PbrtError::error("WebGPU area light references an invalid vertex.")
             })?;
-            *position = transform_point(instance.transform, vertex.position);
+            *position = vertex.position;
         }
-        let area = 0.5
-            * length(cross(
-                sub(positions[1], positions[0]),
-                sub(positions[2], positions[0]),
-            ));
-        if !area.is_finite() || area <= 0.0 {
-            return Err(PbrtError::error(&format!(
-                "WebGPU area light {area_index} has a degenerate primitive."
-            )));
-        }
-        area_light.total_area = area;
+        area_light.total_area =
+            triangle_world_area(instance.transform, positions).ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "WebGPU area light {area_index} has a degenerate primitive."
+                ))
+            })?;
     }
     Ok(())
-}
-
-fn transform_point(matrix: [f32; 16], point: [f32; 4]) -> [f32; 3] {
-    [
-        matrix[0] * point[0] + matrix[1] * point[1] + matrix[2] * point[2] + matrix[3],
-        matrix[4] * point[0] + matrix[5] * point[1] + matrix[6] * point[2] + matrix[7],
-        matrix[8] * point[0] + matrix[9] * point[1] + matrix[10] * point[2] + matrix[11],
-    ]
-}
-
-fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn length(value: [f32; 3]) -> f32 {
-    (value[0] * value[0] + value[1] * value[1] + value[2] * value[2]).sqrt()
 }

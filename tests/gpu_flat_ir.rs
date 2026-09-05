@@ -173,6 +173,27 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
 }
 
 #[test]
+fn flatten_node_rejects_unsupported_area_light_power() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("powered-emitter", "diffuse", [0.0, 0.0, 0.0]);
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_float("float power", 10.0);
+    area.write()
+        .unwrap()
+        .add_component(Component::AreaLight(AreaLightComponent {
+            area_light: NodeAreaLight {
+                name: "diffuse".to_string(),
+                params,
+            },
+        }));
+    root.add_child(area);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("area light power"));
+}
+
+#[test]
 fn flatten_node_preserves_explicit_camera_screen_window() {
     let mut root = Node::new("root");
     root.add_component(Component::Output(OutputComponent {

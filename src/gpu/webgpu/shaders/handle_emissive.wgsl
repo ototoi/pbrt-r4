@@ -24,7 +24,7 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var weight = 1.0;
     if (ray.depth > 0u && ray.prev_pdf > 0.0) {
         let total_area = load_area_total(area_light);
-        let light_pdf = light_pmf_for_area(area_light)
+        let light_pdf = uniform_light_pmf_for_handle(light_handle)
             * dot(ray.origin.xyz - surface.position.xyz, ray.origin.xyz - surface.position.xyz)
             / (max(abs(dot(surface.geometric_normal.xyz, -ray.direction.xyz)), 1e-7) * total_area);
         weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
