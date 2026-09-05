@@ -87,9 +87,8 @@ pub enum LightBoundInput {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AreaTriangleInput {
     pub world_positions: [[f32; 3]; 3],
-    pub input_normals: Option<[[f32; 3]; 3]>,
-    pub reverse_orientation: bool,
-    pub transform_swaps_handedness: bool,
+    pub area: f32,
+    pub geometric_normal: [f32; 3],
 }
 
 impl LightBounds {
@@ -241,30 +240,15 @@ fn light_bounds_for_input(input: &LightBoundInput) -> Result<LightBounds, PbrtEr
             let mut result: Option<LightBounds> = None;
             for triangle in triangles {
                 let bounds = triangle_bounds(triangle.world_positions)?;
-                let edge0 = sub(triangle.world_positions[1], triangle.world_positions[0]);
-                let edge1 = sub(triangle.world_positions[2], triangle.world_positions[0]);
-                let cross = cross(edge0, edge1);
-                let area = 0.5 * dot(cross, cross).sqrt();
+                let area = triangle.area;
                 if !area.is_finite() || area <= 0.0 {
                     return Err(PbrtError::error("Area light triangle has zero area."));
                 }
-                let mut direction = normalize(cross)?;
-                if let Some(normals) = triangle.input_normals {
-                    for normal in normals {
-                        if !normal.iter().all(|value| value.is_finite())
-                            || dot(normal, normal) == 0.0
-                        {
-                            return Err(PbrtError::error(
-                                "Area light input normal must be finite and non-zero.",
-                            ));
-                        }
-                    }
-                    let normal_sum = add(add(normals[0], normals[1]), normals[2]);
-                    if dot(direction, normal_sum) < 0.0 {
-                        direction = scale_vector(direction, -1.0);
-                    }
-                } else if triangle.reverse_orientation ^ triangle.transform_swaps_handedness {
-                    direction = scale_vector(direction, -1.0);
+                let direction = normalize(triangle.geometric_normal)?;
+                if !direction.iter().all(|value| value.is_finite()) {
+                    return Err(PbrtError::error(
+                        "Area light geometric normal must be finite and non-zero.",
+                    ));
                 }
                 let current = LightBounds {
                     bounds,
