@@ -36,10 +36,9 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         let triangle_selection = load_area_distribution(area_light, triangle_distribution_index);
         let triangle = load_area_triangle(area_light, triangle_selection.primitive);
-        let triangle_pdf = triangle_pdf_for_context(
+        let triangle_pdf = uniform_triangle_pdf_for_context(
             triangle,
             ray.prev_position.xyz,
-            ray.prev_shading_normal.xyz,
             surface.geometric_normal.xyz,
             ray.direction.xyz,
             surface.position.xyz,

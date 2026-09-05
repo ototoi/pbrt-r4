@@ -63,7 +63,8 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
     assert!(emissive.contains("light_pmf_for_handle("));
     assert!(evaluate.contains("sample_triangle_for_context("));
-    assert!(evaluate.contains("vec2<f32>(samples.direct.y, samples.direct.z)"));
+    assert!(evaluate.contains("select_area_triangle(light_payload, samples.direct.y)"));
+    assert!(evaluate.contains("vec2<f32>(samples.direct.z, samples.direct.w)"));
     assert!(evaluate.contains("sample_spherical_triangle("));
     assert!(evaluate.contains("MIN_SPHERICAL_SAMPLE_AREA: f32 = 3e-4"));
     assert!(evaluate.contains("MAX_SPHERICAL_SAMPLE_AREA: f32 = 6.22"));
