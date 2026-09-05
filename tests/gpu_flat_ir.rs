@@ -2,10 +2,11 @@ use std::sync::{Arc, RwLock};
 
 use pbrt_r4::gpu::ir::flat::flatten_node;
 use pbrt_r4::gpu::ir::node::{
-    complete_triangle_attributes, Camera, CameraComponent, Component, Film, FilmComponent,
-    Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator, IntegratorComponent,
-    Light as NodeLight, LightComponent, Material, MaterialComponent, Node, Output, OutputComponent,
-    Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
+    complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
+    CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
+    Integrator as NodeIntegrator, IntegratorComponent, Light as NodeLight, LightComponent,
+    Material, MaterialComponent, Node, Output, OutputComponent, Sampler as NodeSampler,
+    SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
 
@@ -30,6 +31,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
                 Vec2f([0.0, 1.0]),
             ]),
         })),
+        reverse_orientation: false,
     }));
     node.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {
@@ -127,6 +129,71 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 }
 
 #[test]
+fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = area.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.positions.push(Vec3f([1.0, 1.0, 0.0]));
+        mesh.indices.extend_from_slice(&[1, 3, 2]);
+        mesh.normals.as_mut().unwrap().push(Vec3f([0.0, 0.0, 1.0]));
+        mesh.uvs.as_mut().unwrap().push(Vec2f([1.0, 1.0]));
+        node.add_component(Component::AreaLight(AreaLightComponent {
+            area_light: NodeAreaLight {
+                name: "diffuse".to_string(),
+                params: Default::default(),
+            },
+        }));
+    }
+    root.add_child(area);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].first_area_light, 0);
+    assert_eq!(scene.area_lights.len(), 2);
+    assert_eq!(scene.area_lights[0].instance, 0);
+    assert_eq!(scene.area_lights[0].primitive, 0);
+    assert_eq!(scene.area_lights[1].instance, 0);
+    assert_eq!(scene.area_lights[1].primitive, 1);
+    assert_eq!(scene.lights.len(), 2);
+    assert_eq!(scene.lights[0].payload, 0);
+    assert_eq!(scene.lights[1].payload, 1);
+    assert_eq!(
+        scene.lights[0].kind,
+        pbrt_r4::gpu::ir::flat::LightKind::Area
+    );
+}
+
+#[test]
+fn flatten_node_rejects_unsupported_area_light_power() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("powered-emitter", "diffuse", [0.0, 0.0, 0.0]);
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_float("float power", 10.0);
+    area.write()
+        .unwrap()
+        .add_component(Component::AreaLight(AreaLightComponent {
+            area_light: NodeAreaLight {
+                name: "diffuse".to_string(),
+                params,
+            },
+        }));
+    root.add_child(area);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("area light power"));
+}
+
+#[test]
 fn flatten_node_preserves_explicit_camera_screen_window() {
     let mut root = Node::new("root");
     root.add_component(Component::Output(OutputComponent {
@@ -190,6 +257,23 @@ fn flatten_node_shares_geometry_across_instances() {
 }
 
 #[test]
+fn flatten_node_preserves_shape_reverse_orientation() {
+    let mut root = Node::new("root");
+    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    let shape = triangle_node("reversed", "matte", [0.0, 0.0, 0.0]);
+    if let Component::Shape(component) = &mut shape.write().unwrap().components[0] {
+        component.reverse_orientation = true;
+    }
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert!(scene.instances[0].reverse_orientation);
+}
+
+#[test]
 fn flatten_node_requires_tessellated_shapes() {
     let mut root = Node::new("root");
     let mut shape = Node::new("sphere");
@@ -197,6 +281,7 @@ fn flatten_node_requires_tessellated_shapes() {
         shape: Shape::Sphere(Box::new(pbrt_r4::gpu::ir::node::SphereShape {
             params: Default::default(),
         })),
+        reverse_orientation: false,
     }));
     shape.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {
@@ -247,6 +332,7 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     }));
     let mut integrator_params = pbrt_r4::paramdict::ParameterDictionary::default();
     integrator_params.add_int("integer maxdepth", 3);
+    integrator_params.add_string("string lightsampler", "uniform");
     root.add_component(Component::Integrator(IntegratorComponent {
         integrator: NodeIntegrator {
             name: "path".to_string(),
@@ -272,8 +358,25 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     assert_eq!(scene.render_settings.samples_per_pixel, 8);
     assert_eq!(scene.render_settings.max_depth, 3);
     assert_eq!(scene.render_settings.seed, 13);
+    assert_eq!(scene.render_settings.light_sampler, "uniform");
     assert_eq!(scene.point_lights.len(), 1);
     assert_eq!(scene.point_lights[0].position, [1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn flatten_node_defaults_light_sampler_to_bvh() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Integrator(IntegratorComponent {
+        integrator: NodeIntegrator {
+            name: "path".to_string(),
+            params: Default::default(),
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.light_sampler, "bvh");
 }
 
 #[test]

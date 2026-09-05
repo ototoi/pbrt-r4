@@ -6,11 +6,17 @@ pub struct Pipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub generate_primary_rays: wgpu::ComputePipeline,
     pub intersect_primary_rays: wgpu::ComputePipeline,
+    pub handle_escaped: wgpu::ComputePipeline,
     pub prepare_sample: wgpu::ComputePipeline,
     pub shade_surface: wgpu::ComputePipeline,
+    pub handle_emissive: wgpu::ComputePipeline,
+    pub evaluate_materials: wgpu::ComputePipeline,
     pub intersect_shadow: wgpu::ComputePipeline,
-    pub finish_shadow: wgpu::ComputePipeline,
     pub sample_diffuse_bounce: wgpu::ComputePipeline,
+    pub swap_ray_queues: wgpu::ComputePipeline,
+    pub reset_next_ray_queue: wgpu::ComputePipeline,
+    pub reset_shadow_queue: wgpu::ComputePipeline,
+    pub reset_classification_queues: wgpu::ComputePipeline,
     pub accumulate_sample: wgpu::ComputePipeline,
 }
 
@@ -38,6 +44,7 @@ impl Pipeline {
                 storage_entry(8, false),
                 storage_entry(9, false),
                 storage_entry(10, false),
+                buffer_entry(11, wgpu::BufferBindingType::Uniform),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -68,6 +75,11 @@ impl Pipeline {
                 include_str!("shaders/intersect_primary_rays.wgsl"),
                 "intersect_primary_rays",
             ),
+            handle_escaped: compute(
+                "pbrt-r4 handle escaped rays",
+                include_str!("shaders/handle_escaped.wgsl"),
+                "handle_escaped",
+            ),
             prepare_sample: compute(
                 "pbrt-r4 prepare sample",
                 include_str!("shaders/prepare_sample.wgsl"),
@@ -78,20 +90,45 @@ impl Pipeline {
                 include_str!("shaders/shade_surface.wgsl"),
                 "shade_surface",
             ),
+            handle_emissive: compute(
+                "pbrt-r4 handle emissive",
+                include_str!("shaders/handle_emissive.wgsl"),
+                "handle_emissive",
+            ),
+            evaluate_materials: compute(
+                "pbrt-r4 evaluate materials",
+                include_str!("shaders/evaluate_materials.wgsl"),
+                "evaluate_materials",
+            ),
             intersect_shadow: compute(
                 "pbrt-r4 intersect shadow",
                 include_str!("shaders/intersect_shadow.wgsl"),
                 "intersect_shadow",
             ),
-            finish_shadow: compute(
-                "pbrt-r4 finish shadow",
-                include_str!("shaders/finish_shadow.wgsl"),
-                "finish_shadow",
-            ),
             sample_diffuse_bounce: compute(
                 "pbrt-r4 sample diffuse bounce",
                 include_str!("shaders/sample_diffuse_bounce.wgsl"),
                 "sample_diffuse_bounce",
+            ),
+            swap_ray_queues: compute(
+                "pbrt-r4 swap ray queues",
+                include_str!("shaders/swap_ray_queues.wgsl"),
+                "swap_ray_queues",
+            ),
+            reset_next_ray_queue: compute(
+                "pbrt-r4 reset next ray queue",
+                include_str!("shaders/reset_next_ray_queue.wgsl"),
+                "reset_next_ray_queue",
+            ),
+            reset_shadow_queue: compute(
+                "pbrt-r4 reset shadow queue",
+                include_str!("shaders/reset_shadow_queue.wgsl"),
+                "reset_shadow_queue",
+            ),
+            reset_classification_queues: compute(
+                "pbrt-r4 reset classification queues",
+                include_str!("shaders/reset_classification_queues.wgsl"),
+                "reset_classification_queues",
             ),
             accumulate_sample: compute(
                 "pbrt-r4 accumulate sample",

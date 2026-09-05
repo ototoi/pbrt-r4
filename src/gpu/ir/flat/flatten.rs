@@ -1,14 +1,17 @@
 use super::{
-    identity_transform, multiply_transform, Camera, Geometry, Instance, Material, PointLight,
-    RenderSettings, Scene, Transform, Vertex, Viewport,
+    build_light_bounds, build_light_bvh, identity_transform, multiply_transform, transform_normal,
+    transform_swaps_handedness, AreaLight, Camera, Geometry, Instance, LightBoundInput, LightKind,
+    LightRecord, Material, PointLight, RenderSettings, Scene, Transform, Vertex, Viewport,
+    INVALID_INDEX,
 };
 use crate::gpu::ir::node::{
-    complete_triangle_attributes, Component, Integrator as NodeIntegrator, Light as NodeLight,
-    Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape, TriangleMeshShape,
+    complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
+    Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
+    Sampler as NodeSampler, Shape, TriangleMeshShape,
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
-use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use crate::util::spectrum::{Spectrum, SpectrumType};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,12 +43,18 @@ pub fn flatten_node_with_material_override(
         .viewport
         .ok_or_else(|| PbrtError::error("No film was found while flattening GPU Node IR."))?;
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
+    let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
+    let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
     Ok(Scene {
         camera,
         viewport,
         output,
         render_settings,
         point_lights: builder.point_lights,
+        area_lights: builder.area_lights,
+        lights: builder.lights,
+        light_bounds,
+        light_bvh,
         vertices: builder.vertices,
         indices: builder.indices,
         geometries: builder.geometries,
@@ -69,6 +78,9 @@ struct FlatBuilder {
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     point_lights: Vec<PointLight>,
+    area_lights: Vec<AreaLight>,
+    lights: Vec<LightRecord>,
+    light_bound_inputs: Vec<LightBoundInput>,
 }
 
 fn flatten_node_ref(
@@ -153,6 +165,13 @@ fn flatten_node_ref(
                 Component::Light(component) => Some(component.light.clone()),
                 _ => None,
             });
+        let area_light = node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                Component::AreaLight(component) => Some(component.area_light.clone()),
+                _ => None,
+            });
         for (component_index, component) in node.components.iter().enumerate() {
             match component {
                 Component::Shape(component) => {
@@ -165,6 +184,7 @@ fn flatten_node_ref(
                             )));
                         }
                     };
+                    let input_normals = shape.normals.clone();
                     let shape = complete_triangle_attributes(shape, &node.name)?;
                     let material = material.clone().ok_or_else(|| {
                         PbrtError::error(&format!(
@@ -172,7 +192,14 @@ fn flatten_node_ref(
                             node.name
                         ))
                     })?;
-                    shapes.push((component_index, shape, material));
+                    shapes.push((
+                        component_index,
+                        shape,
+                        material,
+                        area_light.clone(),
+                        component.reverse_orientation,
+                        input_normals,
+                    ));
                 }
                 Component::Instance(component) => {
                     instances.push((
@@ -254,17 +281,98 @@ fn flatten_node_ref(
         });
     }
     if let Some(light) = light {
-        builder
-            .point_lights
-            .push(point_light(&light, &world_transform, &name)?);
+        let point_light_index = u32::try_from(builder.point_lights.len())
+            .map_err(|_| PbrtError::error("The flattened GPU point-light table exceeds u32."))?;
+        let (point, intensity_max, scale) = point_light(&light, &world_transform, &name)?;
+        builder.point_lights.push(point);
+        builder.light_bound_inputs.push(LightBoundInput::Point {
+            handle: u32::try_from(builder.lights.len())
+                .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
+            world_position: builder.point_lights.last().unwrap().position,
+            intensity_max,
+            scale,
+        });
+        builder.lights.push(LightRecord {
+            kind: LightKind::Point,
+            payload: point_light_index,
+        });
     }
-    for (component_index, shape, material) in shapes {
+    for (component_index, shape, material, area_light, reverse_orientation, input_normals) in shapes
+    {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
         let material = material_index(&material, builder, material_kind)?;
+        let instance_index = u32::try_from(builder.instances.len())
+            .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
+        let first_area_light = if let Some(area_light) = area_light {
+            let first_light_handle = u32::try_from(builder.lights.len())
+                .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
+            let triangle_count = shape.indices.len() / 3;
+            if triangle_count == 0 {
+                return Err(PbrtError::error(&format!(
+                    "Area-light shape node \"{name}\" contains no triangles."
+                )));
+            }
+            for primitive in 0..triangle_count {
+                let area_light_index = u32::try_from(builder.area_lights.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU area-light table exceeds u32.")
+                })?;
+                let primitive = u32::try_from(primitive).map_err(|_| {
+                    PbrtError::error("The flattened GPU area-light primitive exceeds u32.")
+                })?;
+                let (area_record, emission_max, scale) =
+                    area_light_record(&area_light, instance_index, primitive, &name)?;
+                builder.area_lights.push(area_record);
+                builder.lights.push(LightRecord {
+                    kind: LightKind::Area,
+                    payload: area_light_index,
+                });
+                let i0 = shape.indices[primitive as usize * 3] as usize;
+                let i1 = shape.indices[primitive as usize * 3 + 1] as usize;
+                let i2 = shape.indices[primitive as usize * 3 + 2] as usize;
+                let positions = [
+                    transform_point(&world_transform, shape.positions[i0].0),
+                    transform_point(&world_transform, shape.positions[i1].0),
+                    transform_point(&world_transform, shape.positions[i2].0),
+                ];
+                let normals = input_normals.as_ref().map(|normals| {
+                    [
+                        transform_normal(world_transform, normals[i0].0),
+                        transform_normal(world_transform, normals[i1].0),
+                        transform_normal(world_transform, normals[i2].0),
+                    ]
+                });
+                let normals = match normals {
+                    Some([Ok(n0), Ok(n1), Ok(n2)]) => Some([n0, n1, n2]),
+                    Some(_) => {
+                        return Err(PbrtError::error(&format!(
+                            "Area light shape node \"{name}\" has a singular normal transform."
+                        )))
+                    }
+                    None => None,
+                };
+                builder
+                    .light_bound_inputs
+                    .push(LightBoundInput::AreaTriangle {
+                        handle: first_light_handle + primitive,
+                        world_positions: positions,
+                        input_normals: normals,
+                        reverse_orientation,
+                        transform_swaps_handedness: transform_swaps_handedness(world_transform),
+                        emission_max,
+                        scale,
+                        two_sided: area_light.params.get_one_bool("twosided", false),
+                    });
+            }
+            first_light_handle
+        } else {
+            INVALID_INDEX
+        };
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
             material,
+            first_area_light,
+            reverse_orientation,
         });
     }
     for (target, instance_transform) in instances {
@@ -329,6 +437,9 @@ fn render_settings(
     let seed = sampler
         .map(|sampler| sampler.params.get_one_int("seed", 0))
         .unwrap_or(0);
+    let light_sampler = integrator
+        .map(|integrator| integrator.params.get_one_string("lightsampler", "bvh"))
+        .unwrap_or_else(|| "bvh".to_string());
     if samples_per_pixel <= 0 || max_depth < 0 || seed < 0 {
         return Err(PbrtError::error(
             "GPU render settings must have positive samples and non-negative depth/seed.",
@@ -340,6 +451,7 @@ fn render_settings(
         max_depth: u32::try_from(max_depth)
             .map_err(|_| PbrtError::error("GPU max depth does not fit in u32."))?,
         seed: u32::try_from(seed).map_err(|_| PbrtError::error("GPU seed does not fit in u32."))?,
+        light_sampler,
     })
 }
 
@@ -347,7 +459,7 @@ fn point_light(
     light: &NodeLight,
     parent_transform: &Transform,
     node_name: &str,
-) -> Result<PointLight, PbrtError> {
+) -> Result<(PointLight, f32, f32), PbrtError> {
     if light.name != "point" {
         return Err(PbrtError::error(&format!(
             "Unsupported GPU light \"{}\" on node \"{}\".",
@@ -370,15 +482,16 @@ fn point_light(
     let intensity = light
         .params
         .get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
-    let photometric = spectrum_to_photometric(&intensity);
+    // See the area-light emission note below: the v4 photometric division
+    // cancels the illuminant scale carried by the spectral Sample(). Since we
+    // emit the nominal RGB from `to_rgb()`, dividing by the photometric here
+    // would darken the light by ~photometric (~107x for a white illuminant).
     let mut scale = light.params.get_one_float("scale", 1.0);
-    if photometric > 0.0 {
-        scale /= photometric;
-    }
     let power = light.params.get_one_float("power", -1.0);
     if power > 0.0 {
         scale *= power / (4.0 * std::f32::consts::PI);
     }
+    let intensity_max = intensity.max_value() as f32;
     let rgb = intensity.to_rgb();
     let intensity = [
         (rgb[0] * scale) as f32,
@@ -395,10 +508,77 @@ fn point_light(
             node_name
         )));
     }
-    Ok(PointLight {
-        position,
-        intensity,
-    })
+    Ok((
+        PointLight {
+            position,
+            intensity,
+        },
+        intensity_max,
+        scale as f32,
+    ))
+}
+
+fn area_light_record(
+    light: &NodeAreaLight,
+    instance: u32,
+    primitive: u32,
+    node_name: &str,
+) -> Result<(AreaLight, f32, f32), PbrtError> {
+    if light.name != "diffuse" {
+        return Err(PbrtError::error(&format!(
+            "Unsupported GPU area light \"{}\" on node \"{}\".",
+            light.name, node_name
+        )));
+    }
+    if light.params.has_parameter("filename") {
+        return Err(PbrtError::error(&format!(
+            "Textured GPU area light on node \"{}\" is not implemented.",
+            node_name
+        )));
+    }
+    let white = Spectrum::from(1.0);
+    let emission_spectrum =
+        light
+            .params
+            .get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
+    // pbrt-v4 divides `scale` by SpectrumToPhotometric(L) (lights.cpp:910),
+    // but that normalization exactly cancels the illuminant's photometric
+    // scale carried by `L->Sample(lambda)` when the emitted spectrum is
+    // converted back to RGB. Because we emit the nominal RGB from
+    // `to_rgb()` directly (which already excludes that factor), applying the
+    // photometric division here would darken the light by ~photometric
+    // (~107x for a white illuminant). So the RGB emission is just the user
+    // `scale` times the nominal RGB.
+    let scale = light.params.get_one_float("scale", 1.0);
+    let power = light.params.get_one_float("power", -1.0);
+    if power > 0.0 {
+        return Err(PbrtError::error(&format!(
+            "GPU area light power on node \"{node_name}\" is not implemented."
+        )));
+    }
+    let rgb = emission_spectrum.to_rgb();
+    let emission_max = emission_spectrum.max_value() as f32;
+    let emission = [
+        (rgb[0] * scale) as f32,
+        (rgb[1] * scale) as f32,
+        (rgb[2] * scale) as f32,
+    ];
+    if !emission.iter().all(|value| value.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "GPU area light on node \"{}\" contains a non-finite emission value.",
+            node_name
+        )));
+    }
+    Ok((
+        AreaLight {
+            instance,
+            primitive,
+            emission,
+            two_sided: light.params.get_one_bool("twosided", false),
+        },
+        emission_max,
+        scale as f32,
+    ))
 }
 
 fn transform_point(matrix: &Transform, point: [f32; 3]) -> [f32; 3] {

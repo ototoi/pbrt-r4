@@ -2,8 +2,9 @@ use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
 use crate::gpu::ir::flat::flatten_node_with_material_override;
 use crate::gpu::ir::node::{
-    node_ref_to_json_string, tessellate_shapes, triangle_mesh_from_params, Accelerator,
-    AcceleratorComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
+    loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
+    triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
+    AreaLightComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
     FilterComponent, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
     LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
     OutputComponent, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
@@ -244,11 +245,40 @@ impl SceneBuilder {
                     None => return Ok(None),
                 }
             }
+            "loopsubdiv" => {
+                match loop_subdiv_mesh_from_params(params, shape.reverse_orientation)? {
+                    Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
+                    None => return Ok(None),
+                }
+            }
             _ => return Ok(None),
         };
         let mut node = Node::new(&shape.base.name);
         node.transform = node_transform(&shape.render_from_object.primary());
-        node.add_component(Component::Shape(ShapeComponent { shape: shape_value }));
+        node.add_component(Component::Shape(ShapeComponent {
+            shape: shape_value,
+            reverse_orientation: shape.reverse_orientation,
+        }));
+
+        // Object definitions are shared by ObjectInstance and must not create
+        // one AreaLight per definition. The occurrence-specific light is a
+        // later lowering concern.
+        if shape.instance_name.is_none() {
+            if let Some(area_light_index) = shape.area_light_index {
+                let area_light = self.area_lights.get(area_light_index).ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "Shape node \"{}\" references an invalid area light.",
+                        shape.base.name
+                    ))
+                })?;
+                node.add_component(Component::AreaLight(AreaLightComponent {
+                    area_light: NodeAreaLight {
+                        name: area_light.base.name.clone(),
+                        params: area_light.base.params.clone(),
+                    },
+                }));
+            }
+        }
 
         if let Some(material) = self.resolve_gpu_material(shape, materials, named_materials) {
             node.add_component(Component::Material(MaterialComponent { material }));

@@ -4,12 +4,28 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let pixel_index = global_id.y * viewport.width + global_id.x;
-    let second_queue_index = pixel_index + pixel_count();
-    framebuffer[pixel_index] = vec4<f32>(0.0);
-    rays[pixel_index].is_active = 0u;
-    rays[second_queue_index].is_active = 0u;
+    if (pixel_index == 0u) {
+        atomicStore(&wavefront_queue[CURRENT_COUNT], 0u);
+        atomicStore(&wavefront_queue[CURRENT_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[NEXT_COUNT], 0u);
+        atomicStore(&wavefront_queue[NEXT_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[SHADOW_COUNT], 0u);
+        atomicStore(&wavefront_queue[SHADOW_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[MATERIAL_COUNT], 0u);
+        atomicStore(&wavefront_queue[MATERIAL_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[HIT_AREA_COUNT], 0u);
+        atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 0u);
+        atomicStore(&wavefront_queue[ESCAPED_COUNT], 0u);
+        atomicStore(&wavefront_queue[ESCAPED_OVERFLOW], 0u);
+        if (viewport.sample_index == 0u) {
+            atomicStore(&wavefront_queue[RENDER_ERROR], 0u);
+        }
+    }
+    store_sample_radiance(pixel_index, vec4<f32>(0.0));
+    store_sample_metadata(pixel_index);
+    for (var word = 8u; word < SAMPLE_STATE_WORDS; word++) {
+        atomicStore(&wavefront_queue[sample_state_word(pixel_index, word)], 0u);
+    }
     surfaces[pixel_index].hit = 0u;
-    surfaces[pixel_index].shadow_visible = 0u;
     surfaces[pixel_index].flags = 0u;
-    surfaces[pixel_index].direct = vec4<f32>(0.0);
 }
