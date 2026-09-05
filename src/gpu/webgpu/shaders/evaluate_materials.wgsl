@@ -49,12 +49,13 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (total_area <= 0.0) {
             return;
         }
-        let triangle = load_area_triangle(light_payload);
+        let triangle_selection = select_area_triangle(light_payload, samples.direct.w);
+        let triangle = load_area_triangle(light_payload, triangle_selection.primitive);
         let triangle_sample = sample_triangle_for_context(
             triangle,
             light_sample_origin,
             surface.normal.xyz,
-            total_area,
+            triangle_selection.area,
             vec2<f32>(samples.direct.y, samples.direct.z),
         );
         if (triangle_sample.w <= 0.0) {
@@ -75,7 +76,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         } else if (cosine_light <= 0.0) {
             return;
         }
-        sampled_light_pdf = sampled_light_pdf * triangle_sample.w;
+        sampled_light_pdf = sampled_light_pdf * triangle_selection.pmf * triangle_sample.w;
     } else {
         return;
     }

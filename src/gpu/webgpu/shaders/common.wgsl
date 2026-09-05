@@ -117,6 +117,12 @@ struct TriangleDistributionEntry {
     _reserved: u32,
 };
 
+struct AreaTriangleSelection {
+    primitive: u32,
+    area: f32,
+    pmf: f32,
+};
+
 struct QueueState {
     count: atomic<u32>,
     capacity: u32,
@@ -541,8 +547,39 @@ fn load_area_total(index: u32) -> f32 {
     return bitcast<f32>(load_area_word(index, 3u));
 }
 
-fn load_area_primitive(index: u32) -> u32 {
-    return scene_data[load_area_word(index, 1u)];
+fn load_area_distribution_count(index: u32) -> u32 {
+    return load_area_word(index, 2u);
+}
+
+fn load_area_distribution_word(index: u32, distribution_index: u32, word: u32) -> u32 {
+    return scene_data[load_area_word(index, 1u) + distribution_index * 4u + word];
+}
+
+fn load_area_distribution(index: u32, distribution_index: u32) -> AreaTriangleSelection {
+    let total_area = load_area_total(index);
+    let area = bitcast<f32>(load_area_distribution_word(index, distribution_index, 2u));
+    return AreaTriangleSelection(
+        load_area_distribution_word(index, distribution_index, 0u),
+        area,
+        area / total_area,
+    );
+}
+
+fn select_area_triangle(index: u32, u: f32) -> AreaTriangleSelection {
+    let count = load_area_distribution_count(index);
+    var first = 0u;
+    var last = count;
+    let clamped_u = min(u, 0.99999994);
+    for (var iteration = 0u; iteration < 32u && first < last; iteration++) {
+        let middle = (first + last) / 2u;
+        let cdf = bitcast<f32>(load_area_distribution_word(index, middle, 1u));
+        if (clamped_u < cdf) {
+            last = middle;
+        } else {
+            first = middle + 1u;
+        }
+    }
+    return load_area_distribution(index, min(first, count - 1u));
 }
 
 fn load_area_two_sided(index: u32) -> bool {

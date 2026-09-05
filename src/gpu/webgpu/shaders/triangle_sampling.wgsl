@@ -10,10 +10,10 @@ struct TriangleVertices {
     n2: vec4<f32>,
 };
 
-fn load_area_triangle(area_index: u32) -> TriangleVertices {
+fn load_area_triangle(area_index: u32, primitive: u32) -> TriangleVertices {
     let instance = instances[load_area_instance(area_index)];
     let geometry = geometries[instance.geometry];
-    let first_index = geometry.index_offset + load_area_primitive(area_index) * 3u;
+    let first_index = geometry.index_offset + primitive * 3u;
     let i0 = geometry.vertex_offset + indices[first_index];
     let i1 = geometry.vertex_offset + indices[first_index + 1u];
     let i2 = geometry.vertex_offset + indices[first_index + 2u];
@@ -264,7 +264,7 @@ fn sample_triangle_for_context(
     triangle: TriangleVertices,
     p: vec3<f32>,
     shading_normal: vec3<f32>,
-    total_area: f32,
+    triangle_area: f32,
     u: vec2<f32>,
 ) -> vec4<f32> {
     let solid_angle = triangle_solid_angle(triangle, p);
@@ -280,7 +280,7 @@ fn sample_triangle_for_context(
         if (cosine == 0.0) {
             return vec4<f32>(0.0);
         }
-        return vec4<f32>(b, distance_squared / (cosine * total_area));
+        return vec4<f32>(b, distance_squared / (cosine * triangle_area));
     }
     var warped_u = u;
     var warp_pdf = 1.0;
@@ -300,7 +300,7 @@ fn triangle_pdf_for_context(
     light_normal: vec3<f32>,
     wi: vec3<f32>,
     sampled_point: vec3<f32>,
-    total_area: f32,
+    triangle_area: f32,
 ) -> f32 {
     let to_light = sampled_point - p;
     let distance_squared = dot(to_light, to_light);
@@ -314,7 +314,7 @@ fn triangle_pdf_for_context(
         if (cosine == 0.0) {
             return 0.0;
         }
-        return distance_squared / (cosine * total_area);
+        return distance_squared / (cosine * triangle_area);
     }
     var pdf = 1.0 / solid_angle;
     if (dot(shading_normal, shading_normal) > 0.0) {
