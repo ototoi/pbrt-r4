@@ -5,6 +5,9 @@ struct TriangleVertices {
     p0: vec4<f32>,
     p1: vec4<f32>,
     p2: vec4<f32>,
+    n0: vec4<f32>,
+    n1: vec4<f32>,
+    n2: vec4<f32>,
 };
 
 fn load_area_triangle(area_index: u32) -> TriangleVertices {
@@ -14,11 +17,47 @@ fn load_area_triangle(area_index: u32) -> TriangleVertices {
     let i0 = geometry.vertex_offset + indices[first_index];
     let i1 = geometry.vertex_offset + indices[first_index + 1u];
     let i2 = geometry.vertex_offset + indices[first_index + 2u];
+    var n0 = instance.normal_from_object * vec4<f32>(vertices[i0].normal.xyz, 0.0);
+    var n1 = instance.normal_from_object * vec4<f32>(vertices[i1].normal.xyz, 0.0);
+    var n2 = instance.normal_from_object * vec4<f32>(vertices[i2].normal.xyz, 0.0);
+    if ((instance.orientation_flags & 1u) != 0u) {
+        n0 = -n0;
+        n1 = -n1;
+        n2 = -n2;
+    }
     return TriangleVertices(
         instance.world_from_object * vertices[i0].position,
         instance.world_from_object * vertices[i1].position,
         instance.world_from_object * vertices[i2].position,
+        n0,
+        n1,
+        n2,
     );
+}
+
+fn triangle_sample_normal(triangle: TriangleVertices, b: vec3<f32>) -> vec3<f32> {
+    var n = normalize(cross(
+        triangle.p1.xyz - triangle.p0.xyz,
+        triangle.p2.xyz - triangle.p0.xyz,
+    ));
+    let ns = triangle.n0.xyz * b.x + triangle.n1.xyz * b.y + triangle.n2.xyz * b.z;
+    if (dot(ns, ns) > 0.0 && dot(n, ns) < 0.0) {
+        n = -n;
+    }
+    return n;
+}
+
+fn sample_uniform_triangle(u: vec2<f32>) -> vec3<f32> {
+    var b0: f32;
+    var b1: f32;
+    if (u.x < u.y) {
+        b0 = u.x * 0.5;
+        b1 = u.y - b0;
+    } else {
+        b1 = u.y * 0.5;
+        b0 = u.x - b1;
+    }
+    return vec3<f32>(b0, b1, 1.0 - b0 - b1);
 }
 
 fn spherical_triangle_area(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> f32 {
@@ -225,21 +264,19 @@ fn sample_triangle_for_context(
     triangle: TriangleVertices,
     p: vec3<f32>,
     shading_normal: vec3<f32>,
-    light_normal: vec3<f32>,
     total_area: f32,
     u: vec2<f32>,
 ) -> vec4<f32> {
     let solid_angle = triangle_solid_angle(triangle, p);
     if (solid_angle < MIN_SPHERICAL_SAMPLE_AREA || solid_angle > MAX_SPHERICAL_SAMPLE_AREA) {
-        let su = sqrt(u.x);
-        let b = vec3<f32>(1.0 - su, su * (1.0 - u.y), su * u.y);
+        let b = sample_uniform_triangle(u);
         let sampled_point = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
         let to_light = sampled_point - p;
         let distance_squared = dot(to_light, to_light);
         if (distance_squared == 0.0) {
             return vec4<f32>(0.0);
         }
-        let cosine = abs(dot(light_normal, -normalize(to_light)));
+        let cosine = abs(dot(triangle_sample_normal(triangle, b), -normalize(to_light)));
         if (cosine == 0.0) {
             return vec4<f32>(0.0);
         }
@@ -261,6 +298,7 @@ fn triangle_pdf_for_context(
     p: vec3<f32>,
     shading_normal: vec3<f32>,
     light_normal: vec3<f32>,
+    wi: vec3<f32>,
     sampled_point: vec3<f32>,
     total_area: f32,
 ) -> f32 {
@@ -269,10 +307,10 @@ fn triangle_pdf_for_context(
     if (distance_squared == 0.0) {
         return 0.0;
     }
-    let wi = normalize(to_light);
+    let sample_wi = normalize(wi);
     let solid_angle = triangle_solid_angle(triangle, p);
     if (solid_angle < MIN_SPHERICAL_SAMPLE_AREA || solid_angle > MAX_SPHERICAL_SAMPLE_AREA) {
-        let cosine = abs(dot(light_normal, -wi));
+        let cosine = abs(dot(light_normal, -sample_wi));
         if (cosine == 0.0) {
             return 0.0;
         }
@@ -281,7 +319,7 @@ fn triangle_pdf_for_context(
     var pdf = 1.0 / solid_angle;
     if (dot(shading_normal, shading_normal) > 0.0) {
         let weights = triangle_context_weights(triangle, p, shading_normal);
-        let warped_u = invert_spherical_triangle_sample(triangle, p, wi);
+        let warped_u = invert_spherical_triangle_sample(triangle, p, sample_wi);
         pdf = pdf * bilinear_pdf(warped_u, weights);
     }
     return pdf;

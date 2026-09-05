@@ -56,6 +56,8 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         vec4<f32>(direction, 0.0),
         next_throughput,
         surface.position,
+        surface.position_error,
+        surface.geometric_normal,
         vec4<f32>(normal, 0.0),
         pixel_index,
         ray.depth + 1u,
