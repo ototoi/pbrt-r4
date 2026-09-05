@@ -54,6 +54,21 @@ fn input_normals_face_forward_without_orientation_flip() {
 }
 
 #[test]
+fn invalid_input_normals_are_rejected() {
+    let result = build_light_bounds(&[LightBoundInput::AreaTriangle {
+        handle: 0,
+        world_positions: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        input_normals: Some([[0.0, 0.0, 0.0]; 3]),
+        reverse_orientation: false,
+        transform_swaps_handedness: false,
+        emission_max: 1.0,
+        scale: 1.0,
+        two_sided: false,
+    }]);
+    assert!(result.is_err());
+}
+
+#[test]
 fn duplicate_handles_are_rejected() {
     let input = LightBoundInput::Point {
         handle: 1,

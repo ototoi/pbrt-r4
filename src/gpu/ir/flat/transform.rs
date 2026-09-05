@@ -24,3 +24,28 @@ pub fn transform_swaps_handedness(transform: Transform) -> bool {
         + m[2] * (m[4] * m[9] - m[5] * m[8]);
     determinant < 0.0
 }
+
+/// Applies the inverse-transpose of the linear part to a normal.
+pub fn transform_normal(transform: Transform, normal: [f32; 3]) -> Result<[f32; 3], &'static str> {
+    let [a, b, c, _, d, e, f, _, g, h, i, _, _, _, _, _] = transform;
+    let determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if !determinant.is_finite() || determinant == 0.0 {
+        return Err("transform has a singular linear part");
+    }
+    let inverse_determinant = 1.0 / determinant;
+    let transformed = [
+        (e * i - f * h) * normal[0] + (f * g - d * i) * normal[1] + (d * h - e * g) * normal[2],
+        (c * h - b * i) * normal[0] + (a * i - c * g) * normal[1] + (b * g - a * h) * normal[2],
+        (b * f - c * e) * normal[0] + (c * d - a * f) * normal[1] + (a * e - b * d) * normal[2],
+    ];
+    let transformed = transformed.map(|value| value * inverse_determinant);
+    let length = transformed
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    if !length.is_finite() || length == 0.0 {
+        return Err("normal becomes zero or non-finite after transformation");
+    }
+    Ok(transformed.map(|value| value / length))
+}
