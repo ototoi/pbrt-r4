@@ -34,7 +34,7 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
             surface.position.xyz,
             total_area,
         );
-        let light_pdf = uniform_light_pmf_for_handle(light_handle)
+        let light_pdf = light_pmf_for_handle(light_handle, ray.prev_position.xyz, ray.prev_shading_normal.xyz)
             * triangle_pdf;
         weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
     }

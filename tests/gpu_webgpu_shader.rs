@@ -60,6 +60,8 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     ));
     assert!(evaluate.contains("sample_light_bvh(selector, p, n)"));
     assert!(evaluate.contains("cos_sub_clamped("));
+    let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
+    assert!(emissive.contains("light_pmf_for_handle("));
     assert!(evaluate.contains("sample_triangle_for_context("));
     assert!(evaluate.contains("vec2<f32>(samples.direct.y, samples.direct.z)"));
     assert!(evaluate.contains("sample_spherical_triangle("));
@@ -79,7 +81,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
 fn emissive_hit_resolves_the_triangle_light_handle() {
     assert!(HANDLE_EMISSIVE_SHADER.contains("instance.first_area_light + surface.primitive_index"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("load_light_payload(light_handle)"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("uniform_light_pmf_for_handle(light_handle)"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("light_pmf_for_handle(light_handle"));
     assert!(!COMMON_SHADER.contains("fn light_pmf_for_area"));
 }
 
