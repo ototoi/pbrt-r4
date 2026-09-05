@@ -1,356 +1,202 @@
+use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
-use super::light_sampler::{CompactLightBounds, LIGHT_BVH_INDEX_MAX};
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LightBvhInput {
-    pub handle: u32,
-    pub min: [f32; 3],
-    pub max: [f32; 3],
-}
-
-pub fn point_light_input(handle: u32, position: [f32; 3]) -> Result<LightBvhInput, PbrtError> {
-    if !position.iter().all(|value| value.is_finite()) {
-        return Err(PbrtError::error("Point light position is not finite."));
-    }
-    Ok(LightBvhInput {
-        handle,
-        min: position,
-        max: position,
-    })
-}
-
-pub fn triangle_light_input(
-    handle: u32,
-    object_to_world: [f32; 16],
-    positions: [[f32; 3]; 3],
-) -> Result<LightBvhInput, PbrtError> {
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
-    for position in positions {
-        if !position.iter().all(|value| value.is_finite()) {
-            return Err(PbrtError::error(
-                "Area light vertex position is not finite.",
-            ));
-        }
-        let transformed = [
-            object_to_world[0] * position[0]
-                + object_to_world[1] * position[1]
-                + object_to_world[2] * position[2]
-                + object_to_world[3],
-            object_to_world[4] * position[0]
-                + object_to_world[5] * position[1]
-                + object_to_world[6] * position[2]
-                + object_to_world[7],
-            object_to_world[8] * position[0]
-                + object_to_world[9] * position[1]
-                + object_to_world[10] * position[2]
-                + object_to_world[11],
-        ];
-        for axis in 0..3 {
-            min[axis] = min[axis].min(transformed[axis]);
-            max[axis] = max[axis].max(transformed[axis]);
-        }
-    }
-    Ok(LightBvhInput { handle, min, max })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LightBvhNode {
-    Leaf { handle: u32, parent: u32 },
-    Interior { right_child: u32, parent: u32 },
-}
-
-impl LightBvhNode {
-    pub fn parent(self) -> u32 {
-        match self {
-            Self::Leaf { parent, .. } | Self::Interior { parent, .. } => parent,
-        }
-    }
-
-    pub fn is_leaf(self) -> bool {
-        matches!(self, Self::Leaf { .. })
-    }
-}
+pub const LIGHT_BVH_NODE_WORDS: usize = 8;
+pub const LIGHT_BVH_HEADER_WORDS: usize = 8;
+pub const LIGHT_BVH_INDEX_MAX: u32 = 0x7fff_ffff;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LightBvhTopology {
-    pub nodes: Vec<LightBvhNode>,
+pub struct PackedLightBVH {
+    pub header_words: [u32; LIGHT_BVH_HEADER_WORDS],
+    pub node_words: Vec<[u32; LIGHT_BVH_NODE_WORDS]>,
     pub handle_to_leaf: Vec<u32>,
 }
 
-impl LightBvhTopology {
-    /// Packs one topology entry together with its already-quantized bounds.
-    /// The caller supplies bounds in DFS node order; this method only adds the
-    /// topology links and therefore cannot silently reorder payload data.
-    pub fn pack_node(
-        &self,
-        node_index: usize,
-        bounds: CompactLightBounds,
-    ) -> Result<[u32; 8], PbrtError> {
-        let node = *self
-            .nodes
-            .get(node_index)
-            .ok_or_else(|| PbrtError::error("Light BVH node index is out of range."))?;
-        let (child_or_light_index, is_leaf) = match node {
-            LightBvhNode::Leaf { handle, .. } => (handle, true),
-            LightBvhNode::Interior { right_child, .. } => (right_child, false),
+pub fn pack_light_bvh(bvh: &flat::LightBVH) -> Result<Option<PackedLightBVH>, PbrtError> {
+    let Some(all_bounds) = bvh.all_bounds else {
+        if !bvh.nodes.is_empty() || !bvh.bounded_handles.is_empty() {
+            return Err(PbrtError::error(
+                "Non-empty Light BVH must have global bounds.",
+            ));
+        }
+        return Ok(None);
+    };
+    if bvh.nodes.is_empty() || bvh.bounded_handles.is_empty() {
+        return Err(PbrtError::error(
+            "Light BVH global bounds require non-empty nodes and handles.",
+        ));
+    }
+    if bvh.nodes.len() > LIGHT_BVH_INDEX_MAX as usize {
+        return Err(PbrtError::error(
+            "Light BVH node count exceeds the 31-bit packed index limit.",
+        ));
+    }
+    all_bounds_check(all_bounds)?;
+    let header_words = [
+        all_bounds.min[0].to_bits(),
+        all_bounds.min[1].to_bits(),
+        all_bounds.min[2].to_bits(),
+        0,
+        all_bounds.max[0].to_bits(),
+        all_bounds.max[1].to_bits(),
+        all_bounds.max[2].to_bits(),
+        0,
+    ];
+    let mut node_words = Vec::with_capacity(bvh.nodes.len());
+    for (index, node) in bvh.nodes.iter().enumerate() {
+        let bounds = node.bounds();
+        let compact = CompactLightBounds::pack(bounds, all_bounds)?;
+        let (payload, is_leaf) = match node {
+            flat::LightBVHNode::Leaf { light_handle, .. } => (*light_handle, true),
+            flat::LightBVHNode::Interior { right_child, .. } => (*right_child, false),
         };
-        let mut words = bounds.to_words(child_or_light_index, is_leaf)?;
-        words[7] = node.parent();
-        Ok(words)
-    }
-}
-
-pub fn build_light_bvh(inputs: &[LightBvhInput]) -> Result<LightBvhTopology, PbrtError> {
-    if inputs.is_empty() {
-        return Ok(LightBvhTopology {
-            nodes: Vec::new(),
-            handle_to_leaf: Vec::new(),
-        });
-    }
-    let mut items = inputs.to_vec();
-    let max_handle = items.iter().map(|item| item.handle).max().unwrap();
-    if max_handle > LIGHT_BVH_INDEX_MAX {
-        return Err(PbrtError::error(
-            "Light BVH handle exceeds the 31-bit limit.",
-        ));
-    }
-    let mut seen_handles = vec![false; max_handle as usize + 1];
-    for item in &items {
-        if item
-            .min
-            .iter()
-            .chain(item.max.iter())
-            .any(|v| !v.is_finite())
-            || item
-                .min
-                .iter()
-                .zip(item.max.iter())
-                .any(|(min, max)| min > max)
-        {
-            return Err(PbrtError::error("Light BVH input bounds are invalid."));
+        if payload > LIGHT_BVH_INDEX_MAX {
+            return Err(PbrtError::error(
+                "Light BVH payload exceeds the 31-bit packed index limit.",
+            ));
         }
-        let seen = &mut seen_handles[item.handle as usize];
-        if *seen {
-            return Err(PbrtError::error("Light BVH light handles must be unique."));
+        let parent = node.parent();
+        if parent != flat::INVALID_INDEX && parent as usize >= bvh.nodes.len() {
+            return Err(PbrtError::error(&format!(
+                "Light BVH node {index} has an invalid parent."
+            )));
         }
-        *seen = true;
-    }
-    let mut topology = LightBvhTopology {
-        nodes: Vec::with_capacity(items.len() * 2 - 1),
-        handle_to_leaf: vec![u32::MAX; max_handle as usize + 1],
-    };
-    let item_count = items.len();
-    build_subtree(&mut items, 0, item_count, u32::MAX, &mut topology)?;
-    Ok(topology)
-}
-
-fn build_subtree(
-    items: &mut [LightBvhInput],
-    start: usize,
-    end: usize,
-    parent: u32,
-    topology: &mut LightBvhTopology,
-) -> Result<u32, PbrtError> {
-    let node_index = u32::try_from(topology.nodes.len())
-        .map_err(|_| PbrtError::error("Light BVH node count does not fit in u32."))?;
-    if node_index > LIGHT_BVH_INDEX_MAX {
-        return Err(PbrtError::error(
-            "Light BVH node count exceeds the 31-bit limit.",
-        ));
-    }
-    if end - start == 1 {
-        let handle = items[start].handle;
-        topology.nodes.push(LightBvhNode::Leaf { handle, parent });
-        topology.handle_to_leaf[handle as usize] = node_index;
-        return Ok(node_index);
-    }
-
-    let (centroid_min, centroid_max) = centroid_bounds(items, start, end);
-    let split_dimension = largest_extent(centroid_min, centroid_max);
-    let middle = if let Some((split_bucket, middle)) = choose_sah_split(
-        items,
-        start,
-        end,
-        split_dimension,
-        centroid_min,
-        centroid_max,
-    ) {
-        // Partition by the same bucket predicate used for the SAH cost. The
-        // centroid tie-break keeps the resulting topology deterministic.
-        let extent = centroid_max[split_dimension] - centroid_min[split_dimension];
-        items[start..end].sort_by(|a, b| {
-            let bucket = |item: &LightBvhInput| {
-                ((centroid(item, split_dimension) - centroid_min[split_dimension]) / extent * 12.0)
-                    .floor()
-                    .min(11.0) as usize
-            };
-            bucket(a)
-                .cmp(&bucket(b))
-                .then_with(|| centroid(a, split_dimension).total_cmp(&centroid(b, split_dimension)))
-        });
-        debug_assert_eq!(
-            items[start..end]
-                .iter()
-                .take_while(|item| {
-                    let bucket = ((centroid(item, split_dimension) - centroid_min[split_dimension])
-                        / extent
-                        * 12.0)
-                        .floor()
-                        .min(11.0) as usize;
-                    bucket <= split_bucket
-                })
-                .count()
-                + start,
-            middle
-        );
-        middle
-    } else {
-        let middle = (start + end) / 2;
-        items[start..end].select_nth_unstable_by(middle - start, |a, b| {
-            centroid(a, split_dimension).total_cmp(&centroid(b, split_dimension))
-        });
-        middle
-    };
-    topology.nodes.push(LightBvhNode::Interior {
-        right_child: u32::MAX,
-        parent,
-    });
-    let left = build_subtree(items, start, middle, node_index, topology)?;
-    debug_assert_eq!(left, node_index + 1);
-    let right = build_subtree(items, middle, end, node_index, topology)?;
-    if let LightBvhNode::Interior { right_child, .. } = &mut topology.nodes[node_index as usize] {
-        *right_child = right;
-    }
-    Ok(node_index)
-}
-
-fn choose_sah_split(
-    items: &[LightBvhInput],
-    start: usize,
-    end: usize,
-    dimension: usize,
-    centroid_min: [f32; 3],
-    centroid_max: [f32; 3],
-) -> Option<(usize, usize)> {
-    let extent = centroid_max[dimension] - centroid_min[dimension];
-    if extent == 0.0 {
-        return None;
-    }
-    const BUCKETS: usize = 12;
-    let mut counts = [0usize; BUCKETS];
-    let mut bounds = [Bounds::empty(); BUCKETS];
-    for item in &items[start..end] {
-        let bucket = ((centroid(item, dimension) - centroid_min[dimension]) / extent
-            * BUCKETS as f32)
-            .floor()
-            .min((BUCKETS - 1) as f32) as usize;
-        counts[bucket] += 1;
-        bounds[bucket].union(item);
-    }
-    let mut best = None;
-    let mut best_cost = f32::INFINITY;
-    for split in 1..BUCKETS - 1 {
-        let mut left = Bounds::empty();
-        let mut right = Bounds::empty();
-        let mut left_count = 0;
-        let mut right_count = 0;
-        for bucket in 0..=split {
-            left.union_bounds(&bounds[bucket]);
-            left_count += counts[bucket];
-        }
-        for bucket in split + 1..BUCKETS {
-            right.union_bounds(&bounds[bucket]);
-            right_count += counts[bucket];
-        }
-        if left_count != 0 && right_count != 0 {
-            let cost =
-                left.surface_area() * left_count as f32 + right.surface_area() * right_count as f32;
-            if cost > 0.0 && cost < best_cost {
-                best = Some(split);
-                best_cost = cost;
+        if let flat::LightBVHNode::Interior { left_child, .. } = node {
+            if *left_child != index as u32 + 1 {
+                return Err(PbrtError::error(
+                    "Light BVH nodes do not satisfy the DFS left-child invariant.",
+                ));
             }
         }
+        node_words.push(compact.to_words(payload, is_leaf, parent));
     }
-    best.map(|split| {
-        let middle = items[start..end]
-            .iter()
-            .filter(|item| {
-                let bucket = ((centroid(item, dimension) - centroid_min[dimension]) / extent
-                    * BUCKETS as f32)
-                    .floor()
-                    .min((BUCKETS - 1) as f32) as usize;
-                bucket <= split
-            })
-            .count()
-            + start;
-        (split, middle)
-    })
+    Ok(Some(PackedLightBVH {
+        header_words,
+        node_words,
+        handle_to_leaf: bvh.handle_to_leaf.clone(),
+    }))
 }
 
 #[derive(Clone, Copy)]
-struct Bounds {
-    min: [f32; 3],
-    max: [f32; 3],
+struct CompactLightBounds {
+    q_min: [u16; 3],
+    q_max: [u16; 3],
+    direction: [u16; 2],
+    phi: f32,
+    cos_theta_o: u16,
+    cos_theta_e: u16,
+    two_sided: bool,
 }
 
-impl Bounds {
-    const fn empty() -> Self {
-        Self {
-            min: [f32::INFINITY; 3],
-            max: [f32::NEG_INFINITY; 3],
-        }
-    }
-
-    fn union(&mut self, item: &LightBvhInput) {
+impl CompactLightBounds {
+    fn pack(bounds: flat::LightBounds, all: flat::Bounds3) -> Result<Self, PbrtError> {
+        bounds.validate()?;
+        all_bounds_check(all)?;
+        let mut q_min = [0; 3];
+        let mut q_max = [0; 3];
         for axis in 0..3 {
-            self.min[axis] = self.min[axis].min(item.min[axis]);
-            self.max[axis] = self.max[axis].max(item.max[axis]);
+            q_min[axis] =
+                quantize_bounds(bounds.bounds.min[axis], all.min[axis], all.max[axis], false)?;
+            q_max[axis] =
+                quantize_bounds(bounds.bounds.max[axis], all.min[axis], all.max[axis], true)?;
         }
+        let direction = normalize(bounds.direction)?;
+        Ok(Self {
+            q_min,
+            q_max,
+            direction: encode_octahedral(direction),
+            phi: bounds.phi,
+            cos_theta_o: quantize_cosine(bounds.cos_theta_o),
+            cos_theta_e: quantize_cosine(bounds.cos_theta_e),
+            two_sided: bounds.two_sided,
+        })
     }
 
-    fn union_bounds(&mut self, other: &Self) {
-        for axis in 0..3 {
-            self.min[axis] = self.min[axis].min(other.min[axis]);
-            self.max[axis] = self.max[axis].max(other.max[axis]);
-        }
-    }
-
-    fn surface_area(self) -> f32 {
-        let d = [
-            self.max[0] - self.min[0],
-            self.max[1] - self.min[1],
-            self.max[2] - self.min[2],
-        ];
-        2.0 * (d[0] * d[1] + d[0] * d[2] + d[1] * d[2])
+    fn to_words(self, payload: u32, is_leaf: bool, parent: u32) -> [u32; 8] {
+        [
+            u32::from(self.q_min[0]) | (u32::from(self.q_min[1]) << 16),
+            u32::from(self.q_min[2]) | (u32::from(self.q_max[0]) << 16),
+            u32::from(self.q_max[1]) | (u32::from(self.q_max[2]) << 16),
+            u32::from(self.direction[0]) | (u32::from(self.direction[1]) << 16),
+            self.phi.to_bits(),
+            u32::from(self.cos_theta_o)
+                | (u32::from(self.cos_theta_e) << 15)
+                | (u32::from(self.two_sided) << 30),
+            payload | (u32::from(is_leaf) << 31),
+            parent,
+        ]
     }
 }
 
-fn centroid(item: &LightBvhInput, dimension: usize) -> f32 {
-    (item.min[dimension] + item.max[dimension]) * 0.5
-}
-
-fn centroid_bounds(items: &[LightBvhInput], start: usize, end: usize) -> ([f32; 3], [f32; 3]) {
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
-    for item in &items[start..end] {
-        for axis in 0..3 {
-            let value = centroid(item, axis);
-            min[axis] = min[axis].min(value);
-            max[axis] = max[axis].max(value);
-        }
+fn all_bounds_check(bounds: flat::Bounds3) -> Result<(), PbrtError> {
+    if !bounds
+        .min
+        .into_iter()
+        .chain(bounds.max)
+        .all(|value| value.is_finite())
+        || bounds
+            .min
+            .into_iter()
+            .zip(bounds.max)
+            .any(|(min, max)| min > max)
+    {
+        return Err(PbrtError::error("Global Light BVH bounds are invalid."));
     }
-    (min, max)
+    Ok(())
 }
 
-fn largest_extent(min: [f32; 3], max: [f32; 3]) -> usize {
-    let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-    if extent[0] > extent[1] && extent[0] > extent[2] {
-        0
-    } else if extent[1] > extent[2] {
-        1
+fn quantize_bounds(value: f32, min: f32, max: f32, ceil: bool) -> Result<u16, PbrtError> {
+    if min == max {
+        return Ok(0);
+    }
+    let normalized = ((value - min) / (max - min)).clamp(0.0, 1.0) * 65535.0;
+    let value = if ceil {
+        normalized.ceil()
     } else {
-        2
+        normalized.floor()
+    };
+    u16::try_from(value as u32)
+        .map_err(|_| PbrtError::error("Light BVH bounds quantization overflowed."))
+}
+
+fn quantize_cosine(value: f32) -> u16 {
+    (32767.0 * ((value + 1.0) / 2.0)).floor() as u16
+}
+
+fn normalize(direction: [f32; 3]) -> Result<[f32; 3], PbrtError> {
+    let length = direction
+        .into_iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    if !length.is_finite() || length == 0.0 {
+        return Err(PbrtError::error(
+            "Light BVH direction must be finite and non-zero.",
+        ));
+    }
+    Ok(direction.map(|value| value / length))
+}
+
+fn encode_octahedral(mut direction: [f32; 3]) -> [u16; 2] {
+    let sum = direction.into_iter().map(f32::abs).sum::<f32>();
+    direction = direction.map(|value| value / sum);
+    if direction[2] < 0.0 {
+        direction = [
+            (1.0 - direction[1].abs()) * sign(direction[0]),
+            (1.0 - direction[0].abs()) * sign(direction[1]),
+            direction[2],
+        ];
+    }
+    [
+        (((direction[0] + 1.0) * 0.5 * 65535.0).round() as u32).min(u16::MAX as u32) as u16,
+        (((direction[1] + 1.0) * 0.5 * 65535.0).round() as u32).min(u16::MAX as u32) as u16,
+    ]
+}
+
+fn sign(value: f32) -> f32 {
+    if value.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
     }
 }

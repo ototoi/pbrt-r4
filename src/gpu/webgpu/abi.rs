@@ -9,6 +9,7 @@ pub const RAY_T_MAX: f32 = f32::MAX;
 pub const LIGHT_KIND_POINT: u32 = 0;
 pub const LIGHT_KIND_AREA: u32 = 1;
 pub const LIGHT_SAMPLER_KIND_UNIFORM: u32 = 0;
+pub const LIGHT_SAMPLER_KIND_BVH: u32 = 1;
 pub const INVALID_INDEX: u32 = u32::MAX;
 
 #[repr(C)]
