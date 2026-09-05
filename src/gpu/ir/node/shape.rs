@@ -1,8 +1,11 @@
 use super::types::Vec2f;
 use super::types::Vec3f;
+use crate::base::shape::Shape as CpuShape;
 use crate::paramdict::ParameterDictionary;
+use crate::shapes::LoopSubdiv;
 use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
+use crate::util::transform::Transform as CpuTransform;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
@@ -71,6 +74,65 @@ pub fn triangle_mesh_from_params(
         normals: node_vec3_attribute(params, "N", vertex_count)?,
         tangents: node_vec3_attribute(params, "S", vertex_count)?,
         uvs: node_vec2_attribute(params, "uv", vertex_count)?,
+    }))
+}
+
+/// Converts the CPU Loop Subdivision result into the Node IR mesh form.
+///
+/// The CPU implementation creates one `Triangle` value per output face, but
+/// all of those values share a single `TriangleMesh`. The GPU IR stores that
+/// shared mesh once instead of creating one Node IR shape per face.
+pub fn loop_subdiv_mesh_from_params(
+    params: &ParameterDictionary,
+    reverse_orientation: bool,
+) -> Result<Option<TriangleMeshShape>, PbrtError> {
+    let identity = CpuTransform::identity();
+    let triangles = LoopSubdiv::create(&identity, &identity, reverse_orientation, params)?;
+    let Some(CpuShape::Triangle(first_triangle)) = triangles.first() else {
+        return Ok(None);
+    };
+    let mesh = &first_triangle.mesh;
+    let positions = mesh
+        .p
+        .iter()
+        .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
+        .collect();
+    let normals = if mesh.n.len() == mesh.p.len() {
+        Some(
+            mesh.n
+                .iter()
+                .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let tangents = if mesh.s.len() == mesh.p.len() {
+        Some(
+            mesh.s
+                .iter()
+                .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let uvs = if mesh.uv.len() == mesh.p.len() {
+        Some(
+            mesh.uv
+                .iter()
+                .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    Ok(Some(TriangleMeshShape {
+        positions,
+        indices: mesh.vertex_indices.clone(),
+        normals,
+        tangents,
+        uvs,
     }))
 }
 
@@ -151,7 +213,7 @@ pub fn complete_triangle_attributes(
         );
     }
 
-    let normals = shape.normals.unwrap();
+    let mut normals = shape.normals.unwrap();
     if !normals.iter().all(|normal| {
         normal.0.iter().all(|value| value.is_finite()) && length_squared(normal.0) > 0.0
     }) {
@@ -160,6 +222,7 @@ pub fn complete_triangle_attributes(
             node_name
         )));
     }
+    align_normals_to_winding(&shape.positions, &shape.indices, &mut normals);
     let tangents = source_tangents
         .unwrap_or_else(|| generate_tangents(&shape.positions, &shape.indices, &normals, &uvs));
     if !tangents.iter().all(|tangent| {
@@ -177,6 +240,39 @@ pub fn complete_triangle_attributes(
         tangents: Some(tangents),
         uvs: Some(uvs),
     })
+}
+
+/// Flips per-vertex shading normals that disagree with the mesh winding.
+///
+/// Subdivision limit normals (e.g. loopsubdiv's `Cross(S, T)` tangents) can
+/// wind opposite to the face orientation, which pbrt-v4 tolerates through its
+/// hemisphere-agnostic BxDF conventions. The GPU backend additionally aligns
+/// the shading normals with the geometric normals here so every downstream
+/// stage can rely on a consistent orientation. Each vertex accumulates the
+/// unnormalized (area-weighted) geometric normals of its incident triangles
+/// and is flipped when it points against that average.
+fn align_normals_to_winding(positions: &[Vec3f], indices: &[u32], normals: &mut [Vec3f]) {
+    let mut accumulated = vec![[0.0f32; 3]; normals.len()];
+    for triangle in indices.chunks_exact(3) {
+        let p0 = positions[triangle[0] as usize].0;
+        let p1 = positions[triangle[1] as usize].0;
+        let p2 = positions[triangle[2] as usize].0;
+        let face_normal = cross(sub(p1, p0), sub(p2, p0));
+        if !face_normal.iter().all(|value| value.is_finite()) {
+            continue;
+        }
+        for &corner in triangle {
+            let entry = &mut accumulated[corner as usize];
+            entry[0] += face_normal[0];
+            entry[1] += face_normal[1];
+            entry[2] += face_normal[2];
+        }
+    }
+    for (normal, average) in normals.iter_mut().zip(&accumulated) {
+        if dot(normal.0, *average) < 0.0 {
+            normal.0 = [-normal.0[0], -normal.0[1], -normal.0[2]];
+        }
+    }
 }
 
 fn generate_planar_uvs(positions: &[Vec3f]) -> Vec<Vec2f> {

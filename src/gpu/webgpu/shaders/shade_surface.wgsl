@@ -3,14 +3,14 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
-    let ray_index = current_ray_index(pixel_index);
-    let ray = rays[ray_index];
+    let ray_index = global_id.y * viewport.width + global_id.x;
+    if (ray_index >= current_ray_count()) {
+        return;
+    }
+    let ray = load_current_ray(ray_index);
+    let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    if (ray.is_active == 0u || surface.hit == 0u) {
-        if (ray.is_active != 0u) {
-            rays[ray_index].is_active = 0u;
-        }
+    if (surface.hit == 0u) {
         return;
     }
 
@@ -26,8 +26,10 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let b1 = surface.barycentric.x;
     let b2 = surface.barycentric.y;
     let b0 = 1.0 - b1 - b2;
-    let position = ray.origin.xyz + ray.direction.xyz * surface.t;
-    let geometric_normal = normalize(cross(p1 - p0, p2 - p0));
+    let position = p0 * b0 + p1 * b1 + p2 * b2;
+    let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
+    surfaces[pixel_index].position_error = vec4<f32>(position_error, 0.0);
+    var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;
@@ -36,50 +38,31 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);
     }
+    if ((instance.orientation_flags & 1u) != 0u) {
+        geometric_normal = -geometric_normal;
+        normal = -normal;
+    }
+    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
+        normal = -normal;
+    }
     let material_kind = load_material_kind(instance.material);
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
+    surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);
     surfaces[pixel_index].material = instance.material;
     surfaces[pixel_index].flags = 0u;
-    surfaces[pixel_index].direct = vec4<f32>(0.0);
-    surfaces[pixel_index].shadow_visible = 0u;
+    append_material_eval(pixel_index);
+
+    if (material_kind == MATERIAL_KIND_DIFFUSE && instance.first_area_light != 0xffffffffu) {
+        append_hit_area_light(pixel_index);
+    }
 
     if (material_kind == MATERIAL_KIND_NORMAL) {
-        framebuffer[pixel_index] = vec4<f32>(geometric_normal * 0.5 + vec3<f32>(0.5), 1.0);
+        store_sample_radiance(pixel_index, vec4<f32>(geometric_normal * 0.5 + vec3<f32>(0.5), 1.0));
         surfaces[pixel_index].flags = 1u;
-        rays[ray_index].is_active = 0u;
-        return;
-    }
-    if (material_kind == MATERIAL_KIND_UV) {
+    } else if (material_kind == MATERIAL_KIND_UV) {
         let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
-        framebuffer[pixel_index] = vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+        store_sample_radiance(pixel_index, vec4<f32>(uv.x, uv.y, 0.0, 1.0));
         surfaces[pixel_index].flags = 1u;
-        rays[ray_index].is_active = 0u;
-        return;
     }
-    if (material_kind != MATERIAL_KIND_DIFFUSE
-        || ray.depth >= viewport.max_depth
-        || viewport.light_count == 0u) {
-        return;
-    }
-    let light_index = hash_u32(viewport.seed ^ pixel_index ^ viewport.sample_index) % viewport.light_count;
-    let light = load_point_light(light_index);
-    let to_light = light.position.xyz - position;
-    let distance_squared = dot(to_light, to_light);
-    if (distance_squared <= 0.0) {
-        return;
-    }
-    let distance = sqrt(distance_squared);
-    let wi = to_light / distance;
-    let cosine = max(dot(normal, wi), 0.0);
-    if (cosine == 0.0) {
-        return;
-    }
-    let light_pdf = 1.0 / f32(viewport.light_count);
-    let li = light.intensity.xyz / distance_squared;
-    let direct = li * (0.5 / PI) * cosine / light_pdf;
-    surfaces[pixel_index].shadow_origin = vec4<f32>(position + normal * RAY_EPSILON, 1.0);
-    surfaces[pixel_index].shadow_direction = vec4<f32>(wi, 0.0);
-    surfaces[pixel_index].shadow_t = distance - RAY_EPSILON;
-    surfaces[pixel_index].direct = vec4<f32>(direct, 0.0);
 }

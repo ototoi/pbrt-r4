@@ -70,7 +70,16 @@ fn component_to_json(component: &Component) -> Value {
             "type": "Output",
             "filename": component.output.filename,
         }),
-        Component::Shape(component) => shape_to_json(&component.shape),
+        Component::Shape(component) => {
+            let mut value = shape_to_json(&component.shape);
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "reverse_orientation".to_string(),
+                    json!(component.reverse_orientation),
+                );
+            }
+            value
+        }
         Component::Material(component) => json!({
             "type": "Material",
             "name": component.material.name,
@@ -83,6 +92,11 @@ fn component_to_json(component: &Component) -> Value {
             "medium": component.light.medium,
             "params": params_to_json(&component.light.params),
             "transform": component.light.transform.matrix,
+        }),
+        Component::AreaLight(component) => json!({
+            "type": "AreaLight",
+            "name": component.area_light.name,
+            "params": params_to_json(&component.area_light.params),
         }),
         Component::Medium(component) => json!({
             "type": "Medium",

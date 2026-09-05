@@ -1,4 +1,5 @@
 use super::accelerator::Accelerator;
+use super::area_light::AreaLightComponent;
 use super::camera::Camera;
 use super::film::Film;
 use super::filter::Filter;
@@ -57,6 +58,7 @@ pub struct CameraComponent {
 #[derive(Clone)]
 pub struct ShapeComponent {
     pub shape: Shape,
+    pub reverse_orientation: bool,
 }
 
 #[derive(Clone)]
@@ -84,6 +86,7 @@ pub enum Component {
     Sampler(SamplerComponent),
     Integrator(IntegratorComponent),
     Accelerator(AcceleratorComponent),
+    AreaLight(AreaLightComponent),
     Filter(FilterComponent),
     Camera(CameraComponent),
     Film(FilmComponent),

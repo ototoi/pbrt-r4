@@ -6,6 +6,11 @@ use crate::util::error::PbrtError;
 pub const WORKGROUP_SIZE: u32 = 8;
 pub const RAY_T_MIN: f32 = 0.0;
 pub const RAY_T_MAX: f32 = f32::MAX;
+pub const LIGHT_KIND_POINT: u32 = 0;
+pub const LIGHT_KIND_AREA: u32 = 1;
+pub const LIGHT_SAMPLER_KIND_UNIFORM: u32 = 0;
+pub const LIGHT_SAMPLER_KIND_BVH: u32 = 1;
+pub const INVALID_INDEX: u32 = u32::MAX;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -22,9 +27,28 @@ pub struct ViewportUniform {
     pub sample_index: u32,
     pub max_depth: u32,
     pub seed: u32,
-    pub light_data_offset: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct SceneUniform {
+    pub material_offset_words: u32,
+    pub material_count: u32,
+    pub light_record_offset_words: u32,
     pub light_count: u32,
-    pub padding: u32,
+    pub point_light_offset_words: u32,
+    pub point_light_count: u32,
+    pub area_light_offset_words: u32,
+    pub area_light_count: u32,
+    pub light_sampler_kind: u32,
+    pub light_sampler_data_offset: u32,
+    pub light_bvh_node_offset: u32,
+    pub light_bvh_node_count: u32,
+    pub light_leaf_offset: u32,
+    pub light_leaf_count: u32,
+    pub scene_data_words: u32,
+    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -51,7 +75,8 @@ pub struct Geometry {
 pub struct Instance {
     pub geometry: u32,
     pub material: u32,
-    pub padding: [u32; 2],
+    pub first_area_light: u32,
+    pub orientation_flags: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
 }
@@ -69,10 +94,28 @@ pub struct RayWorkItem {
     pub origin: [f32; 4],
     pub direction: [f32; 4],
     pub throughput: [f32; 4],
+    pub prev_position: [f32; 4],
+    pub prev_position_error: [f32; 4],
+    pub prev_geometric_normal: [f32; 4],
+    pub prev_shading_normal: [f32; 4],
     pub pixel_index: u32,
     pub depth: u32,
-    pub is_active: u32,
-    pub padding: u32,
+    pub inv_w_u: f32,
+    pub inv_w_l: f32,
+    pub prev_pdf: f32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ShadowRayWorkItem {
+    pub origin: [f32; 4],
+    pub direction: [f32; 4],
+    pub max_t: f32,
+    pub padding: [u32; 3],
+    pub direct: [f32; 4],
+    pub pixel_index: u32,
+    pub reserved: [u32; 3],
 }
 
 #[repr(C)]
@@ -84,14 +127,12 @@ pub struct SurfaceWorkItem {
     pub primitive_index: u32,
     pub barycentric: [f32; 4],
     pub position: [f32; 4],
+    pub position_error: [f32; 4],
     pub normal: [f32; 4],
-    pub shadow_origin: [f32; 4],
-    pub shadow_direction: [f32; 4],
-    pub shadow_t: f32,
-    pub shadow_visible: u32,
+    pub geometric_normal: [f32; 4],
     pub material: u32,
     pub flags: u32,
-    pub direct: [f32; 4],
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -99,6 +140,45 @@ pub struct SurfaceWorkItem {
 pub struct PointLight {
     pub position: [f32; 4],
     pub intensity: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightRecord {
+    pub kind: u32,
+    pub payload: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct AreaLight {
+    pub instance: u32,
+    pub two_sided: u32,
+    pub emission: [f32; 4],
+    pub total_area: f32,
+    pub primitive: u32,
+    pub reserved: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct QueueState {
+    pub count: u32,
+    pub capacity: u32,
+    pub overflow: u32,
+    pub padding: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PixelSampleState {
+    pub radiance: [f32; 4],
+    pub pixel_index: u32,
+    pub sample_index: u32,
+    pub error: u32,
+    pub padding: u32,
 }
 
 pub fn camera_uniform(
@@ -179,8 +259,6 @@ pub fn camera_uniform(
 pub fn viewport_uniform(
     viewport: &flat::Viewport,
     settings: &flat::RenderSettings,
-    material_count: usize,
-    light_count: usize,
 ) -> Result<ViewportUniform, PbrtError> {
     let [width, height] = viewport.resolution;
     if width == 0 || height == 0 {
@@ -193,21 +271,47 @@ pub fn viewport_uniform(
             "WebGPU viewport pixel count must fit in u32.",
         ));
     }
-    let light_count = u32::try_from(light_count)
-        .map_err(|_| PbrtError::error("WebGPU point light count does not fit in u32."))?;
-    let light_data_offset = material_count
-        .checked_mul(std::mem::size_of::<Material>() / std::mem::size_of::<u32>())
-        .and_then(|offset| u32::try_from(offset).ok())
-        .ok_or_else(|| PbrtError::error("WebGPU material/light buffer offset overflowed."))?;
     Ok(ViewportUniform {
         width,
         height,
         sample_index: 0,
         max_depth: settings.max_depth,
         seed: settings.seed,
-        light_count,
-        light_data_offset,
-        padding: 0,
+        padding: [0; 3],
+    })
+}
+
+pub fn scene_uniform(
+    material_count: usize,
+    light_count: usize,
+    point_light_count: usize,
+    area_light_count: usize,
+    light_record_offset_words: usize,
+    point_light_offset_words: usize,
+    area_light_offset_words: usize,
+    scene_data_words: usize,
+) -> Result<SceneUniform, PbrtError> {
+    let to_u32 = |value: usize, label: &str| {
+        u32::try_from(value)
+            .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
+    };
+    Ok(SceneUniform {
+        material_offset_words: 0,
+        material_count: to_u32(material_count, "material count")?,
+        light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
+        light_count: to_u32(light_count, "light count")?,
+        point_light_offset_words: to_u32(point_light_offset_words, "point-light offset")?,
+        point_light_count: to_u32(point_light_count, "point-light count")?,
+        area_light_offset_words: to_u32(area_light_offset_words, "area-light offset")?,
+        area_light_count: to_u32(area_light_count, "area-light count")?,
+        light_sampler_kind: LIGHT_SAMPLER_KIND_UNIFORM,
+        light_sampler_data_offset: INVALID_INDEX,
+        light_bvh_node_offset: INVALID_INDEX,
+        light_bvh_node_count: 0,
+        light_leaf_offset: INVALID_INDEX,
+        light_leaf_count: 0,
+        scene_data_words: to_u32(scene_data_words, "scene-data word count")?,
+        reserved: 0,
     })
 }
 

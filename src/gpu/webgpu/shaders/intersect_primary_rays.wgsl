@@ -3,13 +3,12 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
-    let ray_index = current_ray_index(pixel_index);
-    let ray = rays[ray_index];
-    if (ray.is_active == 0u) {
-        surfaces[pixel_index].hit = 0u;
+    let ray_index = global_id.y * viewport.width + global_id.x;
+    if (ray_index >= current_ray_count()) {
         return;
     }
+    let ray = load_current_ray(ray_index);
+    let pixel_index = ray.pixel_index;
     var query: ray_query;
     rayQueryInitialize(
         &query,
@@ -21,6 +20,7 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let intersection = rayQueryGetCommittedIntersection(&query);
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
         surfaces[pixel_index].hit = 0u;
+        append_escaped_ray(pixel_index);
     } else {
         surfaces[pixel_index].t = intersection.t;
         surfaces[pixel_index].hit = 1u;

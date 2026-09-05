@@ -1,5 +1,6 @@
 use super::{
-    Camera, Geometry, Instance, Material, Output, PointLight, RenderSettings, Vertex, Viewport,
+    AreaLight, Camera, Geometry, Instance, LightBVH, LightBounds, LightRecord, Material, Output,
+    PointLight, RenderSettings, Vertex, Viewport,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -9,6 +10,10 @@ pub struct Scene {
     pub output: Output,
     pub render_settings: RenderSettings,
     pub point_lights: Vec<PointLight>,
+    pub area_lights: Vec<AreaLight>,
+    pub lights: Vec<LightRecord>,
+    pub light_bounds: Vec<LightBounds>,
+    pub light_bvh: LightBVH,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,

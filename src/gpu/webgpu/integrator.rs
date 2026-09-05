@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
@@ -16,11 +17,14 @@ use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
 
+const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+
 pub struct WavefrontPathIntegrator {
     context: Context,
     scene: Scene,
     camera_buffer: wgpu::Buffer,
     viewport_buffer: wgpu::Buffer,
+    scene_uniform_buffer: wgpu::Buffer,
     queues: Queues,
     film: Film,
     pipeline: Pipeline,
@@ -35,14 +39,26 @@ impl WavefrontPathIntegrator {
     }
 
     pub fn create_with_progress(
-        flat_scene: flat::Scene,
+        mut flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
         let context = Context::new()?;
         let device = &context.device;
         let queue = &context.queue;
+        let has_debug_material_override = std::env::var_os("PBRT_R4_GPU_DEBUG_MATERIAL").is_some();
+        let debug_material = MaterialKind::from_debug_environment()?;
+        if has_debug_material_override {
+            for material in &mut flat_scene.materials {
+                material.kind = match debug_material {
+                    MaterialKind::Normal => "normal".to_string(),
+                    MaterialKind::Uv => "uv".to_string(),
+                    MaterialKind::Diffuse => "diffuse".to_string(),
+                    MaterialKind::Lambert => "lambert".to_string(),
+                };
+            }
+        }
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
-        scene.replace_material_kind(queue, MaterialKind::from_debug_environment()?);
+        scene.replace_material_kind(queue, debug_material);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
@@ -53,8 +69,13 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.viewport),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let scene_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 scene UBO"),
+            contents: bytes_of(&scene.scene_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count)?;
+        let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
         let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
         let pipeline = Pipeline::new(device)?;
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -79,10 +100,11 @@ impl WavefrontPathIntegrator {
                 buffer_entry(4, &scene.index_buffer),
                 buffer_entry(5, &scene.geometry_buffer),
                 buffer_entry(6, &scene.instance_buffer),
-                buffer_entry(7, &scene.material_buffer),
-                buffer_entry(8, &queues.rays),
-                buffer_entry(9, &queues.surfaces),
-                buffer_entry(10, &film.framebuffer),
+                buffer_entry(7, &scene.scene_data_buffer),
+                buffer_entry(8, &queues.surfaces),
+                buffer_entry(9, &film.framebuffer),
+                buffer_entry(10, &queues.wavefront),
+                buffer_entry(11, &scene_uniform_buffer),
             ],
         });
         Ok(Self {
@@ -90,6 +112,7 @@ impl WavefrontPathIntegrator {
             scene,
             camera_buffer,
             viewport_buffer,
+            scene_uniform_buffer,
             queues,
             film,
             pipeline,
@@ -118,6 +141,7 @@ impl WavefrontPathIntegrator {
         let mut reporter = self.show_progress.then(|| {
             ProgressReporter::new(samples_per_pixel as usize, &self.scene.output.filename)
         });
+        let mut last_display_update = Instant::now();
         for sample_index in 0..samples_per_pixel {
             self.scene.viewport.sample_index = sample_index;
             self.context.queue.write_buffer(
@@ -149,6 +173,22 @@ impl WavefrontPathIntegrator {
                 workgroups_y,
             );
             for depth in 0..=self.scene.render_settings.max_depth {
+                if depth != 0 {
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.reset_shadow_queue,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.reset_classification_queues,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                }
                 dispatch(
                     &mut encoder,
                     &self.pipeline.intersect_primary_rays,
@@ -158,7 +198,28 @@ impl WavefrontPathIntegrator {
                 );
                 dispatch(
                     &mut encoder,
+                    &self.pipeline.handle_escaped,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
                     &self.pipeline.shade_surface,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.handle_emissive,
+                    &self.bind_group,
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.evaluate_materials,
                     &self.bind_group,
                     workgroups_x,
                     workgroups_y,
@@ -173,14 +234,21 @@ impl WavefrontPathIntegrator {
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.finish_shadow,
+                        &self.pipeline.sample_diffuse_bounce,
                         &self.bind_group,
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.sample_diffuse_bounce,
+                        &self.pipeline.swap_ray_queues,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.reset_next_ray_queue,
                         &self.bind_group,
                         workgroups_x,
                         workgroups_y,
@@ -195,6 +263,33 @@ impl WavefrontPathIntegrator {
                 workgroups_y,
             );
             self.context.queue.submit(Some(encoder.finish()));
+            self.film.complete_sample()?;
+            let completed_samples = self.film.completed_samples();
+            if !self.film.has_no_display()
+                && (last_display_update.elapsed() >= DEFAULT_DISPLAY_UPDATE_INTERVAL
+                    || completed_samples == samples_per_pixel)
+            {
+                let mut display_encoder =
+                    self.context
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("pbrt-r4 WebGPU display readback encoder"),
+                        });
+                self.film.copy_to_readback(&mut display_encoder);
+                self.queues.copy_state_to_readback(&mut display_encoder);
+                self.context.queue.submit(Some(display_encoder.finish()));
+                self.context.wait()?;
+                if self.queues.read_error(&self.context.device)? {
+                    return Err(PbrtError::error(
+                        "WebGPU wavefront rendering reported an error.",
+                    ));
+                }
+                self.film.readback(&self.context.device)?;
+                if let Err(error) = self.film.update_display() {
+                    log::warn!("WebGPU Film display update failed: {error}");
+                }
+                last_display_update = Instant::now();
+            }
             if let Some(reporter) = reporter.as_mut() {
                 reporter.update(1);
             }
@@ -206,10 +301,15 @@ impl WavefrontPathIntegrator {
                     label: Some("pbrt-r4 diffuse readback encoder"),
                 });
         self.film.copy_to_readback(&mut encoder);
+        self.queues.copy_state_to_readback(&mut encoder);
         self.context.queue.submit(Some(encoder.finish()));
         self.context.wait()?;
-        self.film
-            .readback(&self.context.device, samples_per_pixel)?;
+        if self.queues.read_error(&self.context.device)? {
+            return Err(PbrtError::error(
+                "WebGPU wavefront rendering reported an error.",
+            ));
+        }
+        self.film.readback(&self.context.device)?;
         if let Some(reporter) = reporter.as_mut() {
             reporter.done();
         }

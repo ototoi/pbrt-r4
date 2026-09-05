@@ -15,6 +15,7 @@ pub struct Film {
     display: MultipleDisplay,
     pixels: Vec<f32>,
     pixel_count: u64,
+    completed_samples: u32,
 }
 
 impl Film {
@@ -47,11 +48,16 @@ impl Film {
             display: MultipleDisplay::new(),
             pixels: vec![0.0; pixel_count as usize * 3],
             pixel_count,
+            completed_samples: 0,
         })
     }
 
     pub fn add_display(&mut self, display: &Arc<RwLock<dyn Display>>) {
         self.display.add_display(display);
+    }
+
+    pub fn has_no_display(&self) -> bool {
+        self.display.is_empty()
     }
 
     pub fn start(&mut self) -> Result<(), PbrtError> {
@@ -62,8 +68,21 @@ impl Film {
         )
     }
 
-    pub fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn clear(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        self.completed_samples = 0;
         encoder.clear_buffer(&self.framebuffer, 0, None);
+    }
+
+    pub fn complete_sample(&mut self) -> Result<(), PbrtError> {
+        self.completed_samples = self
+            .completed_samples
+            .checked_add(1)
+            .ok_or_else(|| PbrtError::error("WebGPU Film completed sample count overflowed."))?;
+        Ok(())
+    }
+
+    pub fn completed_samples(&self) -> u32 {
+        self.completed_samples
     }
 
     pub fn copy_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -76,11 +95,8 @@ impl Film {
         );
     }
 
-    pub fn readback(
-        &mut self,
-        device: &wgpu::Device,
-        completed_samples: u32,
-    ) -> Result<(), PbrtError> {
+    pub fn readback(&mut self, device: &wgpu::Device) -> Result<(), PbrtError> {
+        let completed_samples = self.completed_samples;
         if completed_samples == 0 {
             return Err(PbrtError::error(
                 "WebGPU Film cannot read back zero samples.",

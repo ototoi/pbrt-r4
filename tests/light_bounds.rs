@@ -1,5 +1,6 @@
 use pbrt_r4::base::light::{union_light_bounds, Light, LightBounds};
 use pbrt_r4::base::lightsampler::{BVHLightSampler, LightSampleContext};
+use pbrt_r4::gpu::ir::flat::{Bounds3 as FlatBounds3, LightBounds as FlatLightBounds};
 use pbrt_r4::prelude::*;
 use std::sync::Arc;
 
@@ -86,4 +87,21 @@ fn bvh_light_sampler_sample_and_pmf_agree() {
         probability_sum += sampler.pmf(&context, light);
     }
     assert!((probability_sum - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn flat_area_light_importance_uses_light_to_reference_direction() {
+    let bounds = FlatLightBounds {
+        bounds: FlatBounds3::new([-1.0, 3.0, -1.0], [1.0, 3.0, 1.0]).unwrap(),
+        direction: [0.0, -1.0, 0.0],
+        phi: 1.0,
+        cos_theta_o: 1.0,
+        cos_theta_e: 0.0,
+        two_sided: false,
+    };
+
+    let importance = bounds
+        .importance([0.0, 0.0, 0.0], [0.0, -1.0, 0.0])
+        .unwrap();
+    assert!(importance > 0.0);
 }
