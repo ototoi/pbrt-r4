@@ -7,13 +7,11 @@ use crate::util::error::PbrtError;
 use super::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
     viewport_uniform, AreaLight, Geometry, Instance, LightRecord, PointLight, SceneUniform, Vertex,
-    ViewportUniform, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light::triangle_world_area;
-use super::light_bvh::{
-    build_light_bvh, point_light_input, triangle_light_input, LightBvhInput, LightBvhTopology,
-};
+use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler, LightSamplerKind};
 use super::material::MaterialKind;
 use super::output::Output;
@@ -35,8 +33,6 @@ pub struct Scene {
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
     pub light_sampler_kind: LightSamplerKind,
-    pub light_bvh_inputs: Vec<LightBvhInput>,
-    pub light_bvh_topology: LightBvhTopology,
     pub render_settings: flat::RenderSettings,
     pub acceleration: Acceleration,
 }
@@ -153,8 +149,6 @@ impl Scene {
                 _ => {}
             }
         }
-        let light_bvh_inputs = build_light_bvh_inputs(&flat, &vertices, &flat.geometries)?;
-        let light_bvh_topology = build_light_bvh(&light_bvh_inputs)?;
         let material_words = std::mem::size_of::<super::abi::Material>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU material ABI is not word-aligned."))?;
@@ -248,13 +242,37 @@ impl Scene {
         for light in &area_lights {
             scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
+        let packed_light_bvh = if light_sampler_kind == LightSamplerKind::Bvh {
+            pack_light_bvh(&flat.light_bvh)?
+        } else {
+            None
+        };
+        let (light_sampler_data_offset, light_bvh_node_offset, light_leaf_offset) =
+            if let Some(packed) = &packed_light_bvh {
+                let header_offset = align_words(scene_data.len(), 8)?;
+                scene_data.resize(header_offset, 0);
+                scene_data.extend_from_slice(&packed.header_words);
+                let node_offset = scene_data.len();
+                for node in &packed.node_words {
+                    scene_data.extend_from_slice(node);
+                }
+                let leaf_offset = scene_data.len();
+                scene_data.extend_from_slice(&packed.handle_to_leaf);
+                (header_offset, node_offset, leaf_offset)
+            } else {
+                (
+                    INVALID_INDEX as usize,
+                    INVALID_INDEX as usize,
+                    INVALID_INDEX as usize,
+                )
+            };
         let limits = device.limits();
         validate_scene_data_size(
             scene_data.len(),
             limits.max_buffer_size,
             u64::from(limits.max_storage_buffer_binding_size),
         )?;
-        let scene_uniform = scene_uniform(
+        let mut scene_uniform = scene_uniform(
             materials.len(),
             light_records.len(),
             point_lights.len(),
@@ -264,6 +282,23 @@ impl Scene {
             area_light_data_offset,
             scene_data.len(),
         )?;
+        if let Some(packed) = &packed_light_bvh {
+            scene_uniform.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
+            scene_uniform.light_sampler_data_offset =
+                to_u32_offset(light_sampler_data_offset, "light sampler data offset")?;
+            scene_uniform.light_bvh_node_offset =
+                to_u32_offset(light_bvh_node_offset, "light BVH node offset")?;
+            scene_uniform.light_bvh_node_count =
+                u32::try_from(packed.node_words.len()).map_err(|_| {
+                    PbrtError::error("WebGPU Light BVH node count does not fit in u32.")
+                })?;
+            scene_uniform.light_leaf_offset =
+                to_u32_offset(light_leaf_offset, "light handle-to-leaf offset")?;
+            scene_uniform.light_leaf_count =
+                u32::try_from(packed.handle_to_leaf.len()).map_err(|_| {
+                    PbrtError::error("WebGPU Light BVH leaf count does not fit in u32.")
+                })?;
+        }
         let scene_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 scene data SBO"),
             contents: cast_slice(&scene_data),
@@ -295,8 +330,6 @@ impl Scene {
             area_lights,
             light_records,
             light_sampler_kind,
-            light_bvh_inputs,
-            light_bvh_topology,
             render_settings: flat.render_settings,
             acceleration,
         })
@@ -312,6 +345,18 @@ impl Scene {
             bytemuck::cast_slice(&self.materials),
         );
     }
+}
+
+fn align_words(value: usize, alignment: usize) -> Result<usize, PbrtError> {
+    let remainder = value % alignment;
+    value
+        .checked_add((alignment - remainder) % alignment)
+        .ok_or_else(|| PbrtError::error("WebGPU scene-data alignment overflowed."))
+}
+
+fn to_u32_offset(value: usize, label: &str) -> Result<u32, PbrtError> {
+    u32::try_from(value)
+        .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
 }
 
 pub fn validate_scene_data_size(
@@ -554,75 +599,4 @@ fn build_area_light_areas(
             })?;
     }
     Ok(())
-}
-
-fn build_light_bvh_inputs(
-    flat: &flat::Scene,
-    vertices: &[Vertex],
-    flat_geometries: &[flat::Geometry],
-) -> Result<Vec<LightBvhInput>, PbrtError> {
-    flat.lights
-        .iter()
-        .enumerate()
-        .map(|(handle, record)| match record.kind {
-            flat::LightKind::Point => {
-                let light = flat
-                    .point_lights
-                    .get(record.payload as usize)
-                    .ok_or_else(|| {
-                        PbrtError::error("Point light BVH input references an invalid payload.")
-                    })?;
-                point_light_input(handle as u32, light.position)
-            }
-            flat::LightKind::Area => {
-                let light = flat
-                    .area_lights
-                    .get(record.payload as usize)
-                    .ok_or_else(|| {
-                        PbrtError::error("Area light BVH input references an invalid payload.")
-                    })?;
-                let instance = flat.instances.get(light.instance as usize).ok_or_else(|| {
-                    PbrtError::error("Area light BVH input references an invalid instance.")
-                })?;
-                let geometry =
-                    flat_geometries
-                        .get(instance.geometry as usize)
-                        .ok_or_else(|| {
-                            PbrtError::error("Area light BVH input references an invalid geometry.")
-                        })?;
-                let start = geometry
-                    .first_index
-                    .checked_add(light.primitive.checked_mul(3).ok_or_else(|| {
-                        PbrtError::error("Area light BVH primitive index overflowed.")
-                    })?)
-                    .ok_or_else(|| PbrtError::error("Area light BVH index overflowed."))?;
-                let indices = flat
-                    .indices
-                    .get(start as usize..start as usize + 3)
-                    .ok_or_else(|| {
-                        PbrtError::error("Area light BVH triangle index is out of bounds.")
-                    })?;
-                let positions = indices
-                    .iter()
-                    .map(|&index| {
-                        vertices
-                            .get(index as usize)
-                            .map(|vertex| {
-                                [vertex.position[0], vertex.position[1], vertex.position[2]]
-                            })
-                            .ok_or_else(|| {
-                                PbrtError::error("Area light BVH vertex is out of bounds.")
-                            })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                triangle_light_input(
-                    handle as u32,
-                    instance.transform,
-                    positions.try_into().map_err(|_| {
-                        PbrtError::error("Area light BVH triangle must contain three vertices.")
-                    })?,
-                )
-            }
-        })
-        .collect()
 }
