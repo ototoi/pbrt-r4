@@ -11,6 +11,9 @@ use super::abi::{
 };
 use super::acceleration::{self, Acceleration};
 use super::light::triangle_world_area;
+use super::light_bvh::{
+    build_light_bvh, point_light_input, triangle_light_input, LightBvhInput, LightBvhTopology,
+};
 use super::light_sampler::{resolve_scene_light_sampler, LightSamplerKind};
 use super::material::MaterialKind;
 use super::output::Output;
@@ -32,6 +35,8 @@ pub struct Scene {
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
     pub light_sampler_kind: LightSamplerKind,
+    pub light_bvh_inputs: Vec<LightBvhInput>,
+    pub light_bvh_topology: LightBvhTopology,
     pub render_settings: flat::RenderSettings,
     pub acceleration: Acceleration,
 }
@@ -148,6 +153,8 @@ impl Scene {
                 _ => {}
             }
         }
+        let light_bvh_inputs = build_light_bvh_inputs(&flat, &vertices, &flat.geometries)?;
+        let light_bvh_topology = build_light_bvh(&light_bvh_inputs)?;
         let material_words = std::mem::size_of::<super::abi::Material>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU material ABI is not word-aligned."))?;
@@ -288,6 +295,8 @@ impl Scene {
             area_lights,
             light_records,
             light_sampler_kind,
+            light_bvh_inputs,
+            light_bvh_topology,
             render_settings: flat.render_settings,
             acceleration,
         })
@@ -545,4 +554,75 @@ fn build_area_light_areas(
             })?;
     }
     Ok(())
+}
+
+fn build_light_bvh_inputs(
+    flat: &flat::Scene,
+    vertices: &[Vertex],
+    flat_geometries: &[flat::Geometry],
+) -> Result<Vec<LightBvhInput>, PbrtError> {
+    flat.lights
+        .iter()
+        .enumerate()
+        .map(|(handle, record)| match record.kind {
+            flat::LightKind::Point => {
+                let light = flat
+                    .point_lights
+                    .get(record.payload as usize)
+                    .ok_or_else(|| {
+                        PbrtError::error("Point light BVH input references an invalid payload.")
+                    })?;
+                point_light_input(handle as u32, light.position)
+            }
+            flat::LightKind::Area => {
+                let light = flat
+                    .area_lights
+                    .get(record.payload as usize)
+                    .ok_or_else(|| {
+                        PbrtError::error("Area light BVH input references an invalid payload.")
+                    })?;
+                let instance = flat.instances.get(light.instance as usize).ok_or_else(|| {
+                    PbrtError::error("Area light BVH input references an invalid instance.")
+                })?;
+                let geometry =
+                    flat_geometries
+                        .get(instance.geometry as usize)
+                        .ok_or_else(|| {
+                            PbrtError::error("Area light BVH input references an invalid geometry.")
+                        })?;
+                let start = geometry
+                    .first_index
+                    .checked_add(light.primitive.checked_mul(3).ok_or_else(|| {
+                        PbrtError::error("Area light BVH primitive index overflowed.")
+                    })?)
+                    .ok_or_else(|| PbrtError::error("Area light BVH index overflowed."))?;
+                let indices = flat
+                    .indices
+                    .get(start as usize..start as usize + 3)
+                    .ok_or_else(|| {
+                        PbrtError::error("Area light BVH triangle index is out of bounds.")
+                    })?;
+                let positions = indices
+                    .iter()
+                    .map(|&index| {
+                        vertices
+                            .get(index as usize)
+                            .map(|vertex| {
+                                [vertex.position[0], vertex.position[1], vertex.position[2]]
+                            })
+                            .ok_or_else(|| {
+                                PbrtError::error("Area light BVH vertex is out of bounds.")
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                triangle_light_input(
+                    handle as u32,
+                    instance.transform,
+                    positions.try_into().map_err(|_| {
+                        PbrtError::error("Area light BVH triangle must contain three vertices.")
+                    })?,
+                )
+            }
+        })
+        .collect()
 }
