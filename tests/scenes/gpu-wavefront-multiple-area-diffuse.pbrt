@@ -1,0 +1,39 @@
+Integrator "volpath"
+    "integer maxdepth" [ 2 ]
+Sampler "independent"
+    "integer pixelsamples" [ 4 ]
+Film "rgb"
+    "string filename" [ "gpu-wavefront-multiple-area-diffuse.exr" ]
+    "integer xresolution" [ 128 ]
+    "integer yresolution" [ 128 ]
+LookAt 0 2.0 6
+    0 1 0
+    0 1 0
+Camera "perspective"
+    "float fov" [ 35 ]
+
+WorldBegin
+
+AttributeBegin
+    Material "diffuse" "rgb reflectance" [ 1 1 1 ]
+    Shape "trianglemesh"
+        "point3 P" [ -3 0 -3   3 0 -3   3 0 3   -3 0 3 ]
+        "integer indices" [ 0 1 2  0 2 3 ]
+AttributeEnd
+
+AttributeBegin
+    Translate -1.25 3 0
+    AreaLightSource "diffuse" "rgb L" [ 20 20 20 ]
+    Shape "trianglemesh"
+        "point3 P" [ -0.8 0 -0.8   0.8 0 -0.8   0.8 0 0.8   -0.8 0 0.8 ]
+        "integer indices" [ 0 2 1  0 3 2 ]
+AttributeEnd
+
+AttributeBegin
+    Translate 1.25 3 0
+    AreaLightSource "diffuse" "rgb L" [ 10 10 10 ]
+    Shape "trianglemesh"
+        "point3 P" [ -0.8 0 -0.8   0.8 0 -0.8   0.8 0 0.8   -0.8 0 0.8 ]
+        "integer indices" [ 0 2 1  0 3 2 ]
+AttributeEnd
+
