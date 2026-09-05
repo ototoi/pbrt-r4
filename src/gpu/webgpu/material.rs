@@ -6,6 +6,7 @@ pub enum MaterialKind {
     Uv,
     Diffuse,
     Lambert,
+    Dielectric,
 }
 
 impl MaterialKind {
@@ -14,6 +15,7 @@ impl MaterialKind {
             Self::Normal => 0,
             Self::Uv => 1,
             Self::Diffuse | Self::Lambert => 2,
+            Self::Dielectric => 3,
         }
     }
 
@@ -23,6 +25,7 @@ impl MaterialKind {
             "uv" => Ok(Self::Uv),
             "diffuse" => Ok(Self::Diffuse),
             "lambert" => Ok(Self::Lambert),
+            "dielectric" => Ok(Self::Dielectric),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),

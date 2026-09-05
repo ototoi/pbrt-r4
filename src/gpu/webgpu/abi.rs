@@ -35,6 +35,10 @@ pub struct ViewportUniform {
 pub struct SceneUniform {
     pub material_offset_words: u32,
     pub material_count: u32,
+    pub diffuse_material_offset_words: u32,
+    pub diffuse_material_count: u32,
+    pub dielectric_material_offset_words: u32,
+    pub dielectric_material_count: u32,
     pub light_record_offset_words: u32,
     pub light_count: u32,
     pub point_light_offset_words: u32,
@@ -83,8 +87,22 @@ pub struct Instance {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct Material {
+pub struct MaterialRecord {
     pub kind_tag: u32,
+    pub data_index: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DiffuseMaterialData {
+    pub reflectance: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DielectricMaterialData {
+    pub eta: f32,
     pub padding: [u32; 3],
 }
 
@@ -291,6 +309,10 @@ pub fn viewport_uniform(
 
 pub fn scene_uniform(
     material_count: usize,
+    diffuse_material_offset_words: usize,
+    diffuse_material_count: usize,
+    dielectric_material_offset_words: usize,
+    dielectric_material_count: usize,
     light_count: usize,
     point_light_count: usize,
     area_light_count: usize,
@@ -306,6 +328,16 @@ pub fn scene_uniform(
     Ok(SceneUniform {
         material_offset_words: 0,
         material_count: to_u32(material_count, "material count")?,
+        diffuse_material_offset_words: to_u32(
+            diffuse_material_offset_words,
+            "diffuse-material offset",
+        )?,
+        diffuse_material_count: to_u32(diffuse_material_count, "diffuse-material count")?,
+        dielectric_material_offset_words: to_u32(
+            dielectric_material_offset_words,
+            "dielectric-material offset",
+        )?,
+        dielectric_material_count: to_u32(dielectric_material_count, "dielectric-material count")?,
         light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
         light_count: to_u32(light_count, "light count")?,
         point_light_offset_words: to_u32(point_light_offset_words, "point-light offset")?,

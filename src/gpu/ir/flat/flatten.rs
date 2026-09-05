@@ -841,9 +841,14 @@ fn material_index(
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
     let kind = material_kind.unwrap_or(&source_material.kind);
+    let data = if material_kind.is_some() {
+        super::MaterialData::Unsupported
+    } else {
+        material_data(source_material, kind)
+    };
     builder.materials.push(Material {
         kind: kind.to_string(),
-        data: material_data(source_material, kind),
+        data,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
