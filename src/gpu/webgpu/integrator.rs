@@ -54,6 +54,7 @@ impl WavefrontPathIntegrator {
                     MaterialKind::Uv => "uv".to_string(),
                     MaterialKind::Diffuse => "diffuse".to_string(),
                     MaterialKind::Lambert => "lambert".to_string(),
+                    MaterialKind::Dielectric => "dielectric".to_string(),
                 };
             }
         }

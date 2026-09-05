@@ -29,6 +29,10 @@ struct ViewportUniform {
 struct SceneUniform {
     material_offset_words: u32,
     material_count: u32,
+    diffuse_material_offset_words: u32,
+    diffuse_material_count: u32,
+    dielectric_material_offset_words: u32,
+    dielectric_material_count: u32,
     light_record_offset_words: u32,
     light_count: u32,
     point_light_offset_words: u32,
@@ -592,6 +596,24 @@ fn pixel_count() -> u32 {
 
 fn load_material_kind(index: u32) -> u32 {
     return scene_data[scene.material_offset_words + index * 4u];
+}
+
+fn load_material_data_index(index: u32) -> u32 {
+    return scene_data[scene.material_offset_words + index * 4u + 1u];
+}
+
+fn load_diffuse_material(index: u32) -> vec4<f32> {
+    let base = scene.diffuse_material_offset_words + index * 4u;
+    return vec4<f32>(
+        bitcast<f32>(scene_data[base]),
+        bitcast<f32>(scene_data[base + 1u]),
+        bitcast<f32>(scene_data[base + 2u]),
+        bitcast<f32>(scene_data[base + 3u]),
+    );
+}
+
+fn load_dielectric_eta(index: u32) -> f32 {
+    return bitcast<f32>(scene_data[scene.dielectric_material_offset_words + index * 4u]);
 }
 
 fn load_point_light(index: u32) -> PointLight {
