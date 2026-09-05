@@ -179,10 +179,9 @@ pub fn resolve_light_sampler(
         "power" | "exhaustive" => Err(PbrtError::error(&format!(
             "WebGPU light sampler \"{requested}\" is not implemented."
         ))),
-        unknown => {
-            log::error!("Unknown WebGPU light sampler \"{unknown}\"; using bvh.");
-            Ok(LightSamplerKind::Bvh)
-        }
+        unknown => Err(PbrtError::error(&format!(
+            "Unknown WebGPU light sampler \"{unknown}\"."
+        ))),
     }
 }
 
