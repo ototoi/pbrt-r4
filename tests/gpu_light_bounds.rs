@@ -1,4 +1,6 @@
-use pbrt_r4::gpu::ir::flat::{build_light_bounds, Bounds3, LightBoundInput, LightBounds};
+use pbrt_r4::gpu::ir::flat::{
+    build_light_bounds, AreaTriangleInput, Bounds3, LightBoundInput, LightBounds,
+};
 
 #[test]
 fn point_light_bounds_match_v4_shape() {
@@ -20,12 +22,14 @@ fn point_light_bounds_match_v4_shape() {
 
 #[test]
 fn area_triangle_bounds_apply_orientation_and_area() {
-    let bounds = build_light_bounds(&[LightBoundInput::AreaTriangle {
+    let bounds = build_light_bounds(&[LightBoundInput::AreaGroup {
         handle: 0,
-        world_positions: [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        input_normals: None,
-        reverse_orientation: true,
-        transform_swaps_handedness: false,
+        triangles: vec![AreaTriangleInput {
+            world_positions: [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            input_normals: None,
+            reverse_orientation: true,
+            transform_swaps_handedness: false,
+        }],
         emission_max: 4.0,
         scale: 0.5,
         two_sided: true,
@@ -38,13 +42,44 @@ fn area_triangle_bounds_apply_orientation_and_area() {
 }
 
 #[test]
-fn input_normals_face_forward_without_orientation_flip() {
-    let bounds = build_light_bounds(&[LightBoundInput::AreaTriangle {
+fn area_group_unions_triangle_bounds_and_phi() {
+    let bounds = build_light_bounds(&[LightBoundInput::AreaGroup {
         handle: 0,
-        world_positions: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        input_normals: Some([[0.0, 0.0, -1.0]; 3]),
-        reverse_orientation: false,
-        transform_swaps_handedness: false,
+        triangles: vec![
+            AreaTriangleInput {
+                world_positions: [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                input_normals: None,
+                reverse_orientation: false,
+                transform_swaps_handedness: false,
+            },
+            AreaTriangleInput {
+                world_positions: [[3.0, 0.0, 0.0], [3.0, 1.0, 0.0], [3.0, 0.0, 1.0]],
+                input_normals: None,
+                reverse_orientation: false,
+                transform_swaps_handedness: false,
+            },
+        ],
+        emission_max: 1.0,
+        scale: 1.0,
+        two_sided: false,
+    }])
+    .unwrap();
+    assert_eq!(bounds.len(), 1);
+    assert_eq!(bounds[0].bounds.min, [0.0, 0.0, 0.0]);
+    assert_eq!(bounds[0].bounds.max, [3.0, 1.0, 1.0]);
+    assert_eq!(bounds[0].phi, 1.5 * std::f32::consts::PI);
+}
+
+#[test]
+fn input_normals_face_forward_without_orientation_flip() {
+    let bounds = build_light_bounds(&[LightBoundInput::AreaGroup {
+        handle: 0,
+        triangles: vec![AreaTriangleInput {
+            world_positions: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            input_normals: Some([[0.0, 0.0, -1.0]; 3]),
+            reverse_orientation: false,
+            transform_swaps_handedness: false,
+        }],
         emission_max: 1.0,
         scale: 1.0,
         two_sided: false,
@@ -55,12 +90,14 @@ fn input_normals_face_forward_without_orientation_flip() {
 
 #[test]
 fn invalid_input_normals_are_rejected() {
-    let result = build_light_bounds(&[LightBoundInput::AreaTriangle {
+    let result = build_light_bounds(&[LightBoundInput::AreaGroup {
         handle: 0,
-        world_positions: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        input_normals: Some([[0.0, 0.0, 0.0]; 3]),
-        reverse_orientation: false,
-        transform_swaps_handedness: false,
+        triangles: vec![AreaTriangleInput {
+            world_positions: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            input_normals: Some([[0.0, 0.0, 0.0]; 3]),
+            reverse_orientation: false,
+            transform_swaps_handedness: false,
+        }],
         emission_max: 1.0,
         scale: 1.0,
         two_sided: false,
@@ -76,7 +113,7 @@ fn duplicate_handles_are_rejected() {
         intensity_max: 1.0,
         scale: 1.0,
     };
-    assert!(build_light_bounds(&[input, input]).is_err());
+    assert!(build_light_bounds(&[input.clone(), input]).is_err());
 }
 
 #[test]

@@ -21,7 +21,24 @@ pub struct PointLight {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AreaLight {
     pub instance: u32,
+    pub distribution: TriangleDistributionRange,
+    /// Transitional first primitive for the pre-group WebGPU ABI.
+    /// Removed when the distribution table is packed in Phase C.
     pub primitive: u32,
     pub emission: [f32; 3],
     pub two_sided: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriangleDistributionRange {
+    pub offset: u32,
+    pub count: u32,
+    pub total_area: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriangleDistributionEntry {
+    pub primitive: u32,
+    pub cdf: f32,
+    pub area: f32,
 }
