@@ -1,7 +1,8 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform, transform_normal,
-    transform_swaps_handedness, AreaLight, Camera, Geometry, Instance, LightBoundInput, LightKind,
-    LightRecord, Material, PointLight, RenderSettings, Scene, Transform, Vertex, Viewport,
+    transform_swaps_handedness, AreaLight, AreaTriangleInput, Camera, Geometry, Instance,
+    LightBoundInput, LightKind, LightRecord, Material, PointLight, RenderSettings, Scene,
+    Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport,
     INVALID_INDEX,
 };
 use crate::gpu::ir::node::{
@@ -52,6 +53,7 @@ pub fn flatten_node_with_material_override(
         render_settings,
         point_lights: builder.point_lights,
         area_lights: builder.area_lights,
+        triangle_distributions: builder.triangle_distributions,
         lights: builder.lights,
         light_bounds,
         light_bvh,
@@ -79,6 +81,7 @@ struct FlatBuilder {
     integrator: Option<NodeIntegrator>,
     point_lights: Vec<PointLight>,
     area_lights: Vec<AreaLight>,
+    triangle_distributions: Vec<TriangleDistributionEntry>,
     lights: Vec<LightRecord>,
     light_bound_inputs: Vec<LightBoundInput>,
 }
@@ -309,8 +312,8 @@ fn flatten_node_ref(
         let material = material_index(&material, builder, material_kind)?;
         let instance_index = u32::try_from(builder.instances.len())
             .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
-        let first_area_light = if let Some(area_light) = area_light {
-            let first_light_handle = u32::try_from(builder.lights.len())
+        let area_light_handle = if let Some(area_light) = area_light {
+            let light_handle = u32::try_from(builder.lights.len())
                 .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
             let triangle_count = shape.indices.len() / 3;
             if triangle_count == 0 {
@@ -318,20 +321,18 @@ fn flatten_node_ref(
                     "Area-light shape node \"{name}\" contains no triangles."
                 )));
             }
-            for primitive in 0..triangle_count {
-                let area_light_index = u32::try_from(builder.area_lights.len()).map_err(|_| {
-                    PbrtError::error("The flattened GPU area-light table exceeds u32.")
+            let (emission, emission_max, scale, two_sided) = area_light_record(&area_light, &name)?;
+            let distribution_offset =
+                u32::try_from(builder.triangle_distributions.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU distribution table exceeds u32.")
                 })?;
+            let mut total_area = 0.0;
+            let mut bound_triangles = Vec::with_capacity(triangle_count);
+            let mut entries = Vec::with_capacity(triangle_count);
+            for primitive in 0..triangle_count {
                 let primitive = u32::try_from(primitive).map_err(|_| {
                     PbrtError::error("The flattened GPU area-light primitive exceeds u32.")
                 })?;
-                let (area_record, emission_max, scale) =
-                    area_light_record(&area_light, instance_index, primitive, &name)?;
-                builder.area_lights.push(area_record);
-                builder.lights.push(LightRecord {
-                    kind: LightKind::Area,
-                    payload: area_light_index,
-                });
                 let i0 = shape.indices[primitive as usize * 3] as usize;
                 let i1 = shape.indices[primitive as usize * 3 + 1] as usize;
                 let i2 = shape.indices[primitive as usize * 3 + 2] as usize;
@@ -356,20 +357,70 @@ fn flatten_node_ref(
                     }
                     None => None,
                 };
+                let area = triangle_area(positions);
+                if !area.is_finite() {
+                    return Err(PbrtError::error(&format!(
+                        "Area light shape node \"{name}\" contains a non-finite triangle area."
+                    )));
+                }
+                if area <= 0.0 {
+                    continue;
+                }
+                total_area += area;
+                bound_triangles.push(AreaTriangleInput {
+                    world_positions: positions,
+                    input_normals: normals,
+                    reverse_orientation,
+                    transform_swaps_handedness: transform_swaps_handedness(world_transform),
+                });
+                entries.push((primitive, area));
+            }
+            if entries.is_empty() || !total_area.is_finite() || total_area <= 0.0 {
+                return Err(PbrtError::error(&format!(
+                    "Area-light shape node \"{name}\" contains no valid triangles."
+                )));
+            }
+            let mut cumulative = 0.0;
+            for (primitive, area) in entries {
+                cumulative += area / total_area;
                 builder
-                    .light_bound_inputs
-                    .push(LightBoundInput::AreaTriangle {
-                        handle: first_light_handle + primitive,
-                        world_positions: positions,
-                        input_normals: normals,
-                        reverse_orientation,
-                        transform_swaps_handedness: transform_swaps_handedness(world_transform),
-                        emission_max,
-                        scale,
-                        two_sided: area_light.params.get_one_bool("twosided", false),
+                    .triangle_distributions
+                    .push(TriangleDistributionEntry {
+                        primitive,
+                        cdf: cumulative,
+                        area,
                     });
             }
-            first_light_handle
+            if let Some(last) = builder.triangle_distributions.last_mut() {
+                last.cdf = 1.0;
+            }
+            let area_light_index = u32::try_from(builder.area_lights.len())
+                .map_err(|_| PbrtError::error("The flattened GPU area-light table exceeds u32."))?;
+            builder.area_lights.push(AreaLight {
+                instance: instance_index,
+                distribution: TriangleDistributionRange {
+                    offset: distribution_offset,
+                    count: u32::try_from(bound_triangles.len()).map_err(|_| {
+                        PbrtError::error("The flattened GPU area-light distribution exceeds u32.")
+                    })?,
+                    total_area,
+                },
+                primitive: builder.triangle_distributions[distribution_offset as usize].primitive,
+                emission,
+                two_sided,
+            });
+            builder.lights.push(LightRecord {
+                kind: LightKind::Area,
+                payload: area_light_index,
+            });
+            builder.light_bound_inputs.push(LightBoundInput::AreaGroup {
+                handle: light_handle,
+                triangles: bound_triangles,
+                emission_max,
+                scale,
+                two_sided,
+            });
+            light_handle
         } else {
             INVALID_INDEX
         };
@@ -377,7 +428,7 @@ fn flatten_node_ref(
             geometry,
             transform: world_transform,
             material,
-            first_area_light,
+            area_light: area_light_handle,
             reverse_orientation,
         });
     }
@@ -526,10 +577,8 @@ fn point_light(
 
 fn area_light_record(
     light: &NodeAreaLight,
-    instance: u32,
-    primitive: u32,
     node_name: &str,
-) -> Result<(AreaLight, f32, f32), PbrtError> {
+) -> Result<([f32; 3], f32, f32, bool), PbrtError> {
     if light.name != "diffuse" {
         return Err(PbrtError::error(&format!(
             "Unsupported GPU area light \"{}\" on node \"{}\".",
@@ -576,15 +625,30 @@ fn area_light_record(
         )));
     }
     Ok((
-        AreaLight {
-            instance,
-            primitive,
-            emission,
-            two_sided: light.params.get_one_bool("twosided", false),
-        },
+        emission,
         emission_max,
         scale as f32,
+        light.params.get_one_bool("twosided", false),
     ))
+}
+
+fn triangle_area(positions: [[f32; 3]; 3]) -> f32 {
+    let edge0 = [
+        positions[1][0] - positions[0][0],
+        positions[1][1] - positions[0][1],
+        positions[1][2] - positions[0][2],
+    ];
+    let edge1 = [
+        positions[2][0] - positions[0][0],
+        positions[2][1] - positions[0][1],
+        positions[2][2] - positions[0][2],
+    ];
+    let cross = [
+        edge0[1] * edge1[2] - edge0[2] * edge1[1],
+        edge0[2] * edge1[0] - edge0[0] * edge1[2],
+        edge0[0] * edge1[1] - edge0[1] * edge1[0],
+    ];
+    0.5 * (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt()
 }
 
 fn transform_point(matrix: &Transform, point: [f32; 3]) -> [f32; 3] {

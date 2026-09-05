@@ -67,7 +67,7 @@ pub struct LightBounds {
     pub two_sided: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LightBoundInput {
     Point {
         handle: u32,
@@ -75,16 +75,21 @@ pub enum LightBoundInput {
         intensity_max: f32,
         scale: f32,
     },
-    AreaTriangle {
+    AreaGroup {
         handle: u32,
-        world_positions: [[f32; 3]; 3],
-        input_normals: Option<[[f32; 3]; 3]>,
-        reverse_orientation: bool,
-        transform_swaps_handedness: bool,
+        triangles: Vec<AreaTriangleInput>,
         emission_max: f32,
         scale: f32,
         two_sided: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaTriangleInput {
+    pub world_positions: [[f32; 3]; 3],
+    pub input_normals: Option<[[f32; 3]; 3]>,
+    pub reverse_orientation: bool,
+    pub transform_swaps_handedness: bool,
 }
 
 impl LightBounds {
@@ -187,8 +192,9 @@ pub fn build_light_bounds(inputs: &[LightBoundInput]) -> Result<Vec<LightBounds>
     let mut handles = HashSet::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
         let handle = match input {
-            LightBoundInput::Point { handle, .. }
-            | LightBoundInput::AreaTriangle { handle, .. } => *handle,
+            LightBoundInput::Point { handle, .. } | LightBoundInput::AreaGroup { handle, .. } => {
+                *handle
+            }
         };
         let expected_handle = u32::try_from(index)
             .map_err(|_| PbrtError::error("Light handle exceeds the u32 range."))?;
@@ -201,10 +207,10 @@ pub fn build_light_bounds(inputs: &[LightBoundInput]) -> Result<Vec<LightBounds>
             return Err(PbrtError::error("Light handles must be unique."));
         }
     }
-    inputs.iter().copied().map(light_bounds_for_input).collect()
+    inputs.iter().map(light_bounds_for_input).collect()
 }
 
-fn light_bounds_for_input(input: LightBoundInput) -> Result<LightBounds, PbrtError> {
+fn light_bounds_for_input(input: &LightBoundInput) -> Result<LightBounds, PbrtError> {
     match input {
         LightBoundInput::Point {
             handle: _,
@@ -212,8 +218,8 @@ fn light_bounds_for_input(input: LightBoundInput) -> Result<LightBounds, PbrtErr
             intensity_max,
             scale,
         } => {
-            validate_emission(intensity_max, scale)?;
-            let bounds = Bounds3::new(world_position, world_position)?;
+            validate_emission(*intensity_max, *scale)?;
+            let bounds = Bounds3::new(*world_position, *world_position)?;
             LightBounds {
                 bounds,
                 direction: [0.0, 0.0, 1.0],
@@ -224,77 +230,86 @@ fn light_bounds_for_input(input: LightBoundInput) -> Result<LightBounds, PbrtErr
             }
             .validate()
         }
-        LightBoundInput::AreaTriangle {
+        LightBoundInput::AreaGroup {
             handle: _,
-            world_positions,
-            input_normals,
-            reverse_orientation,
-            transform_swaps_handedness,
+            triangles,
             emission_max,
             scale,
             two_sided,
         } => {
-            validate_emission(emission_max, scale)?;
-            if let Some(normals) = input_normals {
-                for normal in normals {
-                    if !normal.iter().all(|value| value.is_finite()) || dot(normal, normal) == 0.0 {
-                        return Err(PbrtError::error(
-                            "Area light input normal must be finite and non-zero.",
-                        ));
-                    }
+            validate_emission(*emission_max, *scale)?;
+            let mut result: Option<LightBounds> = None;
+            for triangle in triangles {
+                let bounds = triangle_bounds(triangle.world_positions)?;
+                let edge0 = sub(triangle.world_positions[1], triangle.world_positions[0]);
+                let edge1 = sub(triangle.world_positions[2], triangle.world_positions[0]);
+                let cross = cross(edge0, edge1);
+                let area = 0.5 * dot(cross, cross).sqrt();
+                if !area.is_finite() || area <= 0.0 {
+                    return Err(PbrtError::error("Area light triangle has zero area."));
                 }
-            }
-            let bounds = Bounds3::new(
-                [
-                    world_positions[0][0]
-                        .min(world_positions[1][0])
-                        .min(world_positions[2][0]),
-                    world_positions[0][1]
-                        .min(world_positions[1][1])
-                        .min(world_positions[2][1]),
-                    world_positions[0][2]
-                        .min(world_positions[1][2])
-                        .min(world_positions[2][2]),
-                ],
-                [
-                    world_positions[0][0]
-                        .max(world_positions[1][0])
-                        .max(world_positions[2][0]),
-                    world_positions[0][1]
-                        .max(world_positions[1][1])
-                        .max(world_positions[2][1]),
-                    world_positions[0][2]
-                        .max(world_positions[1][2])
-                        .max(world_positions[2][2]),
-                ],
-            )?;
-            let edge0 = sub(world_positions[1], world_positions[0]);
-            let edge1 = sub(world_positions[2], world_positions[0]);
-            let cross = cross(edge0, edge1);
-            let area = 0.5 * dot(cross, cross).sqrt();
-            if !area.is_finite() || area <= 0.0 {
-                return Err(PbrtError::error("Area light triangle has zero area."));
-            }
-            let mut direction = normalize(cross)?;
-            if let Some(normals) = input_normals {
-                let normal_sum = add(add(normals[0], normals[1]), normals[2]);
-                if dot(direction, normal_sum) < 0.0 {
+                let mut direction = normalize(cross)?;
+                if let Some(normals) = triangle.input_normals {
+                    for normal in normals {
+                        if !normal.iter().all(|value| value.is_finite())
+                            || dot(normal, normal) == 0.0
+                        {
+                            return Err(PbrtError::error(
+                                "Area light input normal must be finite and non-zero.",
+                            ));
+                        }
+                    }
+                    let normal_sum = add(add(normals[0], normals[1]), normals[2]);
+                    if dot(direction, normal_sum) < 0.0 {
+                        direction = scale_vector(direction, -1.0);
+                    }
+                } else if triangle.reverse_orientation ^ triangle.transform_swaps_handedness {
                     direction = scale_vector(direction, -1.0);
                 }
-            } else if reverse_orientation ^ transform_swaps_handedness {
-                direction = scale_vector(direction, -1.0);
+                let current = LightBounds {
+                    bounds,
+                    direction,
+                    phi: emission_max * scale * area * std::f32::consts::PI,
+                    cos_theta_o: 1.0,
+                    cos_theta_e: 0.0,
+                    two_sided: *two_sided,
+                }
+                .validate()?;
+                result = Some(match result {
+                    Some(existing) => existing.union(current)?,
+                    None => current,
+                });
             }
-            LightBounds {
-                bounds,
-                direction,
-                phi: emission_max * scale * area * std::f32::consts::PI,
-                cos_theta_o: 1.0,
-                cos_theta_e: 0.0,
-                two_sided,
-            }
-            .validate()
+            result.ok_or_else(|| PbrtError::error("Area light group has no triangles."))
         }
     }
+}
+
+fn triangle_bounds(world_positions: [[f32; 3]; 3]) -> Result<Bounds3, PbrtError> {
+    Bounds3::new(
+        [
+            world_positions[0][0]
+                .min(world_positions[1][0])
+                .min(world_positions[2][0]),
+            world_positions[0][1]
+                .min(world_positions[1][1])
+                .min(world_positions[2][1]),
+            world_positions[0][2]
+                .min(world_positions[1][2])
+                .min(world_positions[2][2]),
+        ],
+        [
+            world_positions[0][0]
+                .max(world_positions[1][0])
+                .max(world_positions[2][0]),
+            world_positions[0][1]
+                .max(world_positions[1][1])
+                .max(world_positions[2][1]),
+            world_positions[0][2]
+                .max(world_positions[1][2])
+                .max(world_positions[2][2]),
+        ],
+    )
 }
 
 fn validate_emission(value: f32, scale: f32) -> Result<(), PbrtError> {

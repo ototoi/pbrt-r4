@@ -1,6 +1,6 @@
 use super::{
     AreaLight, Camera, Geometry, Instance, LightBVH, LightBounds, LightRecord, Material, Output,
-    PointLight, RenderSettings, Vertex, Viewport,
+    PointLight, RenderSettings, TriangleDistributionEntry, Vertex, Viewport,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -11,6 +11,7 @@ pub struct Scene {
     pub render_settings: RenderSettings,
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
+    pub triangle_distributions: Vec<TriangleDistributionEntry>,
     pub lights: Vec<LightRecord>,
     pub light_bounds: Vec<LightBounds>,
     pub light_bvh: LightBVH,

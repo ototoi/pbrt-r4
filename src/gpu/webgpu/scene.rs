@@ -69,7 +69,7 @@ impl Scene {
                 Ok(Instance {
                     geometry: instance.geometry,
                     material: instance.material,
-                    first_area_light: instance.first_area_light,
+                    first_area_light: instance.area_light,
                     orientation_flags: u32::from(instance.reverse_orientation)
                         | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
                     world_from_object: row_major_to_columns(instance.transform),
@@ -387,7 +387,7 @@ fn validate_instance_area_lights(
     instance: &flat::Instance,
     flat: &flat::Scene,
 ) -> Result<(), PbrtError> {
-    if instance.first_area_light == flat::INVALID_INDEX {
+    if instance.area_light == flat::INVALID_INDEX {
         return Ok(());
     }
     let geometry = flat
@@ -400,34 +400,29 @@ fn validate_instance_area_lights(
             "Flat area-light instance geometry contains no triangles.",
         ));
     }
-    for primitive in 0..triangle_count {
-        let handle = instance
-            .first_area_light
-            .checked_add(primitive)
-            .ok_or_else(|| PbrtError::error("Flat area-light handle overflowed."))?;
-        let record = flat.lights.get(handle as usize).ok_or_else(|| {
+    let handle = instance.area_light;
+    let record = flat.lights.get(handle as usize).ok_or_else(|| {
+        PbrtError::error(&format!(
+            "Flat instance {instance_index} has an invalid area-light handle."
+        ))
+    })?;
+    if record.kind != flat::LightKind::Area {
+        return Err(PbrtError::error(&format!(
+            "Flat instance {instance_index} area-light range contains a non-area light."
+        )));
+    }
+    let area_light = flat
+        .area_lights
+        .get(record.payload as usize)
+        .ok_or_else(|| {
             PbrtError::error(&format!(
-                "Flat instance {instance_index} has an incomplete area-light range."
+                "Flat instance {instance_index} references an invalid area-light payload."
             ))
         })?;
-        if record.kind != flat::LightKind::Area {
-            return Err(PbrtError::error(&format!(
-                "Flat instance {instance_index} area-light range contains a non-area light."
-            )));
-        }
-        let area_light = flat
-            .area_lights
-            .get(record.payload as usize)
-            .ok_or_else(|| {
-                PbrtError::error(&format!(
-                    "Flat instance {instance_index} references an invalid area-light payload."
-                ))
-            })?;
-        if area_light.instance as usize != instance_index || area_light.primitive != primitive {
-            return Err(PbrtError::error(&format!(
-                "Flat instance {instance_index} area-light range does not match its triangles."
-            )));
-        }
+    if area_light.instance as usize != instance_index {
+        return Err(PbrtError::error(&format!(
+            "Flat instance {instance_index} area-light range does not match its triangles."
+        )));
     }
     Ok(())
 }
