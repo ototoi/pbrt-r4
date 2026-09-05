@@ -19,6 +19,15 @@ pub fn uniform_light_pmf(light_count: u32) -> f32 {
     }
 }
 
+/// Return the conditional PMF of a triangle selected proportionally to area.
+pub fn area_triangle_pmf(area: f32, total_area: f32) -> f32 {
+    if !area.is_finite() || !total_area.is_finite() || area <= 0.0 || total_area <= 0.0 {
+        0.0
+    } else {
+        area / total_area
+    }
+}
+
 /// Convert an area-measure density into a solid-angle density.
 pub fn area_pdf_omega(distance_squared: f32, cosine_at_light: f32, total_area: f32) -> f32 {
     if !distance_squared.is_finite()
