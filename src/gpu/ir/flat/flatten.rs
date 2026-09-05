@@ -389,6 +389,9 @@ fn render_settings(
     let seed = sampler
         .map(|sampler| sampler.params.get_one_int("seed", 0))
         .unwrap_or(0);
+    let light_sampler = integrator
+        .map(|integrator| integrator.params.get_one_string("lightsampler", "bvh"))
+        .unwrap_or_else(|| "bvh".to_string());
     if samples_per_pixel <= 0 || max_depth < 0 || seed < 0 {
         return Err(PbrtError::error(
             "GPU render settings must have positive samples and non-negative depth/seed.",
@@ -400,6 +403,7 @@ fn render_settings(
         max_depth: u32::try_from(max_depth)
             .map_err(|_| PbrtError::error("GPU max depth does not fit in u32."))?,
         seed: u32::try_from(seed).map_err(|_| PbrtError::error("GPU seed does not fit in u32."))?,
+        light_sampler,
     })
 }
 

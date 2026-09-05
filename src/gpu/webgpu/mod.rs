@@ -4,6 +4,7 @@ pub mod context;
 pub mod film;
 pub mod integrator;
 pub mod light;
+pub mod light_sampler;
 pub mod material;
 pub mod output;
 pub mod pipeline;

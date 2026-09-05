@@ -332,6 +332,7 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     }));
     let mut integrator_params = pbrt_r4::paramdict::ParameterDictionary::default();
     integrator_params.add_int("integer maxdepth", 3);
+    integrator_params.add_string("string lightsampler", "uniform");
     root.add_component(Component::Integrator(IntegratorComponent {
         integrator: NodeIntegrator {
             name: "path".to_string(),
@@ -357,8 +358,25 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     assert_eq!(scene.render_settings.samples_per_pixel, 8);
     assert_eq!(scene.render_settings.max_depth, 3);
     assert_eq!(scene.render_settings.seed, 13);
+    assert_eq!(scene.render_settings.light_sampler, "uniform");
     assert_eq!(scene.point_lights.len(), 1);
     assert_eq!(scene.point_lights[0].position, [1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn flatten_node_defaults_light_sampler_to_bvh() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Integrator(IntegratorComponent {
+        integrator: NodeIntegrator {
+            name: "path".to_string(),
+            params: Default::default(),
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.light_sampler, "bvh");
 }
 
 #[test]
