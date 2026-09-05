@@ -75,7 +75,7 @@ pub struct Geometry {
 pub struct Instance {
     pub geometry: u32,
     pub material: u32,
-    pub first_area_light: u32,
+    pub area_light: u32,
     pub orientation_flags: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
@@ -154,12 +154,20 @@ pub struct LightRecord {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct AreaLight {
     pub instance: u32,
-    pub two_sided: u32,
-    pub emission: [f32; 4],
+    pub distribution_offset_words: u32,
+    pub distribution_count: u32,
     pub total_area: f32,
+    pub emission: [f32; 3],
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TriangleDistributionEntry {
     pub primitive: u32,
+    pub cdf: f32,
+    pub area: f32,
     pub reserved: u32,
-    pub padding: [u32; 3],
 }
 
 #[repr(C)]
