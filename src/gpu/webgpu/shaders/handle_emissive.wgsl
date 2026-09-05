@@ -24,9 +24,17 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var weight = 1.0;
     if (ray.depth > 0u && ray.prev_pdf > 0.0) {
         let total_area = load_area_total(area_light);
+        let triangle = load_area_triangle(area_light);
+        let triangle_pdf = triangle_pdf_for_context(
+            triangle,
+            ray.prev_position.xyz,
+            ray.prev_shading_normal.xyz,
+            surface.geometric_normal.xyz,
+            surface.position.xyz,
+            total_area,
+        );
         let light_pdf = uniform_light_pmf_for_handle(light_handle)
-            * dot(ray.origin.xyz - surface.position.xyz, ray.origin.xyz - surface.position.xyz)
-            / (max(abs(dot(surface.geometric_normal.xyz, -ray.direction.xyz)), 1e-7) * total_area);
+            * triangle_pdf;
         weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
     }
     store_sample_radiance(pixel_index, load_sample_radiance(pixel_index)

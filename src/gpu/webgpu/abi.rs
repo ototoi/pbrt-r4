@@ -72,6 +72,7 @@ pub struct RayWorkItem {
     pub origin: [f32; 4],
     pub direction: [f32; 4],
     pub throughput: [f32; 4],
+    pub prev_position: [f32; 4],
     pub prev_shading_normal: [f32; 4],
     pub pixel_index: u32,
     pub depth: u32,

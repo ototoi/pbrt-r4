@@ -41,8 +41,11 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
     assert!(evaluate.contains("let samples = load_ray_samples(pixel_index);"));
     assert!(evaluate.contains("sample_uniform_light(samples.direct.x)"));
-    assert!(evaluate.contains("let su = sqrt(samples.direct.y);"));
-    assert!(evaluate.contains("let bv = samples.direct.z;"));
+    assert!(evaluate.contains("sample_triangle_for_context("));
+    assert!(evaluate.contains("vec2<f32>(samples.direct.y, samples.direct.z)"));
+    assert!(evaluate.contains("sample_spherical_triangle("));
+    assert!(evaluate.contains("MIN_SPHERICAL_SAMPLE_AREA: f32 = 3e-4"));
+    assert!(evaluate.contains("MAX_SPHERICAL_SAMPLE_AREA: f32 = 6.22"));
     assert!(evaluate.contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
     assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
 
@@ -66,7 +69,16 @@ fn primary_rays_initialize_depth_zero_sample_state() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("vec4<f32>(normal, 0.0),\n        pixel_index,"));
+    assert!(
+        SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.position,\n        vec4<f32>(normal, 0.0),")
+    );
+}
+
+#[test]
+fn emissive_mis_uses_the_unoffset_previous_interaction_context() {
+    assert!(HANDLE_EMISSIVE_SHADER.contains("ray.prev_position.xyz"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("ray.prev_shading_normal.xyz"));
+    assert!(!HANDLE_EMISSIVE_SHADER.contains("ray.origin.xyz - surface.position.xyz"));
 }
 
 #[test]
