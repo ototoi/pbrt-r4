@@ -683,17 +683,63 @@ fn light_bvh_importance(node: DecodedLightBVHNode, p: vec3<f32>, n: vec3<f32>) -
     let center = (node.bounds_min + node.bounds_max) * 0.5;
     let diagonal = node.bounds_max - node.bounds_min;
     let delta = p - center;
-    let diagonal_length = length(diagonal);
-    let d2 = max(dot(delta, delta), diagonal_length * 0.5);
+    var d2 = max(dot(delta, delta), length(diagonal) * 0.5);
     if (d2 <= 0.0) {
         return 0.0;
     }
-    var cosine = dot(node.direction, normalize(center - p));
-    if (node.two_sided) {
-        cosine = abs(cosine);
+    let radius = 0.5 * length(diagonal);
+    let to_center = center - p;
+    let center_distance_squared = dot(to_center, to_center);
+    var cos_theta_b = -1.0;
+    if (center_distance_squared > radius * radius && center_distance_squared > 0.0) {
+        cos_theta_b = sqrt(max(0.0, 1.0 - radius * radius / center_distance_squared));
     }
-    let normal_cosine = abs(dot(normalize(n), normalize(center - p)));
-    return max(0.0, node.phi * max(cosine, 0.0) * normal_cosine / d2);
+    let wi = normalize(to_center);
+    var cos_theta_w = dot(node.direction, wi);
+    if (node.two_sided) {
+        cos_theta_w = abs(cos_theta_w);
+    }
+    let sin_theta_w = sqrt(max(0.0, 1.0 - cos_theta_w * cos_theta_w));
+    let sin_theta_o = sqrt(max(0.0, 1.0 - node.cos_theta_o * node.cos_theta_o));
+    let sin_theta_b = sqrt(max(0.0, 1.0 - cos_theta_b * cos_theta_b));
+    let cos_theta_x = cos_sub_clamped(
+        sin_theta_w,
+        cos_theta_w,
+        sin_theta_o,
+        node.cos_theta_o,
+    );
+    let sin_theta_x = sin_sub_clamped(
+        sin_theta_w,
+        cos_theta_w,
+        sin_theta_o,
+        node.cos_theta_o,
+    );
+    let cos_theta_p = cos_sub_clamped(sin_theta_x, cos_theta_x, sin_theta_b, cos_theta_b);
+    if (cos_theta_p <= node.cos_theta_e) {
+        return 0.0;
+    }
+    var importance = node.phi * cos_theta_p / d2;
+    if (dot(n, n) != 0.0) {
+        let cos_theta_i = abs(dot(wi, normalize(n)));
+        let sin_theta_i = sqrt(max(0.0, 1.0 - cos_theta_i * cos_theta_i));
+        importance = importance
+            * cos_sub_clamped(sin_theta_i, cos_theta_i, sin_theta_b, cos_theta_b);
+    }
+    return max(importance, 0.0);
+}
+
+fn cos_sub_clamped(sin_a: f32, cos_a: f32, sin_b: f32, cos_b: f32) -> f32 {
+    if (cos_a > cos_b) {
+        return 1.0;
+    }
+    return cos_a * cos_b + sin_a * sin_b;
+}
+
+fn sin_sub_clamped(sin_a: f32, cos_a: f32, sin_b: f32, cos_b: f32) -> f32 {
+    if (cos_a > cos_b) {
+        return 0.0;
+    }
+    return sin_a * cos_b - cos_a * sin_b;
 }
 
 fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
