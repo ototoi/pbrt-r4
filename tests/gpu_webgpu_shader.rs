@@ -59,6 +59,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
         "sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz)"
     ));
     assert!(evaluate.contains("sample_light_bvh(selector, p, n)"));
+    assert!(evaluate.contains("cos_sub_clamped("));
     assert!(evaluate.contains("sample_triangle_for_context("));
     assert!(evaluate.contains("vec2<f32>(samples.direct.y, samples.direct.z)"));
     assert!(evaluate.contains("sample_spherical_triangle("));
