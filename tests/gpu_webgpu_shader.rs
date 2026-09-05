@@ -55,7 +55,9 @@ fn escaped_queue_follows_the_classification_queues() {
 fn wavefront_stages_use_persisted_sample_dimensions() {
     let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
     assert!(evaluate.contains("let samples = load_ray_samples(pixel_index);"));
-    assert!(evaluate.contains("sample_uniform_light(samples.direct.x)"));
+    assert!(evaluate.contains(
+        "sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz)"
+    ));
     assert!(evaluate.contains("sample_triangle_for_context("));
     assert!(evaluate.contains("vec2<f32>(samples.direct.y, samples.direct.z)"));
     assert!(evaluate.contains("sample_spherical_triangle("));

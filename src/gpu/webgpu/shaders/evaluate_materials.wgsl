@@ -28,7 +28,10 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         surface.geometric_normal.xyz,
         wo,
     );
-    let light_selection = sample_uniform_light(samples.direct.x);
+    let light_selection = sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz);
+    if (light_selection.pmf <= 0.0 || light_selection.index == 0xffffffffu) {
+        return;
+    }
     let light_index = light_selection.index;
     let light_kind = load_light_kind(light_index);
     let light_payload = load_light_payload(light_index);
