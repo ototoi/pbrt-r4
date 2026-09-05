@@ -8,6 +8,7 @@ const GENERATE_PRIMARY_RAYS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
+const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
 #[test]
@@ -56,6 +57,13 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
 fn primary_rays_initialize_depth_zero_sample_state() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
+}
+
+#[test]
+fn triangle_hit_position_is_reconstructed_from_barycentrics() {
+    assert!(SHADE_SURFACE_SHADER.contains("let position = p0 * b0 + p1 * b1 + p2 * b2;"));
+    assert!(!SHADE_SURFACE_SHADER
+        .contains("let position = ray.origin.xyz + ray.direction.xyz * surface.t;"));
 }
 
 #[test]
