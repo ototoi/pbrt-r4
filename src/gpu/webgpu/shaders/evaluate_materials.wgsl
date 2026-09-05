@@ -49,20 +49,19 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (total_area <= 0.0) {
             return;
         }
-        let triangle_selection = select_area_triangle(light_payload, samples.direct.w);
+        let triangle_selection = select_area_triangle(light_payload, samples.direct.y);
         let triangle = load_area_triangle(light_payload, triangle_selection.primitive);
-        let triangle_sample = sample_triangle_for_context(
+        let triangle_sample = sample_uniform_triangle_for_context(
             triangle,
             light_sample_origin,
-            surface.normal.xyz,
+            vec2<f32>(samples.direct.z, samples.direct.w),
             triangle_selection.area,
-            vec2<f32>(samples.direct.y, samples.direct.z),
         );
         if (triangle_sample.w <= 0.0) {
             return;
         }
         let b = triangle_sample.xyz;
-        light_normal = triangle_sample_normal(triangle, b);
+        light_normal = triangle_geometric_normal(triangle);
         light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
         light_radiance = load_area_emission(light_payload).xyz;
         light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)

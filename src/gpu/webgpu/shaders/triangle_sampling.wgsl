@@ -47,6 +47,13 @@ fn triangle_sample_normal(triangle: TriangleVertices, b: vec3<f32>) -> vec3<f32>
     return n;
 }
 
+fn triangle_geometric_normal(triangle: TriangleVertices) -> vec3<f32> {
+    return normalize(cross(
+        triangle.p1.xyz - triangle.p0.xyz,
+        triangle.p2.xyz - triangle.p0.xyz,
+    ));
+}
+
 fn sample_uniform_triangle(u: vec2<f32>) -> vec3<f32> {
     var b0: f32;
     var b1: f32;
@@ -293,6 +300,26 @@ fn sample_triangle_for_context(
     return vec4<f32>(sample.xyz, sample.w * warp_pdf);
 }
 
+fn sample_uniform_triangle_for_context(
+    triangle: TriangleVertices,
+    p: vec3<f32>,
+    u: vec2<f32>,
+    triangle_area: f32,
+) -> vec4<f32> {
+    let b = sample_uniform_triangle(u);
+    let sampled_point = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
+    let to_light = sampled_point - p;
+    let distance_squared = dot(to_light, to_light);
+    if (distance_squared == 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let cosine = abs(dot(triangle_geometric_normal(triangle), -normalize(to_light)));
+    if (cosine == 0.0 || triangle_area <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(b, distance_squared / (cosine * triangle_area));
+}
+
 fn triangle_pdf_for_context(
     triangle: TriangleVertices,
     p: vec3<f32>,
@@ -323,4 +350,24 @@ fn triangle_pdf_for_context(
         pdf = pdf * bilinear_pdf(warped_u, weights);
     }
     return pdf;
+}
+
+fn uniform_triangle_pdf_for_context(
+    triangle: TriangleVertices,
+    p: vec3<f32>,
+    light_normal: vec3<f32>,
+    wi: vec3<f32>,
+    sampled_point: vec3<f32>,
+    triangle_area: f32,
+) -> f32 {
+    let to_light = sampled_point - p;
+    let distance_squared = dot(to_light, to_light);
+    if (distance_squared == 0.0 || triangle_area <= 0.0) {
+        return 0.0;
+    }
+    let cosine = abs(dot(light_normal, -normalize(wi)));
+    if (cosine == 0.0) {
+        return 0.0;
+    }
+    return distance_squared / (cosine * triangle_area);
 }
