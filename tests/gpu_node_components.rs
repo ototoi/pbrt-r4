@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use pbrt_r4::gpu::ir::node::triangle_mesh_from_params;
 use pbrt_r4::gpu::ir::node::{
-    node_ref_to_json, tessellate_shapes, Camera, CameraComponent, Component, Material,
+    node_ref_to_json, tessellate_shapes, Camera, CameraComponent, Component, DiskShape, Material,
     MaterialComponent, Node, Shape, ShapeComponent, SphereShape,
 };
 use pbrt_r4::parser::scene_builder::{
@@ -99,6 +99,89 @@ fn scene_builder_gpu_camera_node_uses_camera_to_world_transform() {
 }
 
 #[test]
+fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_float("float radius", 2.0);
+    params.add_int("integer udiv", 4);
+    params.add_int("integer vdiv", 1);
+    let mut root = Node::new("root");
+    root.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Disk(Box::new(DiskShape { params })),
+        reverse_orientation: false,
+    }));
+
+    tessellate_shapes(&mut root).unwrap();
+
+    let Component::Shape(shape) = &root.components[0] else {
+        panic!("expected shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &shape.shape else {
+        panic!("expected tessellated disk mesh");
+    };
+    assert_eq!(mesh.indices.len(), 4 * 3);
+    assert_eq!(mesh.positions.len(), 5 + 1);
+    assert!(mesh
+        .indices
+        .chunks_exact(3)
+        .all(|triangle| triangle[0] != triangle[1]
+            && triangle[1] != triangle[2]
+            && triangle[0] != triangle[2]));
+    assert!(mesh.normals.is_some());
+    assert!(mesh.tangents.is_some());
+    assert!(mesh.uvs.is_some());
+}
+
+#[test]
+fn disk_ring_uses_radial_segments_and_preserves_seam_vertices() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_float("float radius", 2.0);
+    params.add_float("float innerradius", 1.0);
+    params.add_float("float phimax", 180.0);
+    params.add_int("integer udiv", 4);
+    params.add_int("integer vdiv", 2);
+    let mut root = Node::new("root");
+    root.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Disk(Box::new(DiskShape { params })),
+        reverse_orientation: false,
+    }));
+
+    tessellate_shapes(&mut root).unwrap();
+
+    let Component::Shape(shape) = &root.components[0] else {
+        panic!("expected shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &shape.shape else {
+        panic!("expected tessellated disk mesh");
+    };
+    assert_eq!(mesh.indices.len(), 2 * 4 * 2 * 3);
+    assert_eq!(mesh.positions.len(), 3 * 5);
+    assert_eq!(mesh.uvs.as_ref().unwrap()[4].0[0], 1.0);
+    assert_eq!(mesh.uvs.as_ref().unwrap()[5].0[0], 0.0);
+}
+
+#[test]
+fn disk_rejects_invalid_parameters_during_tessellation() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_float("float radius", 0.0);
+    let mut root = Node::new("root");
+    root.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Disk(Box::new(DiskShape { params })),
+        reverse_orientation: false,
+    }));
+
+    assert!(tessellate_shapes(&mut root).is_err());
+
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_float("float phimax", f32::INFINITY);
+    let mut root = Node::new("root");
+    root.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Disk(Box::new(DiskShape { params })),
+        reverse_orientation: false,
+    }));
+    assert!(tessellate_shapes(&mut root).is_err());
+}
+
+#[test]
 fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
     let child = Arc::new(RwLock::new(Node::new("sphere")));
     child
@@ -113,7 +196,7 @@ fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
     let mut root = Node::new("root");
     root.add_child(child);
 
-    tessellate_shapes(&mut root);
+    tessellate_shapes(&mut root).unwrap();
 
     let child = root.children[0].read().unwrap();
     let Component::Shape(ShapeComponent {
@@ -145,7 +228,7 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
     let mut root = Node::new("root");
     root.add_child(child);
 
-    tessellate_shapes(&mut root);
+    tessellate_shapes(&mut root).unwrap();
 
     let child = root.children[0].read().unwrap();
     let Component::Shape(ShapeComponent {

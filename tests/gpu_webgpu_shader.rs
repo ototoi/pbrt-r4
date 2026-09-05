@@ -62,11 +62,12 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(evaluate.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
     assert!(emissive.contains("light_pmf_for_handle("));
-    assert!(evaluate.contains("sample_triangle_for_context("));
-    assert!(evaluate.contains("vec2<f32>(samples.direct.y, samples.direct.z)"));
-    assert!(evaluate.contains("sample_spherical_triangle("));
-    assert!(evaluate.contains("MIN_SPHERICAL_SAMPLE_AREA: f32 = 3e-4"));
-    assert!(evaluate.contains("MAX_SPHERICAL_SAMPLE_AREA: f32 = 6.22"));
+    assert!(evaluate.contains("select_area_triangle(light_payload, samples.direct.y)"));
+    assert!(evaluate.contains("vec2<f32>(samples.direct.z, samples.direct.w)"));
+    assert!(evaluate.contains("sample_uniform_triangle_for_context("));
+    assert!(!evaluate.contains("sample_spherical_triangle("));
+    assert!(!evaluate.contains("MIN_SPHERICAL_SAMPLE_AREA"));
+    assert!(!evaluate.contains("MAX_SPHERICAL_SAMPLE_AREA"));
     assert!(evaluate.contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
     assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
 
@@ -79,10 +80,23 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
 
 #[test]
 fn emissive_hit_resolves_the_triangle_light_handle() {
-    assert!(HANDLE_EMISSIVE_SHADER.contains("instance.first_area_light + surface.primitive_index"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("let light_handle = instance.area_light;"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("triangle_selection.pmf * triangle_pdf"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("load_light_payload(light_handle)"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("light_pmf_for_handle(light_handle"));
     assert!(!COMMON_SHADER.contains("fn light_pmf_for_area"));
+}
+
+#[test]
+fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
+    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(source.contains(
+        "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
+    ));
+    assert!(source.contains("sample_uniform_triangle_for_context"));
+    assert!(source.contains("triangle.orientation_flags & 1u"));
+    assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
+    assert!(source.contains("load_area_distribution_count(light_payload)"));
 }
 
 #[test]

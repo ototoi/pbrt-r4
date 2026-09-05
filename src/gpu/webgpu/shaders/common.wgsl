@@ -63,7 +63,7 @@ struct Geometry {
 struct Instance {
     geometry: u32,
     material: u32,
-    first_area_light: u32,
+    area_light: u32,
     orientation_flags: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
@@ -108,6 +108,19 @@ struct SurfaceWorkItem {
 struct PointLight {
     position: vec4<f32>,
     intensity: vec4<f32>,
+};
+
+struct TriangleDistributionEntry {
+    primitive: u32,
+    cdf: f32,
+    area: f32,
+    _reserved: u32,
+};
+
+struct AreaTriangleSelection {
+    primitive: u32,
+    area: f32,
+    pmf: f32,
 };
 
 struct QueueState {
@@ -513,17 +526,17 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
 }
 
 fn load_area_emission(index: u32) -> vec4<f32> {
-    let base = scene.area_light_offset_words + index * 12u;
+    let base = scene.area_light_offset_words + index * 8u;
     return vec4<f32>(
-        bitcast<f32>(scene_data[base + 2u]),
-        bitcast<f32>(scene_data[base + 3u]),
         bitcast<f32>(scene_data[base + 4u]),
+        bitcast<f32>(scene_data[base + 5u]),
+        bitcast<f32>(scene_data[base + 6u]),
         0.0,
     );
 }
 
 fn load_area_word(index: u32, word: u32) -> u32 {
-    return scene_data[scene.area_light_offset_words + index * 12u + word];
+    return scene_data[scene.area_light_offset_words + index * 8u + word];
 }
 
 fn load_area_instance(index: u32) -> u32 {
@@ -531,15 +544,46 @@ fn load_area_instance(index: u32) -> u32 {
 }
 
 fn load_area_total(index: u32) -> f32 {
-    return bitcast<f32>(load_area_word(index, 6u));
+    return bitcast<f32>(load_area_word(index, 3u));
 }
 
-fn load_area_primitive(index: u32) -> u32 {
-    return load_area_word(index, 7u);
+fn load_area_distribution_count(index: u32) -> u32 {
+    return load_area_word(index, 2u);
+}
+
+fn load_area_distribution_word(index: u32, distribution_index: u32, word: u32) -> u32 {
+    return scene_data[load_area_word(index, 1u) + distribution_index * 4u + word];
+}
+
+fn load_area_distribution(index: u32, distribution_index: u32) -> AreaTriangleSelection {
+    let total_area = load_area_total(index);
+    let area = bitcast<f32>(load_area_distribution_word(index, distribution_index, 2u));
+    return AreaTriangleSelection(
+        load_area_distribution_word(index, distribution_index, 0u),
+        area,
+        area / total_area,
+    );
+}
+
+fn select_area_triangle(index: u32, u: f32) -> AreaTriangleSelection {
+    let count = load_area_distribution_count(index);
+    var first = 0u;
+    var last = count;
+    let clamped_u = min(u, 0.99999994);
+    for (var iteration = 0u; iteration < 32u && first < last; iteration++) {
+        let middle = (first + last) / 2u;
+        let cdf = bitcast<f32>(load_area_distribution_word(index, middle, 1u));
+        if (clamped_u < cdf) {
+            last = middle;
+        } else {
+            first = middle + 1u;
+        }
+    }
+    return load_area_distribution(index, min(first, count - 1u));
 }
 
 fn load_area_two_sided(index: u32) -> bool {
-    return load_area_word(index, 1u) != 0u;
+    return (load_area_word(index, 7u) & 1u) != 0u;
 }
 
 fn pixel_count() -> u32 {

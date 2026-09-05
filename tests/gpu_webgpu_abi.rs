@@ -1,8 +1,8 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, scene_uniform, AreaLight, CameraUniform,
     Geometry, Instance, LightRecord, Material, PixelSampleState, PointLight, QueueState,
-    RayWorkItem, SceneUniform, ShadowRayWorkItem, SurfaceWorkItem, Vertex, ViewportUniform,
-    INVALID_INDEX, LIGHT_SAMPLER_KIND_UNIFORM,
+    RayWorkItem, SceneUniform, ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry,
+    Vertex, ViewportUniform, INVALID_INDEX, LIGHT_SAMPLER_KIND_UNIFORM,
 };
 
 #[test]
@@ -51,7 +51,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 112);
     assert_eq!(std::mem::size_of::<PointLight>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
-    assert_eq!(std::mem::size_of::<AreaLight>(), 48);
+    assert_eq!(std::mem::size_of::<AreaLight>(), 32);
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
     assert_eq!(std::mem::size_of::<PixelSampleState>(), 32);
 }
@@ -91,10 +91,17 @@ fn webgpu_work_item_field_offsets_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_count), 52);
     assert_eq!(std::mem::offset_of!(SceneUniform, scene_data_words), 56);
     assert_eq!(std::mem::offset_of!(SceneUniform, reserved), 60);
-    assert_eq!(std::mem::offset_of!(Instance, first_area_light), 8);
-    assert_eq!(std::mem::offset_of!(AreaLight, emission), 8);
-    assert_eq!(std::mem::offset_of!(AreaLight, total_area), 24);
-    assert_eq!(std::mem::offset_of!(AreaLight, primitive), 28);
+    assert_eq!(std::mem::offset_of!(Instance, area_light), 8);
+    assert_eq!(
+        std::mem::offset_of!(AreaLight, distribution_offset_words),
+        4
+    );
+    assert_eq!(std::mem::offset_of!(AreaLight, distribution_count), 8);
+    assert_eq!(std::mem::offset_of!(AreaLight, total_area), 12);
+    assert_eq!(std::mem::offset_of!(AreaLight, emission), 16);
+    assert_eq!(std::mem::offset_of!(AreaLight, flags), 28);
+    assert_eq!(std::mem::size_of::<AreaLight>(), 32);
+    assert_eq!(std::mem::size_of::<TriangleDistributionEntry>(), 16);
 
     assert_eq!(std::mem::offset_of!(RayWorkItem, origin), 0);
     assert_eq!(std::mem::offset_of!(RayWorkItem, direction), 16);

@@ -21,7 +21,21 @@ pub struct PointLight {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AreaLight {
     pub instance: u32,
-    pub primitive: u32,
+    pub distribution: TriangleDistributionRange,
     pub emission: [f32; 3],
     pub two_sided: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriangleDistributionRange {
+    pub offset: u32,
+    pub count: u32,
+    pub total_area: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriangleDistributionEntry {
+    pub primitive: u32,
+    pub cdf: f32,
+    pub area: f32,
 }

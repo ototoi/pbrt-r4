@@ -46,22 +46,23 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_radiance = light.intensity.xyz;
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
-        if (total_area <= 0.0) {
+        let distribution_count = load_area_distribution_count(light_payload);
+        if (total_area <= 0.0 || distribution_count == 0u) {
             return;
         }
-        let triangle = load_area_triangle(light_payload);
-        let triangle_sample = sample_triangle_for_context(
+        let triangle_selection = select_area_triangle(light_payload, samples.direct.y);
+        let triangle = load_area_triangle(light_payload, triangle_selection.primitive);
+        let triangle_sample = sample_uniform_triangle_for_context(
             triangle,
             light_sample_origin,
-            surface.normal.xyz,
-            total_area,
-            vec2<f32>(samples.direct.y, samples.direct.z),
+            vec2<f32>(samples.direct.z, samples.direct.w),
+            triangle_selection.area,
         );
         if (triangle_sample.w <= 0.0) {
             return;
         }
         let b = triangle_sample.xyz;
-        light_normal = triangle_sample_normal(triangle, b);
+        light_normal = triangle_geometric_normal(triangle);
         light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
         light_radiance = load_area_emission(light_payload).xyz;
         light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)
@@ -75,7 +76,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         } else if (cosine_light <= 0.0) {
             return;
         }
-        sampled_light_pdf = sampled_light_pdf * triangle_sample.w;
+        sampled_light_pdf = sampled_light_pdf * triangle_selection.pmf * triangle_sample.w;
     } else {
         return;
     }

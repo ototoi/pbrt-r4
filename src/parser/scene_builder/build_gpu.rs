@@ -4,7 +4,7 @@ use crate::gpu::ir::flat::flatten_node_with_material_override;
 use crate::gpu::ir::node::{
     loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
-    AreaLightComponent, Camera, CameraComponent, Component, Film, FilmComponent, Filter,
+    AreaLightComponent, Camera, CameraComponent, Component, DiskShape, Film, FilmComponent, Filter,
     FilterComponent, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
     LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
     OutputComponent, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
@@ -48,7 +48,7 @@ impl SceneBuilder {
             let mut ir_node = ir_node
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            tessellate_shapes(&mut ir_node);
+            tessellate_shapes(&mut ir_node)?;
         }
         match node_ref_to_json_string(&ir_node) {
             Ok(json) => println!("GPU Node IR after tessellation:\n{json}"),
@@ -237,6 +237,9 @@ impl SceneBuilder {
         };
         let shape_value = match shape.base.name.as_str() {
             "sphere" => Shape::Sphere(Box::new(SphereShape {
+                params: shape.base.params.clone(),
+            })),
+            "disk" => Shape::Disk(Box::new(DiskShape {
                 params: shape.base.params.clone(),
             })),
             "trianglemesh" | "plymesh" => {
