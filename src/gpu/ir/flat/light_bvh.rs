@@ -102,6 +102,109 @@ pub fn build_light_bvh(
     Ok(bvh)
 }
 
+/// Samples one bounded light using the same one-child traversal as the GPU
+/// sampler. The returned PMF is the product of the decisions along the path.
+pub fn sample_light_bvh(
+    bvh: &LightBVH,
+    p: [f32; 3],
+    n: [f32; 3],
+    mut u: f32,
+) -> Result<Option<(u32, f32)>, PbrtError> {
+    if !u.is_finite() || !(0.0..=1.0).contains(&u) {
+        return Err(PbrtError::error("Light BVH sample coordinate is invalid."));
+    }
+    if bvh.nodes.is_empty() {
+        return Ok(None);
+    }
+    u = u.min(1.0 - f32::EPSILON);
+    let mut node_index = 0_u32;
+    let mut pmf = 1.0;
+    for _ in 0..bvh.nodes.len() {
+        let node = bvh
+            .nodes
+            .get(node_index as usize)
+            .ok_or_else(|| PbrtError::error("Light BVH traversal reached an invalid node."))?;
+        if let Some(handle) = node.light_handle() {
+            return Ok(Some((handle, pmf)));
+        }
+        let left = node_index + 1;
+        let right = node
+            .right_child()
+            .ok_or_else(|| PbrtError::error("Light BVH interior node has no right child."))?;
+        let left_importance = bvh.nodes[left as usize].bounds().importance(p, n)?;
+        let right_importance = bvh.nodes[right as usize].bounds().importance(p, n)?;
+        let total = left_importance + right_importance;
+        if total <= 0.0 {
+            return Ok(None);
+        }
+        let left_pmf = left_importance / total;
+        if u < left_pmf {
+            pmf *= left_pmf;
+            u = (u / left_pmf).min(1.0 - f32::EPSILON);
+            node_index = left;
+        } else {
+            pmf *= 1.0 - left_pmf;
+            u = ((u - left_pmf) / (1.0 - left_pmf)).min(1.0 - f32::EPSILON);
+            node_index = right;
+        }
+    }
+    Err(PbrtError::error(
+        "Light BVH traversal exceeded its node limit.",
+    ))
+}
+
+/// Computes the PMF of a global light handle by walking its leaf parents.
+pub fn light_bvh_pmf(
+    bvh: &LightBVH,
+    p: [f32; 3],
+    n: [f32; 3],
+    handle: u32,
+) -> Result<f32, PbrtError> {
+    let Some(&leaf_index) = bvh.handle_to_leaf.get(handle as usize) else {
+        return Ok(0.0);
+    };
+    if leaf_index == INVALID_INDEX {
+        return Ok(0.0);
+    }
+    let mut node_index = leaf_index;
+    let mut pmf = 1.0;
+    for _ in 0..bvh.nodes.len() {
+        let node = bvh
+            .nodes
+            .get(node_index as usize)
+            .ok_or_else(|| PbrtError::error("Light BVH PMF reached an invalid leaf."))?;
+        let parent = node.parent();
+        if parent == INVALID_INDEX {
+            return Ok(pmf);
+        }
+        let parent_node = bvh
+            .nodes
+            .get(parent as usize)
+            .ok_or_else(|| PbrtError::error("Light BVH PMF reached an invalid parent."))?;
+        let left = parent + 1;
+        let right = parent_node
+            .right_child()
+            .ok_or_else(|| PbrtError::error("Light BVH PMF parent has no right child."))?;
+        let left_importance = bvh.nodes[left as usize].bounds().importance(p, n)?;
+        let right_importance = bvh.nodes[right as usize].bounds().importance(p, n)?;
+        let total = left_importance + right_importance;
+        if total <= 0.0 {
+            return Ok(0.0);
+        }
+        if node_index == left {
+            pmf *= left_importance / total;
+        } else if node_index == right {
+            pmf *= right_importance / total;
+        } else {
+            return Err(PbrtError::error(
+                "Light BVH PMF child is not owned by its parent.",
+            ));
+        }
+        node_index = parent;
+    }
+    Err(PbrtError::error("Light BVH PMF exceeded its node limit."))
+}
+
 fn build_subtree(
     bvh: &mut LightBVH,
     _lights: &[LightRecord],
