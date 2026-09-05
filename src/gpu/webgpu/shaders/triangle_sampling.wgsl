@@ -2,6 +2,7 @@ struct TriangleVertices {
     p0: vec4<f32>,
     p1: vec4<f32>,
     p2: vec4<f32>,
+    orientation_flags: u32,
 };
 
 fn load_area_triangle(area_index: u32, primitive: u32) -> TriangleVertices {
@@ -15,14 +16,19 @@ fn load_area_triangle(area_index: u32, primitive: u32) -> TriangleVertices {
         instance.world_from_object * vertices[i0].position,
         instance.world_from_object * vertices[i1].position,
         instance.world_from_object * vertices[i2].position,
+        instance.orientation_flags,
     );
 }
 
 fn triangle_geometric_normal(triangle: TriangleVertices) -> vec3<f32> {
-    return normalize(cross(
+    var normal = normalize(cross(
         triangle.p1.xyz - triangle.p0.xyz,
         triangle.p2.xyz - triangle.p0.xyz,
     ));
+    if ((triangle.orientation_flags & 1u) != 0u) {
+        normal = -normal;
+    }
+    return normal;
 }
 
 fn sample_uniform_triangle(u: vec2<f32>) -> vec3<f32> {
