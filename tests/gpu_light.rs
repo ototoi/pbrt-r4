@@ -1,5 +1,6 @@
 use pbrt_r4::gpu::webgpu::light::{
-    area_pdf_omega, area_triangle_pmf, triangle_world_area, uniform_light_pmf,
+    area_pdf_omega, area_triangle_pmf, select_area_triangle_cdf, triangle_world_area,
+    uniform_light_pmf,
 };
 
 #[test]
@@ -49,4 +50,23 @@ fn area_triangle_pmf_rejects_invalid_measurements() {
     assert_eq!(area_triangle_pmf(1.0, 0.0), 0.0);
     assert_eq!(area_triangle_pmf(f32::NAN, 1.0), 0.0);
     assert_eq!(area_triangle_pmf(1.0, f32::INFINITY), 0.0);
+}
+
+#[test]
+fn area_triangle_cdf_matches_shader_boundary_rule() {
+    let cdf = [0.25, 0.75, 1.0];
+    assert_eq!(select_area_triangle_cdf(&cdf, 0.0), Some(0));
+    assert_eq!(select_area_triangle_cdf(&cdf, 0.24999999), Some(0));
+    assert_eq!(select_area_triangle_cdf(&cdf, 0.25), Some(1));
+    assert_eq!(select_area_triangle_cdf(&cdf, 0.74999994), Some(1));
+    assert_eq!(select_area_triangle_cdf(&cdf, 0.75), Some(2));
+    assert_eq!(select_area_triangle_cdf(&cdf, 1.0), Some(2));
+}
+
+#[test]
+fn area_triangle_cdf_rejects_invalid_tables() {
+    assert_eq!(select_area_triangle_cdf(&[], 0.5), None);
+    assert_eq!(select_area_triangle_cdf(&[0.5, 0.5, 1.0], 0.5), None);
+    assert_eq!(select_area_triangle_cdf(&[0.5, 0.9], 0.5), None);
+    assert_eq!(select_area_triangle_cdf(&[0.5, 1.0], f32::NAN), None);
 }
