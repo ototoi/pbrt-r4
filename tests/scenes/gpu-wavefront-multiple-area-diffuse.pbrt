@@ -18,7 +18,7 @@ AttributeBegin
     Material "diffuse" "rgb reflectance" [ 1 1 1 ]
     Shape "trianglemesh"
         "point3 P" [ -3 0 -3   3 0 -3   3 0 3   -3 0 3 ]
-        "integer indices" [ 0 1 2  0 2 3 ]
+        "integer indices" [ 0 2 1  0 3 2 ]
 AttributeEnd
 
 AttributeBegin
@@ -26,7 +26,7 @@ AttributeBegin
     AreaLightSource "diffuse" "rgb L" [ 20 20 20 ]
     Shape "trianglemesh"
         "point3 P" [ -0.8 0 -0.8   0.8 0 -0.8   0.8 0 0.8   -0.8 0 0.8 ]
-        "integer indices" [ 0 2 1  0 3 2 ]
+        "integer indices" [ 0 1 2  0 2 3 ]
 AttributeEnd
 
 AttributeBegin
@@ -34,6 +34,5 @@ AttributeBegin
     AreaLightSource "diffuse" "rgb L" [ 10 10 10 ]
     Shape "trianglemesh"
         "point3 P" [ -0.8 0 -0.8   0.8 0 -0.8   0.8 0 0.8   -0.8 0 0.8 ]
-        "integer indices" [ 0 2 1  0 3 2 ]
+        "integer indices" [ 0 1 2  0 2 3 ]
 AttributeEnd
-
