@@ -65,6 +65,8 @@ fn emissive_hit_resolves_the_triangle_light_handle() {
 fn primary_rays_initialize_depth_zero_sample_state() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
+    assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("vec4<f32>(normal, 0.0),\n        pixel_index,"));
 }
 
 #[test]
