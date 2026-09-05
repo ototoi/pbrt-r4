@@ -18,7 +18,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let ray = load_current_ray(ray_index);
     let samples = load_ray_samples(pixel_index);
-    if (ray.depth >= viewport.max_depth || viewport.light_count == 0u) {
+    if (ray.depth >= viewport.max_depth || scene.light_count == 0u) {
         return;
     }
     let wo = -ray.direction.xyz;

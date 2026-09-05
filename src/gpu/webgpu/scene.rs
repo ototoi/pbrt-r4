@@ -5,9 +5,9 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, inverse_transpose_linear, row_major_to_columns, viewport_uniform, AreaLight,
-    Geometry, Instance, LightRecord, PointLight, Vertex, ViewportUniform, LIGHT_KIND_AREA,
-    LIGHT_KIND_POINT,
+    camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
+    viewport_uniform, AreaLight, Geometry, Instance, LightRecord, PointLight, SceneUniform, Vertex,
+    ViewportUniform, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light::triangle_world_area;
@@ -18,12 +18,13 @@ use super::output::Output;
 pub struct Scene {
     pub camera: super::abi::CameraUniform,
     pub viewport: ViewportUniform,
+    pub scene_uniform: SceneUniform,
     pub output: Output,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub material_buffer: wgpu::Buffer,
+    pub scene_data_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<super::abi::Material>,
@@ -175,13 +176,7 @@ impl Scene {
             .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
             .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
-        let viewport = viewport_uniform(
-            &flat.viewport,
-            &flat.render_settings,
-            materials.len(),
-            light_records.len(),
-            area_light_data_offset,
-        )?;
+        let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
         {
             return Err(PbrtError::error(
@@ -209,7 +204,18 @@ impl Scene {
             contents: cast_slice(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let mut material_light_data = Vec::<u32>::with_capacity(
+        let light_record_data_offset = material_words_total;
+        let point_light_data_offset = light_record_data_offset
+            .checked_add(
+                light_records
+                    .len()
+                    .checked_mul(light_record_words)
+                    .ok_or_else(|| {
+                        PbrtError::error("WebGPU light-record buffer size overflowed.")
+                    })?,
+            )
+            .ok_or_else(|| PbrtError::error("WebGPU point-light buffer offset overflowed."))?;
+        let mut scene_data = Vec::<u32>::with_capacity(
             material_words_total
                 .checked_add(
                     light_records
@@ -224,20 +230,36 @@ impl Scene {
                 .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
         );
         for material in &materials {
-            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
         }
         for record in &light_records {
-            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(record)));
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(record)));
         }
         for light in &point_lights {
-            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
         for light in &area_lights {
-            material_light_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
         }
-        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 material and point-light SBO"),
-            contents: cast_slice(&material_light_data),
+        let limits = device.limits();
+        validate_scene_data_size(
+            scene_data.len(),
+            limits.max_buffer_size,
+            u64::from(limits.max_storage_buffer_binding_size),
+        )?;
+        let scene_uniform = scene_uniform(
+            materials.len(),
+            light_records.len(),
+            point_lights.len(),
+            area_lights.len(),
+            light_record_data_offset,
+            point_light_data_offset,
+            area_light_data_offset,
+            scene_data.len(),
+        )?;
+        let scene_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 scene data SBO"),
+            contents: cast_slice(&scene_data),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let acceleration = acceleration::build(
@@ -252,12 +274,13 @@ impl Scene {
         Ok(Self {
             camera,
             viewport,
+            scene_uniform,
             output: Output::from_flat(flat.output),
             vertex_buffer,
             index_buffer,
             geometry_buffer,
             instance_buffer,
-            material_buffer,
+            scene_data_buffer,
             geometries,
             instances,
             materials,
@@ -275,11 +298,33 @@ impl Scene {
             material.kind_tag = kind.tag();
         }
         queue.write_buffer(
-            &self.material_buffer,
+            &self.scene_data_buffer,
             0,
             bytemuck::cast_slice(&self.materials),
         );
     }
+}
+
+pub fn validate_scene_data_size(
+    word_count: usize,
+    max_buffer_size: u64,
+    max_storage_buffer_binding_size: u64,
+) -> Result<u64, PbrtError> {
+    let byte_count = u64::try_from(word_count)
+        .ok()
+        .and_then(|count| count.checked_mul(std::mem::size_of::<u32>() as u64))
+        .ok_or_else(|| PbrtError::error("WebGPU scene-data byte size overflowed."))?;
+    if byte_count > max_buffer_size {
+        return Err(PbrtError::error(&format!(
+            "WebGPU scene data requires {byte_count} bytes, exceeding max_buffer_size {max_buffer_size}."
+        )));
+    }
+    if byte_count > max_storage_buffer_binding_size {
+        return Err(PbrtError::error(&format!(
+            "WebGPU scene data requires {byte_count} bytes, exceeding max_storage_buffer_binding_size {max_storage_buffer_binding_size}."
+        )));
+    }
+    Ok(byte_count)
 }
 
 fn validate_instance_area_lights(

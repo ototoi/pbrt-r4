@@ -20,9 +20,28 @@ struct ViewportUniform {
     sample_index: u32,
     max_depth: u32,
     seed: u32,
-    light_data_offset: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
+};
+
+struct SceneUniform {
+    material_offset_words: u32,
+    material_count: u32,
+    light_record_offset_words: u32,
     light_count: u32,
-    area_light_data_offset: u32,
+    point_light_offset_words: u32,
+    point_light_count: u32,
+    area_light_offset_words: u32,
+    area_light_count: u32,
+    light_sampler_kind: u32,
+    light_sampler_data_offset: u32,
+    light_bvh_node_offset: u32,
+    light_bvh_node_count: u32,
+    light_leaf_offset: u32,
+    light_leaf_count: u32,
+    scene_data_words: u32,
+    _reserved: u32,
 };
 
 struct Vertex {
@@ -117,13 +136,15 @@ var<storage, read> geometries: array<Geometry>;
 @group(0) @binding(6)
 var<storage, read> instances: array<Instance>;
 @group(0) @binding(7)
-var<storage, read> material_light_data: array<u32>;
+var<storage, read> scene_data: array<u32>;
 @group(0) @binding(8)
 var<storage, read_write> surfaces: array<SurfaceWorkItem>;
 @group(0) @binding(9)
 var<storage, read_write> framebuffer: array<vec4<f32>>;
 @group(0) @binding(10)
 var<storage, read_write> wavefront_queue: array<atomic<u32>>;
+@group(0) @binding(11)
+var<uniform> scene: SceneUniform;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -479,17 +500,17 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
 }
 
 fn load_area_emission(index: u32) -> vec4<f32> {
-    let base = viewport.area_light_data_offset + index * 12u;
+    let base = scene.area_light_offset_words + index * 12u;
     return vec4<f32>(
-        bitcast<f32>(material_light_data[base + 2u]),
-        bitcast<f32>(material_light_data[base + 3u]),
-        bitcast<f32>(material_light_data[base + 4u]),
+        bitcast<f32>(scene_data[base + 2u]),
+        bitcast<f32>(scene_data[base + 3u]),
+        bitcast<f32>(scene_data[base + 4u]),
         0.0,
     );
 }
 
 fn load_area_word(index: u32, word: u32) -> u32 {
-    return material_light_data[viewport.area_light_data_offset + index * 12u + word];
+    return scene_data[scene.area_light_offset_words + index * 12u + word];
 }
 
 fn load_area_instance(index: u32) -> u32 {
@@ -513,40 +534,40 @@ fn pixel_count() -> u32 {
 }
 
 fn load_material_kind(index: u32) -> u32 {
-    return material_light_data[index * 4u];
+    return scene_data[scene.material_offset_words + index * 4u];
 }
 
 fn load_point_light(index: u32) -> PointLight {
-    let base = viewport.light_data_offset + viewport.light_count * 4u + index * 8u;
+    let base = scene.point_light_offset_words + index * 8u;
     return PointLight(
         vec4<f32>(
-            bitcast<f32>(material_light_data[base]),
-            bitcast<f32>(material_light_data[base + 1u]),
-            bitcast<f32>(material_light_data[base + 2u]),
-            bitcast<f32>(material_light_data[base + 3u]),
+            bitcast<f32>(scene_data[base]),
+            bitcast<f32>(scene_data[base + 1u]),
+            bitcast<f32>(scene_data[base + 2u]),
+            bitcast<f32>(scene_data[base + 3u]),
         ),
         vec4<f32>(
-            bitcast<f32>(material_light_data[base + 4u]),
-            bitcast<f32>(material_light_data[base + 5u]),
-            bitcast<f32>(material_light_data[base + 6u]),
-            bitcast<f32>(material_light_data[base + 7u]),
+            bitcast<f32>(scene_data[base + 4u]),
+            bitcast<f32>(scene_data[base + 5u]),
+            bitcast<f32>(scene_data[base + 6u]),
+            bitcast<f32>(scene_data[base + 7u]),
         ),
     );
 }
 
 fn load_light_kind(index: u32) -> u32 {
-    return material_light_data[viewport.light_data_offset + index * 4u];
+    return scene_data[scene.light_record_offset_words + index * 4u];
 }
 
 fn load_light_payload(index: u32) -> u32 {
-    return material_light_data[viewport.light_data_offset + index * 4u + 1u];
+    return scene_data[scene.light_record_offset_words + index * 4u + 1u];
 }
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
-    if (light_handle >= viewport.light_count) {
+    if (light_handle >= scene.light_count) {
         return 0.0;
     }
-    return 1.0 / f32(viewport.light_count);
+    return 1.0 / f32(scene.light_count);
 }
 
 fn hash_u32(value: u32) -> u32 {
@@ -582,12 +603,12 @@ fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
 }
 
 fn sample_uniform_light(selector: f32) -> LightSelection {
-    if (viewport.light_count == 0u) {
+    if (scene.light_count == 0u) {
         return LightSelection(0u, 0.0);
     }
     return LightSelection(
-        min(u32(selector * f32(viewport.light_count)), viewport.light_count - 1u),
-        1.0 / f32(viewport.light_count),
+        min(u32(selector * f32(scene.light_count)), scene.light_count - 1u),
+        1.0 / f32(scene.light_count),
     );
 }
 
