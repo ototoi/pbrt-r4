@@ -66,11 +66,8 @@ pub fn flatten_node_with_material_override(
         geometries: builder.geometries,
         instances: builder.instances,
         materials: builder.materials,
-        material_attributes: Vec::new(),
-        attribute_tables: AttributeTables::default(),
-        diffuse_bxdf_data: builder.diffuse_bxdf_data,
-        dielectric_bxdf_data: builder.dielectric_bxdf_data,
-        layered_bxdf_data: builder.layered_bxdf_data,
+        material_attributes: builder.material_attributes,
+        attribute_tables: builder.attribute_tables,
         scattering_models: builder.scattering_models,
         scattering_nodes: builder.scattering_nodes,
         scattering_child_refs: ScatteringChildRefs {
@@ -84,7 +81,6 @@ pub fn flatten_node_with_material_override(
     };
     let mut scene = scene;
     scene.resolved_scattering_models = resolve_scattering_models(&scene)?;
-    scene.material_attributes = build_material_attributes(&mut scene)?;
     scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
     scene.validate_scattering_models()?;
     scene.validate_static_views()?;
@@ -130,135 +126,68 @@ fn resolve_scattering_models(scene: &Scene) -> Result<Vec<ResolvedScatteringMode
         .collect()
 }
 
-fn build_material_attributes(scene: &mut Scene) -> Result<Vec<Vec<AttributeRef>>, PbrtError> {
-    let models = scene.resolved_scattering_models.clone();
-    let mut all = Vec::with_capacity(scene.materials.len());
-    for material in &mut scene.materials {
-        let model = models
-            .get(material.scattering_model as usize)
-            .ok_or_else(|| PbrtError::error("Material references an invalid scattering model."))?;
-        let refs = match model.root_kind.as_str() {
-            "diffuse" => {
-                let data = scene
-                    .diffuse_bxdf_data
-                    .get(model.data_index as usize)
-                    .ok_or_else(|| PbrtError::error("Diffuse node references invalid data."))?;
-                let index = u32::try_from(scene.attribute_tables.spectra.len())
-                    .map_err(|_| PbrtError::error("Flat spectrum attribute table exceeds u32."))?;
-                scene.attribute_tables.spectra.push(SpectrumValue([
-                    data.reflectance[0],
-                    data.reflectance[1],
-                    data.reflectance[2],
-                    0.0,
-                ]));
-                vec![AttributeRef {
-                    kind: AttributeKind::Spectrum,
-                    index,
-                    name: "reflectance".to_string(),
-                }]
+fn build_material_attributes_for_data(
+    source_material: &NodeMaterial,
+    kind: &str,
+    data: &super::MaterialData,
+    builder: &mut FlatBuilder,
+) -> Result<Vec<AttributeRef>, PbrtError> {
+    let mut push_scalar = |name: &str, value: f32| -> Result<AttributeRef, PbrtError> {
+        let index = u32::try_from(builder.attribute_tables.scalars.len())
+            .map_err(|_| PbrtError::error("Flat scalar attribute table exceeds u32."))?;
+        builder.attribute_tables.scalars.push(value);
+        Ok(AttributeRef {
+            kind: AttributeKind::Scalar,
+            index,
+            name: name.to_string(),
+        })
+    };
+    let mut push_spectrum = |name: &str, value: [f32; 3]| -> Result<AttributeRef, PbrtError> {
+        let index = u32::try_from(builder.attribute_tables.spectra.len())
+            .map_err(|_| PbrtError::error("Flat spectrum attribute table exceeds u32."))?;
+        builder
+            .attribute_tables
+            .spectra
+            .push(SpectrumValue([value[0], value[1], value[2], 0.0]));
+        Ok(AttributeRef {
+            kind: AttributeKind::Spectrum,
+            index,
+            name: name.to_string(),
+        })
+    };
+    match (kind, data) {
+        ("diffuse", super::MaterialData::Diffuse(data)) => {
+            Ok(vec![push_spectrum("reflectance", data.reflectance)?])
+        }
+        (
+            "dielectric" | "thin-dielectric" | "thindielectric",
+            super::MaterialData::Dielectric(data) | super::MaterialData::ThinDielectric(data),
+        ) => Ok(vec![push_scalar("eta", data.eta)?]),
+        ("layered" | "coateddiffuse", super::MaterialData::Layered(data)) => {
+            let mut refs = Vec::with_capacity(8);
+            let scalar_values = [
+                ("thickness", data.thickness),
+                ("g", data.g),
+                ("maxdepth", data.max_depth as f32),
+                ("nsamples", data.n_samples as f32),
+                ("twosided", u32::from(data.two_sided) as f32),
+            ];
+            for (name, value) in scalar_values {
+                refs.push(push_scalar(name, value)?);
             }
-            "dielectric" | "thin-dielectric" | "thindielectric" => {
-                let data = scene
-                    .dielectric_bxdf_data
-                    .get(model.data_index as usize)
-                    .ok_or_else(|| PbrtError::error("Dielectric node references invalid data."))?;
-                let index = u32::try_from(scene.attribute_tables.scalars.len())
-                    .map_err(|_| PbrtError::error("Flat scalar attribute table exceeds u32."))?;
-                scene.attribute_tables.scalars.push(data.eta);
-                vec![AttributeRef {
-                    kind: AttributeKind::Scalar,
-                    index,
-                    name: "eta".to_string(),
-                }]
-            }
-            "layered" => {
-                let data = scene
-                    .layered_bxdf_data
-                    .get(model.data_index as usize)
-                    .ok_or_else(|| PbrtError::error("Layered node references invalid data."))?;
-                let mut refs = Vec::with_capacity(6);
-                let scalar_values = [
-                    ("thickness", data.thickness),
-                    ("g", data.g),
-                    ("maxdepth", data.max_depth as f32),
-                    ("nsamples", data.n_samples as f32),
-                    ("twosided", u32::from(data.two_sided) as f32),
-                ];
-                for (name, value) in scalar_values {
-                    let index =
-                        u32::try_from(scene.attribute_tables.scalars.len()).map_err(|_| {
-                            PbrtError::error("Flat scalar attribute table exceeds u32.")
-                        })?;
-                    scene.attribute_tables.scalars.push(value);
-                    refs.push(AttributeRef {
-                        kind: AttributeKind::Scalar,
-                        index,
-                        name: name.to_string(),
-                    });
-                }
-                let index = u32::try_from(scene.attribute_tables.spectra.len())
-                    .map_err(|_| PbrtError::error("Flat spectrum attribute table exceeds u32."))?;
-                scene.attribute_tables.spectra.push(SpectrumValue([
-                    data.albedo[0],
-                    data.albedo[1],
-                    data.albedo[2],
-                    0.0,
-                ]));
-                refs.push(AttributeRef {
-                    kind: AttributeKind::Spectrum,
-                    index,
-                    name: "albedo".to_string(),
-                });
-                if let Some(top_node_id) = model.child_nodes.first() {
-                    if let Some(top_node) = scene.scattering_nodes.get(*top_node_id as usize) {
-                        if let Some(data) =
-                            scene.dielectric_bxdf_data.get(top_node.data_index as usize)
-                        {
-                            let index = u32::try_from(scene.attribute_tables.scalars.len())
-                                .map_err(|_| {
-                                    PbrtError::error("Flat scalar attribute table exceeds u32.")
-                                })?;
-                            scene.attribute_tables.scalars.push(data.eta);
-                            refs.push(AttributeRef {
-                                kind: AttributeKind::Scalar,
-                                index,
-                                name: "eta".to_string(),
-                            });
-                        }
-                    }
-                }
-                if let Some(bottom_node_id) = model.child_nodes.get(1) {
-                    if let Some(bottom_node) = scene.scattering_nodes.get(*bottom_node_id as usize)
-                    {
-                        if let Some(data) =
-                            scene.diffuse_bxdf_data.get(bottom_node.data_index as usize)
-                        {
-                            let index = u32::try_from(scene.attribute_tables.spectra.len())
-                                .map_err(|_| {
-                                    PbrtError::error("Flat spectrum attribute table exceeds u32.")
-                                })?;
-                            scene.attribute_tables.spectra.push(SpectrumValue([
-                                data.reflectance[0],
-                                data.reflectance[1],
-                                data.reflectance[2],
-                                0.0,
-                            ]));
-                            refs.push(AttributeRef {
-                                kind: AttributeKind::Spectrum,
-                                index,
-                                name: "reflectance".to_string(),
-                            });
-                        }
-                    }
-                }
-                refs
-            }
-            _ => Vec::new(),
-        };
-        material.attributes = refs.clone();
-        all.push(refs);
+            refs.push(push_spectrum("albedo", data.albedo)?);
+            refs.push(push_scalar(
+                "eta",
+                source_material.params.get_one_float("eta", 1.5) as f32,
+            )?);
+            refs.push(push_spectrum(
+                "reflectance",
+                diffuse_reflectance(source_material)?,
+            )?);
+            Ok(refs)
+        }
+        _ => Ok(Vec::new()),
     }
-    Ok(all)
 }
 
 fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
@@ -324,6 +253,8 @@ struct FlatBuilder {
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     materials: Vec<Material>,
+    material_attributes: Vec<Vec<AttributeRef>>,
+    attribute_tables: AttributeTables,
     diffuse_bxdf_data: Vec<super::DiffuseMaterialData>,
     dielectric_bxdf_data: Vec<super::DielectricMaterialData>,
     layered_bxdf_data: Vec<super::LayeredBxDFData>,
@@ -1098,13 +1029,15 @@ fn material_index(
     let kind = material_kind.unwrap_or(&source_material.kind);
     let source_kind = source_material.kind.as_str();
     let data = material_data(source_material, kind)?;
+    let attributes = build_material_attributes_for_data(source_material, kind, &data, builder)?;
     let scattering_model = register_scattering_model(source_material, &data, kind, builder)?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
         scattering_model,
-        attributes: Vec::new(),
+        attributes: attributes.clone(),
     });
+    builder.material_attributes.push(attributes);
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
 }

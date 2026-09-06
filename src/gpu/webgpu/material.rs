@@ -153,9 +153,7 @@ fn node_table_len(scene: &flat::Scene, kind: &str) -> usize {
         .scattering_nodes
         .iter()
         .filter(|node| node.kind == kind)
-        .map(|node| node.data_index as usize + 1)
-        .max()
-        .unwrap_or(0)
+        .count()
 }
 
 fn owner_material<'a>(scene: &'a flat::Scene, node_id: u32) -> Option<&'a flat::Material> {

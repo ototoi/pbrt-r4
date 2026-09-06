@@ -444,7 +444,7 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
     assert_eq!(scene.scattering_nodes[0].kind, "diffuse");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b00101);
     assert_eq!(scene.scattering_nodes[0].data_index, 0);
-    assert_eq!(scene.diffuse_bxdf_data.len(), 1);
+    assert_eq!(scene.attribute_tables.spectra.len(), 1);
 }
 
 #[test]
@@ -481,7 +481,7 @@ fn flatten_node_extracts_dielectric_eta() {
     assert_eq!(scene.materials[0].scattering_model, 0);
     assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
-    assert_eq!(scene.dielectric_bxdf_data.len(), 1);
+    assert_eq!(scene.attribute_tables.scalars.len(), 1);
 }
 
 #[test]
@@ -516,10 +516,18 @@ fn flatten_node_builds_coateddiffuse_layered_graph() {
     assert_eq!(scene.scattering_nodes[2].child_offset, 0);
     assert_eq!(scene.scattering_nodes[2].child_count, 2);
     assert_eq!(scene.scattering_child_refs.node_ids, vec![0, 1]);
-    assert_eq!(scene.layered_bxdf_data[0].thickness, 0.01);
-    assert_eq!(scene.layered_bxdf_data[0].max_depth, 10);
-    assert_eq!(scene.layered_bxdf_data[0].n_samples, 1);
-    assert!(scene.layered_bxdf_data[0].two_sided);
+    let attributes = &scene.materials[0].attributes;
+    let scalar = |name: &str| {
+        let attribute = attributes
+            .iter()
+            .find(|attribute| attribute.name == name)
+            .unwrap();
+        scene.attribute_tables.scalars[attribute.index as usize]
+    };
+    assert_eq!(scalar("thickness"), 0.01);
+    assert_eq!(scalar("maxdepth"), 10.0);
+    assert_eq!(scalar("nsamples"), 1.0);
+    assert_eq!(scalar("twosided"), 1.0);
     use pbrt_r4::gpu::ir::flat::{EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR};
     assert_eq!(
         scene.scattering_nodes[2].event_flags,
