@@ -937,7 +937,7 @@ fn register_scattering_model(
             let node_id = push_scattering_node_with_children(
                 builder,
                 "layered",
-                EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_DIFFUSE,
+                EVENT_REFLECTION | EVENT_SPECULAR | EVENT_DIFFUSE,
                 layered_data_index,
                 child_offset,
                 2,
@@ -1043,7 +1043,7 @@ fn material_data(
                     source_material.name
                 )));
             }
-            if !g.is_finite() || !(-1.0..1.0).contains(&g) {
+            if !g.is_finite() || g <= -1.0 || g >= 1.0 {
                 return Err(PbrtError::error(&format!(
                     "Material \"{}\" has an invalid coateddiffuse g: {g}.",
                     source_material.name
@@ -1081,7 +1081,7 @@ fn material_data(
                     .map_err(|_| PbrtError::error("Coateddiffuse maxdepth does not fit in u32."))?,
                 n_samples: u32::try_from(n_samples)
                     .map_err(|_| PbrtError::error("Coateddiffuse nsamples does not fit in u32."))?,
-                two_sided: false,
+                two_sided: true,
             }))
         }
         "dielectric" => {

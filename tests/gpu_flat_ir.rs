@@ -480,6 +480,94 @@ fn flatten_node_builds_coateddiffuse_layered_graph() {
     assert_eq!(scene.layered_bxdf_data[0].thickness, 0.01);
     assert_eq!(scene.layered_bxdf_data[0].max_depth, 10);
     assert_eq!(scene.layered_bxdf_data[0].n_samples, 1);
+    assert!(scene.layered_bxdf_data[0].two_sided);
+    use pbrt_r4::gpu::ir::flat::{EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR};
+    assert_eq!(
+        scene.scattering_nodes[2].event_flags,
+        EVENT_REFLECTION | EVENT_SPECULAR | EVENT_DIFFUSE
+    );
+}
+
+#[test]
+fn layered_anisotropy_rejects_both_endpoints() {
+    for g in [-1.0, 1.0] {
+        let shape = triangle_node("layered", "coateddiffuse", [0.0; 3]);
+        for component in &mut shape.write().unwrap().components {
+            if let Component::Material(component) = component {
+                Arc::get_mut(&mut component.material)
+                    .unwrap()
+                    .params
+                    .add_float("float g", g);
+            }
+        }
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(shape);
+        assert!(flatten_node(Arc::new(RwLock::new(root))).is_err());
+    }
+}
+
+#[test]
+fn material_table_preserves_child_data_indices_in_mixed_scenes() {
+    use pbrt_r4::gpu::webgpu::material::MaterialTable;
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for kind in [
+        "diffuse",
+        "coateddiffuse",
+        "dielectric",
+        "coateddiffuse",
+        "diffuse",
+    ] {
+        root.add_child(triangle_node(kind, kind, [0.0; 3]));
+    }
+    let mut scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    for (i, data) in scene.diffuse_bxdf_data.iter_mut().enumerate() {
+        data.reflectance = [0.1 * (i + 1) as f32; 3];
+    }
+    for (i, data) in scene.dielectric_bxdf_data.iter_mut().enumerate() {
+        data.eta = 1.1 + 0.1 * i as f32;
+    }
+    let table = MaterialTable::from_flat(&scene).unwrap();
+    assert_eq!(table.diffuse.len(), 4);
+    assert_eq!(table.dielectric.len(), 3);
+    assert_eq!(table.layered.len(), 2);
+    for node in &scene.scattering_nodes {
+        let i = node.data_index as usize;
+        match node.kind.as_str() {
+            "diffuse" => assert_eq!(
+                table.diffuse[i].reflectance[..3],
+                scene.diffuse_bxdf_data[i].reflectance
+            ),
+            "dielectric" => assert_eq!(table.dielectric[i].eta, scene.dielectric_bxdf_data[i].eta),
+            "layered" => assert_eq!(table.layered[i].two_sided, 1),
+            _ => unreachable!(),
+        }
+    }
+    scene.scattering_nodes[0].data_index = u32::MAX;
+    assert!(MaterialTable::from_flat(&scene).is_err());
+}
+
+#[test]
+#[ignore = "requires a Vulkan GPU with experimental ray queries"]
+fn layered_scene_uniform_points_to_layered_table_not_bssrdf_table() {
+    use pbrt_r4::gpu::webgpu::{abi::INVALID_INDEX, context::Context, scene::Scene};
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(triangle_node("layered", "coateddiffuse", [0.0; 3]));
+    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let context = Context::new().unwrap();
+    let scene = Scene::from_flat(&context.device, &context.queue, flat).unwrap();
+    assert_eq!(scene.scene_uniform.layered_bxdf_count, 1);
+    assert_eq!(scene.scene_uniform.bssrdf_node_count, 0);
+    assert_eq!(scene.scene_uniform.bssrdf_node_offset_words, INVALID_INDEX);
+    assert_eq!(
+        scene.scene_uniform.layered_bxdf_offset_words,
+        scene.scene_uniform.scattering_child_offset_words
+            + scene.scene_uniform.scattering_child_count
+    );
+    assert_eq!(scene.scene_uniform.dielectric_material_count, 1);
+    assert_eq!(scene.scene_uniform.diffuse_material_count, 1);
 }
 
 #[test]

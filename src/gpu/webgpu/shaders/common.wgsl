@@ -100,16 +100,9 @@ struct ScatteringNodeRecord {
     data_index: u32,
     child_offset: u32,
     child_count: u32,
-    _padding: vec3<u32>,
-};
-
-struct LayeredBxDFData {
-    thickness: f32,
-    g: f32,
-    max_depth: u32,
-    n_samples: u32,
-    albedo: vec4<f32>,
-    two_sided: bool,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 
 struct RaySamples {
@@ -722,7 +715,7 @@ fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
 fn load_layered_bxdf(index: u32) -> LayeredBxDFData {
     if (index >= scene.layered_bxdf_count) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return LayeredBxDFData(0.0, 0.0, 0u, 0u, vec4<f32>(0.0), false);
+        return LayeredBxDFData(0.0, 0.0, 0u, 0u, vec4<f32>(0.0), 0u, 0u, 0u, 0u);
     }
     let base = scene.layered_bxdf_offset_words + index * 12u;
     return LayeredBxDFData(
@@ -736,7 +729,7 @@ fn load_layered_bxdf(index: u32) -> LayeredBxDFData {
             bitcast<f32>(scene_data[base + 6u]),
             bitcast<f32>(scene_data[base + 7u]),
         ),
-        scene_data[base + 8u] != 0u,
+        scene_data[base + 8u], 0u, 0u, 0u,
     );
 }
 
@@ -764,6 +757,28 @@ fn load_layered_bottom_reflectance(material_index: u32) -> vec3<f32> {
         return vec3<f32>(0.0);
     }
     return load_diffuse_material(data_index).xyz;
+}
+
+fn load_layered_eta(material_index: u32) -> f32 {
+    let model = load_material_model(material_index);
+    let root = scene_data[scene.scattering_model_offset_words + model * 4u];
+    let top = load_scattering_child(root, 0u);
+    let data_index = load_scattering_node_word(top, 2u);
+    if (load_scattering_node_word(top, 0u) != 1u || data_index >= scene.dielectric_material_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 1.0;
+    }
+    return load_dielectric_eta(data_index);
+}
+
+fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
+    return layered_hash(layered_hash(layered_hash(viewport.seed) ^ pixel)
+        ^ layered_hash(viewport.sample_index)) ^ layered_hash(depth);
+}
+
+fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let t = make_tangent(n);
+    return vec3<f32>(dot(w, t), dot(w, cross(n, t)), dot(w, n));
 }
 
 fn load_point_light(index: u32) -> PointLight {

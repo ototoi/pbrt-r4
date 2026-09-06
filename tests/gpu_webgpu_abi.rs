@@ -1,6 +1,3 @@
-use pbrt_r4::gpu::ir::flat::{
-    DiffuseMaterialData as FlatDiffuseMaterialData, MaterialData as FlatMaterialData,
-};
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, scene_uniform, AreaLight, CameraUniform,
     Geometry, Instance, LightRecord, MaterialRecord, PixelSampleState, PointLight, QueueState,
@@ -8,7 +5,6 @@ use pbrt_r4::gpu::webgpu::abi::{
     SurfaceWorkItem, TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX,
     LIGHT_SAMPLER_KIND_UNIFORM,
 };
-use pbrt_r4::gpu::webgpu::material::MaterialTable;
 
 #[test]
 fn webgpu_matrices_are_uploaded_as_column_major() {
@@ -19,56 +15,6 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
     assert_eq!(matrix[1], [1.0, 5.0, 9.0, 13.0]);
     assert_eq!(matrix[2], [2.0, 6.0, 10.0, 14.0]);
     assert_eq!(matrix[3], [3.0, 7.0, 11.0, 15.0]);
-}
-
-#[test]
-fn material_table_assigns_type_specific_data_indices() {
-    let materials = vec![
-        pbrt_r4::gpu::ir::flat::Material {
-            kind: "diffuse".to_string(),
-            data: FlatMaterialData::Diffuse(FlatDiffuseMaterialData {
-                reflectance: [0.2, 0.3, 0.4],
-            }),
-            source_kind: "diffuse".to_string(),
-            source_data: pbrt_r4::gpu::ir::flat::MaterialSourceData::Diffuse(
-                pbrt_r4::gpu::ir::flat::DiffuseMaterialSourceData {
-                    reflectance: [0.2, 0.3, 0.4],
-                },
-            ),
-            scattering_model: 0,
-        },
-        pbrt_r4::gpu::ir::flat::Material {
-            kind: "dielectric".to_string(),
-            data: FlatMaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData {
-                eta: 1.5,
-            }),
-            source_kind: "dielectric".to_string(),
-            source_data: pbrt_r4::gpu::ir::flat::MaterialSourceData::Dielectric(
-                pbrt_r4::gpu::ir::flat::DielectricMaterialSourceData { eta: 1.5 },
-            ),
-            scattering_model: 1,
-        },
-        pbrt_r4::gpu::ir::flat::Material {
-            kind: "diffuse".to_string(),
-            data: FlatMaterialData::Diffuse(FlatDiffuseMaterialData {
-                reflectance: [0.7, 0.8, 0.9],
-            }),
-            source_kind: "diffuse".to_string(),
-            source_data: pbrt_r4::gpu::ir::flat::MaterialSourceData::Diffuse(
-                pbrt_r4::gpu::ir::flat::DiffuseMaterialSourceData {
-                    reflectance: [0.7, 0.8, 0.9],
-                },
-            ),
-            scattering_model: 2,
-        },
-    ];
-
-    let table = MaterialTable::from_flat(&materials).unwrap();
-    assert_eq!(table.records[0].data_index, 0);
-    assert_eq!(table.records[1].data_index, 0);
-    assert_eq!(table.records[2].data_index, 1);
-    assert_eq!(table.diffuse.len(), 2);
-    assert_eq!(table.dielectric.len(), 1);
 }
 
 #[test]
