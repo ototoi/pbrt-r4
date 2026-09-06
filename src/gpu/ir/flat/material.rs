@@ -38,6 +38,22 @@ pub enum UnsupportedTexturePolicy {
     DiagnosticMagenta,
 }
 
+impl UnsupportedTexturePolicy {
+    pub fn from_environment() -> Result<Self, crate::util::error::PbrtError> {
+        match std::env::var("PBRT_R4_GPU_UNSUPPORTED_TEXTURE") {
+            Ok(value) if value == "magenta" => Ok(Self::DiagnosticMagenta),
+            Ok(value) if value == "error" => Ok(Self::Error),
+            Ok(value) => Err(crate::util::error::PbrtError::error(&format!(
+                "PBRT_R4_GPU_UNSUPPORTED_TEXTURE must be 'error' or 'magenta', got '{value}'."
+            ))),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Error),
+            Err(std::env::VarError::NotUnicode(_)) => Err(crate::util::error::PbrtError::error(
+                "PBRT_R4_GPU_UNSUPPORTED_TEXTURE must be valid UTF-8.",
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MaterialData {
     Diffuse(DiffuseMaterialData),
