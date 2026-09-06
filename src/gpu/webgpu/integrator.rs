@@ -61,7 +61,7 @@ impl WavefrontPathIntegrator {
         let scene_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 scene UBO"),
             contents: bytes_of(&scene.scene_uniform),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
         let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
@@ -322,6 +322,11 @@ impl WavefrontPathIntegrator {
 
     pub fn replace_material_kind(&mut self, kind: super::material::MaterialKind) {
         self.scene.replace_material_kind(&self.context.queue, kind);
+        self.context.queue.write_buffer(
+            &self.scene_uniform_buffer,
+            0,
+            bytes_of(&self.scene.scene_uniform),
+        );
     }
 }
 

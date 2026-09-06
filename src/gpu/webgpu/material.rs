@@ -58,7 +58,8 @@ impl MaterialTable {
             table.records.push(MaterialRecord {
                 kind_tag: kind.tag(),
                 data_index,
-                padding: [0; 2],
+                scattering_model: material.scattering_model,
+                padding: 0,
             });
         }
         Ok(table)
