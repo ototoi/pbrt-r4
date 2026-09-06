@@ -1,12 +1,14 @@
 use crate::util::error::PbrtError;
 
+use super::stages::RequiredLimits;
+
 pub struct Context {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
 }
 
 impl Context {
-    pub fn new() -> Result<Self, PbrtError> {
+    pub fn new(required: RequiredLimits) -> Result<Self, PbrtError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -24,6 +26,22 @@ impl Context {
         }
 
         let adapter_limits = adapter.limits();
+        if required.storage_buffers_per_shader_stage
+            > adapter_limits.max_storage_buffers_per_shader_stage
+            || required.uniform_buffers_per_shader_stage
+                > adapter_limits.max_uniform_buffers_per_shader_stage
+            || required.bind_groups > adapter_limits.max_bind_groups
+        {
+            return Err(PbrtError::error(&format!(
+                "WebGPU adapter limits are insufficient: requested storage={}, uniform={}, bind_groups={}; available storage={}, uniform={}, bind_groups={}",
+                required.storage_buffers_per_shader_stage,
+                required.uniform_buffers_per_shader_stage,
+                required.bind_groups,
+                adapter_limits.max_storage_buffers_per_shader_stage,
+                adapter_limits.max_uniform_buffers_per_shader_stage,
+                adapter_limits.max_bind_groups,
+            )));
+        }
         let mut required_limits =
             wgpu::Limits::default().using_minimum_supported_acceleration_structure_values();
         // Keep the default limits for portability, but do not unnecessarily cap
@@ -31,6 +49,11 @@ impl Context {
         required_limits.max_buffer_size = adapter_limits.max_buffer_size;
         required_limits.max_storage_buffer_binding_size =
             adapter_limits.max_storage_buffer_binding_size;
+        required_limits.max_storage_buffers_per_shader_stage =
+            required.storage_buffers_per_shader_stage;
+        required_limits.max_uniform_buffers_per_shader_stage =
+            required.uniform_buffers_per_shader_stage;
+        required_limits.max_bind_groups = required.bind_groups;
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("pbrt-r4 primary-ray device"),
             required_features: wgpu::Features::EXPERIMENTAL_RAY_QUERY,
