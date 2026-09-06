@@ -1,6 +1,7 @@
 use crate::util::error::PbrtError;
 
 use super::shader;
+use super::stages::{all_stage_specs, RequiredLimits};
 
 pub struct Pipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -25,6 +26,10 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(device: &wgpu::Device) -> Result<Self, PbrtError> {
+        // Keep pipeline construction tied to the same complete contract registry
+        // used during adapter limit negotiation. Layout generation will consume
+        // these specs in the next migration step.
+        RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("pbrt-r4 primary-ray bind group layout"),
