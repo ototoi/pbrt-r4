@@ -6,6 +6,8 @@ const EVALUATE_MATERIALS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_materials.wgsl");
 const GENERATE_PRIMARY_RAYS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
+const ESCAPED_TEST_SHADER: &str =
+    r#"@compute @workgroup_size(1) fn test_stage() { append_escaped_ray(0u); }"#;
 const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
@@ -45,6 +47,16 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
 }
 
 #[test]
+fn composed_stage_contains_only_referenced_resources() {
+    let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    assert!(source.contains("var<uniform> camera: CameraUniform;"));
+    assert!(source.contains("var<uniform> viewport: ViewportUniform;"));
+    assert!(source.contains("var<storage, read_write> wavefront_queue: array<atomic<u32>>;"));
+    assert!(!source.contains("var<storage, read> light_records: array<LightRecord>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
+}
+
+#[test]
 fn shadow_direction_is_loaded_from_its_vec4_aligned_queue_slot() {
     let source = compose_source(INTERSECT_SHADOW_SHADER);
 
@@ -55,7 +67,7 @@ fn shadow_direction_is_loaded_from_its_vec4_aligned_queue_slot() {
 
 #[test]
 fn escaped_queue_follows_the_classification_queues() {
-    let source = compose_source(INTERSECT_SHADOW_SHADER);
+    let source = compose_source(ESCAPED_TEST_SHADER);
     let escaped_offset = source
         .split("fn escaped_data_offset() -> u32 {")
         .nth(1)
