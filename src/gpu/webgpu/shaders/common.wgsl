@@ -6,7 +6,10 @@ const PI: f32 = 3.141592653589793;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
+const MATERIAL_KIND_LAMBERT: u32 = 2u;
 const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
+const MATERIAL_KIND_LAYERED: u32 = 4u;
+const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
@@ -34,6 +37,18 @@ struct SceneUniform {
     diffuse_material_count: u32,
     dielectric_material_offset_words: u32,
     dielectric_material_count: u32,
+    scattering_model_offset_words: u32,
+    scattering_model_count: u32,
+    scattering_node_offset_words: u32,
+    scattering_node_count: u32,
+    scattering_child_offset_words: u32,
+    scattering_child_count: u32,
+    bssrdf_node_offset_words: u32,
+    bssrdf_node_count: u32,
+    layered_bxdf_offset_words: u32,
+    layered_bxdf_count: u32,
+    debug_scattering_model: u32,
+    scattering_reserved: u32,
     light_record_offset_words: u32,
     light_count: u32,
     point_light_offset_words: u32,
@@ -72,6 +87,23 @@ struct Instance {
     orientation_flags: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
+};
+
+struct ScatteringModelRecord {
+    surface_root: u32,
+    bssrdf_root: u32,
+    _padding: vec2<u32>,
+};
+
+struct ScatteringNodeRecord {
+    kind_tag: u32,
+    event_flags: u32,
+    data_index: u32,
+    child_offset: u32,
+    child_count: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 
 struct RaySamples {
@@ -596,11 +628,52 @@ fn pixel_count() -> u32 {
 }
 
 fn load_material_kind(index: u32) -> u32 {
-    return scene_data[scene.material_offset_words + index * 4u];
+    if (scene.debug_scattering_model != 0xffffffffu) {
+        return scene.debug_scattering_model;
+    }
+    let model_index = load_material_model(index);
+    if (model_index >= scene.scattering_model_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return MATERIAL_KIND_NORMAL;
+    }
+    let node_index = scene_data[scene.scattering_model_offset_words + model_index * 4u];
+    if (node_index >= scene.scattering_node_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return MATERIAL_KIND_NORMAL;
+    }
+    let node_kind = scene_data[scene.scattering_node_offset_words + node_index * 8u];
+    if (node_kind == 0u) {
+        return MATERIAL_KIND_DIFFUSE;
+    }
+    if (node_kind == 1u) {
+        return MATERIAL_KIND_DIELECTRIC;
+    }
+    if (node_kind == 3u) {
+        return MATERIAL_KIND_THIN_DIELECTRIC;
+    }
+    if (node_kind == 2u) {
+        return MATERIAL_KIND_LAYERED;
+    }
+    atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+    return MATERIAL_KIND_NORMAL;
 }
 
 fn load_material_data_index(index: u32) -> u32 {
-    return scene_data[scene.material_offset_words + index * 4u + 1u];
+    let model_index = load_material_model(index);
+    if (model_index >= scene.scattering_model_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    let node_index = scene_data[scene.scattering_model_offset_words + model_index * 4u];
+    if (node_index >= scene.scattering_node_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    return scene_data[scene.scattering_node_offset_words + node_index * 8u + 2u];
+}
+
+fn load_material_model(index: u32) -> u32 {
+    return scene_data[scene.material_offset_words + index * 4u + 2u];
 }
 
 fn load_diffuse_material(index: u32) -> vec4<f32> {
@@ -614,6 +687,9 @@ fn load_diffuse_material(index: u32) -> vec4<f32> {
 }
 
 fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
+    if (scene.debug_scattering_model == MATERIAL_KIND_LAMBERT) {
+        return vec3<f32>(0.5);
+    }
     let data_index = load_material_data_index(material_index);
     if (data_index >= scene.diffuse_material_count) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
@@ -624,6 +700,89 @@ fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
 
 fn load_dielectric_eta(index: u32) -> f32 {
     return bitcast<f32>(scene_data[scene.dielectric_material_offset_words + index * 4u]);
+}
+
+fn load_scattering_node_word(index: u32, word: u32) -> u32 {
+    return scene_data[scene.scattering_node_offset_words + index * 8u + word];
+}
+
+fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
+    let child_count = load_scattering_node_word(node_index, 4u);
+    if (child_index >= child_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    let child_offset = load_scattering_node_word(node_index, 3u);
+    return scene_data[scene.scattering_child_offset_words + child_offset + child_index];
+}
+
+fn load_layered_bxdf(index: u32) -> LayeredBxDFData {
+    if (index >= scene.layered_bxdf_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return LayeredBxDFData(0.0, 0.0, 0u, 0u, vec4<f32>(0.0), 0u, 0u, 0u, 0u);
+    }
+    let base = scene.layered_bxdf_offset_words + index * 12u;
+    return LayeredBxDFData(
+        bitcast<f32>(scene_data[base]),
+        bitcast<f32>(scene_data[base + 1u]),
+        scene_data[base + 2u],
+        scene_data[base + 3u],
+        vec4<f32>(
+            bitcast<f32>(scene_data[base + 4u]),
+            bitcast<f32>(scene_data[base + 5u]),
+            bitcast<f32>(scene_data[base + 6u]),
+            bitcast<f32>(scene_data[base + 7u]),
+        ),
+        scene_data[base + 8u], 0u, 0u, 0u,
+    );
+}
+
+fn load_layered_data_index(material_index: u32) -> u32 {
+    let model_index = load_material_model(material_index);
+    if (model_index >= scene.scattering_model_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    let root = scene_data[scene.scattering_model_offset_words + model_index * 4u];
+    return load_scattering_node_word(root, 2u);
+}
+
+fn load_layered_bottom_reflectance(material_index: u32) -> vec3<f32> {
+    let model_index = load_material_model(material_index);
+    let root = scene_data[scene.scattering_model_offset_words + model_index * 4u];
+    let bottom = load_scattering_child(root, 1u);
+    if (load_scattering_node_word(bottom, 0u) != 0u) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return vec3<f32>(0.0);
+    }
+    let data_index = load_scattering_node_word(bottom, 2u);
+    if (data_index >= scene.diffuse_material_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return vec3<f32>(0.0);
+    }
+    return load_diffuse_material(data_index).xyz;
+}
+
+fn load_layered_eta(material_index: u32) -> f32 {
+    let model = load_material_model(material_index);
+    let root = scene_data[scene.scattering_model_offset_words + model * 4u];
+    let top = load_scattering_child(root, 0u);
+    let data_index = load_scattering_node_word(top, 2u);
+    if (load_scattering_node_word(top, 0u) != 1u || data_index >= scene.dielectric_material_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 1.0;
+    }
+    return load_dielectric_eta(data_index);
+}
+
+fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
+    return layered_hash(layered_hash(layered_hash(viewport.seed) ^ pixel)
+        ^ layered_hash(viewport.sample_index)) ^ layered_hash(depth);
+}
+
+fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let t = make_tangent(n);
+    return vec3<f32>(dot(w, t), dot(w, cross(n, t)), dot(w, n));
 }
 
 fn load_point_light(index: u32) -> PointLight {

@@ -11,6 +11,10 @@ const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
 const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
+const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_layered_bounce.wgsl");
+const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
@@ -104,9 +108,19 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
 #[test]
 fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(COMMON_SHADER.contains("fn load_diffuse_reflectance(material_index: u32)"));
-    assert!(EVALUATE_MATERIALS_SHADER.contains("let reflectance = load_diffuse_reflectance"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = load_diffuse_reflectance"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
     assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * vec4<f32>(reflectance, 1.0)"));
+}
+
+#[test]
+fn layered_shader_resolves_top_and_bottom_nodes() {
+    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
+    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(index: u32)"));
+    assert!(COMMON_SHADER.contains("fn load_layered_bottom_reflectance"));
+    assert!(COMMON_SHADER.contains("load_scattering_child(root, 0u)"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_bottom_reflectance"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("layered_sample("));
 }
 
 #[test]
@@ -117,6 +131,14 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
+}
+
+#[test]
+fn thin_dielectric_shader_uses_thin_interface_transport() {
+    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
+    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("MATERIAL_KIND_THIN_DIELECTRIC"));
+    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("direction = select(-wo"));
+    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("r0 + (1.0 - r0)"));
 }
 
 #[test]

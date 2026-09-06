@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use pbrt_r4::gpu::ir::flat::{flatten_node, MaterialData};
+use pbrt_r4::gpu::ir::flat::{flatten_node, validate_scattering_graph, MaterialData};
 use pbrt_r4::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
     CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
@@ -90,8 +90,8 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
-    root.add_child(triangle_node("first", "matte", [1.0, 2.0, 3.0]));
-    root.add_child(triangle_node("second", "plastic", [4.0, 5.0, 6.0]));
+    root.add_child(triangle_node("first", "diffuse", [1.0, 2.0, 3.0]));
+    root.add_child(triangle_node("second", "dielectric", [4.0, 5.0, 6.0]));
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
@@ -122,8 +122,10 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.instances[0].transform[11], 3.0);
     assert_eq!(scene.instances[1].geometry, 1);
     assert_eq!(scene.instances[1].material, 1);
-    assert_eq!(scene.materials[0].kind, "matte");
-    assert_eq!(scene.materials[1].kind, "plastic");
+    assert_eq!(scene.materials[0].kind, "diffuse");
+    assert_eq!(scene.materials[1].kind, "dielectric");
+    assert_eq!(scene.materials[0].scattering_model, 0);
+    assert_eq!(scene.materials[1].scattering_model, 1);
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
@@ -245,7 +247,7 @@ fn flatten_node_shares_geometry_across_instances() {
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
 
-    let target = triangle_node("target", "matte", [0.0, 0.0, 0.0]);
+    let target = triangle_node("target", "diffuse", [0.0, 0.0, 0.0]);
     root.add_child(instance_node("first-instance", &target, [1.0, 0.0, 0.0]));
     root.add_child(instance_node("second-instance", &target, [0.0, 2.0, 0.0]));
 
@@ -267,7 +269,7 @@ fn flatten_node_preserves_shape_reverse_orientation() {
     let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
-    let shape = triangle_node("reversed", "matte", [0.0, 0.0, 0.0]);
+    let shape = triangle_node("reversed", "diffuse", [0.0, 0.0, 0.0]);
     if let Component::Shape(component) = &mut shape.write().unwrap().components[0] {
         component.reverse_orientation = true;
     }
@@ -290,8 +292,8 @@ fn flatten_node_requires_tessellated_shapes() {
     }));
     shape.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {
-            name: "matte".to_string(),
-            kind: "matte".to_string(),
+            name: "diffuse".to_string(),
+            kind: "diffuse".to_string(),
             params: Default::default(),
         }),
     }));
@@ -303,7 +305,7 @@ fn flatten_node_requires_tessellated_shapes() {
 
 #[test]
 fn flatten_node_composes_parent_and_child_transforms() {
-    let child = triangle_node("triangle", "matte", [0.0, 2.0, 0.0]);
+    let child = triangle_node("triangle", "diffuse", [0.0, 2.0, 0.0]);
     let mut root = Node::new("root");
     let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
@@ -416,6 +418,12 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
             reflectance: expected_reflectance,
         })
     );
+    assert_eq!(scene.materials[0].scattering_model, 0);
+    assert_eq!(scene.scattering_models[0].surface_root, 0);
+    assert_eq!(scene.scattering_nodes[0].kind, "diffuse");
+    assert_eq!(scene.scattering_nodes[0].event_flags, 0b00101);
+    assert_eq!(scene.scattering_nodes[0].data_index, 0);
+    assert_eq!(scene.diffuse_bxdf_data.len(), 1);
 }
 
 #[test]
@@ -445,6 +453,173 @@ fn flatten_node_extracts_dielectric_eta() {
         scene.materials[0].data,
         MaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData { eta: 1.33 })
     );
+    assert_eq!(scene.materials[0].scattering_model, 0);
+    assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
+    assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
+    assert_eq!(scene.dielectric_bxdf_data.len(), 1);
+}
+
+#[test]
+fn flatten_node_extracts_thin_dielectric_leaf() {
+    let shape = triangle_node("triangle", "thindielectric", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert!(matches!(
+        scene.materials[0].data,
+        MaterialData::ThinDielectric(_)
+    ));
+    assert_eq!(scene.scattering_nodes[0].kind, "thindielectric");
+    assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
+}
+
+#[test]
+fn flatten_node_builds_coateddiffuse_layered_graph() {
+    let shape = triangle_node("triangle", "coateddiffuse", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].kind, "coateddiffuse");
+    assert_eq!(scene.materials[0].scattering_model, 0);
+    assert_eq!(scene.scattering_models[0].surface_root, 2);
+    assert_eq!(scene.scattering_nodes.len(), 3);
+    assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
+    assert_eq!(scene.scattering_nodes[1].kind, "diffuse");
+    assert_eq!(scene.scattering_nodes[2].kind, "layered");
+    assert_eq!(scene.scattering_nodes[2].child_offset, 0);
+    assert_eq!(scene.scattering_nodes[2].child_count, 2);
+    assert_eq!(scene.scattering_child_refs.node_ids, vec![0, 1]);
+    assert_eq!(scene.layered_bxdf_data[0].thickness, 0.01);
+    assert_eq!(scene.layered_bxdf_data[0].max_depth, 10);
+    assert_eq!(scene.layered_bxdf_data[0].n_samples, 1);
+    assert!(scene.layered_bxdf_data[0].two_sided);
+    use pbrt_r4::gpu::ir::flat::{EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR};
+    assert_eq!(
+        scene.scattering_nodes[2].event_flags,
+        EVENT_REFLECTION | EVENT_SPECULAR | EVENT_DIFFUSE
+    );
+}
+
+#[test]
+fn layered_anisotropy_rejects_both_endpoints() {
+    for g in [-1.0, 1.0] {
+        let shape = triangle_node("layered", "coateddiffuse", [0.0; 3]);
+        for component in &mut shape.write().unwrap().components {
+            if let Component::Material(component) = component {
+                Arc::get_mut(&mut component.material)
+                    .unwrap()
+                    .params
+                    .add_float("float g", g);
+            }
+        }
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(shape);
+        assert!(flatten_node(Arc::new(RwLock::new(root))).is_err());
+    }
+}
+
+#[test]
+fn material_table_preserves_child_data_indices_in_mixed_scenes() {
+    use pbrt_r4::gpu::webgpu::material::MaterialTable;
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for kind in [
+        "diffuse",
+        "coateddiffuse",
+        "dielectric",
+        "coateddiffuse",
+        "diffuse",
+    ] {
+        root.add_child(triangle_node(kind, kind, [0.0; 3]));
+    }
+    let mut scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    for (i, data) in scene.diffuse_bxdf_data.iter_mut().enumerate() {
+        data.reflectance = [0.1 * (i + 1) as f32; 3];
+    }
+    for (i, data) in scene.dielectric_bxdf_data.iter_mut().enumerate() {
+        data.eta = 1.1 + 0.1 * i as f32;
+    }
+    let table = MaterialTable::from_flat(&scene).unwrap();
+    assert_eq!(table.diffuse.len(), 4);
+    assert_eq!(table.dielectric.len(), 3);
+    assert_eq!(table.layered.len(), 2);
+    for node in &scene.scattering_nodes {
+        let i = node.data_index as usize;
+        match node.kind.as_str() {
+            "diffuse" => assert_eq!(
+                table.diffuse[i].reflectance[..3],
+                scene.diffuse_bxdf_data[i].reflectance
+            ),
+            "dielectric" => assert_eq!(table.dielectric[i].eta, scene.dielectric_bxdf_data[i].eta),
+            "layered" => assert_eq!(table.layered[i].two_sided, 1),
+            _ => unreachable!(),
+        }
+    }
+    scene.scattering_nodes[0].data_index = u32::MAX;
+    assert!(MaterialTable::from_flat(&scene).is_err());
+}
+
+#[test]
+#[ignore = "requires a Vulkan GPU with experimental ray queries"]
+fn layered_scene_uniform_points_to_layered_table_not_bssrdf_table() {
+    use pbrt_r4::gpu::webgpu::{abi::INVALID_INDEX, context::Context, scene::Scene};
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(triangle_node("layered", "coateddiffuse", [0.0; 3]));
+    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let context = Context::new().unwrap();
+    let scene = Scene::from_flat(&context.device, &context.queue, flat).unwrap();
+    assert_eq!(scene.scene_uniform.layered_bxdf_count, 1);
+    assert_eq!(scene.scene_uniform.bssrdf_node_count, 0);
+    assert_eq!(scene.scene_uniform.bssrdf_node_offset_words, INVALID_INDEX);
+    assert_eq!(
+        scene.scene_uniform.layered_bxdf_offset_words,
+        scene.scene_uniform.scattering_child_offset_words
+            + scene.scene_uniform.scattering_child_count
+    );
+    assert_eq!(scene.scene_uniform.dielectric_material_count, 1);
+    assert_eq!(scene.scene_uniform.diffuse_material_count, 1);
+}
+
+#[test]
+fn scattering_graph_validation_rejects_cycles_and_invalid_ranges() {
+    let cyclic_nodes = vec![pbrt_r4::gpu::ir::flat::ScatteringNode {
+        kind: "layered".to_string(),
+        event_flags: 0,
+        data_index: 0,
+        child_offset: 0,
+        child_count: 1,
+    }];
+    let cyclic_model = vec![pbrt_r4::gpu::ir::flat::ScatteringModel {
+        surface_root: 0,
+        bssrdf_root: u32::MAX,
+    }];
+    let error = validate_scattering_graph(
+        &cyclic_model,
+        &cyclic_nodes,
+        &pbrt_r4::gpu::ir::flat::ScatteringChildRefs { node_ids: vec![0] },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("Cycle detected"));
+
+    let invalid_range = vec![pbrt_r4::gpu::ir::flat::ScatteringNode {
+        kind: "diffuse".to_string(),
+        event_flags: 0,
+        data_index: 0,
+        child_offset: 1,
+        child_count: 1,
+    }];
+    let error = validate_scattering_graph(
+        &cyclic_model,
+        &invalid_range,
+        &pbrt_r4::gpu::ir::flat::ScatteringChildRefs { node_ids: vec![] },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("invalid child range"));
 }
 
 #[test]
@@ -474,15 +649,14 @@ fn flatten_node_rejects_invalid_dielectric_eta() {
 }
 
 #[test]
-fn flatten_node_preserves_unsupported_material_kind() {
+fn flatten_node_rejects_unsupported_material_kind() {
     let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
 
-    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.materials[0].kind, "conductor");
-    assert_eq!(scene.materials[0].data, MaterialData::Unsupported);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("Unsupported GPU material kind"));
 }
 
 #[test]
