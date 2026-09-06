@@ -34,6 +34,18 @@ struct SceneUniform {
     diffuse_material_count: u32,
     dielectric_material_offset_words: u32,
     dielectric_material_count: u32,
+    scattering_model_offset_words: u32,
+    scattering_model_count: u32,
+    scattering_node_offset_words: u32,
+    scattering_node_count: u32,
+    scattering_child_offset_words: u32,
+    scattering_child_count: u32,
+    bssrdf_node_offset_words: u32,
+    bssrdf_node_count: u32,
+    layered_bxdf_offset_words: u32,
+    layered_bxdf_count: u32,
+    debug_scattering_model: u32,
+    scattering_reserved: u32,
     light_record_offset_words: u32,
     light_count: u32,
     point_light_offset_words: u32,
@@ -72,6 +84,21 @@ struct Instance {
     orientation_flags: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
+};
+
+struct ScatteringModelRecord {
+    surface_root: u32,
+    bssrdf_root: u32,
+    _padding: vec2<u32>,
+};
+
+struct ScatteringNodeRecord {
+    kind_tag: u32,
+    event_flags: u32,
+    data_index: u32,
+    child_offset: u32,
+    child_count: u32,
+    _padding: vec3<u32>,
 };
 
 struct RaySamples {

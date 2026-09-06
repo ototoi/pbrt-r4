@@ -4,8 +4,9 @@ use pbrt_r4::gpu::ir::flat::{
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, scene_uniform, AreaLight, CameraUniform,
     Geometry, Instance, LightRecord, MaterialRecord, PixelSampleState, PointLight, QueueState,
-    RayWorkItem, SceneUniform, ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry,
-    Vertex, ViewportUniform, INVALID_INDEX, LIGHT_SAMPLER_KIND_UNIFORM,
+    RayWorkItem, ScatteringModelRecord, ScatteringNodeRecord, SceneUniform, ShadowRayWorkItem,
+    SurfaceWorkItem, TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX,
+    LIGHT_SAMPLER_KIND_UNIFORM,
 };
 use pbrt_r4::gpu::webgpu::material::MaterialTable;
 
@@ -72,7 +73,10 @@ fn material_table_assigns_type_specific_data_indices() {
 
 #[test]
 fn scene_uniform_records_absolute_word_offsets() {
-    let uniform = scene_uniform(2, 8, 1, 12, 1, 3, 1, 2, 16, 28, 36, 60).unwrap();
+    let uniform = scene_uniform(
+        2, 8, 1, 12, 1, 16, 1, 20, 2, 28, 3, 32, 0, 32, 0, 3, 1, 2, 36, 48, 52, 60,
+    )
+    .unwrap();
 
     assert_eq!(uniform.material_offset_words, 0);
     assert_eq!(uniform.material_count, 2);
@@ -80,11 +84,21 @@ fn scene_uniform_records_absolute_word_offsets() {
     assert_eq!(uniform.diffuse_material_count, 1);
     assert_eq!(uniform.dielectric_material_offset_words, 12);
     assert_eq!(uniform.dielectric_material_count, 1);
-    assert_eq!(uniform.light_record_offset_words, 16);
+    assert_eq!(uniform.scattering_model_offset_words, 16);
+    assert_eq!(uniform.scattering_model_count, 1);
+    assert_eq!(uniform.scattering_node_offset_words, 20);
+    assert_eq!(uniform.scattering_node_count, 2);
+    assert_eq!(uniform.scattering_child_offset_words, 28);
+    assert_eq!(uniform.scattering_child_count, 3);
+    assert_eq!(uniform.bssrdf_node_offset_words, 32);
+    assert_eq!(uniform.bssrdf_node_count, 0);
+    assert_eq!(uniform.layered_bxdf_offset_words, 32);
+    assert_eq!(uniform.layered_bxdf_count, 0);
+    assert_eq!(uniform.light_record_offset_words, 36);
     assert_eq!(uniform.light_count, 3);
-    assert_eq!(uniform.point_light_offset_words, 28);
+    assert_eq!(uniform.point_light_offset_words, 48);
     assert_eq!(uniform.point_light_count, 1);
-    assert_eq!(uniform.area_light_offset_words, 36);
+    assert_eq!(uniform.area_light_offset_words, 52);
     assert_eq!(uniform.area_light_count, 2);
     assert_eq!(uniform.light_sampler_kind, LIGHT_SAMPLER_KIND_UNIFORM);
     assert_eq!(uniform.light_sampler_data_offset, INVALID_INDEX);
@@ -99,11 +113,13 @@ fn scene_uniform_records_absolute_word_offsets() {
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
-    assert_eq!(std::mem::size_of::<SceneUniform>(), 80);
+    assert_eq!(std::mem::size_of::<SceneUniform>(), 128);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 144);
     assert_eq!(std::mem::size_of::<MaterialRecord>(), 16);
+    assert_eq!(std::mem::size_of::<ScatteringModelRecord>(), 16);
+    assert_eq!(std::mem::size_of::<ScatteringNodeRecord>(), 32);
     assert_eq!(
         std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::DiffuseMaterialData>(),
         16
@@ -145,34 +161,61 @@ fn webgpu_work_item_field_offsets_match_shader_layout() {
         20
     );
     assert_eq!(
-        std::mem::offset_of!(SceneUniform, light_record_offset_words),
+        std::mem::offset_of!(SceneUniform, scattering_model_offset_words),
         24
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_count), 28);
     assert_eq!(
-        std::mem::offset_of!(SceneUniform, point_light_offset_words),
+        std::mem::offset_of!(SceneUniform, scattering_model_count),
+        28
+    );
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, scattering_node_offset_words),
         32
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, point_light_count), 36);
     assert_eq!(
-        std::mem::offset_of!(SceneUniform, area_light_offset_words),
+        std::mem::offset_of!(SceneUniform, scattering_node_count),
+        36
+    );
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, scattering_child_offset_words),
         40
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, area_light_count), 44);
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_sampler_kind), 48);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, scattering_child_count),
+        44
+    );
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, light_record_offset_words),
+        72
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_count), 76);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, point_light_offset_words),
+        80
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, point_light_count), 84);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, area_light_offset_words),
+        88
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, area_light_count), 92);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_sampler_kind), 96);
     assert_eq!(
         std::mem::offset_of!(SceneUniform, light_sampler_data_offset),
-        52
+        100
     );
     assert_eq!(
         std::mem::offset_of!(SceneUniform, light_bvh_node_offset),
-        56
+        104
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_bvh_node_count), 60);
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_offset), 64);
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_count), 68);
-    assert_eq!(std::mem::offset_of!(SceneUniform, scene_data_words), 72);
-    assert_eq!(std::mem::offset_of!(SceneUniform, reserved), 76);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, light_bvh_node_count),
+        108
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_offset), 112);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_count), 116);
+    assert_eq!(std::mem::offset_of!(SceneUniform, scene_data_words), 120);
+    assert_eq!(std::mem::offset_of!(SceneUniform, reserved), 124);
     assert_eq!(std::mem::offset_of!(Instance, area_light), 8);
     assert_eq!(
         std::mem::offset_of!(AreaLight, distribution_offset_words),
