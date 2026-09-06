@@ -127,7 +127,6 @@ impl WavefrontPathIntegrator {
                 buffer_entry(24, &scene.light_bvh_header_buffer),
                 buffer_entry(25, &scene.light_bvh_node_buffer),
                 buffer_entry(26, &scene.light_leaf_buffer),
-                buffer_entry(27, &scene.texture_attribute_buffer),
             ],
         });
         Ok(Self {
