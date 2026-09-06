@@ -102,6 +102,13 @@ struct ScatteringModelRecord {
     _padding: vec2<u32>,
 };
 
+struct MaterialRecord {
+    kind_tag: u32,
+    data_index: u32,
+    scattering_model: u32,
+    _padding: u32,
+};
+
 struct ScatteringNodeRecord {
     kind_tag: u32,
     event_flags: u32,
@@ -217,6 +224,8 @@ var<storage, read_write> wavefront_queue: array<atomic<u32>>;
 var<uniform> material_table: MaterialTableUniform;
 @group(0) @binding(12)
 var<uniform> light_table: LightTableUniform;
+@group(0) @binding(13)
+var<storage, read> materials: array<MaterialRecord>;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -682,7 +691,11 @@ fn load_material_data_index(index: u32) -> u32 {
 }
 
 fn load_material_model(index: u32) -> u32 {
-    return scene_data[material_table.material_offset_words + index * 4u + 2u];
+    if (index >= arrayLength(&materials)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    return materials[index].scattering_model;
 }
 
 fn load_diffuse_material(index: u32) -> vec4<f32> {

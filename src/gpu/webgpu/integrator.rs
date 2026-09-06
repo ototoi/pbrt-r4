@@ -105,6 +105,7 @@ impl WavefrontPathIntegrator {
                 buffer_entry(10, &queues.wavefront),
                 buffer_entry(11, &material_table_buffer),
                 buffer_entry(12, &light_table_buffer),
+                buffer_entry(13, &scene.material_buffer),
             ],
         });
         Ok(Self {
