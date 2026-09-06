@@ -572,12 +572,14 @@ fn material_table_preserves_child_data_indices_in_mixed_scenes() {
 #[test]
 #[ignore = "requires a Vulkan GPU with experimental ray queries"]
 fn layered_scene_uniform_points_to_layered_table_not_bssrdf_table() {
-    use pbrt_r4::gpu::webgpu::{abi::INVALID_INDEX, context::Context, scene::Scene};
+    use pbrt_r4::gpu::webgpu::{
+        abi::INVALID_INDEX, context::Context, scene::Scene, stages::RequiredLimits,
+    };
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(triangle_node("layered", "coateddiffuse", [0.0; 3]));
     let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let context = Context::new().unwrap();
+    let context = Context::new(RequiredLimits::default()).unwrap();
     let scene = Scene::from_flat(&context.device, &context.queue, flat).unwrap();
     assert_eq!(scene.scene_uniform.layered_bxdf_count, 1);
     assert_eq!(scene.scene_uniform.bssrdf_node_count, 0);
