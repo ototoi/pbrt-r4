@@ -170,6 +170,21 @@ struct PointLight {
     intensity: vec4<f32>,
 };
 
+struct LightRecord {
+    kind: u32,
+    payload: u32,
+    _padding: vec2<u32>,
+};
+
+struct AreaLight {
+    instance: u32,
+    distribution_offset_words: u32,
+    distribution_count: u32,
+    total_area: f32,
+    emission: vec3<f32>,
+    flags: u32,
+};
+
 struct TriangleDistributionEntry {
     primitive: u32,
     cdf: f32,
@@ -221,8 +236,6 @@ var<storage, read> indices: array<u32>;
 var<storage, read> geometries: array<Geometry>;
 @group(0) @binding(6)
 var<storage, read> instances: array<Instance>;
-@group(0) @binding(7)
-var<storage, read> scene_data: array<u32>;
 @group(0) @binding(8)
 var<storage, read_write> surfaces: array<SurfaceWorkItem>;
 @group(0) @binding(9)
@@ -247,6 +260,20 @@ var<storage, read> scattering_nodes: array<ScatteringNodeRecord>;
 var<storage, read> scattering_children: array<u32>;
 @group(0) @binding(19)
 var<storage, read> layered_bxdf_words: array<u32>;
+@group(0) @binding(20)
+var<storage, read> light_records: array<LightRecord>;
+@group(0) @binding(21)
+var<storage, read> point_lights: array<PointLight>;
+@group(0) @binding(22)
+var<storage, read> area_lights: array<AreaLight>;
+@group(0) @binding(23)
+var<storage, read> triangle_distributions: array<TriangleDistributionEntry>;
+@group(0) @binding(24)
+var<storage, read> light_bvh_header: array<u32>;
+@group(0) @binding(25)
+var<storage, read> light_bvh_nodes: array<u32>;
+@group(0) @binding(26)
+var<storage, read> light_bvh_leaves: array<u32>;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -602,17 +629,17 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
 }
 
 fn load_area_emission(index: u32) -> vec4<f32> {
-    let base = light_table.area_light_offset_words + index * 8u;
-    return vec4<f32>(
-        bitcast<f32>(scene_data[base + 4u]),
-        bitcast<f32>(scene_data[base + 5u]),
-        bitcast<f32>(scene_data[base + 6u]),
-        0.0,
-    );
+    return vec4<f32>(area_lights[index].emission, 0.0);
 }
 
 fn load_area_word(index: u32, word: u32) -> u32 {
-    return scene_data[light_table.area_light_offset_words + index * 8u + word];
+    let area = area_lights[index];
+    if (word == 0u) { return area.instance; }
+    if (word == 1u) { return area.distribution_offset_words; }
+    if (word == 2u) { return area.distribution_count; }
+    if (word == 3u) { return bitcast<u32>(area.total_area); }
+    if (word == 7u) { return area.flags; }
+    return 0u;
 }
 
 fn load_area_instance(index: u32) -> u32 {
@@ -628,7 +655,11 @@ fn load_area_distribution_count(index: u32) -> u32 {
 }
 
 fn load_area_distribution_word(index: u32, distribution_index: u32, word: u32) -> u32 {
-    return scene_data[load_area_word(index, 1u) + distribution_index * 4u + word];
+    let entry = triangle_distributions[load_area_word(index, 1u) + distribution_index];
+    if (word == 0u) { return entry.primitive; }
+    if (word == 1u) { return bitcast<u32>(entry.cdf); }
+    if (word == 2u) { return bitcast<u32>(entry.area); }
+    return 0u;
 }
 
 fn load_area_distribution(index: u32, distribution_index: u32) -> AreaTriangleSelection {
@@ -859,41 +890,27 @@ fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
 }
 
 fn load_point_light(index: u32) -> PointLight {
-    let base = light_table.point_light_offset_words + index * 8u;
-    return PointLight(
-        vec4<f32>(
-            bitcast<f32>(scene_data[base]),
-            bitcast<f32>(scene_data[base + 1u]),
-            bitcast<f32>(scene_data[base + 2u]),
-            bitcast<f32>(scene_data[base + 3u]),
-        ),
-        vec4<f32>(
-            bitcast<f32>(scene_data[base + 4u]),
-            bitcast<f32>(scene_data[base + 5u]),
-            bitcast<f32>(scene_data[base + 6u]),
-            bitcast<f32>(scene_data[base + 7u]),
-        ),
-    );
+    return point_lights[index];
 }
 
 fn load_light_kind(index: u32) -> u32 {
-    return scene_data[light_table.light_record_offset_words + index * 4u];
+    return light_records[index].kind;
 }
 
 fn load_light_payload(index: u32) -> u32 {
-    return scene_data[light_table.light_record_offset_words + index * 4u + 1u];
+    return light_records[index].payload;
 }
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
     if (light_handle >= light_table.light_count || light_table.light_leaf_offset == 0xffffffffu) {
         return 0.0;
     }
-    if (scene_data[light_table.light_leaf_offset + light_handle] == 0xffffffffu) {
+    if (light_bvh_leaves[light_handle] == 0xffffffffu) {
         return 0.0;
     }
     var count = 0u;
     for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (scene_data[light_table.light_leaf_offset + handle] != 0xffffffffu) {
+        if (light_bvh_leaves[handle] != 0xffffffffu) {
             count = count + 1u;
         }
     }
@@ -941,7 +958,7 @@ fn sample_uniform_light(selector: f32) -> LightSelection {
     }
     var count = 0u;
     for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (scene_data[light_table.light_leaf_offset + handle] != 0xffffffffu) {
+        if (light_bvh_leaves[handle] != 0xffffffffu) {
             count = count + 1u;
         }
     }
@@ -951,7 +968,7 @@ fn sample_uniform_light(selector: f32) -> LightSelection {
     let selected = min(u32(min(selector, 0.99999994) * f32(count)), count - 1u);
     var ordinal = 0u;
     for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (scene_data[light_table.light_leaf_offset + handle] != 0xffffffffu) {
+            if (light_bvh_leaves[handle] != 0xffffffffu) {
             if (ordinal == selected) {
                 return LightSelection(handle, 1.0 / f32(count));
             }
@@ -962,7 +979,7 @@ fn sample_uniform_light(selector: f32) -> LightSelection {
 }
 
 fn light_bvh_word(node_index: u32, word: u32) -> u32 {
-    return scene_data[light_table.light_bvh_node_offset + node_index * 8u + word];
+    return light_bvh_nodes[node_index * 8u + word];
 }
 
 fn decode_light_bvh_node(node_index: u32) -> DecodedLightBVHNode {
@@ -972,14 +989,14 @@ fn decode_light_bvh_node(node_index: u32) -> DecodedLightBVHNode {
     let q_min = vec3<u32>(word0 & 0xffffu, word0 >> 16u, word1 & 0xffffu);
     let q_max = vec3<u32>(word1 >> 16u, word2 & 0xffffu, word2 >> 16u);
     let all_min = vec3<f32>(
-        bitcast<f32>(scene_data[light_table.light_sampler_data_offset]),
-        bitcast<f32>(scene_data[light_table.light_sampler_data_offset + 1u]),
-        bitcast<f32>(scene_data[light_table.light_sampler_data_offset + 2u]),
+        bitcast<f32>(light_bvh_header[0u]),
+        bitcast<f32>(light_bvh_header[1u]),
+        bitcast<f32>(light_bvh_header[2u]),
     );
     let all_max = vec3<f32>(
-        bitcast<f32>(scene_data[light_table.light_sampler_data_offset + 4u]),
-        bitcast<f32>(scene_data[light_table.light_sampler_data_offset + 5u]),
-        bitcast<f32>(scene_data[light_table.light_sampler_data_offset + 6u]),
+        bitcast<f32>(light_bvh_header[4u]),
+        bitcast<f32>(light_bvh_header[5u]),
+        bitcast<f32>(light_bvh_header[6u]),
     );
     let extent = all_max - all_min;
     let bounds_min = all_min + vec3<f32>(q_min) / 65535.0 * extent;
@@ -1121,7 +1138,7 @@ fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f3
     if (light_handle >= light_table.light_leaf_count) {
         return 0.0;
     }
-    let leaf_index = scene_data[light_table.light_leaf_offset + light_handle];
+    let leaf_index = light_bvh_leaves[light_handle];
     if (leaf_index >= light_table.light_bvh_node_count) {
         return 0.0;
     }

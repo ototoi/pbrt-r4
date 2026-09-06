@@ -39,7 +39,8 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(
         COMMON_SHADER.contains("var<storage, read> diffuse_materials: array<DiffuseMaterialData>;")
     );
-    assert!(COMMON_SHADER.contains("var<storage, read> scene_data: array<u32>;"));
+    assert!(!COMMON_SHADER.contains("scene_data"));
+    assert!(COMMON_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
     assert!(!COMMON_SHADER.contains("material_light_data"));
 }
 

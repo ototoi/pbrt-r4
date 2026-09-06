@@ -99,7 +99,6 @@ impl WavefrontPathIntegrator {
                 buffer_entry(4, &scene.index_buffer),
                 buffer_entry(5, &scene.geometry_buffer),
                 buffer_entry(6, &scene.instance_buffer),
-                buffer_entry(7, &scene.scene_data_buffer),
                 buffer_entry(8, &queues.surfaces),
                 buffer_entry(9, &film.framebuffer),
                 buffer_entry(10, &queues.wavefront),
@@ -112,6 +111,13 @@ impl WavefrontPathIntegrator {
                 buffer_entry(17, &scene.scattering_node_buffer),
                 buffer_entry(18, &scene.scattering_child_buffer),
                 buffer_entry(19, &scene.layered_bxdf_buffer),
+                buffer_entry(20, &scene.light_record_buffer),
+                buffer_entry(21, &scene.point_light_buffer),
+                buffer_entry(22, &scene.area_light_buffer),
+                buffer_entry(23, &scene.distribution_buffer),
+                buffer_entry(24, &scene.light_bvh_header_buffer),
+                buffer_entry(25, &scene.light_bvh_node_buffer),
+                buffer_entry(26, &scene.light_leaf_buffer),
             ],
         });
         Ok(Self {
