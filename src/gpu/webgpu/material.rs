@@ -18,19 +18,19 @@ impl MaterialTable {
             let valid = match node.kind.as_str() {
                 "diffuse" => {
                     node.child_count == 0
-                        && (node.data_index as usize) < scene.diffuse_bxdf_data.len()
+                        && (node.data_index as usize) < node_table_len(scene, "diffuse")
                 }
                 "dielectric" => {
                     node.child_count == 0
-                        && (node.data_index as usize) < scene.dielectric_bxdf_data.len()
+                        && (node.data_index as usize) < node_table_len(scene, "dielectric")
                 }
                 "thindielectric" => {
                     node.child_count == 0
-                        && (node.data_index as usize) < scene.dielectric_bxdf_data.len()
+                        && (node.data_index as usize) < node_table_len(scene, "thindielectric")
                 }
                 "layered" => {
                     if node.child_count != 2
-                        || (node.data_index as usize) >= scene.layered_bxdf_data.len()
+                        || (node.data_index as usize) >= node_table_len(scene, "layered")
                     {
                         false
                     } else {
@@ -104,9 +104,11 @@ fn build_abi_tables(
     ),
     PbrtError,
 > {
-    let mut diffuse = vec![DiffuseMaterialData::zeroed(); scene.diffuse_bxdf_data.len()];
-    let mut dielectric = vec![DielectricMaterialData::zeroed(); scene.dielectric_bxdf_data.len()];
-    let mut layered = vec![LayeredBxDFData::zeroed(); scene.layered_bxdf_data.len()];
+    let mut diffuse = vec![DiffuseMaterialData::zeroed(); node_table_len(scene, "diffuse")];
+    let dielectric_len =
+        node_table_len(scene, "dielectric").max(node_table_len(scene, "thindielectric"));
+    let mut dielectric = vec![DielectricMaterialData::zeroed(); dielectric_len];
+    let mut layered = vec![LayeredBxDFData::zeroed(); node_table_len(scene, "layered")];
     for (node_id, node) in scene.scattering_nodes.iter().enumerate() {
         let Some(material) = owner_material(scene, node_id as u32) else {
             return Err(PbrtError::error("Scattering node has no owning material."));
@@ -144,6 +146,16 @@ fn build_abi_tables(
         }
     }
     Ok((diffuse, dielectric, layered))
+}
+
+fn node_table_len(scene: &flat::Scene, kind: &str) -> usize {
+    scene
+        .scattering_nodes
+        .iter()
+        .filter(|node| node.kind == kind)
+        .map(|node| node.data_index as usize + 1)
+        .max()
+        .unwrap_or(0)
 }
 
 fn owner_material<'a>(scene: &'a flat::Scene, node_id: u32) -> Option<&'a flat::Material> {
