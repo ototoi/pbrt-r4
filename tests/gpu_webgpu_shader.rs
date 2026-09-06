@@ -26,9 +26,11 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
         .and_then(|tail| tail.split("};").next())
         .unwrap();
     assert!(!viewport.contains("light_count"));
-    assert!(COMMON_SHADER.contains("struct SceneUniform {"));
+    assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
+    assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
     assert!(COMMON_SHADER.contains("@group(0) @binding(11)"));
-    assert!(COMMON_SHADER.contains("var<uniform> scene: SceneUniform;"));
+    assert!(COMMON_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
+    assert!(COMMON_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
     assert!(COMMON_SHADER.contains("var<storage, read> scene_data: array<u32>;"));
     assert!(!COMMON_SHADER.contains("material_light_data"));
 }

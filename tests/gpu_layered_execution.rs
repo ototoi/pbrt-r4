@@ -1,6 +1,8 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::webgpu::{abi::LayeredBxDFData, context::Context, pipeline::Pipeline};
+use pbrt_r4::gpu::webgpu::{
+    abi::LayeredBxDFData, context::Context, pipeline::Pipeline, stages::RequiredLimits,
+};
 use wgpu::util::DeviceExt;
 
 const SAMPLE_COUNT: usize = 8192;
@@ -60,7 +62,7 @@ fn mixed_layered_scene_renders_with_real_and_debug_materials() {
 #[test]
 #[ignore = "requires a Vulkan GPU with experimental ray queries"]
 fn layered_gpu_matches_analytic_limits_and_sampled_energy() {
-    let context = Context::new().unwrap();
+    let context = Context::new(RequiredLimits::default()).unwrap();
     let device = &context.device;
     Pipeline::new(device).expect("all composed wavefront shaders must validate");
     let cases: Vec<_> = (0..CASE_COUNT)
