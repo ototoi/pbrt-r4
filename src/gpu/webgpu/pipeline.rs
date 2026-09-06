@@ -14,6 +14,7 @@ pub struct Pipeline {
     pub intersect_shadow: wgpu::ComputePipeline,
     pub sample_diffuse_bounce: wgpu::ComputePipeline,
     pub sample_dielectric_bounce: wgpu::ComputePipeline,
+    pub sample_layered_bounce: wgpu::ComputePipeline,
     pub swap_ray_queues: wgpu::ComputePipeline,
     pub reset_next_ray_queue: wgpu::ComputePipeline,
     pub reset_shadow_queue: wgpu::ComputePipeline,
@@ -115,6 +116,11 @@ impl Pipeline {
                 "pbrt-r4 sample dielectric bounce",
                 include_str!("shaders/sample_dielectric_bounce.wgsl"),
                 "sample_dielectric_bounce",
+            ),
+            sample_layered_bounce: compute(
+                "pbrt-r4 sample layered bounce",
+                include_str!("shaders/sample_layered_bounce.wgsl"),
+                "sample_layered_bounce",
             ),
             swap_ray_queues: compute(
                 "pbrt-r4 swap ray queues",
