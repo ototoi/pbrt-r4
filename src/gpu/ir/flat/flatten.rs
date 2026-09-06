@@ -841,11 +841,7 @@ fn material_index(
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
     let kind = material_kind.unwrap_or(&source_material.kind);
-    let data = if material_kind.is_some() {
-        super::MaterialData::Unsupported
-    } else {
-        material_data(source_material, kind)
-    };
+    let data = material_data(source_material, kind)?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         data,
@@ -854,7 +850,10 @@ fn material_index(
     Ok(index)
 }
 
-fn material_data(source_material: &NodeMaterial, kind: &str) -> super::MaterialData {
+fn material_data(
+    source_material: &NodeMaterial,
+    kind: &str,
+) -> Result<super::MaterialData, PbrtError> {
     match kind {
         "diffuse" => {
             let default_reflectance = Spectrum::from(0.5);
@@ -862,12 +861,23 @@ fn material_data(source_material: &NodeMaterial, kind: &str) -> super::MaterialD
                 .params
                 .get_one_spectrum("reflectance", &default_reflectance)
                 .to_rgb();
-            super::MaterialData::Diffuse(super::DiffuseMaterialData { reflectance })
+            Ok(super::MaterialData::Diffuse(super::DiffuseMaterialData {
+                reflectance,
+            }))
         }
-        "dielectric" => super::MaterialData::Dielectric(super::DielectricMaterialData {
-            eta: source_material.params.get_one_float("eta", 1.5) as f32,
-        }),
-        _ => super::MaterialData::Unsupported,
+        "dielectric" => {
+            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
+            if !eta.is_finite() || eta <= 0.0 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has an invalid dielectric eta: {eta}.",
+                    source_material.name
+                )));
+            }
+            Ok(super::MaterialData::Dielectric(
+                super::DielectricMaterialData { eta },
+            ))
+        }
+        _ => Ok(super::MaterialData::Unsupported),
     }
 }
 
