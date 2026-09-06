@@ -9,6 +9,8 @@ const GENERATE_PRIMARY_RAYS_SHADER: &str =
 const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
+const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
@@ -105,6 +107,16 @@ fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(EVALUATE_MATERIALS_SHADER.contains("let reflectance = load_diffuse_reflectance"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
     assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * vec4<f32>(reflectance, 1.0)"));
+}
+
+#[test]
+fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
+    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
+    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(index: u32)"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
 }
 
 #[test]
