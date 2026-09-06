@@ -1,9 +1,10 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
     transform_swaps_handedness, AreaLight, AreaTriangleInput, Camera, Geometry, Instance,
-    LightBoundInput, LightKind, LightRecord, Material, PointLight, RenderSettings, Scene,
-    Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport,
-    INVALID_INDEX,
+    LightBoundInput, LightKind, LightRecord, Material, PointLight, RenderSettings,
+    ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene, Transform,
+    TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport, EVENT_DIFFUSE,
+    EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
 };
 use crate::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
@@ -46,7 +47,7 @@ pub fn flatten_node_with_material_override(
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
-    Ok(Scene {
+    let scene = Scene {
         camera,
         viewport,
         output,
@@ -62,7 +63,16 @@ pub fn flatten_node_with_material_override(
         geometries: builder.geometries,
         instances: builder.instances,
         materials: builder.materials,
-    })
+        diffuse_bxdf_data: builder.diffuse_bxdf_data,
+        dielectric_bxdf_data: builder.dielectric_bxdf_data,
+        scattering_models: builder.scattering_models,
+        scattering_nodes: builder.scattering_nodes,
+        scattering_child_refs: ScatteringChildRefs {
+            node_ids: builder.scattering_child_refs,
+        },
+    };
+    scene.validate_scattering_models()?;
+    Ok(scene)
 }
 
 #[derive(Default)]
@@ -75,6 +85,11 @@ struct FlatBuilder {
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     materials: Vec<Material>,
+    diffuse_bxdf_data: Vec<super::DiffuseMaterialData>,
+    dielectric_bxdf_data: Vec<super::DielectricMaterialData>,
+    scattering_models: Vec<ScatteringModel>,
+    scattering_nodes: Vec<ScatteringNode>,
+    scattering_child_refs: Vec<u32>,
     output: Option<super::Output>,
     source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
@@ -841,13 +856,71 @@ fn material_index(
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
     let kind = material_kind.unwrap_or(&source_material.kind);
+    let source_kind = source_material.kind.as_str();
+    let source_data = material_source_data(source_material, source_kind)?;
     let data = material_data(source_material, kind)?;
+    let scattering_model = register_scattering_model(&data, kind, builder)?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         data,
+        source_kind: source_kind.to_string(),
+        source_data,
+        scattering_model,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
+}
+
+fn register_scattering_model(
+    data: &super::MaterialData,
+    kind: &str,
+    builder: &mut FlatBuilder,
+) -> Result<u32, PbrtError> {
+    let (event_flags, data_index) = match (kind, data) {
+        ("diffuse", super::MaterialData::Diffuse(data)) => {
+            let index = u32::try_from(builder.diffuse_bxdf_data.len())
+                .map_err(|_| PbrtError::error("The flattened diffuse BxDF table exceeds u32."))?;
+            builder.diffuse_bxdf_data.push(data.clone());
+            (EVENT_REFLECTION | EVENT_DIFFUSE, index)
+        }
+        ("dielectric", super::MaterialData::Dielectric(data)) => {
+            let index = u32::try_from(builder.dielectric_bxdf_data.len()).map_err(|_| {
+                PbrtError::error("The flattened dielectric BxDF table exceeds u32.")
+            })?;
+            builder.dielectric_bxdf_data.push(data.clone());
+            (
+                EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_SPECULAR,
+                index,
+            )
+        }
+        (_, super::MaterialData::Unsupported) => {
+            return Err(PbrtError::error(&format!(
+                "Unsupported GPU material kind: {kind}."
+            )))
+        }
+        _ => {
+            return Err(PbrtError::error(&format!(
+                "Material kind \"{kind}\" does not match its flat material data."
+            )))
+        }
+    };
+    let node_id = u32::try_from(builder.scattering_nodes.len())
+        .map_err(|_| PbrtError::error("The flattened scattering-node table exceeds u32."))?;
+    builder.scattering_nodes.push(ScatteringNode {
+        kind: kind.to_string(),
+        event_flags,
+        data_index,
+        child_offset: u32::try_from(builder.scattering_child_refs.len())
+            .map_err(|_| PbrtError::error("The flattened scattering-child table exceeds u32."))?,
+        child_count: 0,
+    });
+    let model_id = u32::try_from(builder.scattering_models.len())
+        .map_err(|_| PbrtError::error("The flattened scattering-model table exceeds u32."))?;
+    builder.scattering_models.push(ScatteringModel {
+        surface_root: node_id,
+        bssrdf_root: INVALID_INDEX,
+    });
+    Ok(model_id)
 }
 
 fn material_data(
@@ -879,6 +952,26 @@ fn material_data(
         }
         _ => Ok(super::MaterialData::Unsupported),
     }
+}
+
+fn material_source_data(
+    source_material: &NodeMaterial,
+    kind: &str,
+) -> Result<super::MaterialSourceData, PbrtError> {
+    let data = material_data(source_material, kind)?;
+    Ok(match data {
+        super::MaterialData::Diffuse(data) => {
+            super::MaterialSourceData::Diffuse(super::DiffuseMaterialSourceData {
+                reflectance: data.reflectance,
+            })
+        }
+        super::MaterialData::Dielectric(data) => {
+            super::MaterialSourceData::Dielectric(super::DielectricMaterialSourceData {
+                eta: data.eta,
+            })
+        }
+        super::MaterialData::Unsupported => super::MaterialSourceData::Unsupported,
+    })
 }
 
 fn validate_attribute_len<T>(

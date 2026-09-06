@@ -28,18 +28,37 @@ fn material_table_assigns_type_specific_data_indices() {
             data: FlatMaterialData::Diffuse(FlatDiffuseMaterialData {
                 reflectance: [0.2, 0.3, 0.4],
             }),
+            source_kind: "diffuse".to_string(),
+            source_data: pbrt_r4::gpu::ir::flat::MaterialSourceData::Diffuse(
+                pbrt_r4::gpu::ir::flat::DiffuseMaterialSourceData {
+                    reflectance: [0.2, 0.3, 0.4],
+                },
+            ),
+            scattering_model: 0,
         },
         pbrt_r4::gpu::ir::flat::Material {
             kind: "dielectric".to_string(),
             data: FlatMaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData {
                 eta: 1.5,
             }),
+            source_kind: "dielectric".to_string(),
+            source_data: pbrt_r4::gpu::ir::flat::MaterialSourceData::Dielectric(
+                pbrt_r4::gpu::ir::flat::DielectricMaterialSourceData { eta: 1.5 },
+            ),
+            scattering_model: 1,
         },
         pbrt_r4::gpu::ir::flat::Material {
             kind: "diffuse".to_string(),
             data: FlatMaterialData::Diffuse(FlatDiffuseMaterialData {
                 reflectance: [0.7, 0.8, 0.9],
             }),
+            source_kind: "diffuse".to_string(),
+            source_data: pbrt_r4::gpu::ir::flat::MaterialSourceData::Diffuse(
+                pbrt_r4::gpu::ir::flat::DiffuseMaterialSourceData {
+                    reflectance: [0.7, 0.8, 0.9],
+                },
+            ),
+            scattering_model: 2,
         },
     ];
 
