@@ -9,10 +9,26 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let pixel_index = load_material_eval_pixel(queue_index);
     let surface = surfaces[pixel_index];
-    if (surface.hit == 0u || load_material_kind(surface.material) != MATERIAL_KIND_DIFFUSE) {
+    let material_kind = load_material_kind(surface.material);
+    if (surface.hit == 0u
+        || (material_kind != MATERIAL_KIND_DIFFUSE && material_kind != MATERIAL_KIND_LAYERED)) {
         return;
     }
-    let reflectance = load_diffuse_reflectance(surface.material);
+    var reflectance = vec3<f32>(0.0);
+    if (material_kind == MATERIAL_KIND_DIFFUSE) {
+        reflectance = load_diffuse_reflectance(surface.material);
+    } else {
+        let layered = load_layered_bxdf(load_layered_data_index(surface.material));
+        // The first executable Layered path deliberately covers only the
+        // zero-albedo coated-diffuse configuration. Internal HG scattering
+        // requires the bounded local random walk implemented in the bounce
+        // evaluator and must not be silently approximated here.
+        if (max(layered.albedo.x, max(layered.albedo.y, layered.albedo.z)) > 0.0) {
+            atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+            return;
+        }
+        reflectance = load_layered_bottom_reflectance(surface.material);
+    }
     let ray_index = find_current_ray_for_pixel(pixel_index);
     if (ray_index == 0xffffffffu) {
         return;

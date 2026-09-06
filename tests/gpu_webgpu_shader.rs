@@ -11,6 +11,8 @@ const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
 const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
+const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_layered_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
@@ -104,9 +106,19 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
 #[test]
 fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(COMMON_SHADER.contains("fn load_diffuse_reflectance(material_index: u32)"));
-    assert!(EVALUATE_MATERIALS_SHADER.contains("let reflectance = load_diffuse_reflectance"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = load_diffuse_reflectance"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
     assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * vec4<f32>(reflectance, 1.0)"));
+}
+
+#[test]
+fn layered_shader_resolves_top_and_bottom_nodes() {
+    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
+    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(index: u32)"));
+    assert!(COMMON_SHADER.contains("fn load_layered_bottom_reflectance"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_scattering_child(root, 0u)"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_bottom_reflectance"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("max_depth"));
 }
 
 #[test]

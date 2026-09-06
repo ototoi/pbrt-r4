@@ -18,6 +18,8 @@ use crate::util::spectrum::{Spectrum, SpectrumType};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+const MAX_LAYERED_LOCAL_STEPS: i64 = 1_048_576;
+
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)
 }
@@ -1065,7 +1067,7 @@ fn material_data(
             let max_local_steps = i64::from(max_depth)
                 .checked_mul(i64::from(n_samples))
                 .ok_or_else(|| PbrtError::error("Coateddiffuse local step count overflowed."))?;
-            if max_local_steps > 1_048_576 {
+            if max_local_steps > MAX_LAYERED_LOCAL_STEPS {
                 return Err(PbrtError::error(&format!(
                     "Material \"{}\" exceeds the coateddiffuse local step limit.",
                     source_material.name
