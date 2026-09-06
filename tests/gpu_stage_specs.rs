@@ -8,7 +8,7 @@ fn initial_stage_specs_request_their_actual_storage_dependencies() {
     let specs = initial_stage_specs();
     let limits = RequiredLimits::from_stages(&specs).unwrap();
     assert_eq!(limits.storage_buffers_per_shader_stage, 15);
-    assert_eq!(limits.uniform_buffers_per_shader_stage, 1);
+    assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
     assert_eq!(limits.bind_groups, 3);
 }
 
