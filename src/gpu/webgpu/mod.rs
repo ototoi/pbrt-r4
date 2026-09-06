@@ -12,3 +12,4 @@ pub mod pipeline;
 pub mod queue;
 pub mod scene;
 pub mod shader;
+pub mod stages;
