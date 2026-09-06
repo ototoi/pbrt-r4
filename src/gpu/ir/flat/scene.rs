@@ -1,8 +1,8 @@
 use super::{
     AreaLight, Camera, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
     LayeredBxDFData, LightBVH, LightBounds, LightRecord, Material, Output, PointLight,
-    RenderSettings, ScatteringChildRefs, ScatteringModel, ScatteringNode,
-    TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
+    PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel, ScatteringChildRefs,
+    ScatteringModel, ScatteringNode, TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +28,8 @@ pub struct Scene {
     pub scattering_models: Vec<ScatteringModel>,
     pub scattering_nodes: Vec<ScatteringNode>,
     pub scattering_child_refs: ScatteringChildRefs,
+    pub resolved_scattering_models: Vec<ResolvedScatteringModel>,
+    pub primitive_distribution_map: PrimitiveDistributionMap,
 }
 
 impl Scene {
@@ -37,6 +39,26 @@ impl Scene {
             &self.scattering_nodes,
             &self.scattering_child_refs,
         )
+    }
+
+    pub fn validate_static_views(&self) -> Result<(), crate::util::error::PbrtError> {
+        if self.resolved_scattering_models.len() != self.scattering_models.len() {
+            return Err(crate::util::error::PbrtError::error(
+                "Resolved scattering model count does not match the source graph.",
+            ));
+        }
+        if self.primitive_distribution_map.offsets.len() != self.area_lights.len() + 1 {
+            return Err(crate::util::error::PbrtError::error(
+                "Primitive distribution map offsets do not match area lights.",
+            ));
+        }
+        let last = *self.primitive_distribution_map.offsets.last().unwrap_or(&0) as usize;
+        if last != self.primitive_distribution_map.entries.len() {
+            return Err(crate::util::error::PbrtError::error(
+                "Primitive distribution map range is inconsistent.",
+            ));
+        }
+        Ok(())
     }
 }
 

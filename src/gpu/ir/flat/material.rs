@@ -77,6 +77,16 @@ pub struct ScatteringModel {
     pub bssrdf_root: u32,
 }
 
+/// A resolved view of a scattering model for backend lowering.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedScatteringModel {
+    pub root_node: u32,
+    pub root_kind: String,
+    pub event_flags: u32,
+    pub data_index: u32,
+    pub child_nodes: Vec<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScatteringNode {
     pub kind: String,
