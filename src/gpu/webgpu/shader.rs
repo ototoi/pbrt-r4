@@ -21,14 +21,17 @@ pub fn compose_source(stage_source: &str) -> String {
 }
 
 pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) -> String {
-    let common_source = prune_common_source(
-        COMMON_SHADER,
-        &[stage_source, TRIANGLE_SAMPLING_SHADER, LAYERED_SHADER],
-    );
-    let resource_source = select_resources(
-        RESOURCES_SHADER,
-        &format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}\n{LAYERED_SHADER}"),
-    );
+    let mut roots = vec![stage_source, TRIANGLE_SAMPLING_SHADER];
+    if include_layered {
+        roots.push(LAYERED_SHADER);
+    }
+    let common_source = prune_common_source(COMMON_SHADER, &roots);
+    let mut references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
+    if include_layered {
+        references.push('\n');
+        references.push_str(LAYERED_SHADER);
+    }
+    let resource_source = select_resources(RESOURCES_SHADER, &references);
     // The module graph is built entirely from the literals above. A missing
     // dependency or cycle is therefore a source invariant, not a runtime scene
     // condition; keep the failure explicit while avoiding a generic expect.
