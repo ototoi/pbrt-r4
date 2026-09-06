@@ -23,6 +23,10 @@ impl MaterialTable {
                     node.child_count == 0
                         && (node.data_index as usize) < scene.dielectric_bxdf_data.len()
                 }
+                "thindielectric" => {
+                    node.child_count == 0
+                        && (node.data_index as usize) < scene.dielectric_bxdf_data.len()
+                }
                 "layered" => {
                     if node.child_count != 2
                         || (node.data_index as usize) >= scene.layered_bxdf_data.len()
@@ -121,6 +125,7 @@ pub enum MaterialKind {
     Lambert,
     Dielectric,
     Layered,
+    ThinDielectric,
 }
 
 impl MaterialKind {
@@ -131,6 +136,7 @@ impl MaterialKind {
             Self::Diffuse | Self::Lambert => 2,
             Self::Dielectric => 3,
             Self::Layered => 4,
+            Self::ThinDielectric => 5,
         }
     }
 
@@ -142,6 +148,7 @@ impl MaterialKind {
             "lambert" => Ok(Self::Lambert),
             "dielectric" => Ok(Self::Dielectric),
             "coateddiffuse" => Ok(Self::Layered),
+            "thindielectric" => Ok(Self::ThinDielectric),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
@@ -170,6 +177,7 @@ pub fn scattering_node_tag(kind: &str) -> Result<u32, PbrtError> {
     match kind {
         "diffuse" => Ok(0),
         "dielectric" => Ok(1),
+        "thin_dielectric" => Ok(3),
         "layered" => Ok(2),
         other => Err(PbrtError::error(&format!(
             "Unsupported initial WebGPU scattering node kind: {other}."

@@ -9,6 +9,7 @@ const MATERIAL_KIND_DIFFUSE: u32 = 2u;
 const MATERIAL_KIND_LAMBERT: u32 = 2u;
 const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
 const MATERIAL_KIND_LAYERED: u32 = 4u;
+const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
@@ -646,6 +647,9 @@ fn load_material_kind(index: u32) -> u32 {
     }
     if (node_kind == 1u) {
         return MATERIAL_KIND_DIELECTRIC;
+    }
+    if (node_kind == 3u) {
+        return MATERIAL_KIND_THIN_DIELECTRIC;
     }
     if (node_kind == 2u) {
         return MATERIAL_KIND_LAYERED;

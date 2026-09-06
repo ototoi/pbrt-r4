@@ -898,6 +898,16 @@ fn register_scattering_model(
                 index,
             )
         }
+        ("thindielectric", super::MaterialData::ThinDielectric(data)) => {
+            let index = u32::try_from(builder.dielectric_bxdf_data.len()).map_err(|_| {
+                PbrtError::error("The flattened dielectric BxDF table exceeds u32.")
+            })?;
+            builder.dielectric_bxdf_data.push(data.clone());
+            (
+                EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_SPECULAR,
+                index,
+            )
+        }
         ("coateddiffuse", super::MaterialData::Layered(data)) => {
             let eta = source_material.params.get_one_float("eta", 1.5) as f32;
             let top_data_index =
@@ -1096,6 +1106,18 @@ fn material_data(
                 super::DielectricMaterialData { eta },
             ))
         }
+        "thindielectric" => {
+            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
+            if !eta.is_finite() || eta <= 0.0 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has an invalid thindielectric eta: {eta}.",
+                    source_material.name
+                )));
+            }
+            Ok(super::MaterialData::ThinDielectric(
+                super::DielectricMaterialData { eta },
+            ))
+        }
         _ => Ok(super::MaterialData::Unsupported),
     }
 }
@@ -1113,6 +1135,11 @@ fn material_source_data(
         }
         super::MaterialData::Dielectric(data) => {
             super::MaterialSourceData::Dielectric(super::DielectricMaterialSourceData {
+                eta: data.eta,
+            })
+        }
+        super::MaterialData::ThinDielectric(data) => {
+            super::MaterialSourceData::ThinDielectric(super::DielectricMaterialSourceData {
                 eta: data.eta,
             })
         }
