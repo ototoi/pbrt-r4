@@ -16,7 +16,7 @@ use super::material::MaterialKind;
 use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
-use super::stages::{initial_stage_specs, RequiredLimits};
+use super::stages::{all_stage_specs, RequiredLimits};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -44,7 +44,7 @@ impl WavefrontPathIntegrator {
         flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
-        let required_limits = RequiredLimits::from_stages(&initial_stage_specs())?;
+        let required_limits = RequiredLimits::from_stages(&all_stage_specs())?;
         let context = Context::new(required_limits)?;
         let device = &context.device;
         let queue = &context.queue;
