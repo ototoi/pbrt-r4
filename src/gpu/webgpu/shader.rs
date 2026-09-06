@@ -14,7 +14,10 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
-    compose(
+    // The module graph is built entirely from the four literals above. A missing
+    // dependency or cycle is therefore a source invariant, not a runtime scene
+    // condition; keep the failure explicit while avoiding a generic expect.
+    match compose(
         vec![
             ShaderModuleSpec {
                 id: "common".to_string(),
@@ -38,7 +41,8 @@ pub fn compose_source(stage_source: &str) -> String {
             },
         ],
         "stage",
-    )
-    .expect("built-in WebGPU shader module graph is valid")
-    .source
+    ) {
+        Ok(composed) => composed.source,
+        Err(error) => unreachable!("built-in WebGPU shader module graph is invalid: {error}"),
+    }
 }
