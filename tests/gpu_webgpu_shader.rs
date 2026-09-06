@@ -26,10 +26,20 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
         .and_then(|tail| tail.split("};").next())
         .unwrap();
     assert!(!viewport.contains("light_count"));
-    assert!(COMMON_SHADER.contains("struct SceneUniform {"));
+    assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
+    assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
     assert!(COMMON_SHADER.contains("@group(0) @binding(11)"));
-    assert!(COMMON_SHADER.contains("var<uniform> scene: SceneUniform;"));
-    assert!(COMMON_SHADER.contains("var<storage, read> scene_data: array<u32>;"));
+    assert!(COMMON_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
+    assert!(COMMON_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
+    assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
+    assert!(COMMON_SHADER.contains("@group(0) @binding(13)"));
+    assert!(COMMON_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
+    assert!(COMMON_SHADER.contains("struct MaterialAttributeRef {"));
+    assert!(COMMON_SHADER
+        .contains("var<storage, read> material_attributes: array<MaterialAttributeRef>;"));
+    assert!(COMMON_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
+    assert!(!COMMON_SHADER.contains("scene_data"));
+    assert!(COMMON_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
     assert!(!COMMON_SHADER.contains("material_light_data"));
 }
 
@@ -114,9 +124,17 @@ fn diffuse_shaders_load_type_specific_reflectance() {
 }
 
 #[test]
+fn non_layered_stage_does_not_include_layered_module() {
+    let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    assert!(!source.contains("pbrt-v4 bxdfs.h: LayeredParams"));
+    let layered = compose_source(SAMPLE_LAYERED_BOUNCE_SHADER);
+    assert!(layered.contains("pbrt-v4 bxdfs.h: LayeredBxDF"));
+}
+
+#[test]
 fn layered_shader_resolves_top_and_bottom_nodes() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
-    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(index: u32)"));
+    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(material_index: u32)"));
     assert!(COMMON_SHADER.contains("fn load_layered_bottom_reflectance"));
     assert!(COMMON_SHADER.contains("load_scattering_child(root, 0u)"));
     assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_bottom_reflectance"));
@@ -126,7 +144,7 @@ fn layered_shader_resolves_top_and_bottom_nodes() {
 #[test]
 fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
-    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(index: u32)"));
+    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(node_index: u32)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));

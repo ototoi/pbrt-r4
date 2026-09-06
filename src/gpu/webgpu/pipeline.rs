@@ -1,6 +1,7 @@
 use crate::util::error::PbrtError;
 
 use super::shader;
+use super::stages::{all_stage_specs, RequiredLimits};
 
 pub struct Pipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -25,6 +26,10 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(device: &wgpu::Device) -> Result<Self, PbrtError> {
+        // Keep pipeline construction tied to the same complete contract registry
+        // used during adapter limit negotiation. Layout generation will consume
+        // these specs in the next migration step.
+        RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("pbrt-r4 primary-ray bind group layout"),
@@ -43,11 +48,25 @@ impl Pipeline {
                 storage_entry(4, true),
                 storage_entry(5, true),
                 storage_entry(6, true),
-                storage_entry(7, true),
                 storage_entry(8, false),
                 storage_entry(9, false),
                 storage_entry(10, false),
                 buffer_entry(11, wgpu::BufferBindingType::Uniform),
+                buffer_entry(12, wgpu::BufferBindingType::Uniform),
+                storage_entry(13, true),
+                storage_entry(14, true),
+                storage_entry(15, true),
+                storage_entry(16, true),
+                storage_entry(17, true),
+                storage_entry(18, true),
+                storage_entry(19, true),
+                storage_entry(20, true),
+                storage_entry(21, true),
+                storage_entry(22, true),
+                storage_entry(23, true),
+                storage_entry(24, true),
+                storage_entry(25, true),
+                storage_entry(26, true),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

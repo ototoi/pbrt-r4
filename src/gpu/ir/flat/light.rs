@@ -39,3 +39,11 @@ pub struct TriangleDistributionEntry {
     pub cdf: f32,
     pub area: f32,
 }
+
+/// Maps an area-light-local primitive number to its distribution entry.
+/// `INVALID_INDEX` denotes a primitive excluded from sampling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrimitiveDistributionMap {
+    pub offsets: Vec<u32>,
+    pub entries: Vec<u32>,
+}
