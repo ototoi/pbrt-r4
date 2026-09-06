@@ -561,12 +561,6 @@ fn material_table_preserves_child_data_indices_in_mixed_scenes() {
         root.add_child(triangle_node(kind, kind, [0.0; 3]));
     }
     let mut scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    for (i, data) in scene.diffuse_bxdf_data.iter_mut().enumerate() {
-        data.reflectance = [0.1 * (i + 1) as f32; 3];
-    }
-    for (i, data) in scene.dielectric_bxdf_data.iter_mut().enumerate() {
-        data.eta = 1.1 + 0.1 * i as f32;
-    }
     let table = MaterialTable::from_flat(&scene).unwrap();
     assert_eq!(table.diffuse.len(), 4);
     assert_eq!(table.dielectric.len(), 3);
@@ -574,11 +568,20 @@ fn material_table_preserves_child_data_indices_in_mixed_scenes() {
     for node in &scene.scattering_nodes {
         let i = node.data_index as usize;
         match node.kind.as_str() {
-            "diffuse" => assert_eq!(
-                table.diffuse[i].reflectance[..3],
-                scene.diffuse_bxdf_data[i].reflectance
-            ),
-            "dielectric" => assert_eq!(table.dielectric[i].eta, scene.dielectric_bxdf_data[i].eta),
+            "diffuse" => assert!(scene.materials.iter().any(|material| {
+                material.attributes.iter().any(|attribute| {
+                    attribute.name == "reflectance"
+                        && scene.attribute_tables.spectra[attribute.index as usize].0[..3]
+                            == table.diffuse[i].reflectance[..3]
+                })
+            })),
+            "dielectric" => assert!(scene.materials.iter().any(|material| {
+                material.attributes.iter().any(|attribute| {
+                    attribute.name == "eta"
+                        && scene.attribute_tables.scalars[attribute.index as usize]
+                            == table.dielectric[i].eta
+                })
+            })),
             "layered" => assert_eq!(table.layered[i].two_sided, 1),
             _ => unreachable!(),
         }

@@ -1,4 +1,5 @@
 use crate::util::error::PbrtError;
+use bytemuck::Zeroable;
 
 use super::abi::{DielectricMaterialData, DiffuseMaterialData, LayeredBxDFData, MaterialRecord};
 use crate::gpu::ir::flat;
@@ -83,38 +84,128 @@ impl MaterialTable {
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
+        let (diffuse, dielectric, layered) = build_abi_tables(scene)?;
         Ok(Self {
             records,
-            diffuse: scene
-                .diffuse_bxdf_data
-                .iter()
-                .map(|d| DiffuseMaterialData {
-                    reflectance: [d.reflectance[0], d.reflectance[1], d.reflectance[2], 0.0],
-                })
-                .collect(),
-            dielectric: scene
-                .dielectric_bxdf_data
-                .iter()
-                .map(|d| DielectricMaterialData {
-                    eta: d.eta,
-                    padding: [0; 3],
-                })
-                .collect(),
-            layered: scene
-                .layered_bxdf_data
-                .iter()
-                .map(|d| LayeredBxDFData {
-                    thickness: d.thickness,
-                    g: d.g,
-                    max_depth: d.max_depth,
-                    n_samples: d.n_samples,
-                    albedo: [d.albedo[0], d.albedo[1], d.albedo[2], 0.0],
-                    two_sided: u32::from(d.two_sided),
-                    padding: [0; 3],
-                })
-                .collect(),
+            diffuse,
+            dielectric,
+            layered,
         })
     }
+}
+
+fn build_abi_tables(
+    scene: &flat::Scene,
+) -> Result<
+    (
+        Vec<DiffuseMaterialData>,
+        Vec<DielectricMaterialData>,
+        Vec<LayeredBxDFData>,
+    ),
+    PbrtError,
+> {
+    let mut diffuse = vec![DiffuseMaterialData::zeroed(); scene.diffuse_bxdf_data.len()];
+    let mut dielectric = vec![DielectricMaterialData::zeroed(); scene.dielectric_bxdf_data.len()];
+    let mut layered = vec![LayeredBxDFData::zeroed(); scene.layered_bxdf_data.len()];
+    for (node_id, node) in scene.scattering_nodes.iter().enumerate() {
+        let Some(material) = owner_material(scene, node_id as u32) else {
+            return Err(PbrtError::error("Scattering node has no owning material."));
+        };
+        match node.kind.as_str() {
+            "diffuse" => {
+                let value = spectrum_attribute(scene, material, "reflectance")?;
+                let slot = diffuse.get_mut(node.data_index as usize).ok_or_else(|| {
+                    PbrtError::error("Diffuse node references an invalid ABI slot.")
+                })?;
+                slot.reflectance = [value[0], value[1], value[2], 0.0];
+            }
+            "dielectric" | "thindielectric" => {
+                let eta = scalar_attribute(scene, material, "eta")?;
+                let slot = dielectric
+                    .get_mut(node.data_index as usize)
+                    .ok_or_else(|| {
+                        PbrtError::error("Dielectric node references an invalid ABI slot.")
+                    })?;
+                slot.eta = eta;
+            }
+            "layered" => {
+                let slot = layered.get_mut(node.data_index as usize).ok_or_else(|| {
+                    PbrtError::error("Layered node references an invalid ABI slot.")
+                })?;
+                slot.thickness = scalar_attribute(scene, material, "thickness")?;
+                slot.g = scalar_attribute(scene, material, "g")?;
+                slot.max_depth = scalar_attribute(scene, material, "maxdepth")? as u32;
+                slot.n_samples = scalar_attribute(scene, material, "nsamples")? as u32;
+                let albedo = spectrum_attribute(scene, material, "albedo")?;
+                slot.albedo = [albedo[0], albedo[1], albedo[2], 0.0];
+                slot.two_sided = scalar_attribute(scene, material, "twosided")? as u32;
+            }
+            _ => return Err(PbrtError::error("Unsupported scattering node kind.")),
+        }
+    }
+    Ok((diffuse, dielectric, layered))
+}
+
+fn owner_material<'a>(scene: &'a flat::Scene, node_id: u32) -> Option<&'a flat::Material> {
+    scene.materials.iter().find(|material| {
+        let Some(model) = scene
+            .scattering_models
+            .get(material.scattering_model as usize)
+        else {
+            return false;
+        };
+        if model.surface_root == node_id {
+            return true;
+        }
+        let Some(root) = scene.scattering_nodes.get(model.surface_root as usize) else {
+            return false;
+        };
+        let start = root.child_offset as usize;
+        let end = start.saturating_add(root.child_count as usize);
+        scene
+            .scattering_child_refs
+            .node_ids
+            .get(start..end)
+            .is_some_and(|children| children.contains(&node_id))
+    })
+}
+
+fn scalar_attribute(
+    scene: &flat::Scene,
+    material: &flat::Material,
+    name: &str,
+) -> Result<f32, PbrtError> {
+    let attribute = material
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name == name && attribute.kind == flat::AttributeKind::Scalar)
+        .ok_or_else(|| PbrtError::error(&format!("Missing scalar material attribute '{name}'.")))?;
+    scene
+        .attribute_tables
+        .scalars
+        .get(attribute.index as usize)
+        .copied()
+        .ok_or_else(|| PbrtError::error("Scalar material attribute index is invalid."))
+}
+
+fn spectrum_attribute(
+    scene: &flat::Scene,
+    material: &flat::Material,
+    name: &str,
+) -> Result<[f32; 3], PbrtError> {
+    let attribute = material
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name == name && attribute.kind == flat::AttributeKind::Spectrum)
+        .ok_or_else(|| {
+            PbrtError::error(&format!("Missing spectrum material attribute '{name}'."))
+        })?;
+    let value = scene
+        .attribute_tables
+        .spectra
+        .get(attribute.index as usize)
+        .ok_or_else(|| PbrtError::error("Spectrum material attribute index is invalid."))?;
+    Ok([value.0[0], value.0[1], value.0[2]])
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
