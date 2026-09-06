@@ -1,6 +1,6 @@
 use pbrt_r4::gpu::webgpu::stages::{
-    initial_stage_specs, Access, BindingClass, BindingSpec, RequiredLimits, ResourceId, StageId,
-    StageSpec,
+    all_stage_specs, initial_stage_specs, Access, BindingClass, BindingSpec, RequiredLimits,
+    ResourceId, StageId, StageSpec,
 };
 
 #[test]
@@ -10,6 +10,15 @@ fn initial_stage_specs_request_their_actual_storage_dependencies() {
     assert_eq!(limits.storage_buffers_per_shader_stage, 15);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
     assert_eq!(limits.bind_groups, 3);
+}
+
+#[test]
+fn all_stage_specs_cover_the_wavefront_registry() {
+    let specs = all_stage_specs();
+    assert_eq!(specs.len(), 17);
+    let limits = RequiredLimits::from_stages(&specs).unwrap();
+    assert_eq!(limits.storage_buffers_per_shader_stage, 15);
+    assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
 }
 
 #[test]

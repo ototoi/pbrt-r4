@@ -488,3 +488,96 @@ pub fn initial_stage_specs() -> Vec<StageSpec> {
         },
     ]
 }
+
+/// Returns the complete contract registry used to size the device and validate
+/// every wavefront variant.  `initial_stage_specs` remains the small bootstrap
+/// set used by focused contract tests.
+pub fn all_stage_specs() -> Vec<StageSpec> {
+    vec![
+        StageSpec {
+            id: StageId::BeginSample,
+            entry_point: "begin_sample",
+            bindings: BEGIN_SAMPLE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::GenerateCameraRays,
+            entry_point: "generate_primary_rays",
+            bindings: BEGIN_SAMPLE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::ResetDepthQueues,
+            entry_point: "reset_classification_queues",
+            bindings: BEGIN_SAMPLE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::GenerateRaySamples,
+            entry_point: "prepare_sample",
+            bindings: BEGIN_SAMPLE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::TraceClosest,
+            entry_point: "trace_closest",
+            bindings: TRACE_CLOSEST_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::BuildSurface,
+            entry_point: "build_surface",
+            bindings: BUILD_SURFACE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::HandleEscaped,
+            entry_point: "handle_escaped",
+            bindings: SCATTER_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::HandleEmission,
+            entry_point: "handle_emissive",
+            bindings: SCATTER_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::BuildShadingContext,
+            entry_point: "build_shading_context",
+            bindings: BUILD_SURFACE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::SampleDirectLight,
+            entry_point: "sample_direct_light",
+            bindings: SAMPLE_DIRECT_LIGHT_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::ScatterDiffuse,
+            entry_point: "scatter_diffuse",
+            bindings: SCATTER_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::ScatterDielectric,
+            entry_point: "scatter_dielectric",
+            bindings: SCATTER_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::ScatterThinDielectric,
+            entry_point: "scatter_thin_dielectric",
+            bindings: SCATTER_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::ScatterLayered,
+            entry_point: "scatter_layered",
+            bindings: SCATTER_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::TraceShadow,
+            entry_point: "trace_shadow",
+            bindings: TRACE_CLOSEST_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::DebugSurface,
+            entry_point: "debug_surface",
+            bindings: BUILD_SURFACE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::AccumulateFilm,
+            entry_point: "accumulate_sample",
+            bindings: SCATTER_BINDINGS,
+        },
+    ]
+}
