@@ -17,8 +17,8 @@ use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
 use super::stages::{
-    all_stage_specs, RequiredLimits, FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE,
-    FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE,
+    all_stage_specs, canonical_wavefront_bindings, RequiredLimits, ResourceId,
+    FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE, FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE,
 };
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
@@ -86,48 +86,61 @@ impl WavefrontPathIntegrator {
         let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
         let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
         let pipeline = Pipeline::new(device)?;
+        let bind_group_entries = canonical_wavefront_bindings()
+            .into_iter()
+            .map(|binding| wgpu::BindGroupEntry {
+                binding: binding.binding,
+                resource: match binding.resource {
+                    ResourceId::CameraParams => camera_buffer.as_entire_binding(),
+                    ResourceId::SampleParams => viewport_buffer.as_entire_binding(),
+                    ResourceId::Tlas => {
+                        wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas)
+                    }
+                    ResourceId::Vertex => scene.vertex_buffer.as_entire_binding(),
+                    ResourceId::Index => scene.index_buffer.as_entire_binding(),
+                    ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
+                    ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
+                    ResourceId::Surface => queues.surfaces.as_entire_binding(),
+                    ResourceId::Film => film.framebuffer.as_entire_binding(),
+                    ResourceId::RaySamples => queues.wavefront.as_entire_binding(),
+                    ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
+                    ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
+                    ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
+                    ResourceId::MaterialAttribute => {
+                        scene.material_attribute_buffer.as_entire_binding()
+                    }
+                    ResourceId::ScalarAttribute => {
+                        scene.scalar_attribute_buffer.as_entire_binding()
+                    }
+                    ResourceId::ScatteringModel => {
+                        scene.scattering_model_buffer.as_entire_binding()
+                    }
+                    ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
+                    ResourceId::ScatteringChild => {
+                        scene.scattering_child_buffer.as_entire_binding()
+                    }
+                    ResourceId::SpectrumAttribute => {
+                        scene.spectrum_attribute_buffer.as_entire_binding()
+                    }
+                    ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
+                    ResourceId::PointLight => scene.point_light_buffer.as_entire_binding(),
+                    ResourceId::AreaLight => scene.area_light_buffer.as_entire_binding(),
+                    ResourceId::TriangleDistribution => {
+                        scene.distribution_buffer.as_entire_binding()
+                    }
+                    ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
+                    ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
+                    ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
+                    resource => {
+                        panic!("resource {resource:?} is not part of canonical wavefront layout")
+                    }
+                },
+            })
+            .collect::<Vec<_>>();
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pbrt-r4 primary-ray bind group"),
             layout: &pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: viewport_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::AccelerationStructure(
-                        &scene.acceleration.tlas,
-                    ),
-                },
-                buffer_entry(3, &scene.vertex_buffer),
-                buffer_entry(4, &scene.index_buffer),
-                buffer_entry(5, &scene.geometry_buffer),
-                buffer_entry(6, &scene.instance_buffer),
-                buffer_entry(8, &queues.surfaces),
-                buffer_entry(9, &film.framebuffer),
-                buffer_entry(10, &queues.wavefront),
-                buffer_entry(11, &material_table_buffer),
-                buffer_entry(12, &light_table_buffer),
-                buffer_entry(13, &scene.material_buffer),
-                buffer_entry(14, &scene.material_attribute_buffer),
-                buffer_entry(15, &scene.scalar_attribute_buffer),
-                buffer_entry(16, &scene.scattering_model_buffer),
-                buffer_entry(17, &scene.scattering_node_buffer),
-                buffer_entry(18, &scene.scattering_child_buffer),
-                buffer_entry(19, &scene.spectrum_attribute_buffer),
-                buffer_entry(20, &scene.light_record_buffer),
-                buffer_entry(21, &scene.point_light_buffer),
-                buffer_entry(22, &scene.area_light_buffer),
-                buffer_entry(23, &scene.distribution_buffer),
-                buffer_entry(24, &scene.light_bvh_header_buffer),
-                buffer_entry(25, &scene.light_bvh_node_buffer),
-                buffer_entry(26, &scene.light_leaf_buffer),
-            ],
+            entries: &bind_group_entries,
         });
         Ok(Self {
             context,
@@ -375,13 +388,6 @@ impl WavefrontPathIntegrator {
             0,
             bytes_of(&self.scene.material_table),
         );
-    }
-}
-
-fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
     }
 }
 
