@@ -82,40 +82,11 @@ mod tests {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum MaterialData {
-    Diffuse(DiffuseMaterialData),
-    Dielectric(DielectricMaterialData),
-    ThinDielectric(DielectricMaterialData),
-    Layered(LayeredBxDFData),
-    Unsupported,
-}
-
 pub const EVENT_REFLECTION: u32 = 1 << 0;
 pub const EVENT_TRANSMISSION: u32 = 1 << 1;
 pub const EVENT_DIFFUSE: u32 = 1 << 2;
 pub const EVENT_GLOSSY: u32 = 1 << 3;
 pub const EVENT_SPECULAR: u32 = 1 << 4;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DiffuseMaterialData {
-    pub reflectance: [f32; 3],
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DielectricMaterialData {
-    pub eta: f32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LayeredBxDFData {
-    pub thickness: f32,
-    pub albedo: [f32; 3],
-    pub g: f32,
-    pub max_depth: u32,
-    pub n_samples: u32,
-    pub two_sided: bool,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScatteringModel {
