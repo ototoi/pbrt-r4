@@ -6,14 +6,14 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
-    viewport_uniform, AreaLight, Geometry, Instance, LightRecord, PointLight, SceneUniform,
-    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_POINT,
+    viewport_uniform, AreaLight, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
+    LightRecord, MaterialRecord, PointLight, SceneUniform, TriangleDistributionEntry, Vertex,
+    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
-use super::material::MaterialKind;
+use super::material::{MaterialKind, MaterialTable};
 use super::output::Output;
 
 pub struct Scene {
@@ -28,7 +28,7 @@ pub struct Scene {
     pub scene_data_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
-    pub materials: Vec<super::abi::Material>,
+    pub materials: Vec<MaterialRecord>,
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
@@ -77,16 +77,10 @@ impl Scene {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let materials = flat
-            .materials
-            .iter()
-            .map(|material| {
-                Ok(super::abi::Material {
-                    kind_tag: MaterialKind::from_flat(&material.kind)?.tag(),
-                    padding: [0; 3],
-                })
-            })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
+        let material_table = MaterialTable::from_flat(&flat.materials)?;
+        let materials = material_table.records;
+        let diffuse_materials = material_table.diffuse;
+        let dielectric_materials = material_table.dielectric;
         let point_lights = flat
             .point_lights
             .iter()
@@ -143,7 +137,7 @@ impl Scene {
                 _ => {}
             }
         }
-        let material_words = std::mem::size_of::<super::abi::Material>()
+        let material_words = std::mem::size_of::<MaterialRecord>()
             .checked_div(std::mem::size_of::<u32>())
             .ok_or_else(|| PbrtError::error("WebGPU material ABI is not word-aligned."))?;
         let light_words = std::mem::size_of::<PointLight>()
@@ -162,17 +156,52 @@ impl Scene {
             .len()
             .checked_mul(material_words)
             .ok_or_else(|| PbrtError::error("WebGPU material buffer size overflowed."))?;
-        let area_light_data_offset = material_words_total
+        let diffuse_material_words = std::mem::size_of::<DiffuseMaterialData>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU diffuse-material ABI is not word-aligned."))?;
+        let dielectric_material_words = std::mem::size_of::<DielectricMaterialData>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| {
+                PbrtError::error("WebGPU dielectric-material ABI is not word-aligned.")
+            })?;
+        let diffuse_material_data_offset = material_words_total;
+        let diffuse_material_words_total = diffuse_materials
+            .len()
+            .checked_mul(diffuse_material_words)
+            .ok_or_else(|| PbrtError::error("WebGPU diffuse-material buffer size overflowed."))?;
+        let dielectric_material_data_offset = diffuse_material_data_offset
+            .checked_add(diffuse_material_words_total)
+            .ok_or_else(|| PbrtError::error("WebGPU dielectric-material offset overflowed."))?;
+        let dielectric_material_words_total = dielectric_materials
+            .len()
+            .checked_mul(dielectric_material_words)
+            .ok_or_else(|| {
+                PbrtError::error("WebGPU dielectric-material buffer size overflowed.")
+            })?;
+        let distribution_words_total = flat
+            .triangle_distributions
+            .len()
+            .checked_mul(distribution_words)
+            .ok_or_else(|| PbrtError::error("WebGPU distribution buffer size overflowed."))?;
+        let light_record_data_offset = dielectric_material_data_offset
+            .checked_add(dielectric_material_words_total)
+            .ok_or_else(|| PbrtError::error("WebGPU light-record offset overflowed."))?;
+        let point_light_data_offset = light_record_data_offset
             .checked_add(
                 light_records
                     .len()
                     .checked_mul(light_record_words)
                     .ok_or_else(|| {
-                        PbrtError::error("WebGPU light-record buffer offset overflowed.")
+                        PbrtError::error("WebGPU light-record buffer size overflowed.")
                     })?,
             )
-            .and_then(|offset| offset.checked_add(point_lights.len().checked_mul(light_words)?))
-            .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
+            .ok_or_else(|| PbrtError::error("WebGPU point-light offset overflowed."))?;
+        let area_light_data_offset =
+            point_light_data_offset
+                .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
+                    PbrtError::error("WebGPU point-light buffer size overflowed.")
+                })?)
+                .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
         let distribution_data_offset = area_light_data_offset
             .checked_add(
                 area_lights
@@ -233,39 +262,34 @@ impl Scene {
             contents: cast_slice(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let light_record_data_offset = material_words_total;
-        let point_light_data_offset = light_record_data_offset
-            .checked_add(
-                light_records
-                    .len()
-                    .checked_mul(light_record_words)
-                    .ok_or_else(|| {
-                        PbrtError::error("WebGPU light-record buffer size overflowed.")
-                    })?,
-            )
-            .ok_or_else(|| PbrtError::error("WebGPU point-light buffer offset overflowed."))?;
-        let mut scene_data = Vec::<u32>::with_capacity(
-            material_words_total
-                .checked_add(
-                    light_records
-                        .len()
-                        .checked_mul(light_record_words)
-                        .ok_or_else(|| {
-                            PbrtError::error("WebGPU light-record buffer size overflowed.")
-                        })?,
-                )
-                .and_then(|size| size.checked_add(point_lights.len().checked_mul(light_words)?))
-                .and_then(|size| size.checked_add(area_lights.len().checked_mul(area_light_words)?))
-                .and_then(|size| {
-                    size.checked_add(
-                        flat.triangle_distributions
-                            .len()
-                            .checked_mul(distribution_words)?,
-                    )
-                })
-                .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?,
-        );
+        let light_record_words_total = light_records
+            .len()
+            .checked_mul(light_record_words)
+            .ok_or_else(|| PbrtError::error("WebGPU light-record buffer size overflowed."))?;
+        let point_light_words_total = point_lights
+            .len()
+            .checked_mul(light_words)
+            .ok_or_else(|| PbrtError::error("WebGPU point-light buffer size overflowed."))?;
+        let area_light_words_total = area_lights
+            .len()
+            .checked_mul(area_light_words)
+            .ok_or_else(|| PbrtError::error("WebGPU area-light buffer size overflowed."))?;
+        let scene_data_capacity = material_words_total
+            .checked_add(diffuse_material_words_total)
+            .and_then(|size| size.checked_add(dielectric_material_words_total))
+            .and_then(|size| size.checked_add(light_record_words_total))
+            .and_then(|size| size.checked_add(point_light_words_total))
+            .and_then(|size| size.checked_add(area_light_words_total))
+            .and_then(|size| size.checked_add(distribution_words_total))
+            .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?;
+        let mut scene_data = Vec::<u32>::with_capacity(scene_data_capacity);
         for material in &materials {
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
+        }
+        for material in &diffuse_materials {
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
+        }
+        for material in &dielectric_materials {
             scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
         }
         for record in &light_records {
@@ -315,6 +339,10 @@ impl Scene {
         )?;
         let mut scene_uniform = scene_uniform(
             materials.len(),
+            diffuse_material_data_offset,
+            diffuse_materials.len(),
+            dielectric_material_data_offset,
+            dielectric_materials.len(),
             light_records.len(),
             point_lights.len(),
             area_lights.len(),

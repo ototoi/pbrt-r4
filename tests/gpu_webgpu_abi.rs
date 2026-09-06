@@ -1,9 +1,13 @@
+use pbrt_r4::gpu::ir::flat::{
+    DiffuseMaterialData as FlatDiffuseMaterialData, MaterialData as FlatMaterialData,
+};
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, scene_uniform, AreaLight, CameraUniform,
-    Geometry, Instance, LightRecord, Material, PixelSampleState, PointLight, QueueState,
+    Geometry, Instance, LightRecord, MaterialRecord, PixelSampleState, PointLight, QueueState,
     RayWorkItem, SceneUniform, ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry,
     Vertex, ViewportUniform, INVALID_INDEX, LIGHT_SAMPLER_KIND_UNIFORM,
 };
+use pbrt_r4::gpu::webgpu::material::MaterialTable;
 
 #[test]
 fn webgpu_matrices_are_uploaded_as_column_major() {
@@ -17,16 +21,51 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 }
 
 #[test]
+fn material_table_assigns_type_specific_data_indices() {
+    let materials = vec![
+        pbrt_r4::gpu::ir::flat::Material {
+            kind: "diffuse".to_string(),
+            data: FlatMaterialData::Diffuse(FlatDiffuseMaterialData {
+                reflectance: [0.2, 0.3, 0.4],
+            }),
+        },
+        pbrt_r4::gpu::ir::flat::Material {
+            kind: "dielectric".to_string(),
+            data: FlatMaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData {
+                eta: 1.5,
+            }),
+        },
+        pbrt_r4::gpu::ir::flat::Material {
+            kind: "diffuse".to_string(),
+            data: FlatMaterialData::Diffuse(FlatDiffuseMaterialData {
+                reflectance: [0.7, 0.8, 0.9],
+            }),
+        },
+    ];
+
+    let table = MaterialTable::from_flat(&materials).unwrap();
+    assert_eq!(table.records[0].data_index, 0);
+    assert_eq!(table.records[1].data_index, 0);
+    assert_eq!(table.records[2].data_index, 1);
+    assert_eq!(table.diffuse.len(), 2);
+    assert_eq!(table.dielectric.len(), 1);
+}
+
+#[test]
 fn scene_uniform_records_absolute_word_offsets() {
-    let uniform = scene_uniform(2, 3, 1, 2, 8, 20, 28, 52).unwrap();
+    let uniform = scene_uniform(2, 8, 1, 12, 1, 3, 1, 2, 16, 28, 36, 60).unwrap();
 
     assert_eq!(uniform.material_offset_words, 0);
     assert_eq!(uniform.material_count, 2);
-    assert_eq!(uniform.light_record_offset_words, 8);
+    assert_eq!(uniform.diffuse_material_offset_words, 8);
+    assert_eq!(uniform.diffuse_material_count, 1);
+    assert_eq!(uniform.dielectric_material_offset_words, 12);
+    assert_eq!(uniform.dielectric_material_count, 1);
+    assert_eq!(uniform.light_record_offset_words, 16);
     assert_eq!(uniform.light_count, 3);
-    assert_eq!(uniform.point_light_offset_words, 20);
+    assert_eq!(uniform.point_light_offset_words, 28);
     assert_eq!(uniform.point_light_count, 1);
-    assert_eq!(uniform.area_light_offset_words, 28);
+    assert_eq!(uniform.area_light_offset_words, 36);
     assert_eq!(uniform.area_light_count, 2);
     assert_eq!(uniform.light_sampler_kind, LIGHT_SAMPLER_KIND_UNIFORM);
     assert_eq!(uniform.light_sampler_data_offset, INVALID_INDEX);
@@ -34,18 +73,26 @@ fn scene_uniform_records_absolute_word_offsets() {
     assert_eq!(uniform.light_bvh_node_count, 0);
     assert_eq!(uniform.light_leaf_offset, INVALID_INDEX);
     assert_eq!(uniform.light_leaf_count, 0);
-    assert_eq!(uniform.scene_data_words, 52);
+    assert_eq!(uniform.scene_data_words, 60);
 }
 
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
-    assert_eq!(std::mem::size_of::<SceneUniform>(), 64);
+    assert_eq!(std::mem::size_of::<SceneUniform>(), 80);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 144);
-    assert_eq!(std::mem::size_of::<Material>(), 16);
+    assert_eq!(std::mem::size_of::<MaterialRecord>(), 16);
+    assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::DiffuseMaterialData>(),
+        16
+    );
+    assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::DielectricMaterialData>(),
+        16
+    );
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 112);
@@ -63,34 +110,50 @@ fn webgpu_work_item_field_offsets_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(SceneUniform, material_offset_words), 0);
     assert_eq!(std::mem::offset_of!(SceneUniform, material_count), 4);
     assert_eq!(
-        std::mem::offset_of!(SceneUniform, light_record_offset_words),
+        std::mem::offset_of!(SceneUniform, diffuse_material_offset_words),
         8
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_count), 12);
     assert_eq!(
-        std::mem::offset_of!(SceneUniform, point_light_offset_words),
+        std::mem::offset_of!(SceneUniform, diffuse_material_count),
+        12
+    );
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, dielectric_material_offset_words),
         16
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, point_light_count), 20);
     assert_eq!(
-        std::mem::offset_of!(SceneUniform, area_light_offset_words),
+        std::mem::offset_of!(SceneUniform, dielectric_material_count),
+        20
+    );
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, light_record_offset_words),
         24
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, area_light_count), 28);
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_sampler_kind), 32);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_count), 28);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, point_light_offset_words),
+        32
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, point_light_count), 36);
+    assert_eq!(
+        std::mem::offset_of!(SceneUniform, area_light_offset_words),
+        40
+    );
+    assert_eq!(std::mem::offset_of!(SceneUniform, area_light_count), 44);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_sampler_kind), 48);
     assert_eq!(
         std::mem::offset_of!(SceneUniform, light_sampler_data_offset),
-        36
+        52
     );
     assert_eq!(
         std::mem::offset_of!(SceneUniform, light_bvh_node_offset),
-        40
+        56
     );
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_bvh_node_count), 44);
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_offset), 48);
-    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_count), 52);
-    assert_eq!(std::mem::offset_of!(SceneUniform, scene_data_words), 56);
-    assert_eq!(std::mem::offset_of!(SceneUniform, reserved), 60);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_bvh_node_count), 60);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_offset), 64);
+    assert_eq!(std::mem::offset_of!(SceneUniform, light_leaf_count), 68);
+    assert_eq!(std::mem::offset_of!(SceneUniform, scene_data_words), 72);
+    assert_eq!(std::mem::offset_of!(SceneUniform, reserved), 76);
     assert_eq!(std::mem::offset_of!(Instance, area_light), 8);
     assert_eq!(
         std::mem::offset_of!(AreaLight, distribution_offset_words),

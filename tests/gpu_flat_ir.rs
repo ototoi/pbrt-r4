@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use pbrt_r4::gpu::ir::flat::flatten_node;
+use pbrt_r4::gpu::ir::flat::{flatten_node, MaterialData};
 use pbrt_r4::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
     CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
@@ -9,6 +9,7 @@ use pbrt_r4::gpu::ir::node::{
     SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
+use pbrt_r4::util::spectrum::{Spectrum, SpectrumType};
 
 fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
     let mut node = Node::new(name);
@@ -384,7 +385,7 @@ fn flatten_node_defaults_light_sampler_to_bvh() {
 }
 
 #[test]
-fn flatten_node_ignores_explicit_diffuse_reflectance_for_now() {
+fn flatten_node_extracts_explicit_diffuse_reflectance() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
@@ -406,8 +407,82 @@ fn flatten_node_ignores_explicit_diffuse_reflectance_for_now() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root)))
-        .expect("reflectance is currently ignored by the GPU material representation");
+        .expect("diffuse reflectance should be normalized into Flat IR");
     assert_eq!(scene.materials[0].kind, "diffuse");
+    let expected_reflectance = Spectrum::from_rgb(&[0.5, 0.5, 0.5], SpectrumType::Albedo).to_rgb();
+    assert_eq!(
+        scene.materials[0].data,
+        MaterialData::Diffuse(pbrt_r4::gpu::ir::flat::DiffuseMaterialData {
+            reflectance: expected_reflectance,
+        })
+    );
+}
+
+#[test]
+fn flatten_node_extracts_dielectric_eta() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_float("float eta", 1.33);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(
+        scene.materials[0].data,
+        MaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData { eta: 1.33 })
+    );
+}
+
+#[test]
+fn flatten_node_rejects_invalid_dielectric_eta() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_float("float eta", 0.0);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("invalid dielectric eta"));
+}
+
+#[test]
+fn flatten_node_preserves_unsupported_material_kind() {
+    let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].kind, "conductor");
+    assert_eq!(scene.materials[0].data, MaterialData::Unsupported);
 }
 
 #[test]

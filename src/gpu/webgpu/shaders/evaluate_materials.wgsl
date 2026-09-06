@@ -12,6 +12,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (surface.hit == 0u || load_material_kind(surface.material) != MATERIAL_KIND_DIFFUSE) {
         return;
     }
+    let reflectance = load_diffuse_reflectance(surface.material);
     let ray_index = find_current_ray_for_pixel(pixel_index);
     if (ray_index == 0xffffffffu) {
         return;
@@ -110,7 +111,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (light_kind == LIGHT_KIND_AREA) {
         mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
     }
-    let direct = light_radiance * (1.0 / PI) * cosine
+    let direct = light_radiance * (reflectance / PI) * cosine
         / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
         * mis_weight;
     let shadow_origin = light_sample_origin;

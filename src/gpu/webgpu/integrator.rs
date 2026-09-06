@@ -39,24 +39,13 @@ impl WavefrontPathIntegrator {
     }
 
     pub fn create_with_progress(
-        mut flat_scene: flat::Scene,
+        flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
         let context = Context::new()?;
         let device = &context.device;
         let queue = &context.queue;
-        let has_debug_material_override = std::env::var_os("PBRT_R4_GPU_DEBUG_MATERIAL").is_some();
         let debug_material = MaterialKind::from_debug_environment()?;
-        if has_debug_material_override {
-            for material in &mut flat_scene.materials {
-                material.kind = match debug_material {
-                    MaterialKind::Normal => "normal".to_string(),
-                    MaterialKind::Uv => "uv".to_string(),
-                    MaterialKind::Diffuse => "diffuse".to_string(),
-                    MaterialKind::Lambert => "lambert".to_string(),
-                };
-            }
-        }
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
         scene.replace_material_kind(queue, debug_material);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -235,6 +224,13 @@ impl WavefrontPathIntegrator {
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_diffuse_bounce,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_dielectric_bounce,
                         &self.bind_group,
                         workgroups_x,
                         workgroups_y,

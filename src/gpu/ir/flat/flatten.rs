@@ -840,11 +840,45 @@ fn material_index(
     let index = u32::try_from(builder.materials.len()).map_err(|_| {
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
+    let kind = material_kind.unwrap_or(&source_material.kind);
+    let data = material_data(source_material, kind)?;
     builder.materials.push(Material {
-        kind: material_kind.unwrap_or(&source_material.kind).to_string(),
+        kind: kind.to_string(),
+        data,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
+}
+
+fn material_data(
+    source_material: &NodeMaterial,
+    kind: &str,
+) -> Result<super::MaterialData, PbrtError> {
+    match kind {
+        "diffuse" => {
+            let default_reflectance = Spectrum::from(0.5);
+            let reflectance = source_material
+                .params
+                .get_one_spectrum("reflectance", &default_reflectance)
+                .to_rgb();
+            Ok(super::MaterialData::Diffuse(super::DiffuseMaterialData {
+                reflectance,
+            }))
+        }
+        "dielectric" => {
+            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
+            if !eta.is_finite() || eta <= 0.0 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has an invalid dielectric eta: {eta}.",
+                    source_material.name
+                )));
+            }
+            Ok(super::MaterialData::Dielectric(
+                super::DielectricMaterialData { eta },
+            ))
+        }
+        _ => Ok(super::MaterialData::Unsupported),
+    }
 }
 
 fn validate_attribute_len<T>(

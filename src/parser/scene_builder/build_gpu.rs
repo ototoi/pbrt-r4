@@ -1,6 +1,6 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
-use crate::gpu::ir::flat::flatten_node_with_material_override;
+use crate::gpu::ir::flat::flatten_node;
 use crate::gpu::ir::node::{
     loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
@@ -56,9 +56,7 @@ impl SceneBuilder {
         }
 
         // Lower the IR node to a flat scene representation.
-        let debug_material_kind = std::env::var("PBRT_R4_GPU_DEBUG_MATERIAL").ok();
-        let flat_scene =
-            flatten_node_with_material_override(ir_node, debug_material_kind.as_deref())?;
+        let flat_scene = flatten_node(ir_node)?;
 
         // Create the WavefrontPathIntegrator from the flat scene.
         let integrator = WavefrontPathIntegrator::create_with_progress(flat_scene, show_progress)?;
