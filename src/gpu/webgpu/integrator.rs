@@ -107,6 +107,9 @@ impl WavefrontPathIntegrator {
                 buffer_entry(12, &light_table_buffer),
                 buffer_entry(13, &scene.material_buffer),
                 buffer_entry(14, &scene.diffuse_material_buffer),
+                buffer_entry(15, &scene.dielectric_material_buffer),
+                buffer_entry(16, &scene.scattering_model_buffer),
+                buffer_entry(17, &scene.scattering_node_buffer),
             ],
         });
         Ok(Self {

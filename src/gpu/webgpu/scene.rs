@@ -30,6 +30,9 @@ pub struct Scene {
     pub instance_buffer: wgpu::Buffer,
     pub material_buffer: wgpu::Buffer,
     pub diffuse_material_buffer: wgpu::Buffer,
+    pub dielectric_material_buffer: wgpu::Buffer,
+    pub scattering_model_buffer: wgpu::Buffer,
+    pub scattering_node_buffer: wgpu::Buffer,
     pub scene_data_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
@@ -339,6 +342,23 @@ impl Scene {
                 contents: cast_slice(&diffuse_materials),
                 usage: wgpu::BufferUsages::STORAGE,
             });
+        let dielectric_material_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 dielectric material data SBO"),
+                contents: cast_slice(&dielectric_materials),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let scattering_model_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 scattering model SBO"),
+                contents: cast_slice(&scattering_models),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let scattering_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 scattering node SBO"),
+            contents: cast_slice(&scattering_nodes),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let light_record_words_total = light_records
             .len()
             .checked_mul(light_record_words)
@@ -499,6 +519,9 @@ impl Scene {
             instance_buffer,
             material_buffer,
             diffuse_material_buffer,
+            dielectric_material_buffer,
+            scattering_model_buffer,
+            scattering_node_buffer,
             scene_data_buffer,
             geometries,
             instances,

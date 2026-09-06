@@ -113,6 +113,11 @@ struct DiffuseMaterialData {
     reflectance: vec4<f32>,
 };
 
+struct DielectricMaterialData {
+    eta: f32,
+    _padding: vec3<u32>,
+};
+
 struct ScatteringNodeRecord {
     kind_tag: u32,
     event_flags: u32,
@@ -232,6 +237,12 @@ var<uniform> light_table: LightTableUniform;
 var<storage, read> materials: array<MaterialRecord>;
 @group(0) @binding(14)
 var<storage, read> diffuse_materials: array<DiffuseMaterialData>;
+@group(0) @binding(15)
+var<storage, read> dielectric_materials: array<DielectricMaterialData>;
+@group(0) @binding(16)
+var<storage, read> scattering_models: array<ScatteringModelRecord>;
+@group(0) @binding(17)
+var<storage, read> scattering_nodes: array<ScatteringNodeRecord>;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -660,12 +671,16 @@ fn load_material_kind(index: u32) -> u32 {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return MATERIAL_KIND_NORMAL;
     }
-    let node_index = scene_data[material_table.scattering_model_offset_words + model_index * 4u];
-    if (node_index >= material_table.scattering_node_count) {
+    if (model_index >= arrayLength(&scattering_models)) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return MATERIAL_KIND_NORMAL;
     }
-    let node_kind = scene_data[material_table.scattering_node_offset_words + node_index * 8u];
+    let node_index = scattering_models[model_index].surface_root;
+    if (node_index >= arrayLength(&scattering_nodes)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return MATERIAL_KIND_NORMAL;
+    }
+    let node_kind = scattering_nodes[node_index].kind_tag;
     if (node_kind == 0u) {
         return MATERIAL_KIND_DIFFUSE;
     }
@@ -688,12 +703,16 @@ fn load_material_data_index(index: u32) -> u32 {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return 0u;
     }
-    let node_index = scene_data[material_table.scattering_model_offset_words + model_index * 4u];
-    if (node_index >= material_table.scattering_node_count) {
+    if (model_index >= arrayLength(&scattering_models)) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return 0u;
     }
-    return scene_data[material_table.scattering_node_offset_words + node_index * 8u + 2u];
+    let node_index = scattering_models[model_index].surface_root;
+    if (node_index >= arrayLength(&scattering_nodes)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    return scattering_nodes[node_index].data_index;
 }
 
 fn load_material_model(index: u32) -> u32 {
@@ -725,11 +744,25 @@ fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
 }
 
 fn load_dielectric_eta(index: u32) -> f32 {
-    return bitcast<f32>(scene_data[material_table.dielectric_material_offset_words + index * 4u]);
+    if (index >= arrayLength(&dielectric_materials)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0.0;
+    }
+    return dielectric_materials[index].eta;
 }
 
 fn load_scattering_node_word(index: u32, word: u32) -> u32 {
-    return scene_data[material_table.scattering_node_offset_words + index * 8u + word];
+    if (index >= arrayLength(&scattering_nodes)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return 0u;
+    }
+    let node = scattering_nodes[index];
+    if (word == 0u) { return node.kind_tag; }
+    if (word == 1u) { return node.event_flags; }
+    if (word == 2u) { return node.data_index; }
+    if (word == 3u) { return node.child_offset; }
+    if (word == 4u) { return node.child_count; }
+    return 0u;
 }
 
 fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
