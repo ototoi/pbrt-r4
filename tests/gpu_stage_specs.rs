@@ -1,6 +1,6 @@
 use pbrt_r4::gpu::webgpu::stages::{
-    all_stage_specs, initial_stage_specs, Access, BindingClass, BindingSpec, RequiredLimits,
-    ResourceId, StageId, StageSpec,
+    all_stage_specs, canonical_wavefront_bindings, initial_stage_specs, Access, BindingClass,
+    BindingSpec, RequiredLimits, ResourceId, StageId, StageSpec,
 };
 
 #[test]
@@ -45,4 +45,23 @@ fn duplicate_bindings_are_rejected_before_device_creation() {
         bindings,
     }]);
     assert!(result.is_err());
+}
+
+#[test]
+fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
+    let bindings = canonical_wavefront_bindings();
+    assert_eq!(bindings.len(), 26);
+    for (index, left) in bindings.iter().enumerate() {
+        for right in &bindings[index + 1..] {
+            assert!(!(left.group == right.group && left.binding == right.binding));
+        }
+    }
+    assert_eq!(
+        bindings.iter().find(|b| b.binding == 11).unwrap().resource,
+        ResourceId::MaterialTable
+    );
+    assert_eq!(
+        bindings.iter().find(|b| b.binding == 14).unwrap().resource,
+        ResourceId::MaterialAttribute
+    );
 }
