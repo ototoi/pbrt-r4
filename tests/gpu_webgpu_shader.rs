@@ -17,6 +17,7 @@ const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
+const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
 
 #[test]
 fn immutable_scene_metadata_is_separate_from_viewport_state() {
@@ -28,18 +29,18 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(!viewport.contains("light_count"));
     assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
     assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
-    assert!(COMMON_SHADER.contains("@group(0) @binding(11)"));
-    assert!(COMMON_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
-    assert!(COMMON_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(11)"));
+    assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
+    assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
     assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
-    assert!(COMMON_SHADER.contains("@group(0) @binding(13)"));
-    assert!(COMMON_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(13)"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
     assert!(COMMON_SHADER.contains("struct MaterialAttributeRef {"));
-    assert!(COMMON_SHADER
+    assert!(RESOURCES_SHADER
         .contains("var<storage, read> material_attributes: array<MaterialAttributeRef>;"));
-    assert!(COMMON_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
     assert!(!COMMON_SHADER.contains("scene_data"));
-    assert!(COMMON_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
     assert!(!COMMON_SHADER.contains("material_light_data"));
 }
 

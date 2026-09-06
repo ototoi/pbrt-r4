@@ -1,3 +1,4 @@
+const RESOURCES_SHADER: &str = include_str!("shaders/resources.wgsl");
 const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
 const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
 const LAYERED_SHADER: &str = include_str!("shaders/layered.wgsl");
@@ -24,9 +25,14 @@ pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) ->
     match compose(
         vec![
             ShaderModuleSpec {
+                id: "resources".to_string(),
+                source: RESOURCES_SHADER.to_string(),
+                dependencies: Vec::new(),
+            },
+            ShaderModuleSpec {
                 id: "common".to_string(),
                 source: COMMON_SHADER.to_string(),
-                dependencies: Vec::new(),
+                dependencies: vec!["resources".to_string()],
             },
             ShaderModuleSpec {
                 id: "triangle_sampling".to_string(),
