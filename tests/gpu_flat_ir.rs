@@ -581,16 +581,16 @@ fn layered_scene_uniform_points_to_layered_table_not_bssrdf_table() {
     let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let context = Context::new(RequiredLimits::default()).unwrap();
     let scene = Scene::from_flat(&context.device, &context.queue, flat).unwrap();
-    assert_eq!(scene.scene_uniform.layered_bxdf_count, 1);
-    assert_eq!(scene.scene_uniform.bssrdf_node_count, 0);
-    assert_eq!(scene.scene_uniform.bssrdf_node_offset_words, INVALID_INDEX);
+    assert_eq!(scene.material_table.layered_bxdf_count, 1);
+    assert_eq!(scene.material_table.bssrdf_node_count, 0);
+    assert_eq!(scene.material_table.bssrdf_node_offset_words, INVALID_INDEX);
     assert_eq!(
-        scene.scene_uniform.layered_bxdf_offset_words,
-        scene.scene_uniform.scattering_child_offset_words
-            + scene.scene_uniform.scattering_child_count
+        scene.material_table.layered_bxdf_offset_words,
+        scene.material_table.scattering_child_offset_words
+            + scene.material_table.scattering_child_count
     );
-    assert_eq!(scene.scene_uniform.dielectric_material_count, 1);
-    assert_eq!(scene.scene_uniform.diffuse_material_count, 1);
+    assert_eq!(scene.material_table.dielectric_material_count, 1);
+    assert_eq!(scene.material_table.diffuse_material_count, 1);
 }
 
 #[test]

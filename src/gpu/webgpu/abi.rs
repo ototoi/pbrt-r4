@@ -32,7 +32,7 @@ pub struct ViewportUniform {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct SceneUniform {
+pub struct MaterialTableUniform {
     pub material_offset_words: u32,
     pub material_count: u32,
     pub diffuse_material_offset_words: u32,
@@ -51,6 +51,12 @@ pub struct SceneUniform {
     pub layered_bxdf_count: u32,
     pub debug_scattering_model: u32,
     pub scattering_reserved: u32,
+    pub reserved: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightTableUniform {
     pub light_record_offset_words: u32,
     pub light_count: u32,
     pub point_light_offset_words: u32,
@@ -63,8 +69,7 @@ pub struct SceneUniform {
     pub light_bvh_node_count: u32,
     pub light_leaf_offset: u32,
     pub light_leaf_count: u32,
-    pub scene_data_words: u32,
-    pub reserved: u32,
+    pub reserved: [u32; 4],
 }
 
 #[repr(C)]
@@ -351,7 +356,7 @@ pub fn viewport_uniform(
     })
 }
 
-pub fn scene_uniform(
+pub fn material_table_uniform(
     material_count: usize,
     diffuse_material_offset_words: usize,
     diffuse_material_count: usize,
@@ -367,19 +372,12 @@ pub fn scene_uniform(
     bssrdf_node_count: usize,
     layered_bxdf_offset_words: usize,
     layered_bxdf_count: usize,
-    light_count: usize,
-    point_light_count: usize,
-    area_light_count: usize,
-    light_record_offset_words: usize,
-    point_light_offset_words: usize,
-    area_light_offset_words: usize,
-    scene_data_words: usize,
-) -> Result<SceneUniform, PbrtError> {
+) -> Result<MaterialTableUniform, PbrtError> {
     let to_u32 = |value: usize, label: &str| {
         u32::try_from(value)
             .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
     };
-    Ok(SceneUniform {
+    Ok(MaterialTableUniform {
         material_offset_words: 0,
         material_count: to_u32(material_count, "material count")?,
         diffuse_material_offset_words: to_u32(
@@ -413,6 +411,23 @@ pub fn scene_uniform(
         layered_bxdf_count: to_u32(layered_bxdf_count, "layered-BxDF count")?,
         debug_scattering_model: INVALID_INDEX,
         scattering_reserved: 0,
+        reserved: [0; 2],
+    })
+}
+
+pub fn light_table_uniform(
+    light_count: usize,
+    point_light_count: usize,
+    area_light_count: usize,
+    light_record_offset_words: usize,
+    point_light_offset_words: usize,
+    area_light_offset_words: usize,
+) -> Result<LightTableUniform, PbrtError> {
+    let to_u32 = |value: usize, label: &str| {
+        u32::try_from(value)
+            .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
+    };
+    Ok(LightTableUniform {
         light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
         light_count: to_u32(light_count, "light count")?,
         point_light_offset_words: to_u32(point_light_offset_words, "point-light offset")?,
@@ -425,8 +440,7 @@ pub fn scene_uniform(
         light_bvh_node_count: 0,
         light_leaf_offset: INVALID_INDEX,
         light_leaf_count: 0,
-        scene_data_words: to_u32(scene_data_words, "scene-data word count")?,
-        reserved: 0,
+        reserved: [0; 4],
     })
 }
 
