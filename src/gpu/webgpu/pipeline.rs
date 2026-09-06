@@ -1,7 +1,7 @@
 use crate::util::error::PbrtError;
 
 use super::shader;
-use super::stages::{all_stage_specs, RequiredLimits};
+use super::stages::{all_stage_specs, canonical_wavefront_bindings, BindingClass, RequiredLimits};
 
 pub struct Pipeline {
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -31,43 +31,11 @@ impl Pipeline {
         // these specs in the next migration step.
         RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let layout_bindings = canonical_wavefront_bindings();
+        let layout_entries = layout_bindings.iter().map(layout_entry).collect::<Vec<_>>();
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("pbrt-r4 primary-ray bind group layout"),
-            entries: &[
-                buffer_entry(0, wgpu::BufferBindingType::Uniform),
-                buffer_entry(1, wgpu::BufferBindingType::Uniform),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::AccelerationStructure {
-                        vertex_return: false,
-                    },
-                    count: None,
-                },
-                storage_entry(3, true),
-                storage_entry(4, true),
-                storage_entry(5, true),
-                storage_entry(6, true),
-                storage_entry(8, false),
-                storage_entry(9, false),
-                storage_entry(10, false),
-                buffer_entry(11, wgpu::BufferBindingType::Uniform),
-                buffer_entry(12, wgpu::BufferBindingType::Uniform),
-                storage_entry(13, true),
-                storage_entry(14, true),
-                storage_entry(15, true),
-                storage_entry(16, true),
-                storage_entry(17, true),
-                storage_entry(18, true),
-                storage_entry(19, true),
-                storage_entry(20, true),
-                storage_entry(21, true),
-                storage_entry(22, true),
-                storage_entry(23, true),
-                storage_entry(24, true),
-                storage_entry(25, true),
-                storage_entry(26, true),
-            ],
+            entries: &layout_entries,
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pbrt-r4 primary-ray pipeline layout"),
@@ -182,19 +150,28 @@ impl Pipeline {
     }
 }
 
-fn buffer_entry(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty,
+fn layout_entry(binding: &super::stages::BindingSpec) -> wgpu::BindGroupLayoutEntry {
+    let ty = match binding.class {
+        BindingClass::Uniform => wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
             min_binding_size: None,
         },
+        BindingClass::Storage => wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage {
+                read_only: !binding.access.permits_write(),
+            },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        BindingClass::AccelerationStructure => wgpu::BindingType::AccelerationStructure {
+            vertex_return: false,
+        },
+    };
+    wgpu::BindGroupLayoutEntry {
+        binding: binding.binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty,
         count: None,
     }
-}
-
-fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
-    buffer_entry(binding, wgpu::BufferBindingType::Storage { read_only })
 }
