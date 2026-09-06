@@ -39,6 +39,18 @@ pub struct SceneUniform {
     pub diffuse_material_count: u32,
     pub dielectric_material_offset_words: u32,
     pub dielectric_material_count: u32,
+    pub scattering_model_offset_words: u32,
+    pub scattering_model_count: u32,
+    pub scattering_node_offset_words: u32,
+    pub scattering_node_count: u32,
+    pub scattering_child_offset_words: u32,
+    pub scattering_child_count: u32,
+    pub bssrdf_node_offset_words: u32,
+    pub bssrdf_node_count: u32,
+    pub layered_bxdf_offset_words: u32,
+    pub layered_bxdf_count: u32,
+    pub debug_scattering_model: u32,
+    pub scattering_reserved: u32,
     pub light_record_offset_words: u32,
     pub light_count: u32,
     pub point_light_offset_words: u32,
@@ -90,7 +102,8 @@ pub struct Instance {
 pub struct MaterialRecord {
     pub kind_tag: u32,
     pub data_index: u32,
-    pub padding: [u32; 2],
+    pub scattering_model: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
@@ -103,6 +116,37 @@ pub struct DiffuseMaterialData {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct DielectricMaterialData {
     pub eta: f32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ScatteringModelRecord {
+    pub surface_root: u32,
+    pub bssrdf_root: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ScatteringNodeRecord {
+    pub kind_tag: u32,
+    pub event_flags: u32,
+    pub data_index: u32,
+    pub child_offset: u32,
+    pub child_count: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LayeredBxDFData {
+    pub thickness: f32,
+    pub g: f32,
+    pub max_depth: u32,
+    pub n_samples: u32,
+    pub albedo: [f32; 4],
+    pub two_sided: u32,
     pub padding: [u32; 3],
 }
 
@@ -313,6 +357,16 @@ pub fn scene_uniform(
     diffuse_material_count: usize,
     dielectric_material_offset_words: usize,
     dielectric_material_count: usize,
+    scattering_model_offset_words: usize,
+    scattering_model_count: usize,
+    scattering_node_offset_words: usize,
+    scattering_node_count: usize,
+    scattering_child_offset_words: usize,
+    scattering_child_count: usize,
+    bssrdf_node_offset_words: usize,
+    bssrdf_node_count: usize,
+    layered_bxdf_offset_words: usize,
+    layered_bxdf_count: usize,
     light_count: usize,
     point_light_count: usize,
     area_light_count: usize,
@@ -338,6 +392,27 @@ pub fn scene_uniform(
             "dielectric-material offset",
         )?,
         dielectric_material_count: to_u32(dielectric_material_count, "dielectric-material count")?,
+        scattering_model_offset_words: to_u32(
+            scattering_model_offset_words,
+            "scattering-model offset",
+        )?,
+        scattering_model_count: to_u32(scattering_model_count, "scattering-model count")?,
+        scattering_node_offset_words: to_u32(
+            scattering_node_offset_words,
+            "scattering-node offset",
+        )?,
+        scattering_node_count: to_u32(scattering_node_count, "scattering-node count")?,
+        scattering_child_offset_words: to_u32(
+            scattering_child_offset_words,
+            "scattering-child offset",
+        )?,
+        scattering_child_count: to_u32(scattering_child_count, "scattering-child count")?,
+        bssrdf_node_offset_words: to_u32(bssrdf_node_offset_words, "BSSRDF-node offset")?,
+        bssrdf_node_count: to_u32(bssrdf_node_count, "BSSRDF-node count")?,
+        layered_bxdf_offset_words: to_u32(layered_bxdf_offset_words, "layered-BxDF offset")?,
+        layered_bxdf_count: to_u32(layered_bxdf_count, "layered-BxDF count")?,
+        debug_scattering_model: INVALID_INDEX,
+        scattering_reserved: 0,
         light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
         light_count: to_u32(light_count, "light count")?,
         point_light_offset_words: to_u32(point_light_offset_words, "point-light offset")?,

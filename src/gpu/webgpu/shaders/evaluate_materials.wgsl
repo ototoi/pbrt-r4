@@ -9,10 +9,15 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let pixel_index = load_material_eval_pixel(queue_index);
     let surface = surfaces[pixel_index];
-    if (surface.hit == 0u || load_material_kind(surface.material) != MATERIAL_KIND_DIFFUSE) {
+    let material_kind = load_material_kind(surface.material);
+    if (surface.hit == 0u
+        || (material_kind != MATERIAL_KIND_DIFFUSE && material_kind != MATERIAL_KIND_LAYERED)) {
         return;
     }
-    let reflectance = load_diffuse_reflectance(surface.material);
+    var reflectance = vec3<f32>(0.0);
+    if (material_kind == MATERIAL_KIND_DIFFUSE) {
+        reflectance = load_diffuse_reflectance(surface.material);
+    }
     let ray_index = find_current_ray_for_pixel(pixel_index);
     if (ray_index == 0xffffffffu) {
         return;
@@ -106,12 +111,22 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (light_kind == LIGHT_KIND_POINT) {
         light_radiance = light_radiance / distance_squared;
     }
-    let bsdf_pdf = cosine / PI;
+    var bsdf_pdf = cosine / PI;
+    var f = reflectance / PI;
+    if (material_kind == MATERIAL_KIND_LAYERED) {
+        let data = load_layered_bxdf(load_layered_data_index(surface.material));
+        let eta = load_layered_eta(surface.material);
+        let local_wo = scattering_local(wo, shading_n);
+        let local_wi = scattering_local(wi, shading_n);
+        f = layered_f(data, eta, load_layered_bottom_reflectance(surface.material),
+            local_wo, local_wi, layered_path_seed(pixel_index, ray.depth));
+        bsdf_pdf = layered_pdf(data, eta, local_wo, local_wi);
+    }
     var mis_weight = 1.0;
     if (light_kind == LIGHT_KIND_AREA) {
         mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
     }
-    let direct = light_radiance * (reflectance / PI) * cosine
+    let direct = light_radiance * f * cosine
         / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
         * mis_weight;
     let shadow_origin = light_sample_origin;

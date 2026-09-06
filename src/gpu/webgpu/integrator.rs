@@ -47,7 +47,9 @@ impl WavefrontPathIntegrator {
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
-        scene.replace_material_kind(queue, debug_material);
+        if let Some(kind) = debug_material {
+            scene.replace_material_kind(queue, kind);
+        }
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
@@ -61,7 +63,7 @@ impl WavefrontPathIntegrator {
         let scene_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 scene UBO"),
             contents: bytes_of(&scene.scene_uniform),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
         let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
@@ -237,6 +239,20 @@ impl WavefrontPathIntegrator {
                     );
                     dispatch(
                         &mut encoder,
+                        &self.pipeline.sample_layered_bounce,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_thin_dielectric_bounce,
+                        &self.bind_group,
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
                         &self.pipeline.swap_ray_queues,
                         &self.bind_group,
                         workgroups_x,
@@ -322,6 +338,11 @@ impl WavefrontPathIntegrator {
 
     pub fn replace_material_kind(&mut self, kind: super::material::MaterialKind) {
         self.scene.replace_material_kind(&self.context.queue, kind);
+        self.context.queue.write_buffer(
+            &self.scene_uniform_buffer,
+            0,
+            bytes_of(&self.scene.scene_uniform),
+        );
     }
 }
 

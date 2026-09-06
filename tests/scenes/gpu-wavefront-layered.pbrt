@@ -1,0 +1,34 @@
+Integrator "volpath" "integer maxdepth" [4]
+Sampler "independent" "integer pixelsamples" [16]
+Film "rgb" "string filename" ["gpu-wavefront-layered.exr"]
+    "integer xresolution" [128] "integer yresolution" [128]
+LookAt 0 2 6  0 1 0  0 1 0
+Camera "perspective" "float fov" [40]
+WorldBegin
+AttributeBegin
+    Material "diffuse" "rgb reflectance" [0.5 0.5 0.5]
+    Shape "trianglemesh"
+        "point3 P" [-4 0 -4  4 0 -4  4 0 4  -4 0 4]
+        "integer indices" [0 2 1  0 3 2]
+AttributeEnd
+AttributeBegin
+    Translate -1 0.8 0
+    Material "coateddiffuse" "float eta" [1.5]
+        "rgb reflectance" [0.5 0.2 0.1] "float thickness" [0.2]
+    Shape "sphere" "float radius" [0.8] "integer udiv" [48] "integer vdiv" [24]
+AttributeEnd
+AttributeBegin
+    Translate 1 0.8 0
+    Material "coateddiffuse" "float eta" [1.5]
+        "rgb reflectance" [0.1 0.2 0.5] "float thickness" [0.2]
+        "rgb albedo" [0.6 0.6 0.6] "float g" [0.4] "integer nsamples" [4]
+    Shape "sphere" "float radius" [0.8] "integer udiv" [48] "integer vdiv" [24]
+AttributeEnd
+AttributeBegin
+    Translate 0 3.5 0
+    Material "diffuse" "rgb reflectance" [0.5 0.5 0.5]
+    AreaLightSource "diffuse" "rgb L" [20 20 20]
+    Shape "trianglemesh"
+        "point3 P" [-1 0 -1  1 0 -1  1 0 1  -1 0 1]
+        "integer indices" [0 1 2  0 2 3]
+AttributeEnd
