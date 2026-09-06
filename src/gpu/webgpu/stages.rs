@@ -265,10 +265,226 @@ const SAMPLE_DIRECT_LIGHT_BINDINGS: &[BindingSpec] = &[
     },
 ];
 
+const BEGIN_SAMPLE_BINDINGS: &[BindingSpec] = &[
+    BindingSpec {
+        group: 0,
+        binding: 0,
+        resource: ResourceId::SampleParams,
+        class: BindingClass::Uniform,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 0,
+        resource: ResourceId::PixelSampleState,
+        class: BindingClass::Storage,
+        access: Access::Write,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 1,
+        resource: ResourceId::CurrentRay,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 2,
+        resource: ResourceId::NextRay,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+];
+
+const TRACE_CLOSEST_BINDINGS: &[BindingSpec] = &[
+    BindingSpec {
+        group: 0,
+        binding: 0,
+        resource: ResourceId::Tlas,
+        class: BindingClass::AccelerationStructure,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 0,
+        resource: ResourceId::CurrentRay,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 1,
+        resource: ResourceId::HitRecord,
+        class: BindingClass::Storage,
+        access: Access::Write,
+    },
+];
+
+const BUILD_SURFACE_BINDINGS: &[BindingSpec] = &[
+    BindingSpec {
+        group: 0,
+        binding: 0,
+        resource: ResourceId::DepthParams,
+        class: BindingClass::Uniform,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 0,
+        resource: ResourceId::CurrentRay,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 1,
+        resource: ResourceId::HitRecord,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 2,
+        resource: ResourceId::Vertex,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 3,
+        resource: ResourceId::Index,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 4,
+        resource: ResourceId::Geometry,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 5,
+        resource: ResourceId::Instance,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 6,
+        resource: ResourceId::Surface,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+];
+
+const SCATTER_BINDINGS: &[BindingSpec] = &[
+    BindingSpec {
+        group: 0,
+        binding: 0,
+        resource: ResourceId::SampleParams,
+        class: BindingClass::Uniform,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 0,
+        binding: 1,
+        resource: ResourceId::DepthParams,
+        class: BindingClass::Uniform,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 0,
+        resource: ResourceId::CurrentRay,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 1,
+        resource: ResourceId::Surface,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 2,
+        resource: ResourceId::ShadingContext,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 3,
+        resource: ResourceId::RaySamples,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 4,
+        resource: ResourceId::LightCandidate,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 5,
+        resource: ResourceId::ConstantBxdf,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 2,
+        binding: 0,
+        resource: ResourceId::NextRay,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+    BindingSpec {
+        group: 2,
+        binding: 1,
+        resource: ResourceId::ShadowQueue,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+    BindingSpec {
+        group: 2,
+        binding: 2,
+        resource: ResourceId::RenderError,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+];
+
 pub fn initial_stage_specs() -> Vec<StageSpec> {
-    vec![StageSpec {
-        id: StageId::SampleDirectLight,
-        entry_point: "sample_direct_light",
-        bindings: SAMPLE_DIRECT_LIGHT_BINDINGS,
-    }]
+    vec![
+        StageSpec {
+            id: StageId::BeginSample,
+            entry_point: "begin_sample",
+            bindings: BEGIN_SAMPLE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::TraceClosest,
+            entry_point: "trace_closest",
+            bindings: TRACE_CLOSEST_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::BuildSurface,
+            entry_point: "build_surface",
+            bindings: BUILD_SURFACE_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::SampleDirectLight,
+            entry_point: "sample_direct_light",
+            bindings: SAMPLE_DIRECT_LIGHT_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::ScatterDiffuse,
+            entry_point: "scatter_diffuse",
+            bindings: SCATTER_BINDINGS,
+        },
+    ]
 }
