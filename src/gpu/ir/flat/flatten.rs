@@ -171,6 +171,46 @@ fn build_material_attributes(scene: &mut Scene) -> Result<Vec<Vec<AttributeRef>>
                     name: "eta".to_string(),
                 }]
             }
+            "layered" => {
+                let data = scene
+                    .layered_bxdf_data
+                    .get(model.data_index as usize)
+                    .ok_or_else(|| PbrtError::error("Layered node references invalid data."))?;
+                let mut refs = Vec::with_capacity(6);
+                let scalar_values = [
+                    ("thickness", data.thickness),
+                    ("g", data.g),
+                    ("maxdepth", data.max_depth as f32),
+                    ("nsamples", data.n_samples as f32),
+                    ("twosided", u32::from(data.two_sided) as f32),
+                ];
+                for (name, value) in scalar_values {
+                    let index =
+                        u32::try_from(scene.attribute_tables.scalars.len()).map_err(|_| {
+                            PbrtError::error("Flat scalar attribute table exceeds u32.")
+                        })?;
+                    scene.attribute_tables.scalars.push(value);
+                    refs.push(AttributeRef {
+                        kind: AttributeKind::Scalar,
+                        index,
+                        name: name.to_string(),
+                    });
+                }
+                let index = u32::try_from(scene.attribute_tables.spectra.len())
+                    .map_err(|_| PbrtError::error("Flat spectrum attribute table exceeds u32."))?;
+                scene.attribute_tables.spectra.push(SpectrumValue([
+                    data.albedo[0],
+                    data.albedo[1],
+                    data.albedo[2],
+                    0.0,
+                ]));
+                refs.push(AttributeRef {
+                    kind: AttributeKind::Spectrum,
+                    index,
+                    name: "albedo".to_string(),
+                });
+                refs
+            }
             _ => Vec::new(),
         };
         material.attributes = refs.clone();
