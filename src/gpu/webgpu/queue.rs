@@ -167,6 +167,12 @@ impl Queues {
             || words.get(14).copied().unwrap_or(0) != 0
             || words.get(18).copied().unwrap_or(0) != 0
             || words.get(22).copied().unwrap_or(0) != 0;
+        if errored {
+            log::error!(
+                "WebGPU queue state: {:?}",
+                &words[..QUEUE_STATE_WORDS as usize]
+            );
+        }
         drop(mapped);
         self.state_readback.unmap();
         Ok(errored)
