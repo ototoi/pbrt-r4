@@ -694,14 +694,15 @@ fn flatten_node_rejects_invalid_dielectric_eta() {
 }
 
 #[test]
-fn flatten_node_rejects_unsupported_material_kind() {
+fn flatten_node_falls_back_for_unsupported_material_kind() {
     let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
 
-    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(error.to_string().contains("Unsupported GPU material kind"));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].kind, "diffuse");
+    assert_eq!(scene.attribute_tables.spectra[0].0, [1.0, 1.0, 0.0, 0.0]);
 }
 
 #[test]

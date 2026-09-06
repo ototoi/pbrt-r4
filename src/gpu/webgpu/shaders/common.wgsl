@@ -198,6 +198,18 @@ struct AreaTriangleSelection {
     pmf: f32,
 };
 
+struct LayeredBxDFData {
+    thickness: f32,
+    g: f32,
+    max_depth: u32,
+    n_samples: u32,
+    albedo: vec4<f32>,
+    two_sided: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
+};
+
 struct QueueState {
     count: atomic<u32>,
     capacity: u32,

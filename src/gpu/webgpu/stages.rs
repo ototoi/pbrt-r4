@@ -104,6 +104,14 @@ pub struct RequiredLimits {
     pub bind_groups: u32,
 }
 
+/// Storage bindings currently present in the shared WebGPU bind group.
+///
+/// StageSpec negotiation remains intentionally independent while the fixed
+/// layout is being migrated. The device request must still cover every entry
+/// in that layout, including resources used only by some composed stages.
+pub const FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE: u32 = 24;
+pub const FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE: u32 = 4;
+
 impl RequiredLimits {
     pub fn from_stages(stages: &[StageSpec]) -> Result<Self, PbrtError> {
         let mut required = Self::default();

@@ -9,18 +9,6 @@ const SCATTER_SPECULAR: u32 = 16u;
 const LAYERED_F_STREAM: u32 = 0u;
 const LAYERED_SAMPLE_STREAM: u32 = 1u;
 
-struct LayeredBxDFData {
-    thickness: f32,
-    g: f32,
-    max_depth: u32,
-    n_samples: u32,
-    albedo: vec4<f32>,
-    two_sided: u32,
-    padding0: u32,
-    padding1: u32,
-    padding2: u32,
-};
-
 struct LayeredSample {
     f: vec4<f32>,
     wi: vec4<f32>,
