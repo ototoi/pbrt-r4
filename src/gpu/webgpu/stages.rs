@@ -214,10 +214,28 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     bindings
 }
 
-pub const FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE: u32 = 24;
-pub const FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE: u32 = 4;
-
 impl RequiredLimits {
+    pub fn from_bindings(bindings: &[BindingSpec]) -> Result<Self, PbrtError> {
+        let mut required = Self::default();
+        for (index, left) in bindings.iter().enumerate() {
+            for right in &bindings[index + 1..] {
+                if left.group == right.group && left.binding == right.binding {
+                    return Err(PbrtError::error(&format!(
+                        "Duplicate binding group {} binding {} in layout registry.",
+                        left.group, left.binding
+                    )));
+                }
+            }
+            required.bind_groups = required.bind_groups.max(left.group + 1);
+            match left.class {
+                BindingClass::Storage => required.storage_buffers_per_shader_stage += 1,
+                BindingClass::Uniform => required.uniform_buffers_per_shader_stage += 1,
+                BindingClass::AccelerationStructure => {}
+            }
+        }
+        Ok(required)
+    }
+
     pub fn from_stages(stages: &[StageSpec]) -> Result<Self, PbrtError> {
         let mut required = Self::default();
         for stage in stages {

@@ -16,10 +16,7 @@ use super::material::MaterialKind;
 use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
-use super::stages::{
-    all_stage_specs, canonical_wavefront_bindings, RequiredLimits, ResourceId,
-    FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE, FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE,
-};
+use super::stages::{canonical_wavefront_bindings, RequiredLimits, ResourceId};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -47,13 +44,8 @@ impl WavefrontPathIntegrator {
         flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
-        let mut required_limits = RequiredLimits::from_stages(&all_stage_specs())?;
-        required_limits.storage_buffers_per_shader_stage = required_limits
-            .storage_buffers_per_shader_stage
-            .max(FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE);
-        required_limits.uniform_buffers_per_shader_stage = required_limits
-            .uniform_buffers_per_shader_stage
-            .max(FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE);
+        let canonical_bindings = canonical_wavefront_bindings();
+        let required_limits = RequiredLimits::from_bindings(&canonical_bindings)?;
         let context = Context::new(required_limits)?;
         let device = &context.device;
         let queue = &context.queue;
