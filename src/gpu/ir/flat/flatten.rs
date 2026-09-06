@@ -154,6 +154,7 @@ fn build_material_attributes(scene: &mut Scene) -> Result<Vec<Vec<AttributeRef>>
                 vec![AttributeRef {
                     kind: AttributeKind::Spectrum,
                     index,
+                    name: "reflectance".to_string(),
                 }]
             }
             "dielectric" | "thin-dielectric" | "thindielectric" => {
@@ -167,6 +168,7 @@ fn build_material_attributes(scene: &mut Scene) -> Result<Vec<Vec<AttributeRef>>
                 vec![AttributeRef {
                     kind: AttributeKind::Scalar,
                     index,
+                    name: "eta".to_string(),
                 }]
             }
             _ => Vec::new(),

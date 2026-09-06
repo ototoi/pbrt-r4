@@ -427,7 +427,8 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
         scene.materials[0].attributes[0].kind,
         AttributeKind::Spectrum
     );
-    let attribute = scene.materials[0].attributes[0];
+    assert_eq!(scene.materials[0].attributes[0].name, "reflectance");
+    let attribute = &scene.materials[0].attributes[0];
     let spectrum = scene.attribute_tables.spectra[attribute.index as usize].0;
     assert_eq!(
         spectrum,
@@ -471,7 +472,8 @@ fn flatten_node_extracts_dielectric_eta() {
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.materials[0].attributes.len(), 1);
     assert_eq!(scene.materials[0].attributes[0].kind, AttributeKind::Scalar);
-    let attribute = scene.materials[0].attributes[0];
+    assert_eq!(scene.materials[0].attributes[0].name, "eta");
+    let attribute = &scene.materials[0].attributes[0];
     assert_eq!(
         scene.attribute_tables.scalars[attribute.index as usize],
         1.33
@@ -491,6 +493,7 @@ fn flatten_node_extracts_thin_dielectric_leaf() {
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.materials[0].attributes.len(), 1);
     assert_eq!(scene.materials[0].attributes[0].kind, AttributeKind::Scalar);
+    assert_eq!(scene.materials[0].attributes[0].name, "eta");
     assert_eq!(scene.scattering_nodes[0].kind, "thindielectric");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
 }

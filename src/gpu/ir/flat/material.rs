@@ -13,10 +13,12 @@ pub enum AttributeKind {
     Texture,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttributeRef {
     pub kind: AttributeKind,
     pub index: u32,
+    /// Canonical Node IR parameter name retained for diagnostics and CPU-side evaluation.
+    pub name: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
