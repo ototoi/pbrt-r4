@@ -1,8 +1,9 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AreaLight, CameraUniform, Geometry, Instance,
-    LightRecord, LightTableUniform, MaterialRecord, MaterialTableUniform, PixelSampleState,
-    PointLight, QueueState, RayWorkItem, ScatteringModelRecord, ScatteringNodeRecord,
-    ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry, Vertex, ViewportUniform,
+    LightRecord, LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform,
+    PixelSampleState, PointLight, QueueState, RayWorkItem, ScatteringModelRecord,
+    ScatteringNodeRecord, ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry, Vertex,
+    ViewportUniform,
 };
 
 #[test]
@@ -18,7 +19,7 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
-    assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 80);
+    assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 64);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
@@ -26,18 +27,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<MaterialRecord>(), 16);
     assert_eq!(std::mem::size_of::<ScatteringModelRecord>(), 16);
     assert_eq!(std::mem::size_of::<ScatteringNodeRecord>(), 32);
-    assert_eq!(
-        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LayeredBxDFData>(),
-        48
-    );
-    assert_eq!(
-        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::DiffuseMaterialData>(),
-        16
-    );
-    assert_eq!(
-        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::DielectricMaterialData>(),
-        16
-    );
+    assert_eq!(std::mem::size_of::<MaterialAttributeRef>(), 8);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 112);

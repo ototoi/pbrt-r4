@@ -114,12 +114,12 @@ impl WavefrontPathIntegrator {
                 buffer_entry(11, &material_table_buffer),
                 buffer_entry(12, &light_table_buffer),
                 buffer_entry(13, &scene.material_buffer),
-                buffer_entry(14, &scene.diffuse_material_buffer),
-                buffer_entry(15, &scene.dielectric_material_buffer),
+                buffer_entry(14, &scene.material_attribute_buffer),
+                buffer_entry(15, &scene.scalar_attribute_buffer),
                 buffer_entry(16, &scene.scattering_model_buffer),
                 buffer_entry(17, &scene.scattering_node_buffer),
                 buffer_entry(18, &scene.scattering_child_buffer),
-                buffer_entry(19, &scene.layered_bxdf_buffer),
+                buffer_entry(19, &scene.spectrum_attribute_buffer),
                 buffer_entry(20, &scene.light_record_buffer),
                 buffer_entry(21, &scene.point_light_buffer),
                 buffer_entry(22, &scene.area_light_buffer),
@@ -127,6 +127,7 @@ impl WavefrontPathIntegrator {
                 buffer_entry(24, &scene.light_bvh_header_buffer),
                 buffer_entry(25, &scene.light_bvh_node_buffer),
                 buffer_entry(26, &scene.light_leaf_buffer),
+                buffer_entry(27, &scene.texture_attribute_buffer),
             ],
         });
         Ok(Self {

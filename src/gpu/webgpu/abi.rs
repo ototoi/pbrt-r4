@@ -35,10 +35,6 @@ pub struct ViewportUniform {
 pub struct MaterialTableUniform {
     pub material_offset_words: u32,
     pub material_count: u32,
-    pub diffuse_material_offset_words: u32,
-    pub diffuse_material_count: u32,
-    pub dielectric_material_offset_words: u32,
-    pub dielectric_material_count: u32,
     pub scattering_model_offset_words: u32,
     pub scattering_model_count: u32,
     pub scattering_node_offset_words: u32,
@@ -47,11 +43,9 @@ pub struct MaterialTableUniform {
     pub scattering_child_count: u32,
     pub bssrdf_node_offset_words: u32,
     pub bssrdf_node_count: u32,
-    pub layered_bxdf_offset_words: u32,
-    pub layered_bxdf_count: u32,
     pub debug_scattering_model: u32,
     pub scattering_reserved: u32,
-    pub reserved: [u32; 2],
+    pub reserved: [u32; 6],
 }
 
 #[repr(C)]
@@ -106,22 +100,16 @@ pub struct Instance {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialRecord {
     pub kind_tag: u32,
-    pub data_index: u32,
+    pub attribute_offset: u32,
+    pub attribute_count: u32,
     pub scattering_model: u32,
-    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct DiffuseMaterialData {
-    pub reflectance: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct DielectricMaterialData {
-    pub eta: f32,
-    pub padding: [u32; 3],
+pub struct MaterialAttributeRef {
+    pub kind: u32,
+    pub index: u32,
 }
 
 #[repr(C)]
@@ -137,22 +125,11 @@ pub struct ScatteringModelRecord {
 pub struct ScatteringNodeRecord {
     pub kind_tag: u32,
     pub event_flags: u32,
-    pub data_index: u32,
+    pub attribute_offset: u32,
     pub child_offset: u32,
     pub child_count: u32,
-    pub padding: [u32; 3],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct LayeredBxDFData {
-    pub thickness: f32,
-    pub g: f32,
-    pub max_depth: u32,
-    pub n_samples: u32,
-    pub albedo: [f32; 4],
-    pub two_sided: u32,
-    pub padding: [u32; 3],
+    pub attribute_count: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -358,10 +335,6 @@ pub fn viewport_uniform(
 
 pub fn material_table_uniform(
     material_count: usize,
-    diffuse_material_offset_words: usize,
-    diffuse_material_count: usize,
-    dielectric_material_offset_words: usize,
-    dielectric_material_count: usize,
     scattering_model_offset_words: usize,
     scattering_model_count: usize,
     scattering_node_offset_words: usize,
@@ -370,8 +343,6 @@ pub fn material_table_uniform(
     scattering_child_count: usize,
     bssrdf_node_offset_words: usize,
     bssrdf_node_count: usize,
-    layered_bxdf_offset_words: usize,
-    layered_bxdf_count: usize,
 ) -> Result<MaterialTableUniform, PbrtError> {
     let to_u32 = |value: usize, label: &str| {
         u32::try_from(value)
@@ -380,16 +351,6 @@ pub fn material_table_uniform(
     Ok(MaterialTableUniform {
         material_offset_words: 0,
         material_count: to_u32(material_count, "material count")?,
-        diffuse_material_offset_words: to_u32(
-            diffuse_material_offset_words,
-            "diffuse-material offset",
-        )?,
-        diffuse_material_count: to_u32(diffuse_material_count, "diffuse-material count")?,
-        dielectric_material_offset_words: to_u32(
-            dielectric_material_offset_words,
-            "dielectric-material offset",
-        )?,
-        dielectric_material_count: to_u32(dielectric_material_count, "dielectric-material count")?,
         scattering_model_offset_words: to_u32(
             scattering_model_offset_words,
             "scattering-model offset",
@@ -407,11 +368,9 @@ pub fn material_table_uniform(
         scattering_child_count: to_u32(scattering_child_count, "scattering-child count")?,
         bssrdf_node_offset_words: to_u32(bssrdf_node_offset_words, "BSSRDF-node offset")?,
         bssrdf_node_count: to_u32(bssrdf_node_count, "BSSRDF-node count")?,
-        layered_bxdf_offset_words: to_u32(layered_bxdf_offset_words, "layered-BxDF offset")?,
-        layered_bxdf_count: to_u32(layered_bxdf_count, "layered-BxDF count")?,
         debug_scattering_model: INVALID_INDEX,
         scattering_reserved: 0,
-        reserved: [0; 2],
+        reserved: [0; 6],
     })
 }
 

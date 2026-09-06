@@ -8,7 +8,7 @@ fn sample_layered_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     if (surface.hit == 0u || surface.flags != 0u
         || load_material_kind(surface.material) != MATERIAL_KIND_LAYERED) { return; }
-    let data = load_layered_bxdf(load_layered_data_index(surface.material));
+    let data = load_layered_bxdf(surface.material);
     let eta = load_layered_eta(surface.material);
     let reflectance = load_layered_bottom_reflectance(surface.material);
     let samples = load_ray_samples(pixel_index);

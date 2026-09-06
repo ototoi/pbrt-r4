@@ -1,12 +1,21 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::webgpu::{
-    abi::LayeredBxDFData, context::Context, pipeline::Pipeline, stages::RequiredLimits,
-};
+use pbrt_r4::gpu::webgpu::{context::Context, pipeline::Pipeline, stages::RequiredLimits};
 use wgpu::util::DeviceExt;
 
 const SAMPLE_COUNT: usize = 8192;
 const CASE_COUNT: usize = 5;
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LayeredParams {
+    thickness: f32,
+    g: f32,
+    max_depth: u32,
+    n_samples: u32,
+    albedo: [f32; 4],
+    two_sided: u32,
+    padding: [u32; 3],
+}
 
 #[test]
 #[ignore = "requires a Vulkan GPU with experimental ray queries"]
@@ -66,7 +75,7 @@ fn layered_gpu_matches_analytic_limits_and_sampled_energy() {
     let device = &context.device;
     Pipeline::new(device).expect("all composed wavefront shaders must validate");
     let cases: Vec<_> = (0..CASE_COUNT)
-        .map(|case| LayeredBxDFData {
+        .map(|case| LayeredParams {
             thickness: 0.2,
             g: if case == 3 { -0.4 } else { 0.4 },
             max_depth: if case == 0 { 2 } else { 32 },
