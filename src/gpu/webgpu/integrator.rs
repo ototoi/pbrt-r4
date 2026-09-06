@@ -110,6 +110,8 @@ impl WavefrontPathIntegrator {
                 buffer_entry(15, &scene.dielectric_material_buffer),
                 buffer_entry(16, &scene.scattering_model_buffer),
                 buffer_entry(17, &scene.scattering_node_buffer),
+                buffer_entry(18, &scene.scattering_child_buffer),
+                buffer_entry(19, &scene.layered_bxdf_buffer),
             ],
         });
         Ok(Self {

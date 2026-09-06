@@ -33,6 +33,8 @@ pub struct Scene {
     pub dielectric_material_buffer: wgpu::Buffer,
     pub scattering_model_buffer: wgpu::Buffer,
     pub scattering_node_buffer: wgpu::Buffer,
+    pub scattering_child_buffer: wgpu::Buffer,
+    pub layered_bxdf_buffer: wgpu::Buffer,
     pub scene_data_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
@@ -359,6 +361,17 @@ impl Scene {
             contents: cast_slice(&scattering_nodes),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let scattering_child_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 scattering child SBO"),
+                contents: cast_slice(&flat.scattering_child_refs.node_ids),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let layered_bxdf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 layered BxDF SBO"),
+            contents: cast_slice(&layered_bxdf),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let light_record_words_total = light_records
             .len()
             .checked_mul(light_record_words)
@@ -522,6 +535,8 @@ impl Scene {
             dielectric_material_buffer,
             scattering_model_buffer,
             scattering_node_buffer,
+            scattering_child_buffer,
+            layered_bxdf_buffer,
             scene_data_buffer,
             geometries,
             instances,
