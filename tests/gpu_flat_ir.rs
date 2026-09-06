@@ -460,6 +460,21 @@ fn flatten_node_extracts_dielectric_eta() {
 }
 
 #[test]
+fn flatten_node_extracts_thin_dielectric_leaf() {
+    let shape = triangle_node("triangle", "thindielectric", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert!(matches!(
+        scene.materials[0].data,
+        MaterialData::ThinDielectric(_)
+    ));
+    assert_eq!(scene.scattering_nodes[0].kind, "thindielectric");
+    assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
+}
+
+#[test]
 fn flatten_node_builds_coateddiffuse_layered_graph() {
     let shape = triangle_node("triangle", "coateddiffuse", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");

@@ -177,7 +177,7 @@ pub fn scattering_node_tag(kind: &str) -> Result<u32, PbrtError> {
     match kind {
         "diffuse" => Ok(0),
         "dielectric" => Ok(1),
-        "thin_dielectric" => Ok(3),
+        "thindielectric" => Ok(3),
         "layered" => Ok(2),
         other => Err(PbrtError::error(&format!(
             "Unsupported initial WebGPU scattering node kind: {other}."

@@ -13,6 +13,8 @@ const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
 const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_layered_bounce.wgsl");
+const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
@@ -129,6 +131,14 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
+}
+
+#[test]
+fn thin_dielectric_shader_uses_thin_interface_transport() {
+    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
+    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("MATERIAL_KIND_THIN_DIELECTRIC"));
+    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("direction = select(-wo"));
+    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("r0 + (1.0 - r0)"));
 }
 
 #[test]
