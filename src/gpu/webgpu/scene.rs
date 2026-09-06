@@ -13,7 +13,7 @@ use super::abi::{
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
-use super::material::MaterialKind;
+use super::material::{MaterialKind, MaterialTable};
 use super::output::Output;
 
 pub struct Scene {
@@ -77,57 +77,10 @@ impl Scene {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut diffuse_materials = Vec::new();
-        let mut dielectric_materials = Vec::new();
-        let materials = flat
-            .materials
-            .iter()
-            .map(|material| {
-                let kind = MaterialKind::from_flat(&material.kind)?;
-                let data_index = match &material.data {
-                    flat::MaterialData::Diffuse(data) => {
-                        let index = u32::try_from(diffuse_materials.len()).map_err(|_| {
-                            PbrtError::error("WebGPU diffuse-material table exceeds u32.")
-                        })?;
-                        diffuse_materials.push(DiffuseMaterialData {
-                            reflectance: [
-                                data.reflectance[0],
-                                data.reflectance[1],
-                                data.reflectance[2],
-                                0.0,
-                            ],
-                        });
-                        if kind != MaterialKind::Diffuse {
-                            return Err(PbrtError::error(
-                                "Flat diffuse material data has a non-diffuse kind.",
-                            ));
-                        }
-                        index
-                    }
-                    flat::MaterialData::Dielectric(data) => {
-                        let index = u32::try_from(dielectric_materials.len()).map_err(|_| {
-                            PbrtError::error("WebGPU dielectric-material table exceeds u32.")
-                        })?;
-                        dielectric_materials.push(DielectricMaterialData {
-                            eta: data.eta,
-                            padding: [0; 3],
-                        });
-                        if kind != MaterialKind::Dielectric {
-                            return Err(PbrtError::error(
-                                "Flat dielectric material data has a non-dielectric kind.",
-                            ));
-                        }
-                        index
-                    }
-                    flat::MaterialData::Unsupported => INVALID_INDEX,
-                };
-                Ok(MaterialRecord {
-                    kind_tag: kind.tag(),
-                    data_index,
-                    padding: [0; 2],
-                })
-            })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
+        let material_table = MaterialTable::from_flat(&flat.materials)?;
+        let materials = material_table.records;
+        let diffuse_materials = material_table.diffuse;
+        let dielectric_materials = material_table.dielectric;
         let point_lights = flat
             .point_lights
             .iter()
