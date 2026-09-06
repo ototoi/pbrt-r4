@@ -116,6 +116,14 @@ fn diffuse_shaders_load_type_specific_reflectance() {
 }
 
 #[test]
+fn non_layered_stage_does_not_include_layered_module() {
+    let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    assert!(!source.contains("pbrt-v4 bxdfs.h: LayeredBxDF"));
+    let layered = compose_source(SAMPLE_LAYERED_BOUNCE_SHADER);
+    assert!(layered.contains("pbrt-v4 bxdfs.h: LayeredBxDF"));
+}
+
+#[test]
 fn layered_shader_resolves_top_and_bottom_nodes() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
     assert!(COMMON_SHADER.contains("fn load_layered_bxdf(index: u32)"));

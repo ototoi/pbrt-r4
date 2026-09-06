@@ -14,7 +14,11 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
-    // The module graph is built entirely from the four literals above. A missing
+    compose_source_with_layered(stage_source, stage_source.contains("layered_"))
+}
+
+pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) -> String {
+    // The module graph is built entirely from the literals above. A missing
     // dependency or cycle is therefore a source invariant, not a runtime scene
     // condition; keep the failure explicit while avoiding a generic expect.
     match compose(
@@ -37,7 +41,11 @@ pub fn compose_source(stage_source: &str) -> String {
             ShaderModuleSpec {
                 id: "stage".to_string(),
                 source: stage_source.to_string(),
-                dependencies: vec!["triangle_sampling".to_string(), "layered".to_string()],
+                dependencies: if include_layered {
+                    vec!["triangle_sampling".to_string(), "layered".to_string()]
+                } else {
+                    vec!["triangle_sampling".to_string()]
+                },
             },
         ],
         "stage",
