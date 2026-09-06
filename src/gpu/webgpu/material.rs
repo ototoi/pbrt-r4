@@ -1,12 +1,15 @@
 use crate::util::error::PbrtError;
 
-use super::abi::{DielectricMaterialData, DiffuseMaterialData, MaterialRecord, INVALID_INDEX};
+use super::abi::{
+    DielectricMaterialData, DiffuseMaterialData, LayeredBxDFData, MaterialRecord, INVALID_INDEX,
+};
 use crate::gpu::ir::flat;
 
 pub struct MaterialTable {
     pub records: Vec<MaterialRecord>,
     pub diffuse: Vec<DiffuseMaterialData>,
     pub dielectric: Vec<DielectricMaterialData>,
+    pub layered: Vec<LayeredBxDFData>,
 }
 
 impl MaterialTable {
@@ -15,6 +18,7 @@ impl MaterialTable {
             records: Vec::with_capacity(materials.len()),
             diffuse: Vec::new(),
             dielectric: Vec::new(),
+            layered: Vec::new(),
         };
         for material in materials {
             let kind = MaterialKind::from_flat(&material.kind)?;
@@ -54,6 +58,21 @@ impl MaterialTable {
                     index
                 }
                 flat::MaterialData::Unsupported => INVALID_INDEX,
+                flat::MaterialData::Layered(data) => {
+                    let index = u32::try_from(table.layered.len()).map_err(|_| {
+                        PbrtError::error("WebGPU layered-material table exceeds u32.")
+                    })?;
+                    table.layered.push(LayeredBxDFData {
+                        thickness: data.thickness,
+                        g: data.g,
+                        max_depth: data.max_depth,
+                        n_samples: data.n_samples,
+                        albedo: [data.albedo[0], data.albedo[1], data.albedo[2], 0.0],
+                        two_sided: u32::from(data.two_sided),
+                        padding: [0; 3],
+                    });
+                    index
+                }
             };
             table.records.push(MaterialRecord {
                 kind_tag: kind.tag(),
@@ -73,6 +92,7 @@ pub enum MaterialKind {
     Diffuse,
     Lambert,
     Dielectric,
+    Layered,
 }
 
 impl MaterialKind {
@@ -82,6 +102,7 @@ impl MaterialKind {
             Self::Uv => 1,
             Self::Diffuse | Self::Lambert => 2,
             Self::Dielectric => 3,
+            Self::Layered => 4,
         }
     }
 
@@ -92,6 +113,7 @@ impl MaterialKind {
             "diffuse" => Ok(Self::Diffuse),
             "lambert" => Ok(Self::Lambert),
             "dielectric" => Ok(Self::Dielectric),
+            "coateddiffuse" => Ok(Self::Layered),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
@@ -120,6 +142,7 @@ pub fn scattering_node_tag(kind: &str) -> Result<u32, PbrtError> {
     match kind {
         "diffuse" => Ok(0),
         "dielectric" => Ok(1),
+        "layered" => Ok(2),
         other => Err(PbrtError::error(&format!(
             "Unsupported initial WebGPU scattering node kind: {other}."
         ))),

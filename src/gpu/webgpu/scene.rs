@@ -7,9 +7,9 @@ use crate::util::error::PbrtError;
 use super::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
     viewport_uniform, AreaLight, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
-    LightRecord, MaterialRecord, PointLight, ScatteringModelRecord, ScatteringNodeRecord,
-    SceneUniform, TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX,
-    LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    LayeredBxDFData, LightRecord, MaterialRecord, PointLight, ScatteringModelRecord,
+    ScatteringNodeRecord, SceneUniform, TriangleDistributionEntry, Vertex, ViewportUniform,
+    INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -32,6 +32,7 @@ pub struct Scene {
     pub materials: Vec<MaterialRecord>,
     pub scattering_models: Vec<ScatteringModelRecord>,
     pub scattering_nodes: Vec<ScatteringNodeRecord>,
+    pub layered_bxdf: Vec<LayeredBxDFData>,
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
@@ -84,6 +85,7 @@ impl Scene {
         let materials = material_table.records;
         let diffuse_materials = material_table.diffuse;
         let dielectric_materials = material_table.dielectric;
+        let layered_bxdf = material_table.layered;
         let scattering_models = flat
             .scattering_models
             .iter()
@@ -228,13 +230,23 @@ impl Scene {
             .checked_add(scattering_node_words_total)
             .ok_or_else(|| PbrtError::error("WebGPU scattering-child offset overflowed."))?;
         let scattering_child_words_total = flat.scattering_child_refs.node_ids.len();
+        let layered_bxdf_data_offset = scattering_child_data_offset
+            .checked_add(scattering_child_words_total)
+            .ok_or_else(|| PbrtError::error("WebGPU layered-BxDF offset overflowed."))?;
+        let layered_bxdf_words = std::mem::size_of::<LayeredBxDFData>()
+            .checked_div(std::mem::size_of::<u32>())
+            .ok_or_else(|| PbrtError::error("WebGPU layered-BxDF ABI is not word-aligned."))?;
+        let layered_bxdf_words_total = layered_bxdf
+            .len()
+            .checked_mul(layered_bxdf_words)
+            .ok_or_else(|| PbrtError::error("WebGPU layered-BxDF buffer size overflowed."))?;
         let distribution_words_total = flat
             .triangle_distributions
             .len()
             .checked_mul(distribution_words)
             .ok_or_else(|| PbrtError::error("WebGPU distribution buffer size overflowed."))?;
-        let light_record_data_offset = scattering_child_data_offset
-            .checked_add(scattering_child_words_total)
+        let light_record_data_offset = layered_bxdf_data_offset
+            .checked_add(layered_bxdf_words_total)
             .ok_or_else(|| PbrtError::error("WebGPU light-record offset overflowed."))?;
         let point_light_data_offset = light_record_data_offset
             .checked_add(
@@ -330,6 +342,7 @@ impl Scene {
             .and_then(|size| size.checked_add(scattering_model_words_total))
             .and_then(|size| size.checked_add(scattering_node_words_total))
             .and_then(|size| size.checked_add(scattering_child_words_total))
+            .and_then(|size| size.checked_add(layered_bxdf_words_total))
             .and_then(|size| size.checked_add(light_record_words_total))
             .and_then(|size| size.checked_add(point_light_words_total))
             .and_then(|size| size.checked_add(area_light_words_total))
@@ -352,6 +365,9 @@ impl Scene {
             scene_data.extend_from_slice(cast_slice(std::slice::from_ref(node)));
         }
         scene_data.extend_from_slice(&flat.scattering_child_refs.node_ids);
+        for data in &layered_bxdf {
+            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(data)));
+        }
         for record in &light_records {
             scene_data.extend_from_slice(cast_slice(std::slice::from_ref(record)));
         }
@@ -409,8 +425,8 @@ impl Scene {
             scattering_nodes.len(),
             scattering_child_data_offset,
             scattering_child_words_total,
-            INVALID_INDEX as usize,
-            0,
+            layered_bxdf_data_offset,
+            layered_bxdf.len(),
             INVALID_INDEX as usize,
             0,
             light_records.len(),
@@ -470,6 +486,7 @@ impl Scene {
             materials,
             scattering_models,
             scattering_nodes,
+            layered_bxdf,
             point_lights,
             area_lights,
             light_records,

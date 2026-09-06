@@ -1,7 +1,8 @@
 use super::{
-    AreaLight, Camera, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance, LightBVH,
-    LightBounds, LightRecord, Material, Output, PointLight, RenderSettings, ScatteringChildRefs,
-    ScatteringModel, ScatteringNode, TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
+    AreaLight, Camera, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
+    LayeredBxDFData, LightBVH, LightBounds, LightRecord, Material, Output, PointLight,
+    RenderSettings, ScatteringChildRefs, ScatteringModel, ScatteringNode,
+    TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +24,7 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub diffuse_bxdf_data: Vec<DiffuseMaterialData>,
     pub dielectric_bxdf_data: Vec<DielectricMaterialData>,
+    pub layered_bxdf_data: Vec<LayeredBxDFData>,
     pub scattering_models: Vec<ScatteringModel>,
     pub scattering_nodes: Vec<ScatteringNode>,
     pub scattering_child_refs: ScatteringChildRefs,

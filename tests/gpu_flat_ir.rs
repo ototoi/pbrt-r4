@@ -460,6 +460,29 @@ fn flatten_node_extracts_dielectric_eta() {
 }
 
 #[test]
+fn flatten_node_builds_coateddiffuse_layered_graph() {
+    let shape = triangle_node("triangle", "coateddiffuse", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].kind, "coateddiffuse");
+    assert_eq!(scene.materials[0].scattering_model, 0);
+    assert_eq!(scene.scattering_models[0].surface_root, 2);
+    assert_eq!(scene.scattering_nodes.len(), 3);
+    assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
+    assert_eq!(scene.scattering_nodes[1].kind, "diffuse");
+    assert_eq!(scene.scattering_nodes[2].kind, "layered");
+    assert_eq!(scene.scattering_nodes[2].child_offset, 0);
+    assert_eq!(scene.scattering_nodes[2].child_count, 2);
+    assert_eq!(scene.scattering_child_refs.node_ids, vec![0, 1]);
+    assert_eq!(scene.layered_bxdf_data[0].thickness, 0.01);
+    assert_eq!(scene.layered_bxdf_data[0].max_depth, 10);
+    assert_eq!(scene.layered_bxdf_data[0].n_samples, 1);
+}
+
+#[test]
 fn scattering_graph_validation_rejects_cycles_and_invalid_ranges() {
     let cyclic_nodes = vec![pbrt_r4::gpu::ir::flat::ScatteringNode {
         kind: "layered".to_string(),

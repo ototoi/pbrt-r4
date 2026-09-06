@@ -65,6 +65,7 @@ pub fn flatten_node_with_material_override(
         materials: builder.materials,
         diffuse_bxdf_data: builder.diffuse_bxdf_data,
         dielectric_bxdf_data: builder.dielectric_bxdf_data,
+        layered_bxdf_data: builder.layered_bxdf_data,
         scattering_models: builder.scattering_models,
         scattering_nodes: builder.scattering_nodes,
         scattering_child_refs: ScatteringChildRefs {
@@ -87,6 +88,7 @@ struct FlatBuilder {
     materials: Vec<Material>,
     diffuse_bxdf_data: Vec<super::DiffuseMaterialData>,
     dielectric_bxdf_data: Vec<super::DielectricMaterialData>,
+    layered_bxdf_data: Vec<super::LayeredBxDFData>,
     scattering_models: Vec<ScatteringModel>,
     scattering_nodes: Vec<ScatteringNode>,
     scattering_child_refs: Vec<u32>,
@@ -859,7 +861,7 @@ fn material_index(
     let source_kind = source_material.kind.as_str();
     let source_data = material_source_data(source_material, source_kind)?;
     let data = material_data(source_material, kind)?;
-    let scattering_model = register_scattering_model(&data, kind, builder)?;
+    let scattering_model = register_scattering_model(source_material, &data, kind, builder)?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         data,
@@ -872,6 +874,7 @@ fn material_index(
 }
 
 fn register_scattering_model(
+    source_material: &NodeMaterial,
     data: &super::MaterialData,
     kind: &str,
     builder: &mut FlatBuilder,
@@ -893,6 +896,52 @@ fn register_scattering_model(
                 index,
             )
         }
+        ("coateddiffuse", super::MaterialData::Layered(data)) => {
+            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
+            let top_data_index =
+                u32::try_from(builder.dielectric_bxdf_data.len()).map_err(|_| {
+                    PbrtError::error("The flattened dielectric BxDF table exceeds u32.")
+                })?;
+            builder
+                .dielectric_bxdf_data
+                .push(super::DielectricMaterialData { eta });
+            let bottom_data_index = u32::try_from(builder.diffuse_bxdf_data.len())
+                .map_err(|_| PbrtError::error("The flattened diffuse BxDF table exceeds u32."))?;
+            builder.diffuse_bxdf_data.push(super::DiffuseMaterialData {
+                reflectance: diffuse_reflectance(source_material),
+            });
+            let top_node = push_scattering_node(
+                builder,
+                "dielectric",
+                EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_SPECULAR,
+                top_data_index,
+            )?;
+            let bottom_node = push_scattering_node(
+                builder,
+                "diffuse",
+                EVENT_REFLECTION | EVENT_DIFFUSE,
+                bottom_data_index,
+            )?;
+            let child_offset =
+                u32::try_from(builder.scattering_child_refs.len()).map_err(|_| {
+                    PbrtError::error("The flattened scattering-child table exceeds u32.")
+                })?;
+            builder
+                .scattering_child_refs
+                .extend([top_node, bottom_node]);
+            let layered_data_index = u32::try_from(builder.layered_bxdf_data.len())
+                .map_err(|_| PbrtError::error("The flattened Layered BxDF table exceeds u32."))?;
+            builder.layered_bxdf_data.push(data.clone());
+            let node_id = push_scattering_node_with_children(
+                builder,
+                "layered",
+                EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_DIFFUSE,
+                layered_data_index,
+                child_offset,
+                2,
+            )?;
+            return push_scattering_model(builder, node_id);
+        }
         (_, super::MaterialData::Unsupported) => {
             return Err(PbrtError::error(&format!(
                 "Unsupported GPU material kind: {kind}."
@@ -904,16 +953,42 @@ fn register_scattering_model(
             )))
         }
     };
+    let node_id = push_scattering_node(builder, kind, event_flags, data_index)?;
+    push_scattering_model(builder, node_id)
+}
+
+fn push_scattering_node(
+    builder: &mut FlatBuilder,
+    kind: &str,
+    event_flags: u32,
+    data_index: u32,
+) -> Result<u32, PbrtError> {
+    let child_offset = u32::try_from(builder.scattering_child_refs.len())
+        .map_err(|_| PbrtError::error("The flattened scattering-child table exceeds u32."))?;
+    push_scattering_node_with_children(builder, kind, event_flags, data_index, child_offset, 0)
+}
+
+fn push_scattering_node_with_children(
+    builder: &mut FlatBuilder,
+    kind: &str,
+    event_flags: u32,
+    data_index: u32,
+    child_offset: u32,
+    child_count: u32,
+) -> Result<u32, PbrtError> {
     let node_id = u32::try_from(builder.scattering_nodes.len())
         .map_err(|_| PbrtError::error("The flattened scattering-node table exceeds u32."))?;
     builder.scattering_nodes.push(ScatteringNode {
         kind: kind.to_string(),
         event_flags,
         data_index,
-        child_offset: u32::try_from(builder.scattering_child_refs.len())
-            .map_err(|_| PbrtError::error("The flattened scattering-child table exceeds u32."))?,
-        child_count: 0,
+        child_offset,
+        child_count,
     });
+    Ok(node_id)
+}
+
+fn push_scattering_model(builder: &mut FlatBuilder, node_id: u32) -> Result<u32, PbrtError> {
     let model_id = u32::try_from(builder.scattering_models.len())
         .map_err(|_| PbrtError::error("The flattened scattering-model table exceeds u32."))?;
     builder.scattering_models.push(ScatteringModel {
@@ -929,13 +1004,82 @@ fn material_data(
 ) -> Result<super::MaterialData, PbrtError> {
     match kind {
         "diffuse" => {
-            let default_reflectance = Spectrum::from(0.5);
-            let reflectance = source_material
-                .params
-                .get_one_spectrum("reflectance", &default_reflectance)
-                .to_rgb();
+            let reflectance = diffuse_reflectance(source_material);
             Ok(super::MaterialData::Diffuse(super::DiffuseMaterialData {
                 reflectance,
+            }))
+        }
+        "coateddiffuse" => {
+            if source_material.params.has_parameter("roughness")
+                || source_material.params.has_parameter("uroughness")
+                || source_material.params.has_parameter("vroughness")
+            {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" uses unsupported coateddiffuse roughness.",
+                    source_material.name
+                )));
+            }
+            let thickness = source_material.params.get_one_float("thickness", 0.01) as f32;
+            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
+            let g = source_material.params.get_one_float("g", 0.0) as f32;
+            let max_depth = source_material.params.get_one_int("maxdepth", 10);
+            let n_samples = source_material.params.get_one_int("nsamples", 1);
+            let default_albedo = Spectrum::from(0.0);
+            let albedo = source_material
+                .params
+                .get_one_spectrum("albedo", &default_albedo)
+                .to_rgb();
+            if !thickness.is_finite() || thickness <= 0.0 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has an invalid coateddiffuse thickness: {thickness}.",
+                    source_material.name
+                )));
+            }
+            if !eta.is_finite() || eta <= 0.0 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has an invalid coateddiffuse eta: {eta}.",
+                    source_material.name
+                )));
+            }
+            if !g.is_finite() || !(-1.0..1.0).contains(&g) {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has an invalid coateddiffuse g: {g}.",
+                    source_material.name
+                )));
+            }
+            if max_depth <= 0 || n_samples <= 0 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has non-positive coateddiffuse depth or sample count.",
+                    source_material.name
+                )));
+            }
+            if !albedo
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid coateddiffuse albedo.",
+                    source_material.name
+                )));
+            }
+            let max_local_steps = i64::from(max_depth)
+                .checked_mul(i64::from(n_samples))
+                .ok_or_else(|| PbrtError::error("Coateddiffuse local step count overflowed."))?;
+            if max_local_steps > 1_048_576 {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" exceeds the coateddiffuse local step limit.",
+                    source_material.name
+                )));
+            }
+            Ok(super::MaterialData::Layered(super::LayeredBxDFData {
+                thickness,
+                albedo,
+                g,
+                max_depth: u32::try_from(max_depth)
+                    .map_err(|_| PbrtError::error("Coateddiffuse maxdepth does not fit in u32."))?,
+                n_samples: u32::try_from(n_samples)
+                    .map_err(|_| PbrtError::error("Coateddiffuse nsamples does not fit in u32."))?,
+                two_sided: false,
             }))
         }
         "dielectric" => {
@@ -970,8 +1114,26 @@ fn material_source_data(
                 eta: data.eta,
             })
         }
+        super::MaterialData::Layered(data) => {
+            super::MaterialSourceData::Layered(super::LayeredMaterialSourceData {
+                thickness: data.thickness,
+                albedo: data.albedo,
+                g: data.g,
+                max_depth: data.max_depth,
+                n_samples: data.n_samples,
+                two_sided: data.two_sided,
+            })
+        }
         super::MaterialData::Unsupported => super::MaterialSourceData::Unsupported,
     })
+}
+
+fn diffuse_reflectance(source_material: &NodeMaterial) -> [f32; 3] {
+    let default_reflectance = Spectrum::from(0.5);
+    source_material
+        .params
+        .get_one_spectrum("reflectance", &default_reflectance)
+        .to_rgb()
 }
 
 fn validate_attribute_len<T>(
