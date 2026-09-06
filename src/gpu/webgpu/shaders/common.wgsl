@@ -785,8 +785,18 @@ fn load_layered_eta(material_index: u32) -> f32 {
 }
 
 fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
-    return layered_hash(layered_hash(layered_hash(viewport.seed) ^ pixel)
-        ^ layered_hash(viewport.sample_index)) ^ layered_hash(depth);
+    return path_hash(path_hash(path_hash(viewport.seed) ^ pixel)
+        ^ path_hash(viewport.sample_index)) ^ path_hash(depth);
+}
+
+fn path_hash(value: u32) -> u32 {
+    var x = value;
+    x ^= x >> 16u;
+    x *= 0x7feb352du;
+    x ^= x >> 15u;
+    x *= 0x846ca68bu;
+    x ^= x >> 16u;
+    return x;
 }
 
 fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
