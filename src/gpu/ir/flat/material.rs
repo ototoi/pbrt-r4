@@ -31,6 +31,13 @@ pub struct AttributeTables {
     pub textures: Vec<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnsupportedTexturePolicy {
+    #[default]
+    Error,
+    DiagnosticMagenta,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MaterialData {
     Diffuse(DiffuseMaterialData),
