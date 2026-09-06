@@ -109,6 +109,10 @@ struct MaterialRecord {
     _padding: u32,
 };
 
+struct DiffuseMaterialData {
+    reflectance: vec4<f32>,
+};
+
 struct ScatteringNodeRecord {
     kind_tag: u32,
     event_flags: u32,
@@ -226,6 +230,8 @@ var<uniform> material_table: MaterialTableUniform;
 var<uniform> light_table: LightTableUniform;
 @group(0) @binding(13)
 var<storage, read> materials: array<MaterialRecord>;
+@group(0) @binding(14)
+var<storage, read> diffuse_materials: array<DiffuseMaterialData>;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -699,13 +705,11 @@ fn load_material_model(index: u32) -> u32 {
 }
 
 fn load_diffuse_material(index: u32) -> vec4<f32> {
-    let base = material_table.diffuse_material_offset_words + index * 4u;
-    return vec4<f32>(
-        bitcast<f32>(scene_data[base]),
-        bitcast<f32>(scene_data[base + 1u]),
-        bitcast<f32>(scene_data[base + 2u]),
-        bitcast<f32>(scene_data[base + 3u]),
-    );
+    if (index >= arrayLength(&diffuse_materials)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return vec4<f32>(0.0);
+    }
+    return diffuse_materials[index].reflectance;
 }
 
 fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {

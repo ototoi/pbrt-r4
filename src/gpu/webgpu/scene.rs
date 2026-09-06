@@ -29,6 +29,7 @@ pub struct Scene {
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub material_buffer: wgpu::Buffer,
+    pub diffuse_material_buffer: wgpu::Buffer,
     pub scene_data_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
@@ -332,6 +333,12 @@ impl Scene {
             contents: cast_slice(&materials),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
+        let diffuse_material_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 diffuse material data SBO"),
+                contents: cast_slice(&diffuse_materials),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let light_record_words_total = light_records
             .len()
             .checked_mul(light_record_words)
@@ -491,6 +498,7 @@ impl Scene {
             geometry_buffer,
             instance_buffer,
             material_buffer,
+            diffuse_material_buffer,
             scene_data_buffer,
             geometries,
             instances,
