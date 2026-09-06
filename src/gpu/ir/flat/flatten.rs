@@ -1,10 +1,10 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
     transform_swaps_handedness, AreaLight, AreaTriangleInput, Camera, Geometry, Instance,
-    LightBoundInput, LightKind, LightRecord, Material, PointLight, RenderSettings,
-    ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene, Transform,
-    TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport, EVENT_DIFFUSE,
-    EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
+    LightBoundInput, LightKind, LightRecord, Material, PointLight, PrimitiveDistributionMap,
+    RenderSettings, ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode,
+    Scene, Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport,
+    EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
 };
 use crate::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
@@ -73,9 +73,110 @@ pub fn flatten_node_with_material_override(
         scattering_child_refs: ScatteringChildRefs {
             node_ids: builder.scattering_child_refs,
         },
+        resolved_scattering_models: Vec::new(),
+        primitive_distribution_map: PrimitiveDistributionMap {
+            offsets: vec![0],
+            entries: Vec::new(),
+        },
     };
+    let mut scene = scene;
+    scene.resolved_scattering_models = resolve_scattering_models(&scene)?;
+    scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
     scene.validate_scattering_models()?;
+    scene.validate_static_views()?;
     Ok(scene)
+}
+
+fn resolve_scattering_models(scene: &Scene) -> Result<Vec<ResolvedScatteringModel>, PbrtError> {
+    scene
+        .scattering_models
+        .iter()
+        .enumerate()
+        .map(|(model_index, model)| {
+            let root = scene
+                .scattering_nodes
+                .get(model.surface_root as usize)
+                .ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "Scattering model {model_index} has an invalid surface root."
+                    ))
+                })?;
+            let end = root
+                .child_offset
+                .checked_add(root.child_count)
+                .ok_or_else(|| PbrtError::error("Scattering child range overflowed."))?;
+            let child_nodes = scene
+                .scattering_child_refs
+                .node_ids
+                .get(root.child_offset as usize..end as usize)
+                .ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "Scattering model {model_index} has an invalid child range."
+                    ))
+                })?
+                .to_vec();
+            Ok(ResolvedScatteringModel {
+                root_node: model.surface_root,
+                root_kind: root.kind.clone(),
+                event_flags: root.event_flags,
+                data_index: root.data_index,
+                child_nodes,
+            })
+        })
+        .collect()
+}
+
+fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
+    let mut offsets = Vec::with_capacity(scene.area_lights.len() + 1);
+    let mut entries = Vec::new();
+    offsets.push(0);
+    for (area_index, area_light) in scene.area_lights.iter().enumerate() {
+        let instance = scene
+            .instances
+            .get(area_light.instance as usize)
+            .ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Area light {area_index} references an invalid instance."
+                ))
+            })?;
+        let geometry = scene
+            .geometries
+            .get(instance.geometry as usize)
+            .ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Area light {area_index} references an invalid geometry."
+                ))
+            })?;
+        let triangle_count = geometry.index_count / 3;
+        let base = entries.len();
+        entries.resize(base + triangle_count as usize, INVALID_INDEX);
+        let start = usize::try_from(area_light.distribution.offset)
+            .map_err(|_| PbrtError::error("Area-light distribution offset exceeds usize."))?;
+        let count = usize::try_from(area_light.distribution.count)
+            .map_err(|_| PbrtError::error("Area-light distribution count exceeds usize."))?;
+        let end = start
+            .checked_add(count)
+            .ok_or_else(|| PbrtError::error("Area-light distribution range overflowed."))?;
+        for (distribution_index, entry) in scene
+            .triangle_distributions
+            .get(start..end)
+            .ok_or_else(|| PbrtError::error("Area-light distribution range is invalid."))?
+            .iter()
+            .enumerate()
+        {
+            if entry.primitive >= triangle_count {
+                return Err(PbrtError::error(
+                    "Area-light distribution primitive is invalid.",
+                ));
+            }
+            entries[base + entry.primitive as usize] = u32::try_from(start + distribution_index)
+                .map_err(|_| PbrtError::error("Distribution index exceeds u32."))?;
+        }
+        offsets.push(u32::try_from(entries.len()).map_err(|_| {
+            PbrtError::error("Primitive distribution map exceeds the u32 index range.")
+        })?);
+    }
+    Ok(PrimitiveDistributionMap { offsets, entries })
 }
 
 #[derive(Default)]

@@ -129,6 +129,10 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
+    assert_eq!(scene.resolved_scattering_models.len(), 2);
+    assert_eq!(scene.resolved_scattering_models[0].root_kind, "diffuse");
+    assert_eq!(scene.resolved_scattering_models[1].root_kind, "dielectric");
+    assert!(scene.primitive_distribution_map.offsets == vec![0]);
 }
 
 #[test]
@@ -177,6 +181,8 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
         scene.lights[0].kind,
         pbrt_r4::gpu::ir::flat::LightKind::Area
     );
+    assert_eq!(scene.primitive_distribution_map.offsets, vec![0, 2]);
+    assert_eq!(scene.primitive_distribution_map.entries, vec![0, 1]);
 }
 
 #[test]
