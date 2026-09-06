@@ -81,7 +81,7 @@ impl Scene {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let material_table = MaterialTable::from_flat(&flat.materials)?;
+        let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
         let diffuse_materials = material_table.diffuse;
         let dielectric_materials = material_table.dielectric;
@@ -425,10 +425,10 @@ impl Scene {
             scattering_nodes.len(),
             scattering_child_data_offset,
             scattering_child_words_total,
-            layered_bxdf_data_offset,
-            layered_bxdf.len(),
             INVALID_INDEX as usize,
             0,
+            layered_bxdf_data_offset,
+            layered_bxdf.len(),
             light_records.len(),
             point_lights.len(),
             area_lights.len(),

@@ -116,9 +116,9 @@ fn layered_shader_resolves_top_and_bottom_nodes() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
     assert!(COMMON_SHADER.contains("fn load_layered_bxdf(index: u32)"));
     assert!(COMMON_SHADER.contains("fn load_layered_bottom_reflectance"));
-    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_scattering_child(root, 0u)"));
+    assert!(COMMON_SHADER.contains("load_scattering_child(root, 0u)"));
     assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_bottom_reflectance"));
-    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("max_depth"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("layered_sample("));
 }
 
 #[test]

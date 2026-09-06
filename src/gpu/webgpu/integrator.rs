@@ -47,7 +47,9 @@ impl WavefrontPathIntegrator {
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
-        scene.replace_material_kind(queue, debug_material);
+        if let Some(kind) = debug_material {
+            scene.replace_material_kind(queue, kind);
+        }
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
