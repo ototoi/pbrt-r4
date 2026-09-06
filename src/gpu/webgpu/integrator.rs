@@ -16,6 +16,10 @@ use super::material::MaterialKind;
 use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
+use super::stages::{
+    all_stage_specs, RequiredLimits, FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE,
+    FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE,
+};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -24,7 +28,8 @@ pub struct WavefrontPathIntegrator {
     scene: Scene,
     camera_buffer: wgpu::Buffer,
     viewport_buffer: wgpu::Buffer,
-    scene_uniform_buffer: wgpu::Buffer,
+    material_table_buffer: wgpu::Buffer,
+    light_table_buffer: wgpu::Buffer,
     queues: Queues,
     film: Film,
     pipeline: Pipeline,
@@ -42,7 +47,14 @@ impl WavefrontPathIntegrator {
         flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
-        let context = Context::new()?;
+        let mut required_limits = RequiredLimits::from_stages(&all_stage_specs())?;
+        required_limits.storage_buffers_per_shader_stage = required_limits
+            .storage_buffers_per_shader_stage
+            .max(FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE);
+        required_limits.uniform_buffers_per_shader_stage = required_limits
+            .uniform_buffers_per_shader_stage
+            .max(FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE);
+        let context = Context::new(required_limits)?;
         let device = &context.device;
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
@@ -60,9 +72,14 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.viewport),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let scene_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 scene UBO"),
-            contents: bytes_of(&scene.scene_uniform),
+        let material_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material table UBO"),
+            contents: bytes_of(&scene.material_table),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let light_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 light table UBO"),
+            contents: bytes_of(&scene.light_table),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
@@ -91,11 +108,25 @@ impl WavefrontPathIntegrator {
                 buffer_entry(4, &scene.index_buffer),
                 buffer_entry(5, &scene.geometry_buffer),
                 buffer_entry(6, &scene.instance_buffer),
-                buffer_entry(7, &scene.scene_data_buffer),
                 buffer_entry(8, &queues.surfaces),
                 buffer_entry(9, &film.framebuffer),
                 buffer_entry(10, &queues.wavefront),
-                buffer_entry(11, &scene_uniform_buffer),
+                buffer_entry(11, &material_table_buffer),
+                buffer_entry(12, &light_table_buffer),
+                buffer_entry(13, &scene.material_buffer),
+                buffer_entry(14, &scene.material_attribute_buffer),
+                buffer_entry(15, &scene.scalar_attribute_buffer),
+                buffer_entry(16, &scene.scattering_model_buffer),
+                buffer_entry(17, &scene.scattering_node_buffer),
+                buffer_entry(18, &scene.scattering_child_buffer),
+                buffer_entry(19, &scene.spectrum_attribute_buffer),
+                buffer_entry(20, &scene.light_record_buffer),
+                buffer_entry(21, &scene.point_light_buffer),
+                buffer_entry(22, &scene.area_light_buffer),
+                buffer_entry(23, &scene.distribution_buffer),
+                buffer_entry(24, &scene.light_bvh_header_buffer),
+                buffer_entry(25, &scene.light_bvh_node_buffer),
+                buffer_entry(26, &scene.light_leaf_buffer),
             ],
         });
         Ok(Self {
@@ -103,7 +134,8 @@ impl WavefrontPathIntegrator {
             scene,
             camera_buffer,
             viewport_buffer,
-            scene_uniform_buffer,
+            material_table_buffer,
+            light_table_buffer,
             queues,
             film,
             pipeline,
@@ -339,9 +371,9 @@ impl WavefrontPathIntegrator {
     pub fn replace_material_kind(&mut self, kind: super::material::MaterialKind) {
         self.scene.replace_material_kind(&self.context.queue, kind);
         self.context.queue.write_buffer(
-            &self.scene_uniform_buffer,
+            &self.material_table_buffer,
             0,
-            bytes_of(&self.scene.scene_uniform),
+            bytes_of(&self.scene.material_table),
         );
     }
 }

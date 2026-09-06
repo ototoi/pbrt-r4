@@ -30,25 +30,18 @@ struct ViewportUniform {
     _padding2: u32,
 };
 
-struct SceneUniform {
-    material_offset_words: u32,
-    material_count: u32,
-    diffuse_material_offset_words: u32,
-    diffuse_material_count: u32,
-    dielectric_material_offset_words: u32,
-    dielectric_material_count: u32,
-    scattering_model_offset_words: u32,
-    scattering_model_count: u32,
-    scattering_node_offset_words: u32,
-    scattering_node_count: u32,
-    scattering_child_offset_words: u32,
-    scattering_child_count: u32,
-    bssrdf_node_offset_words: u32,
-    bssrdf_node_count: u32,
-    layered_bxdf_offset_words: u32,
-    layered_bxdf_count: u32,
-    debug_scattering_model: u32,
-    scattering_reserved: u32,
+struct MaterialTableUniform {
+    material_offset_words: u32, material_count: u32,
+    scattering_model_offset_words: u32, scattering_model_count: u32,
+    scattering_node_offset_words: u32, scattering_node_count: u32,
+    scattering_child_offset_words: u32, scattering_child_count: u32,
+    bssrdf_node_offset_words: u32, bssrdf_node_count: u32,
+    debug_scattering_model: u32, scattering_reserved: u32,
+    _reserved0: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
+    _reserved4: u32, _reserved5: u32,
+};
+
+struct LightTableUniform {
     light_record_offset_words: u32,
     light_count: u32,
     point_light_offset_words: u32,
@@ -61,8 +54,10 @@ struct SceneUniform {
     light_bvh_node_count: u32,
     light_leaf_offset: u32,
     light_leaf_count: u32,
-    scene_data_words: u32,
-    _reserved: u32,
+    _reserved0: u32,
+    _reserved1: u32,
+    _reserved2: u32,
+    _reserved3: u32,
 };
 
 struct Vertex {
@@ -95,15 +90,18 @@ struct ScatteringModelRecord {
     _padding: vec2<u32>,
 };
 
+struct MaterialRecord { kind_tag: u32, attribute_offset: u32, attribute_count: u32, scattering_model: u32, };
+struct MaterialAttributeRef { kind: u32, index: u32, };
+
 struct ScatteringNodeRecord {
     kind_tag: u32,
     event_flags: u32,
-    data_index: u32,
+    attribute_offset: u32,
     child_offset: u32,
     child_count: u32,
+    attribute_count: u32,
     _padding0: u32,
     _padding1: u32,
-    _padding2: u32,
 };
 
 struct RaySamples {
@@ -147,6 +145,21 @@ struct PointLight {
     intensity: vec4<f32>,
 };
 
+struct LightRecord {
+    kind: u32,
+    payload: u32,
+    _padding: vec2<u32>,
+};
+
+struct AreaLight {
+    instance: u32,
+    distribution_offset_words: u32,
+    distribution_count: u32,
+    total_area: f32,
+    emission: vec3<f32>,
+    flags: u32,
+};
+
 struct TriangleDistributionEntry {
     primitive: u32,
     cdf: f32,
@@ -158,6 +171,18 @@ struct AreaTriangleSelection {
     primitive: u32,
     area: f32,
     pmf: f32,
+};
+
+struct LayeredParams {
+    thickness: f32,
+    g: f32,
+    max_depth: u32,
+    n_samples: u32,
+    albedo: vec4<f32>,
+    two_sided: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
 };
 
 struct QueueState {
@@ -198,8 +223,6 @@ var<storage, read> indices: array<u32>;
 var<storage, read> geometries: array<Geometry>;
 @group(0) @binding(6)
 var<storage, read> instances: array<Instance>;
-@group(0) @binding(7)
-var<storage, read> scene_data: array<u32>;
 @group(0) @binding(8)
 var<storage, read_write> surfaces: array<SurfaceWorkItem>;
 @group(0) @binding(9)
@@ -207,7 +230,37 @@ var<storage, read_write> framebuffer: array<vec4<f32>>;
 @group(0) @binding(10)
 var<storage, read_write> wavefront_queue: array<atomic<u32>>;
 @group(0) @binding(11)
-var<uniform> scene: SceneUniform;
+var<uniform> material_table: MaterialTableUniform;
+@group(0) @binding(12)
+var<uniform> light_table: LightTableUniform;
+@group(0) @binding(13)
+var<storage, read> materials: array<MaterialRecord>;
+@group(0) @binding(14)
+var<storage, read> material_attributes: array<MaterialAttributeRef>;
+@group(0) @binding(15)
+var<storage, read> scalar_attributes: array<f32>;
+@group(0) @binding(16)
+var<storage, read> scattering_models: array<ScatteringModelRecord>;
+@group(0) @binding(17)
+var<storage, read> scattering_nodes: array<ScatteringNodeRecord>;
+@group(0) @binding(18)
+var<storage, read> scattering_children: array<u32>;
+@group(0) @binding(19)
+var<storage, read> spectrum_attributes: array<vec4<f32>>;
+@group(0) @binding(20)
+var<storage, read> light_records: array<LightRecord>;
+@group(0) @binding(21)
+var<storage, read> point_lights: array<PointLight>;
+@group(0) @binding(22)
+var<storage, read> area_lights: array<AreaLight>;
+@group(0) @binding(23)
+var<storage, read> triangle_distributions: array<TriangleDistributionEntry>;
+@group(0) @binding(24)
+var<storage, read> light_bvh_header: array<u32>;
+@group(0) @binding(25)
+var<storage, read> light_bvh_nodes: array<u32>;
+@group(0) @binding(26)
+var<storage, read> light_bvh_leaves: array<u32>;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -563,17 +616,17 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
 }
 
 fn load_area_emission(index: u32) -> vec4<f32> {
-    let base = scene.area_light_offset_words + index * 8u;
-    return vec4<f32>(
-        bitcast<f32>(scene_data[base + 4u]),
-        bitcast<f32>(scene_data[base + 5u]),
-        bitcast<f32>(scene_data[base + 6u]),
-        0.0,
-    );
+    return vec4<f32>(area_lights[index].emission, 0.0);
 }
 
 fn load_area_word(index: u32, word: u32) -> u32 {
-    return scene_data[scene.area_light_offset_words + index * 8u + word];
+    let area = area_lights[index];
+    if (word == 0u) { return area.instance; }
+    if (word == 1u) { return area.distribution_offset_words; }
+    if (word == 2u) { return area.distribution_count; }
+    if (word == 3u) { return bitcast<u32>(area.total_area); }
+    if (word == 7u) { return area.flags; }
+    return 0u;
 }
 
 fn load_area_instance(index: u32) -> u32 {
@@ -589,7 +642,11 @@ fn load_area_distribution_count(index: u32) -> u32 {
 }
 
 fn load_area_distribution_word(index: u32, distribution_index: u32, word: u32) -> u32 {
-    return scene_data[load_area_word(index, 1u) + distribution_index * 4u + word];
+    let entry = triangle_distributions[load_area_word(index, 1u) + distribution_index];
+    if (word == 0u) { return entry.primitive; }
+    if (word == 1u) { return bitcast<u32>(entry.cdf); }
+    if (word == 2u) { return bitcast<u32>(entry.area); }
+    return 0u;
 }
 
 fn load_area_distribution(index: u32, distribution_index: u32) -> AreaTriangleSelection {
@@ -628,20 +685,24 @@ fn pixel_count() -> u32 {
 }
 
 fn load_material_kind(index: u32) -> u32 {
-    if (scene.debug_scattering_model != 0xffffffffu) {
-        return scene.debug_scattering_model;
+    if (material_table.debug_scattering_model != 0xffffffffu) {
+        return material_table.debug_scattering_model;
     }
     let model_index = load_material_model(index);
-    if (model_index >= scene.scattering_model_count) {
+    if (model_index >= material_table.scattering_model_count) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return MATERIAL_KIND_NORMAL;
     }
-    let node_index = scene_data[scene.scattering_model_offset_words + model_index * 4u];
-    if (node_index >= scene.scattering_node_count) {
+    if (model_index >= arrayLength(&scattering_models)) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return MATERIAL_KIND_NORMAL;
     }
-    let node_kind = scene_data[scene.scattering_node_offset_words + node_index * 8u];
+    let node_index = scattering_models[model_index].surface_root;
+    if (node_index >= arrayLength(&scattering_nodes)) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return MATERIAL_KIND_NORMAL;
+    }
+    let node_kind = scattering_nodes[node_index].kind_tag;
     if (node_kind == 0u) {
         return MATERIAL_KIND_DIFFUSE;
     }
@@ -658,126 +719,79 @@ fn load_material_kind(index: u32) -> u32 {
     return MATERIAL_KIND_NORMAL;
 }
 
-fn load_material_data_index(index: u32) -> u32 {
-    let model_index = load_material_model(index);
-    if (model_index >= scene.scattering_model_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return 0u;
-    }
-    let node_index = scene_data[scene.scattering_model_offset_words + model_index * 4u];
-    if (node_index >= scene.scattering_node_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return 0u;
-    }
-    return scene_data[scene.scattering_node_offset_words + node_index * 8u + 2u];
+fn load_material_attribute(node_index: u32, ordinal: u32) -> MaterialAttributeRef {
+    if (node_index >= arrayLength(&scattering_nodes)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return MaterialAttributeRef(0u, 0u); }
+    let node = scattering_nodes[node_index];
+    if (ordinal >= node.attribute_count || node.attribute_offset + ordinal >= arrayLength(&material_attributes)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return MaterialAttributeRef(0u, 0u); }
+    return material_attributes[node.attribute_offset + ordinal];
 }
-
+fn load_node_scalar(node_index: u32, ordinal: u32) -> f32 {
+    let attr_ref = load_material_attribute(node_index, ordinal);
+    if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 0.0; }
+    return scalar_attributes[attr_ref.index];
+}
+fn load_node_spectrum(node_index: u32, ordinal: u32) -> vec3<f32> {
+    let attr_ref = load_material_attribute(node_index, ordinal);
+    if (attr_ref.kind != 1u || attr_ref.index >= arrayLength(&spectrum_attributes)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return vec3<f32>(0.0); }
+    return spectrum_attributes[attr_ref.index].xyz;
+}
+fn load_material_surface_node(index: u32) -> u32 {
+    let model = load_material_model(index);
+    if (model >= arrayLength(&scattering_models)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 0u; }
+    return scattering_models[model].surface_root;
+}
 fn load_material_model(index: u32) -> u32 {
-    return scene_data[scene.material_offset_words + index * 4u + 2u];
+    if (index >= arrayLength(&materials)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 0u; }
+    return materials[index].scattering_model;
 }
-
-fn load_diffuse_material(index: u32) -> vec4<f32> {
-    let base = scene.diffuse_material_offset_words + index * 4u;
-    return vec4<f32>(
-        bitcast<f32>(scene_data[base]),
-        bitcast<f32>(scene_data[base + 1u]),
-        bitcast<f32>(scene_data[base + 2u]),
-        bitcast<f32>(scene_data[base + 3u]),
-    );
-}
-
 fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
-    if (scene.debug_scattering_model == MATERIAL_KIND_LAMBERT) {
-        return vec3<f32>(0.5);
-    }
-    let data_index = load_material_data_index(material_index);
-    if (data_index >= scene.diffuse_material_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return vec3<f32>(0.0);
-    }
-    return load_diffuse_material(data_index).xyz;
+    if (material_table.debug_scattering_model == MATERIAL_KIND_LAMBERT) { return vec3<f32>(0.5); }
+    let model = load_material_model(material_index);
+    return load_node_spectrum(scattering_models[model].surface_root, 0u);
 }
-
-fn load_dielectric_eta(index: u32) -> f32 {
-    return bitcast<f32>(scene_data[scene.dielectric_material_offset_words + index * 4u]);
-}
-
+fn load_dielectric_eta(node_index: u32) -> f32 { return load_node_scalar(node_index, 0u); }
 fn load_scattering_node_word(index: u32, word: u32) -> u32 {
-    return scene_data[scene.scattering_node_offset_words + index * 8u + word];
+    if (index >= arrayLength(&scattering_nodes)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 0u; }
+    let node = scattering_nodes[index];
+    if (word == 0u) { return node.kind_tag; } if (word == 1u) { return node.event_flags; }
+    if (word == 2u) { return node.attribute_offset; } if (word == 3u) { return node.child_offset; }
+    if (word == 4u) { return node.child_count; } if (word == 5u) { return node.attribute_count; } return 0u;
 }
-
 fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
     let child_count = load_scattering_node_word(node_index, 4u);
-    if (child_index >= child_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return 0u;
-    }
-    let child_offset = load_scattering_node_word(node_index, 3u);
-    return scene_data[scene.scattering_child_offset_words + child_offset + child_index];
+    if (child_index >= child_count) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 0u; }
+    return scattering_children[load_scattering_node_word(node_index, 3u) + child_index];
 }
-
-fn load_layered_bxdf(index: u32) -> LayeredBxDFData {
-    if (index >= scene.layered_bxdf_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return LayeredBxDFData(0.0, 0.0, 0u, 0u, vec4<f32>(0.0), 0u, 0u, 0u, 0u);
-    }
-    let base = scene.layered_bxdf_offset_words + index * 12u;
-    return LayeredBxDFData(
-        bitcast<f32>(scene_data[base]),
-        bitcast<f32>(scene_data[base + 1u]),
-        scene_data[base + 2u],
-        scene_data[base + 3u],
-        vec4<f32>(
-            bitcast<f32>(scene_data[base + 4u]),
-            bitcast<f32>(scene_data[base + 5u]),
-            bitcast<f32>(scene_data[base + 6u]),
-            bitcast<f32>(scene_data[base + 7u]),
-        ),
-        scene_data[base + 8u], 0u, 0u, 0u,
-    );
+fn load_layered_bxdf(material_index: u32) -> LayeredParams {
+    let root = scattering_models[load_material_model(material_index)].surface_root;
+    return LayeredParams(load_node_scalar(root, 0u), load_node_scalar(root, 1u), u32(max(load_node_scalar(root, 2u), 0.0)), u32(max(load_node_scalar(root, 3u), 0.0)), vec4<f32>(load_node_spectrum(root, 5u), 0.0), u32(max(load_node_scalar(root, 4u), 0.0)), 0u, 0u, 0u);
 }
-
-fn load_layered_data_index(material_index: u32) -> u32 {
-    let model_index = load_material_model(material_index);
-    if (model_index >= scene.scattering_model_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return 0u;
-    }
-    let root = scene_data[scene.scattering_model_offset_words + model_index * 4u];
-    return load_scattering_node_word(root, 2u);
-}
-
 fn load_layered_bottom_reflectance(material_index: u32) -> vec3<f32> {
-    let model_index = load_material_model(material_index);
-    let root = scene_data[scene.scattering_model_offset_words + model_index * 4u];
+    let root = scattering_models[load_material_model(material_index)].surface_root;
     let bottom = load_scattering_child(root, 1u);
-    if (load_scattering_node_word(bottom, 0u) != 0u) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return vec3<f32>(0.0);
-    }
-    let data_index = load_scattering_node_word(bottom, 2u);
-    if (data_index >= scene.diffuse_material_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return vec3<f32>(0.0);
-    }
-    return load_diffuse_material(data_index).xyz;
+    if (load_scattering_node_word(bottom, 0u) != 0u) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return vec3<f32>(0.0); }
+    return load_node_spectrum(bottom, 7u);
 }
-
 fn load_layered_eta(material_index: u32) -> f32 {
-    let model = load_material_model(material_index);
-    let root = scene_data[scene.scattering_model_offset_words + model * 4u];
+    let root = scattering_models[load_material_model(material_index)].surface_root;
     let top = load_scattering_child(root, 0u);
-    let data_index = load_scattering_node_word(top, 2u);
-    if (load_scattering_node_word(top, 0u) != 1u || data_index >= scene.dielectric_material_count) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
-        return 1.0;
-    }
-    return load_dielectric_eta(data_index);
+    if (load_scattering_node_word(top, 0u) != 1u) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 1.0; }
+    return load_node_scalar(top, 6u);
 }
 
 fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
-    return layered_hash(layered_hash(layered_hash(viewport.seed) ^ pixel)
-        ^ layered_hash(viewport.sample_index)) ^ layered_hash(depth);
+    return path_hash(path_hash(path_hash(viewport.seed) ^ pixel)
+        ^ path_hash(viewport.sample_index)) ^ path_hash(depth);
+}
+
+fn path_hash(value: u32) -> u32 {
+    var x = value;
+    x ^= x >> 16u;
+    x *= 0x7feb352du;
+    x ^= x >> 15u;
+    x *= 0x846ca68bu;
+    x ^= x >> 16u;
+    return x;
 }
 
 fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
@@ -786,41 +800,27 @@ fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
 }
 
 fn load_point_light(index: u32) -> PointLight {
-    let base = scene.point_light_offset_words + index * 8u;
-    return PointLight(
-        vec4<f32>(
-            bitcast<f32>(scene_data[base]),
-            bitcast<f32>(scene_data[base + 1u]),
-            bitcast<f32>(scene_data[base + 2u]),
-            bitcast<f32>(scene_data[base + 3u]),
-        ),
-        vec4<f32>(
-            bitcast<f32>(scene_data[base + 4u]),
-            bitcast<f32>(scene_data[base + 5u]),
-            bitcast<f32>(scene_data[base + 6u]),
-            bitcast<f32>(scene_data[base + 7u]),
-        ),
-    );
+    return point_lights[index];
 }
 
 fn load_light_kind(index: u32) -> u32 {
-    return scene_data[scene.light_record_offset_words + index * 4u];
+    return light_records[index].kind;
 }
 
 fn load_light_payload(index: u32) -> u32 {
-    return scene_data[scene.light_record_offset_words + index * 4u + 1u];
+    return light_records[index].payload;
 }
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
-    if (light_handle >= scene.light_count || scene.light_leaf_offset == 0xffffffffu) {
+    if (light_handle >= light_table.light_count || light_table.light_leaf_offset == 0xffffffffu) {
         return 0.0;
     }
-    if (scene_data[scene.light_leaf_offset + light_handle] == 0xffffffffu) {
+    if (light_bvh_leaves[light_handle] == 0xffffffffu) {
         return 0.0;
     }
     var count = 0u;
-    for (var handle = 0u; handle < scene.light_leaf_count; handle++) {
-        if (scene_data[scene.light_leaf_offset + handle] != 0xffffffffu) {
+    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
+        if (light_bvh_leaves[handle] != 0xffffffffu) {
             count = count + 1u;
         }
     }
@@ -863,12 +863,12 @@ fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
 }
 
 fn sample_uniform_light(selector: f32) -> LightSelection {
-    if (scene.light_leaf_offset == 0xffffffffu || scene.light_leaf_count == 0u) {
+    if (light_table.light_leaf_offset == 0xffffffffu || light_table.light_leaf_count == 0u) {
         return LightSelection(0xffffffffu, 0.0);
     }
     var count = 0u;
-    for (var handle = 0u; handle < scene.light_leaf_count; handle++) {
-        if (scene_data[scene.light_leaf_offset + handle] != 0xffffffffu) {
+    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
+        if (light_bvh_leaves[handle] != 0xffffffffu) {
             count = count + 1u;
         }
     }
@@ -877,8 +877,8 @@ fn sample_uniform_light(selector: f32) -> LightSelection {
     }
     let selected = min(u32(min(selector, 0.99999994) * f32(count)), count - 1u);
     var ordinal = 0u;
-    for (var handle = 0u; handle < scene.light_leaf_count; handle++) {
-        if (scene_data[scene.light_leaf_offset + handle] != 0xffffffffu) {
+    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
+            if (light_bvh_leaves[handle] != 0xffffffffu) {
             if (ordinal == selected) {
                 return LightSelection(handle, 1.0 / f32(count));
             }
@@ -889,7 +889,7 @@ fn sample_uniform_light(selector: f32) -> LightSelection {
 }
 
 fn light_bvh_word(node_index: u32, word: u32) -> u32 {
-    return scene_data[scene.light_bvh_node_offset + node_index * 8u + word];
+    return light_bvh_nodes[node_index * 8u + word];
 }
 
 fn decode_light_bvh_node(node_index: u32) -> DecodedLightBVHNode {
@@ -899,14 +899,14 @@ fn decode_light_bvh_node(node_index: u32) -> DecodedLightBVHNode {
     let q_min = vec3<u32>(word0 & 0xffffu, word0 >> 16u, word1 & 0xffffu);
     let q_max = vec3<u32>(word1 >> 16u, word2 & 0xffffu, word2 >> 16u);
     let all_min = vec3<f32>(
-        bitcast<f32>(scene_data[scene.light_sampler_data_offset]),
-        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 1u]),
-        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 2u]),
+        bitcast<f32>(light_bvh_header[0u]),
+        bitcast<f32>(light_bvh_header[1u]),
+        bitcast<f32>(light_bvh_header[2u]),
     );
     let all_max = vec3<f32>(
-        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 4u]),
-        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 5u]),
-        bitcast<f32>(scene_data[scene.light_sampler_data_offset + 6u]),
+        bitcast<f32>(light_bvh_header[4u]),
+        bitcast<f32>(light_bvh_header[5u]),
+        bitcast<f32>(light_bvh_header[6u]),
     );
     let extent = all_max - all_min;
     let bounds_min = all_min + vec3<f32>(q_min) / 65535.0 * extent;
@@ -1008,13 +1008,13 @@ fn sin_sub_clamped(sin_a: f32, cos_a: f32, sin_b: f32, cos_b: f32) -> f32 {
 }
 
 fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
-    if (scene.light_bvh_node_count == 0u || scene.light_leaf_count == 0u) {
+    if (light_table.light_bvh_node_count == 0u || light_table.light_leaf_count == 0u) {
         return LightSelection(0xffffffffu, 0.0);
     }
     var node_index = 0u;
     var pmf = 1.0;
     var u = min(selector, 0.99999994);
-    for (var iteration = 0u; iteration < scene.light_bvh_node_count; iteration++) {
+    for (var iteration = 0u; iteration < light_table.light_bvh_node_count; iteration++) {
         let node = decode_light_bvh_node(node_index);
         if (node.is_leaf) {
             return LightSelection(node.payload, pmf);
@@ -1037,7 +1037,7 @@ fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection
             u = (u - left_pmf) / max(1.0 - left_pmf, 1e-7);
             node_index = node.payload;
         }
-        if (node_index >= scene.light_bvh_node_count) {
+        if (node_index >= light_table.light_bvh_node_count) {
             return LightSelection(0xffffffffu, 0.0);
         }
     }
@@ -1045,21 +1045,21 @@ fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection
 }
 
 fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (light_handle >= scene.light_leaf_count) {
+    if (light_handle >= light_table.light_leaf_count) {
         return 0.0;
     }
-    let leaf_index = scene_data[scene.light_leaf_offset + light_handle];
-    if (leaf_index >= scene.light_bvh_node_count) {
+    let leaf_index = light_bvh_leaves[light_handle];
+    if (leaf_index >= light_table.light_bvh_node_count) {
         return 0.0;
     }
     var node_index = leaf_index;
     var pmf = 1.0;
-    for (var iteration = 0u; iteration < scene.light_bvh_node_count; iteration++) {
+    for (var iteration = 0u; iteration < light_table.light_bvh_node_count; iteration++) {
         let parent = light_bvh_word(node_index, 7u);
         if (parent == 0xffffffffu) {
             return pmf;
         }
-        if (parent >= scene.light_bvh_node_count) {
+        if (parent >= light_table.light_bvh_node_count) {
             return 0.0;
         }
         let parent_node = decode_light_bvh_node(parent);
@@ -1085,14 +1085,14 @@ fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f3
 }
 
 fn light_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (scene.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
+    if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         return light_bvh_pmf_for_handle(light_handle, p, n);
     }
     return uniform_light_pmf_for_handle(light_handle);
 }
 
 fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
-    if (scene.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
+    if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         return sample_light_bvh(selector, p, n);
     }
     return sample_uniform_light(selector);

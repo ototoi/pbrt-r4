@@ -1,13 +1,11 @@
 use crate::util::error::PbrtError;
 
-use super::abi::{DielectricMaterialData, DiffuseMaterialData, LayeredBxDFData, MaterialRecord};
+use super::abi::{MaterialAttributeRef, MaterialRecord};
 use crate::gpu::ir::flat;
 
 pub struct MaterialTable {
     pub records: Vec<MaterialRecord>,
-    pub diffuse: Vec<DiffuseMaterialData>,
-    pub dielectric: Vec<DielectricMaterialData>,
-    pub layered: Vec<LayeredBxDFData>,
+    pub attributes: Vec<MaterialAttributeRef>,
 }
 
 impl MaterialTable {
@@ -15,22 +13,9 @@ impl MaterialTable {
         scene.validate_scattering_models()?;
         for node in &scene.scattering_nodes {
             let valid = match node.kind.as_str() {
-                "diffuse" => {
-                    node.child_count == 0
-                        && (node.data_index as usize) < scene.diffuse_bxdf_data.len()
-                }
-                "dielectric" => {
-                    node.child_count == 0
-                        && (node.data_index as usize) < scene.dielectric_bxdf_data.len()
-                }
-                "thindielectric" => {
-                    node.child_count == 0
-                        && (node.data_index as usize) < scene.dielectric_bxdf_data.len()
-                }
+                "diffuse" | "dielectric" | "thindielectric" => node.child_count == 0,
                 "layered" => {
-                    if node.child_count != 2
-                        || (node.data_index as usize) >= scene.layered_bxdf_data.len()
-                    {
+                    if node.child_count != 2 {
                         false
                     } else {
                         let children = node.child_offset.checked_add(2).and_then(|end| {
@@ -59,6 +44,7 @@ impl MaterialTable {
                 ));
             }
         }
+        let mut attributes = Vec::new();
         let records = scene
             .materials
             .iter()
@@ -69,50 +55,35 @@ impl MaterialTable {
                     .ok_or_else(|| {
                         PbrtError::error("Material references an invalid scattering model.")
                     })?;
-                let node = scene
+                scene
                     .scattering_nodes
                     .get(model.surface_root as usize)
                     .ok_or_else(|| {
                         PbrtError::error("Material references an invalid surface root.")
                     })?;
+                let offset = attributes.len() as u32;
+                for attr in &material.attributes {
+                    let kind = match attr.kind {
+                        flat::AttributeKind::Scalar => 0,
+                        flat::AttributeKind::Spectrum => 1,
+                        flat::AttributeKind::Texture => 2,
+                    };
+                    attributes.push(MaterialAttributeRef {
+                        kind,
+                        index: attr.index,
+                    });
+                }
                 Ok(MaterialRecord {
                     kind_tag: MaterialKind::from_flat(&material.kind)?.tag(),
-                    data_index: node.data_index,
+                    attribute_offset: offset,
+                    attribute_count: material.attributes.len() as u32,
                     scattering_model: material.scattering_model,
-                    padding: 0,
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
         Ok(Self {
             records,
-            diffuse: scene
-                .diffuse_bxdf_data
-                .iter()
-                .map(|d| DiffuseMaterialData {
-                    reflectance: [d.reflectance[0], d.reflectance[1], d.reflectance[2], 0.0],
-                })
-                .collect(),
-            dielectric: scene
-                .dielectric_bxdf_data
-                .iter()
-                .map(|d| DielectricMaterialData {
-                    eta: d.eta,
-                    padding: [0; 3],
-                })
-                .collect(),
-            layered: scene
-                .layered_bxdf_data
-                .iter()
-                .map(|d| LayeredBxDFData {
-                    thickness: d.thickness,
-                    g: d.g,
-                    max_depth: d.max_depth,
-                    n_samples: d.n_samples,
-                    albedo: [d.albedo[0], d.albedo[1], d.albedo[2], 0.0],
-                    two_sided: u32::from(d.two_sided),
-                    padding: [0; 3],
-                })
-                .collect(),
+            attributes,
         })
     }
 }

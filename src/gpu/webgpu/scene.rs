@@ -5,11 +5,11 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
-    viewport_uniform, AreaLight, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
-    LayeredBxDFData, LightRecord, MaterialRecord, PointLight, ScatteringModelRecord,
-    ScatteringNodeRecord, SceneUniform, TriangleDistributionEntry, Vertex, ViewportUniform,
-    INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    camera_uniform, inverse_transpose_linear, light_table_uniform, material_table_uniform,
+    row_major_to_columns, viewport_uniform, AreaLight, Geometry, Instance, LightRecord,
+    LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform, PointLight,
+    ScatteringModelRecord, ScatteringNodeRecord, TriangleDistributionEntry, Vertex,
+    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -20,19 +20,34 @@ use super::output::Output;
 pub struct Scene {
     pub camera: super::abi::CameraUniform,
     pub viewport: ViewportUniform,
-    pub scene_uniform: SceneUniform,
+    pub material_table: MaterialTableUniform,
+    pub light_table: LightTableUniform,
     pub output: Output,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub scene_data_buffer: wgpu::Buffer,
+    pub material_buffer: wgpu::Buffer,
+    pub material_attribute_buffer: wgpu::Buffer,
+    pub scalar_attribute_buffer: wgpu::Buffer,
+    pub scattering_model_buffer: wgpu::Buffer,
+    pub scattering_node_buffer: wgpu::Buffer,
+    pub scattering_child_buffer: wgpu::Buffer,
+    pub spectrum_attribute_buffer: wgpu::Buffer,
+    pub texture_attribute_buffer: wgpu::Buffer,
+    pub light_record_buffer: wgpu::Buffer,
+    pub point_light_buffer: wgpu::Buffer,
+    pub area_light_buffer: wgpu::Buffer,
+    pub distribution_buffer: wgpu::Buffer,
+    pub light_bvh_header_buffer: wgpu::Buffer,
+    pub light_bvh_node_buffer: wgpu::Buffer,
+    pub light_leaf_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<MaterialRecord>,
     pub scattering_models: Vec<ScatteringModelRecord>,
     pub scattering_nodes: Vec<ScatteringNodeRecord>,
-    pub layered_bxdf: Vec<LayeredBxDFData>,
+    pub material_attributes: Vec<MaterialAttributeRef>,
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
@@ -83,9 +98,15 @@ impl Scene {
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
-        let diffuse_materials = material_table.diffuse;
-        let dielectric_materials = material_table.dielectric;
-        let layered_bxdf = material_table.layered;
+        let material_attributes = material_table.attributes;
+        let scalar_attributes = flat.attribute_tables.scalars.clone();
+        let spectrum_attributes = flat
+            .attribute_tables
+            .spectra
+            .iter()
+            .map(|v| v.0)
+            .collect::<Vec<_>>();
+        let texture_attributes = flat.attribute_tables.textures.clone();
         let scattering_models = flat
             .scattering_models
             .iter()
@@ -98,14 +119,46 @@ impl Scene {
         let scattering_nodes = flat
             .scattering_nodes
             .iter()
-            .map(|node| {
+            .enumerate()
+            .map(|(node_id, node)| {
                 Ok(ScatteringNodeRecord {
                     kind_tag: scattering_node_tag(&node.kind)?,
                     event_flags: node.event_flags,
-                    data_index: node.data_index,
+                    attribute_offset: flat
+                        .materials
+                        .iter()
+                        .enumerate()
+                        .find_map(|(material_index, material)| {
+                            let model = flat
+                                .scattering_models
+                                .get(material.scattering_model as usize)?;
+                            let root = flat.scattering_nodes.get(model.surface_root as usize)?;
+                            let owns = root.child_offset <= node_id as u32
+                                && (node_id as u32) < root.child_offset + root.child_count;
+                            (model.surface_root == node_id as u32 || owns)
+                                .then(|| materials.get(material_index).map(|m| m.attribute_offset))
+                                .flatten()
+                        })
+                        .unwrap_or(0),
                     child_offset: node.child_offset,
                     child_count: node.child_count,
-                    padding: [0; 3],
+                    attribute_count: flat
+                        .materials
+                        .iter()
+                        .enumerate()
+                        .find_map(|(material_index, material)| {
+                            let model = flat
+                                .scattering_models
+                                .get(material.scattering_model as usize)?;
+                            let root = flat.scattering_nodes.get(model.surface_root as usize)?;
+                            let owns = root.child_offset <= node_id as u32
+                                && (node_id as u32) < root.child_offset + root.child_count;
+                            (model.surface_root == node_id as u32 || owns)
+                                .then(|| materials.get(material_index).map(|m| m.attribute_count))
+                                .flatten()
+                        })
+                        .unwrap_or(0),
+                    padding: [0; 2],
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
@@ -165,135 +218,13 @@ impl Scene {
                 _ => {}
             }
         }
-        let material_words = std::mem::size_of::<MaterialRecord>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU material ABI is not word-aligned."))?;
-        let light_words = std::mem::size_of::<PointLight>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU point-light ABI is not word-aligned."))?;
-        let light_record_words = std::mem::size_of::<LightRecord>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU light-record ABI is not word-aligned."))?;
-        let area_light_words = std::mem::size_of::<AreaLight>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU area-light ABI is not word-aligned."))?;
-        let distribution_words = std::mem::size_of::<TriangleDistributionEntry>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU distribution ABI is not word-aligned."))?;
-        let material_words_total = materials
-            .len()
-            .checked_mul(material_words)
-            .ok_or_else(|| PbrtError::error("WebGPU material buffer size overflowed."))?;
-        let diffuse_material_words = std::mem::size_of::<DiffuseMaterialData>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU diffuse-material ABI is not word-aligned."))?;
-        let dielectric_material_words = std::mem::size_of::<DielectricMaterialData>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| {
-                PbrtError::error("WebGPU dielectric-material ABI is not word-aligned.")
-            })?;
-        let scattering_model_words = std::mem::size_of::<ScatteringModelRecord>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-model ABI is not word-aligned."))?;
-        let scattering_node_words = std::mem::size_of::<ScatteringNodeRecord>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-node ABI is not word-aligned."))?;
-        let diffuse_material_data_offset = material_words_total;
-        let diffuse_material_words_total = diffuse_materials
-            .len()
-            .checked_mul(diffuse_material_words)
-            .ok_or_else(|| PbrtError::error("WebGPU diffuse-material buffer size overflowed."))?;
-        let dielectric_material_data_offset = diffuse_material_data_offset
-            .checked_add(diffuse_material_words_total)
-            .ok_or_else(|| PbrtError::error("WebGPU dielectric-material offset overflowed."))?;
-        let dielectric_material_words_total = dielectric_materials
-            .len()
-            .checked_mul(dielectric_material_words)
-            .ok_or_else(|| {
-                PbrtError::error("WebGPU dielectric-material buffer size overflowed.")
-            })?;
-        let scattering_model_data_offset = dielectric_material_data_offset
-            .checked_add(dielectric_material_words_total)
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-model offset overflowed."))?;
-        let scattering_model_words_total = scattering_models
-            .len()
-            .checked_mul(scattering_model_words)
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-model buffer size overflowed."))?;
-        let scattering_node_data_offset = scattering_model_data_offset
-            .checked_add(scattering_model_words_total)
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-node offset overflowed."))?;
-        let scattering_node_words_total = scattering_nodes
-            .len()
-            .checked_mul(scattering_node_words)
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-node buffer size overflowed."))?;
-        let scattering_child_data_offset = scattering_node_data_offset
-            .checked_add(scattering_node_words_total)
-            .ok_or_else(|| PbrtError::error("WebGPU scattering-child offset overflowed."))?;
         let scattering_child_words_total = flat.scattering_child_refs.node_ids.len();
-        let layered_bxdf_data_offset = scattering_child_data_offset
-            .checked_add(scattering_child_words_total)
-            .ok_or_else(|| PbrtError::error("WebGPU layered-BxDF offset overflowed."))?;
-        let layered_bxdf_words = std::mem::size_of::<LayeredBxDFData>()
-            .checked_div(std::mem::size_of::<u32>())
-            .ok_or_else(|| PbrtError::error("WebGPU layered-BxDF ABI is not word-aligned."))?;
-        let layered_bxdf_words_total = layered_bxdf
-            .len()
-            .checked_mul(layered_bxdf_words)
-            .ok_or_else(|| PbrtError::error("WebGPU layered-BxDF buffer size overflowed."))?;
-        let distribution_words_total = flat
-            .triangle_distributions
-            .len()
-            .checked_mul(distribution_words)
-            .ok_or_else(|| PbrtError::error("WebGPU distribution buffer size overflowed."))?;
-        let light_record_data_offset = layered_bxdf_data_offset
-            .checked_add(layered_bxdf_words_total)
-            .ok_or_else(|| PbrtError::error("WebGPU light-record offset overflowed."))?;
-        let point_light_data_offset = light_record_data_offset
-            .checked_add(
-                light_records
-                    .len()
-                    .checked_mul(light_record_words)
-                    .ok_or_else(|| {
-                        PbrtError::error("WebGPU light-record buffer size overflowed.")
-                    })?,
-            )
-            .ok_or_else(|| PbrtError::error("WebGPU point-light offset overflowed."))?;
-        let area_light_data_offset =
-            point_light_data_offset
-                .checked_add(point_lights.len().checked_mul(light_words).ok_or_else(|| {
-                    PbrtError::error("WebGPU point-light buffer size overflowed.")
-                })?)
-                .ok_or_else(|| PbrtError::error("WebGPU area-light buffer offset overflowed."))?;
-        let distribution_data_offset = area_light_data_offset
-            .checked_add(
-                area_lights
-                    .len()
-                    .checked_mul(area_light_words)
-                    .ok_or_else(|| PbrtError::error("WebGPU area-light buffer size overflowed."))?,
-            )
-            .ok_or_else(|| PbrtError::error("WebGPU distribution buffer offset overflowed."))?;
         for (area_index, area_light) in area_lights.iter_mut().enumerate() {
             let flat_area = flat
                 .area_lights
                 .get(area_index)
                 .ok_or_else(|| PbrtError::error("WebGPU area-light table is inconsistent."))?;
-            area_light.distribution_offset_words = to_u32_offset(
-                distribution_data_offset
-                    .checked_add(
-                        usize::try_from(flat_area.distribution.offset)
-                            .map_err(|_| {
-                                PbrtError::error(
-                                    "WebGPU distribution offset does not fit in usize.",
-                                )
-                            })?
-                            .checked_mul(distribution_words)
-                            .ok_or_else(|| {
-                                PbrtError::error("WebGPU distribution offset overflowed.")
-                            })?,
-                    )
-                    .ok_or_else(|| PbrtError::error("WebGPU distribution offset overflowed."))?,
-                "distribution offset",
-            )?;
+            area_light.distribution_offset_words = flat_area.distribution.offset;
         }
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
@@ -306,161 +237,166 @@ impl Scene {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 vertex SBO"),
-            contents: cast_slice(&vertices),
+            contents: buffer_contents(&vertices),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 local index SBO"),
-            contents: cast_slice(&indices),
+            contents: buffer_contents(&indices),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
         });
         let geometry_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 geometry SBO"),
-            contents: cast_slice(&geometries),
+            contents: buffer_contents(&geometries),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 instance SBO"),
-            contents: cast_slice(&instances),
+            contents: buffer_contents(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let light_record_words_total = light_records
-            .len()
-            .checked_mul(light_record_words)
-            .ok_or_else(|| PbrtError::error("WebGPU light-record buffer size overflowed."))?;
-        let point_light_words_total = point_lights
-            .len()
-            .checked_mul(light_words)
-            .ok_or_else(|| PbrtError::error("WebGPU point-light buffer size overflowed."))?;
-        let area_light_words_total = area_lights
-            .len()
-            .checked_mul(area_light_words)
-            .ok_or_else(|| PbrtError::error("WebGPU area-light buffer size overflowed."))?;
-        let scene_data_capacity = material_words_total
-            .checked_add(diffuse_material_words_total)
-            .and_then(|size| size.checked_add(dielectric_material_words_total))
-            .and_then(|size| size.checked_add(scattering_model_words_total))
-            .and_then(|size| size.checked_add(scattering_node_words_total))
-            .and_then(|size| size.checked_add(scattering_child_words_total))
-            .and_then(|size| size.checked_add(layered_bxdf_words_total))
-            .and_then(|size| size.checked_add(light_record_words_total))
-            .and_then(|size| size.checked_add(point_light_words_total))
-            .and_then(|size| size.checked_add(area_light_words_total))
-            .and_then(|size| size.checked_add(distribution_words_total))
-            .ok_or_else(|| PbrtError::error("WebGPU material/light buffer size overflowed."))?;
-        let mut scene_data = Vec::<u32>::with_capacity(scene_data_capacity);
-        for material in &materials {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
-        }
-        for material in &diffuse_materials {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
-        }
-        for material in &dielectric_materials {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(material)));
-        }
-        for model in &scattering_models {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(model)));
-        }
-        for node in &scattering_nodes {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(node)));
-        }
-        scene_data.extend_from_slice(&flat.scattering_child_refs.node_ids);
-        for data in &layered_bxdf {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(data)));
-        }
-        for record in &light_records {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(record)));
-        }
-        for light in &point_lights {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
-        }
-        for light in &area_lights {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(light)));
-        }
-        for entry in &flat.triangle_distributions {
-            scene_data.extend_from_slice(cast_slice(std::slice::from_ref(
-                &TriangleDistributionEntry {
-                    primitive: entry.primitive,
-                    cdf: entry.cdf,
-                    area: entry.area,
-                    reserved: 0,
-                },
-            )));
-        }
+        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material record SBO"),
+            contents: buffer_contents(&materials),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let material_attribute_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 material attribute refs SBO"),
+                contents: buffer_contents(&material_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let scalar_attribute_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 scalar attributes SBO"),
+                contents: buffer_contents(&scalar_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let scattering_model_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 scattering model SBO"),
+                contents: buffer_contents(&scattering_models),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let scattering_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 scattering node SBO"),
+            contents: buffer_contents(&scattering_nodes),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let scattering_child_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 scattering child SBO"),
+                contents: buffer_contents(&flat.scattering_child_refs.node_ids),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let spectrum_attribute_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 spectrum attributes SBO"),
+                contents: buffer_contents(&spectrum_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let texture_attribute_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 texture attributes SBO"),
+                contents: buffer_contents(&texture_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let distribution_entries = flat
+            .triangle_distributions
+            .iter()
+            .map(|entry| TriangleDistributionEntry {
+                primitive: entry.primitive,
+                cdf: entry.cdf,
+                area: entry.area,
+                reserved: 0,
+            })
+            .collect::<Vec<_>>();
+        let light_record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 light record SBO"),
+            contents: buffer_contents(&light_records),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let point_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 point light SBO"),
+            contents: buffer_contents(&point_lights),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let area_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 area light SBO"),
+            contents: buffer_contents(&area_lights),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let distribution_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 triangle distribution SBO"),
+            contents: buffer_contents(&distribution_entries),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
-        let (light_sampler_data_offset, light_bvh_node_offset, light_leaf_offset) =
-            if let Some(packed) = &packed_light_bvh {
-                let header_offset = align_words(scene_data.len(), 8)?;
-                scene_data.resize(header_offset, 0);
-                scene_data.extend_from_slice(&packed.header_words);
-                let node_offset = scene_data.len();
-                for node in &packed.node_words {
-                    scene_data.extend_from_slice(node);
-                }
-                let leaf_offset = scene_data.len();
-                scene_data.extend_from_slice(&packed.handle_to_leaf);
-                (header_offset, node_offset, leaf_offset)
-            } else {
-                (
-                    INVALID_INDEX as usize,
-                    INVALID_INDEX as usize,
-                    INVALID_INDEX as usize,
-                )
-            };
-        let limits = device.limits();
-        validate_scene_data_size(
-            scene_data.len(),
-            limits.max_buffer_size,
-            u64::from(limits.max_storage_buffer_binding_size),
-        )?;
-        let mut scene_uniform = scene_uniform(
+        let mut material_table = material_table_uniform(
             materials.len(),
-            diffuse_material_data_offset,
-            diffuse_materials.len(),
-            dielectric_material_data_offset,
-            dielectric_materials.len(),
-            scattering_model_data_offset,
+            0,
             scattering_models.len(),
-            scattering_node_data_offset,
+            0,
             scattering_nodes.len(),
-            scattering_child_data_offset,
+            0,
             scattering_child_words_total,
             INVALID_INDEX as usize,
             0,
-            layered_bxdf_data_offset,
-            layered_bxdf.len(),
+        )?;
+        let mut light_table = light_table_uniform(
             light_records.len(),
             point_lights.len(),
             area_lights.len(),
-            light_record_data_offset,
-            point_light_data_offset,
-            area_light_data_offset,
-            scene_data.len(),
+            0,
+            0,
+            0,
         )?;
-        scene_uniform.debug_scattering_model = INVALID_INDEX;
+        material_table.debug_scattering_model = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
-                scene_uniform.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
+                light_table.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
             }
-            scene_uniform.light_sampler_data_offset =
-                to_u32_offset(light_sampler_data_offset, "light sampler data offset")?;
-            scene_uniform.light_bvh_node_offset =
-                to_u32_offset(light_bvh_node_offset, "light BVH node offset")?;
-            scene_uniform.light_bvh_node_count =
+            light_table.light_sampler_data_offset = 0;
+            light_table.light_bvh_node_offset = 0;
+            light_table.light_bvh_node_count =
                 u32::try_from(packed.node_words.len()).map_err(|_| {
                     PbrtError::error("WebGPU Light BVH node count does not fit in u32.")
                 })?;
-            scene_uniform.light_leaf_offset =
-                to_u32_offset(light_leaf_offset, "light handle-to-leaf offset")?;
-            scene_uniform.light_leaf_count =
+            light_table.light_leaf_offset = 0;
+            light_table.light_leaf_count =
                 u32::try_from(packed.handle_to_leaf.len()).map_err(|_| {
                     PbrtError::error("WebGPU Light BVH leaf count does not fit in u32.")
                 })?;
         }
-        let scene_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 scene data SBO"),
-            contents: cast_slice(&scene_data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        let (light_bvh_header, light_bvh_nodes, light_leaf) = packed_light_bvh
+            .as_ref()
+            .map(|packed| {
+                (
+                    packed.header_words.to_vec(),
+                    packed
+                        .node_words
+                        .iter()
+                        .flat_map(|node| node.iter().copied())
+                        .collect::<Vec<_>>(),
+                    packed.handle_to_leaf.clone(),
+                )
+            })
+            .unwrap_or_default();
+        let light_bvh_header_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 light BVH header SBO"),
+                contents: buffer_contents(&light_bvh_header),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let light_bvh_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 light BVH node SBO"),
+            contents: buffer_contents(&light_bvh_nodes),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let light_leaf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 light BVH leaf SBO"),
+            contents: buffer_contents(&light_leaf),
+            usage: wgpu::BufferUsages::STORAGE,
         });
         let acceleration = acceleration::build(
             device,
@@ -474,19 +410,34 @@ impl Scene {
         Ok(Self {
             camera,
             viewport,
-            scene_uniform,
+            material_table,
+            light_table,
             output: Output::from_flat(flat.output),
             vertex_buffer,
             index_buffer,
             geometry_buffer,
             instance_buffer,
-            scene_data_buffer,
+            material_buffer,
+            material_attribute_buffer,
+            scalar_attribute_buffer,
+            scattering_model_buffer,
+            scattering_node_buffer,
+            scattering_child_buffer,
+            spectrum_attribute_buffer,
+            texture_attribute_buffer,
+            light_record_buffer,
+            point_light_buffer,
+            area_light_buffer,
+            distribution_buffer,
+            light_bvh_header_buffer,
+            light_bvh_node_buffer,
+            light_leaf_buffer,
             geometries,
             instances,
             materials,
             scattering_models,
             scattering_nodes,
-            layered_bxdf,
+            material_attributes,
             point_lights,
             area_lights,
             light_records,
@@ -497,50 +448,27 @@ impl Scene {
     }
 
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
-        self.scene_uniform.debug_scattering_model = kind.tag();
+        self.material_table.debug_scattering_model = kind.tag();
         for material in &mut self.materials {
             material.kind_tag = kind.tag();
         }
         queue.write_buffer(
-            &self.scene_data_buffer,
+            &self.material_buffer,
             0,
             bytemuck::cast_slice(&self.materials),
         );
     }
 }
 
-fn align_words(value: usize, alignment: usize) -> Result<usize, PbrtError> {
-    let remainder = value % alignment;
-    value
-        .checked_add((alignment - remainder) % alignment)
-        .ok_or_else(|| PbrtError::error("WebGPU scene-data alignment overflowed."))
-}
-
-fn to_u32_offset(value: usize, label: &str) -> Result<u32, PbrtError> {
-    u32::try_from(value)
-        .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
-}
-
-pub fn validate_scene_data_size(
-    word_count: usize,
-    max_buffer_size: u64,
-    max_storage_buffer_binding_size: u64,
-) -> Result<u64, PbrtError> {
-    let byte_count = u64::try_from(word_count)
-        .ok()
-        .and_then(|count| count.checked_mul(std::mem::size_of::<u32>() as u64))
-        .ok_or_else(|| PbrtError::error("WebGPU scene-data byte size overflowed."))?;
-    if byte_count > max_buffer_size {
-        return Err(PbrtError::error(&format!(
-            "WebGPU scene data requires {byte_count} bytes, exceeding max_buffer_size {max_buffer_size}."
-        )));
+fn buffer_contents<T: bytemuck::Pod>(values: &[T]) -> &[u8] {
+    if values.is_empty() {
+        // WebGPU validates the minimum binding size against the declared
+        // storage-array stride, so a four-byte sentinel is insufficient for
+        // an empty array of a larger record type.
+        cast_slice(&[0u32; 16])
+    } else {
+        cast_slice(values)
     }
-    if byte_count > max_storage_buffer_binding_size {
-        return Err(PbrtError::error(&format!(
-            "WebGPU scene data requires {byte_count} bytes, exceeding max_storage_buffer_binding_size {max_storage_buffer_binding_size}."
-        )));
-    }
-    Ok(byte_count)
 }
 
 fn validate_instance_area_lights(

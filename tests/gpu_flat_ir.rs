@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use pbrt_r4::gpu::ir::flat::{flatten_node, validate_scattering_graph, MaterialData};
+use pbrt_r4::gpu::ir::flat::{flatten_node, validate_scattering_graph, AttributeKind};
 use pbrt_r4::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
     CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
@@ -97,6 +97,10 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 
     assert_eq!(scene.vertices.len(), 6);
     assert_eq!(scene.indices, vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(scene.attribute_tables.spectra.len(), 1);
+    assert_eq!(scene.attribute_tables.scalars.len(), 1);
+    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[1].attributes.len(), 1);
     assert_eq!(
         scene.geometries,
         vec![
@@ -129,6 +133,10 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
+    assert_eq!(scene.resolved_scattering_models.len(), 2);
+    assert_eq!(scene.resolved_scattering_models[0].root_kind, "diffuse");
+    assert_eq!(scene.resolved_scattering_models[1].root_kind, "dielectric");
+    assert!(scene.primitive_distribution_map.offsets == vec![0]);
 }
 
 #[test]
@@ -177,6 +185,8 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
         scene.lights[0].kind,
         pbrt_r4::gpu::ir::flat::LightKind::Area
     );
+    assert_eq!(scene.primitive_distribution_map.offsets, vec![0, 2]);
+    assert_eq!(scene.primitive_distribution_map.entries, vec![0, 1]);
 }
 
 #[test]
@@ -412,18 +422,29 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
         .expect("diffuse reflectance should be normalized into Flat IR");
     assert_eq!(scene.materials[0].kind, "diffuse");
     let expected_reflectance = Spectrum::from_rgb(&[0.5, 0.5, 0.5], SpectrumType::Albedo).to_rgb();
+    assert_eq!(scene.materials[0].attributes.len(), 1);
     assert_eq!(
-        scene.materials[0].data,
-        MaterialData::Diffuse(pbrt_r4::gpu::ir::flat::DiffuseMaterialData {
-            reflectance: expected_reflectance,
-        })
+        scene.materials[0].attributes[0].kind,
+        AttributeKind::Spectrum
+    );
+    assert_eq!(scene.materials[0].attributes[0].name, "reflectance");
+    let attribute = &scene.materials[0].attributes[0];
+    let spectrum = scene.attribute_tables.spectra[attribute.index as usize].0;
+    assert_eq!(
+        spectrum,
+        [
+            expected_reflectance[0],
+            expected_reflectance[1],
+            expected_reflectance[2],
+            0.0
+        ]
     );
     assert_eq!(scene.materials[0].scattering_model, 0);
     assert_eq!(scene.scattering_models[0].surface_root, 0);
     assert_eq!(scene.scattering_nodes[0].kind, "diffuse");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b00101);
     assert_eq!(scene.scattering_nodes[0].data_index, 0);
-    assert_eq!(scene.diffuse_bxdf_data.len(), 1);
+    assert_eq!(scene.attribute_tables.spectra.len(), 1);
 }
 
 #[test]
@@ -449,14 +470,18 @@ fn flatten_node_extracts_dielectric_eta() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[0].attributes[0].kind, AttributeKind::Scalar);
+    assert_eq!(scene.materials[0].attributes[0].name, "eta");
+    let attribute = &scene.materials[0].attributes[0];
     assert_eq!(
-        scene.materials[0].data,
-        MaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData { eta: 1.33 })
+        scene.attribute_tables.scalars[attribute.index as usize],
+        1.33
     );
     assert_eq!(scene.materials[0].scattering_model, 0);
     assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
-    assert_eq!(scene.dielectric_bxdf_data.len(), 1);
+    assert_eq!(scene.attribute_tables.scalars.len(), 1);
 }
 
 #[test]
@@ -466,10 +491,9 @@ fn flatten_node_extracts_thin_dielectric_leaf() {
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert!(matches!(
-        scene.materials[0].data,
-        MaterialData::ThinDielectric(_)
-    ));
+    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[0].attributes[0].kind, AttributeKind::Scalar);
+    assert_eq!(scene.materials[0].attributes[0].name, "eta");
     assert_eq!(scene.scattering_nodes[0].kind, "thindielectric");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
 }
@@ -492,10 +516,18 @@ fn flatten_node_builds_coateddiffuse_layered_graph() {
     assert_eq!(scene.scattering_nodes[2].child_offset, 0);
     assert_eq!(scene.scattering_nodes[2].child_count, 2);
     assert_eq!(scene.scattering_child_refs.node_ids, vec![0, 1]);
-    assert_eq!(scene.layered_bxdf_data[0].thickness, 0.01);
-    assert_eq!(scene.layered_bxdf_data[0].max_depth, 10);
-    assert_eq!(scene.layered_bxdf_data[0].n_samples, 1);
-    assert!(scene.layered_bxdf_data[0].two_sided);
+    let attributes = &scene.materials[0].attributes;
+    let scalar = |name: &str| {
+        let attribute = attributes
+            .iter()
+            .find(|attribute| attribute.name == name)
+            .unwrap();
+        scene.attribute_tables.scalars[attribute.index as usize]
+    };
+    assert_eq!(scalar("thickness"), 0.01);
+    assert_eq!(scalar("maxdepth"), 10.0);
+    assert_eq!(scalar("nsamples"), 1.0);
+    assert_eq!(scalar("twosided"), 1.0);
     use pbrt_r4::gpu::ir::flat::{EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR};
     assert_eq!(
         scene.scattering_nodes[2].event_flags,
@@ -523,7 +555,7 @@ fn layered_anisotropy_rejects_both_endpoints() {
 }
 
 #[test]
-fn material_table_preserves_child_data_indices_in_mixed_scenes() {
+fn material_table_uses_generic_attribute_ranges() {
     use pbrt_r4::gpu::webgpu::material::MaterialTable;
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
@@ -533,56 +565,27 @@ fn material_table_preserves_child_data_indices_in_mixed_scenes() {
         "dielectric",
         "coateddiffuse",
         "diffuse",
+        "thindielectric",
     ] {
         root.add_child(triangle_node(kind, kind, [0.0; 3]));
     }
-    let mut scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    for (i, data) in scene.diffuse_bxdf_data.iter_mut().enumerate() {
-        data.reflectance = [0.1 * (i + 1) as f32; 3];
-    }
-    for (i, data) in scene.dielectric_bxdf_data.iter_mut().enumerate() {
-        data.eta = 1.1 + 0.1 * i as f32;
-    }
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let table = MaterialTable::from_flat(&scene).unwrap();
-    assert_eq!(table.diffuse.len(), 4);
-    assert_eq!(table.dielectric.len(), 3);
-    assert_eq!(table.layered.len(), 2);
-    for node in &scene.scattering_nodes {
-        let i = node.data_index as usize;
-        match node.kind.as_str() {
-            "diffuse" => assert_eq!(
-                table.diffuse[i].reflectance[..3],
-                scene.diffuse_bxdf_data[i].reflectance
-            ),
-            "dielectric" => assert_eq!(table.dielectric[i].eta, scene.dielectric_bxdf_data[i].eta),
-            "layered" => assert_eq!(table.layered[i].two_sided, 1),
-            _ => unreachable!(),
-        }
-    }
-    scene.scattering_nodes[0].data_index = u32::MAX;
-    assert!(MaterialTable::from_flat(&scene).is_err());
-}
-
-#[test]
-#[ignore = "requires a Vulkan GPU with experimental ray queries"]
-fn layered_scene_uniform_points_to_layered_table_not_bssrdf_table() {
-    use pbrt_r4::gpu::webgpu::{abi::INVALID_INDEX, context::Context, scene::Scene};
-    let mut root = Node::new("root");
-    add_camera_and_film(&mut root, Default::default());
-    root.add_child(triangle_node("layered", "coateddiffuse", [0.0; 3]));
-    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let context = Context::new().unwrap();
-    let scene = Scene::from_flat(&context.device, &context.queue, flat).unwrap();
-    assert_eq!(scene.scene_uniform.layered_bxdf_count, 1);
-    assert_eq!(scene.scene_uniform.bssrdf_node_count, 0);
-    assert_eq!(scene.scene_uniform.bssrdf_node_offset_words, INVALID_INDEX);
+    assert_eq!(table.records.len(), scene.materials.len());
     assert_eq!(
-        scene.scene_uniform.layered_bxdf_offset_words,
-        scene.scene_uniform.scattering_child_offset_words
-            + scene.scene_uniform.scattering_child_count
+        table.attributes.len(),
+        scene
+            .materials
+            .iter()
+            .map(|m| m.attributes.len())
+            .sum::<usize>()
     );
-    assert_eq!(scene.scene_uniform.dielectric_material_count, 1);
-    assert_eq!(scene.scene_uniform.diffuse_material_count, 1);
+    for record in &table.records {
+        assert!(
+            (record.attribute_offset as usize) + (record.attribute_count as usize)
+                <= table.attributes.len()
+        );
+    }
 }
 
 #[test]
@@ -649,14 +652,15 @@ fn flatten_node_rejects_invalid_dielectric_eta() {
 }
 
 #[test]
-fn flatten_node_rejects_unsupported_material_kind() {
+fn flatten_node_falls_back_for_unsupported_material_kind() {
     let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
 
-    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(error.to_string().contains("Unsupported GPU material kind"));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].kind, "diffuse");
+    assert_eq!(scene.attribute_tables.spectra[0].0, [1.0, 1.0, 0.0, 0.0]);
 }
 
 #[test]
