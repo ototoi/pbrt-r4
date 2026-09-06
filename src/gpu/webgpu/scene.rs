@@ -6,8 +6,8 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, inverse_transpose_linear, light_table_uniform, material_table_uniform,
-    row_major_to_columns, viewport_uniform, AreaLight, Geometry, Instance, LayeredBxDFData,
-    LightRecord, LightTableUniform, MaterialRecord, MaterialTableUniform, PointLight,
+    row_major_to_columns, viewport_uniform, AreaLight, Geometry, Instance, LightRecord,
+    LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform, PointLight,
     ScatteringModelRecord, ScatteringNodeRecord, TriangleDistributionEntry, Vertex,
     ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
@@ -28,12 +28,13 @@ pub struct Scene {
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub material_buffer: wgpu::Buffer,
-    pub diffuse_material_buffer: wgpu::Buffer,
-    pub dielectric_material_buffer: wgpu::Buffer,
+    pub material_attribute_buffer: wgpu::Buffer,
+    pub scalar_attribute_buffer: wgpu::Buffer,
     pub scattering_model_buffer: wgpu::Buffer,
     pub scattering_node_buffer: wgpu::Buffer,
     pub scattering_child_buffer: wgpu::Buffer,
-    pub layered_bxdf_buffer: wgpu::Buffer,
+    pub spectrum_attribute_buffer: wgpu::Buffer,
+    pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
     pub point_light_buffer: wgpu::Buffer,
     pub area_light_buffer: wgpu::Buffer,
@@ -46,7 +47,7 @@ pub struct Scene {
     pub materials: Vec<MaterialRecord>,
     pub scattering_models: Vec<ScatteringModelRecord>,
     pub scattering_nodes: Vec<ScatteringNodeRecord>,
-    pub layered_bxdf: Vec<LayeredBxDFData>,
+    pub material_attributes: Vec<MaterialAttributeRef>,
     pub point_lights: Vec<PointLight>,
     pub area_lights: Vec<AreaLight>,
     pub light_records: Vec<LightRecord>,
@@ -97,9 +98,15 @@ impl Scene {
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
-        let diffuse_materials = material_table.diffuse;
-        let dielectric_materials = material_table.dielectric;
-        let layered_bxdf = material_table.layered;
+        let material_attributes = material_table.attributes;
+        let scalar_attributes = flat.attribute_tables.scalars.clone();
+        let spectrum_attributes = flat
+            .attribute_tables
+            .spectra
+            .iter()
+            .map(|v| v.0)
+            .collect::<Vec<_>>();
+        let texture_attributes = flat.attribute_tables.textures.clone();
         let scattering_models = flat
             .scattering_models
             .iter()
@@ -112,14 +119,46 @@ impl Scene {
         let scattering_nodes = flat
             .scattering_nodes
             .iter()
-            .map(|node| {
+            .enumerate()
+            .map(|(node_id, node)| {
                 Ok(ScatteringNodeRecord {
                     kind_tag: scattering_node_tag(&node.kind)?,
                     event_flags: node.event_flags,
-                    data_index: node.data_index,
+                    attribute_offset: flat
+                        .materials
+                        .iter()
+                        .enumerate()
+                        .find_map(|(material_index, material)| {
+                            let model = flat
+                                .scattering_models
+                                .get(material.scattering_model as usize)?;
+                            let root = flat.scattering_nodes.get(model.surface_root as usize)?;
+                            let owns = root.child_offset <= node_id as u32
+                                && (node_id as u32) < root.child_offset + root.child_count;
+                            (model.surface_root == node_id as u32 || owns)
+                                .then(|| materials.get(material_index).map(|m| m.attribute_offset))
+                                .flatten()
+                        })
+                        .unwrap_or(0),
                     child_offset: node.child_offset,
                     child_count: node.child_count,
-                    padding: [0; 3],
+                    attribute_count: flat
+                        .materials
+                        .iter()
+                        .enumerate()
+                        .find_map(|(material_index, material)| {
+                            let model = flat
+                                .scattering_models
+                                .get(material.scattering_model as usize)?;
+                            let root = flat.scattering_nodes.get(model.surface_root as usize)?;
+                            let owns = root.child_offset <= node_id as u32
+                                && (node_id as u32) < root.child_offset + root.child_count;
+                            (model.surface_root == node_id as u32 || owns)
+                                .then(|| materials.get(material_index).map(|m| m.attribute_count))
+                                .flatten()
+                        })
+                        .unwrap_or(0),
+                    padding: [0; 2],
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
@@ -221,16 +260,16 @@ impl Scene {
             contents: buffer_contents(&materials),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let diffuse_material_buffer =
+        let material_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 diffuse material data SBO"),
-                contents: buffer_contents(&diffuse_materials),
+                label: Some("pbrt-r4 material attribute refs SBO"),
+                contents: buffer_contents(&material_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let dielectric_material_buffer =
+        let scalar_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 dielectric material data SBO"),
-                contents: buffer_contents(&dielectric_materials),
+                label: Some("pbrt-r4 scalar attributes SBO"),
+                contents: buffer_contents(&scalar_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let scattering_model_buffer =
@@ -250,11 +289,18 @@ impl Scene {
                 contents: buffer_contents(&flat.scattering_child_refs.node_ids),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let layered_bxdf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 layered BxDF SBO"),
-            contents: buffer_contents(&layered_bxdf),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let spectrum_attribute_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 spectrum attributes SBO"),
+                contents: buffer_contents(&spectrum_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let texture_attribute_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 texture attributes SBO"),
+                contents: buffer_contents(&texture_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let distribution_entries = flat
             .triangle_distributions
             .iter()
@@ -289,10 +335,6 @@ impl Scene {
         let mut material_table = material_table_uniform(
             materials.len(),
             0,
-            diffuse_materials.len(),
-            0,
-            dielectric_materials.len(),
-            0,
             scattering_models.len(),
             0,
             scattering_nodes.len(),
@@ -300,8 +342,6 @@ impl Scene {
             scattering_child_words_total,
             INVALID_INDEX as usize,
             0,
-            0,
-            layered_bxdf.len(),
         )?;
         let mut light_table = light_table_uniform(
             light_records.len(),
@@ -378,12 +418,13 @@ impl Scene {
             geometry_buffer,
             instance_buffer,
             material_buffer,
-            diffuse_material_buffer,
-            dielectric_material_buffer,
+            material_attribute_buffer,
+            scalar_attribute_buffer,
             scattering_model_buffer,
             scattering_node_buffer,
             scattering_child_buffer,
-            layered_bxdf_buffer,
+            spectrum_attribute_buffer,
+            texture_attribute_buffer,
             light_record_buffer,
             point_light_buffer,
             area_light_buffer,
@@ -396,7 +437,7 @@ impl Scene {
             materials,
             scattering_models,
             scattering_nodes,
-            layered_bxdf,
+            material_attributes,
             point_lights,
             area_lights,
             light_records,

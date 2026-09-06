@@ -114,7 +114,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
     if (material_kind == MATERIAL_KIND_LAYERED) {
-        let data = load_layered_bxdf(load_layered_data_index(surface.material));
+        let data = load_layered_bxdf(surface.material);
         let eta = load_layered_eta(surface.material);
         let local_wo = scattering_local(wo, shading_n);
         let local_wi = scattering_local(wi, shading_n);

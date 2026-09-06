@@ -114,7 +114,7 @@ fn layered_hg_sample(wo: vec3<f32>, g_input: f32, u: vec2<f32>) -> vec3<f32> {
     return x * (s * cos(phi)) + y * (s * sin(phi)) + wo * c;
 }
 
-fn layered_sample(data: LayeredBxDFData, eta: f32, reflectance: vec3<f32>,
+fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
     wo_input: vec3<f32>, uc: f32, u: vec2<f32>, seed: u32) -> LayeredSample {
     let flip = data.two_sided != 0u && wo_input.z < 0.0;
     let wo = select(wo_input, -wo_input, flip);
@@ -180,7 +180,7 @@ fn layered_sample(data: LayeredBxDFData, eta: f32, reflectance: vec3<f32>,
     return layered_invalid();
 }
 
-fn layered_f(data: LayeredBxDFData, eta: f32, reflectance: vec3<f32>,
+fn layered_f(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
     wo_input: vec3<f32>, wi_input: vec3<f32>, seed: u32) -> vec3<f32> {
     let flip = data.two_sided != 0u && wo_input.z < 0.0;
     let wo = select(wo_input, -wo_input, flip);
@@ -244,7 +244,7 @@ fn layered_f(data: LayeredBxDFData, eta: f32, reflectance: vec3<f32>,
     return result / f32(data.n_samples);
 }
 
-fn layered_pdf(data: LayeredBxDFData, eta: f32, wo_input: vec3<f32>, wi_input: vec3<f32>) -> f32 {
+fn layered_pdf(data: LayeredParams, eta: f32, wo_input: vec3<f32>, wi_input: vec3<f32>) -> f32 {
     let flip = data.two_sided != 0u && wo_input.z < 0.0;
     let wo = select(wo_input, -wo_input, flip);
     let wi = select(wi_input, -wi_input, flip);

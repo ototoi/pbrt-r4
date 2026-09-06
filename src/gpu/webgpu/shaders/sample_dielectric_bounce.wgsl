@@ -18,7 +18,7 @@ fn sample_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<u32>)
         return;
     }
 
-    let eta = load_dielectric_eta(load_material_data_index(surface.material));
+    let eta = load_dielectric_eta(load_material_surface_node(surface.material));
     if (!(eta > 0.0) || eta != eta) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return;

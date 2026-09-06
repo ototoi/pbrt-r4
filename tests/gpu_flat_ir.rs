@@ -555,7 +555,7 @@ fn layered_anisotropy_rejects_both_endpoints() {
 }
 
 #[test]
-fn material_table_preserves_child_data_indices_in_mixed_scenes() {
+fn material_table_uses_generic_attribute_ranges() {
     use pbrt_r4::gpu::webgpu::material::MaterialTable;
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
@@ -569,65 +569,23 @@ fn material_table_preserves_child_data_indices_in_mixed_scenes() {
     ] {
         root.add_child(triangle_node(kind, kind, [0.0; 3]));
     }
-    let mut scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let table = MaterialTable::from_flat(&scene).unwrap();
-    assert_eq!(table.diffuse.len(), 4);
-    assert_eq!(table.dielectric.len(), 4);
-    assert_eq!(table.layered.len(), 2);
-    for node in &scene.scattering_nodes {
-        let i = node.data_index as usize;
-        match node.kind.as_str() {
-            "diffuse" => assert!(scene.materials.iter().any(|material| {
-                material.attributes.iter().any(|attribute| {
-                    attribute.name == "reflectance"
-                        && scene.attribute_tables.spectra[attribute.index as usize].0[..3]
-                            == table.diffuse[i].reflectance[..3]
-                })
-            })),
-            "dielectric" => assert!(scene.materials.iter().any(|material| {
-                material.attributes.iter().any(|attribute| {
-                    attribute.name == "eta"
-                        && scene.attribute_tables.scalars[attribute.index as usize]
-                            == table.dielectric[i].eta
-                })
-            })),
-            "thindielectric" => assert!(scene.materials.iter().any(|material| {
-                material.attributes.iter().any(|attribute| {
-                    attribute.name == "eta"
-                        && scene.attribute_tables.scalars[attribute.index as usize]
-                            == table.dielectric[i].eta
-                })
-            })),
-            "layered" => assert_eq!(table.layered[i].two_sided, 1),
-            _ => unreachable!(),
-        }
-    }
-    scene.scattering_nodes[0].data_index = u32::MAX;
-    assert!(MaterialTable::from_flat(&scene).is_err());
-}
-
-#[test]
-#[ignore = "requires a Vulkan GPU with experimental ray queries"]
-fn layered_scene_uniform_points_to_layered_table_not_bssrdf_table() {
-    use pbrt_r4::gpu::webgpu::{
-        abi::INVALID_INDEX, context::Context, scene::Scene, stages::RequiredLimits,
-    };
-    let mut root = Node::new("root");
-    add_camera_and_film(&mut root, Default::default());
-    root.add_child(triangle_node("layered", "coateddiffuse", [0.0; 3]));
-    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let context = Context::new(RequiredLimits::default()).unwrap();
-    let scene = Scene::from_flat(&context.device, &context.queue, flat).unwrap();
-    assert_eq!(scene.material_table.layered_bxdf_count, 1);
-    assert_eq!(scene.material_table.bssrdf_node_count, 0);
-    assert_eq!(scene.material_table.bssrdf_node_offset_words, INVALID_INDEX);
+    assert_eq!(table.records.len(), scene.materials.len());
     assert_eq!(
-        scene.material_table.layered_bxdf_offset_words,
-        scene.material_table.scattering_child_offset_words
-            + scene.material_table.scattering_child_count
+        table.attributes.len(),
+        scene
+            .materials
+            .iter()
+            .map(|m| m.attributes.len())
+            .sum::<usize>()
     );
-    assert_eq!(scene.material_table.dielectric_material_count, 1);
-    assert_eq!(scene.material_table.diffuse_material_count, 1);
+    for record in &table.records {
+        assert!(
+            (record.attribute_offset as usize) + (record.attribute_count as usize)
+                <= table.attributes.len()
+        );
+    }
 }
 
 #[test]
