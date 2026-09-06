@@ -9,6 +9,8 @@ const GENERATE_PRIMARY_RAYS_SHADER: &str =
 const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
+const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
 
@@ -97,6 +99,24 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
     assert!(source.contains("triangle.orientation_flags & 1u"));
     assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
     assert!(source.contains("load_area_distribution_count(light_payload)"));
+}
+
+#[test]
+fn diffuse_shaders_load_type_specific_reflectance() {
+    assert!(COMMON_SHADER.contains("fn load_diffuse_reflectance(material_index: u32)"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("let reflectance = load_diffuse_reflectance"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * vec4<f32>(reflectance, 1.0)"));
+}
+
+#[test]
+fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
+    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
+    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(index: u32)"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
 }
 
 #[test]

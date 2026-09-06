@@ -6,6 +6,7 @@ const PI: f32 = 3.141592653589793;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
+const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
@@ -29,6 +30,10 @@ struct ViewportUniform {
 struct SceneUniform {
     material_offset_words: u32,
     material_count: u32,
+    diffuse_material_offset_words: u32,
+    diffuse_material_count: u32,
+    dielectric_material_offset_words: u32,
+    dielectric_material_count: u32,
     light_record_offset_words: u32,
     light_count: u32,
     point_light_offset_words: u32,
@@ -592,6 +597,33 @@ fn pixel_count() -> u32 {
 
 fn load_material_kind(index: u32) -> u32 {
     return scene_data[scene.material_offset_words + index * 4u];
+}
+
+fn load_material_data_index(index: u32) -> u32 {
+    return scene_data[scene.material_offset_words + index * 4u + 1u];
+}
+
+fn load_diffuse_material(index: u32) -> vec4<f32> {
+    let base = scene.diffuse_material_offset_words + index * 4u;
+    return vec4<f32>(
+        bitcast<f32>(scene_data[base]),
+        bitcast<f32>(scene_data[base + 1u]),
+        bitcast<f32>(scene_data[base + 2u]),
+        bitcast<f32>(scene_data[base + 3u]),
+    );
+}
+
+fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
+    let data_index = load_material_data_index(material_index);
+    if (data_index >= scene.diffuse_material_count) {
+        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        return vec3<f32>(0.0);
+    }
+    return load_diffuse_material(data_index).xyz;
+}
+
+fn load_dielectric_eta(index: u32) -> f32 {
+    return bitcast<f32>(scene_data[scene.dielectric_material_offset_words + index * 4u]);
 }
 
 fn load_point_light(index: u32) -> PointLight {
