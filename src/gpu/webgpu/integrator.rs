@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,7 @@ use super::abi::WORKGROUP_SIZE;
 use super::context::Context;
 use super::film::Film;
 use super::material::MaterialKind;
-use super::pipeline::Pipeline;
+use super::pipeline::{Pipeline, StagePipeline};
 use super::queue::Queues;
 use super::scene::Scene;
 use super::stages::{canonical_wavefront_bindings, RequiredLimits, ResourceId};
@@ -30,7 +31,7 @@ pub struct WavefrontPathIntegrator {
     queues: Queues,
     film: Film,
     pipeline: Pipeline,
-    bind_group: wgpu::BindGroup,
+    bind_groups: HashMap<&'static str, wgpu::BindGroup>,
     rendered: bool,
     show_progress: bool,
 }
@@ -78,62 +79,153 @@ impl WavefrontPathIntegrator {
         let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
         let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
         let pipeline = Pipeline::new(device)?;
-        let bind_group_entries = canonical_wavefront_bindings()
-            .into_iter()
-            .map(|binding| wgpu::BindGroupEntry {
-                binding: binding.binding,
-                resource: match binding.resource {
-                    ResourceId::CameraParams => camera_buffer.as_entire_binding(),
-                    ResourceId::SampleParams => viewport_buffer.as_entire_binding(),
-                    ResourceId::Tlas => {
-                        wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas)
-                    }
-                    ResourceId::Vertex => scene.vertex_buffer.as_entire_binding(),
-                    ResourceId::Index => scene.index_buffer.as_entire_binding(),
-                    ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
-                    ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
-                    ResourceId::Surface => queues.surfaces.as_entire_binding(),
-                    ResourceId::Film => film.framebuffer.as_entire_binding(),
-                    ResourceId::RaySamples => queues.wavefront.as_entire_binding(),
-                    ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
-                    ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
-                    ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
-                    ResourceId::MaterialAttribute => {
-                        scene.material_attribute_buffer.as_entire_binding()
-                    }
-                    ResourceId::ScalarAttribute => {
-                        scene.scalar_attribute_buffer.as_entire_binding()
-                    }
-                    ResourceId::ScatteringModel => {
-                        scene.scattering_model_buffer.as_entire_binding()
-                    }
-                    ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
-                    ResourceId::ScatteringChild => {
-                        scene.scattering_child_buffer.as_entire_binding()
-                    }
-                    ResourceId::SpectrumAttribute => {
-                        scene.spectrum_attribute_buffer.as_entire_binding()
-                    }
-                    ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
-                    ResourceId::PointLight => scene.point_light_buffer.as_entire_binding(),
-                    ResourceId::AreaLight => scene.area_light_buffer.as_entire_binding(),
-                    ResourceId::TriangleDistribution => {
-                        scene.distribution_buffer.as_entire_binding()
-                    }
-                    ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
-                    ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
-                    ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
-                    resource => {
-                        panic!("resource {resource:?} is not part of canonical wavefront layout")
-                    }
-                },
+        let make_entry = |binding: super::stages::BindingSpec| wgpu::BindGroupEntry {
+            binding: binding.binding,
+            resource: match binding.resource {
+                ResourceId::CameraParams => camera_buffer.as_entire_binding(),
+                ResourceId::SampleParams => viewport_buffer.as_entire_binding(),
+                ResourceId::Tlas => {
+                    wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas)
+                }
+                ResourceId::Vertex => scene.vertex_buffer.as_entire_binding(),
+                ResourceId::Index => scene.index_buffer.as_entire_binding(),
+                ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
+                ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
+                ResourceId::Surface => queues.surfaces.as_entire_binding(),
+                ResourceId::Film => film.framebuffer.as_entire_binding(),
+                ResourceId::RaySamples => queues.wavefront.as_entire_binding(),
+                ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
+                ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
+                ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
+                ResourceId::MaterialAttribute => {
+                    scene.material_attribute_buffer.as_entire_binding()
+                }
+                ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
+                ResourceId::ScatteringModel => scene.scattering_model_buffer.as_entire_binding(),
+                ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
+                ResourceId::ScatteringChild => scene.scattering_child_buffer.as_entire_binding(),
+                ResourceId::SpectrumAttribute => {
+                    scene.spectrum_attribute_buffer.as_entire_binding()
+                }
+                ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
+                ResourceId::PointLight => scene.point_light_buffer.as_entire_binding(),
+                ResourceId::AreaLight => scene.area_light_buffer.as_entire_binding(),
+                ResourceId::TriangleDistribution => scene.distribution_buffer.as_entire_binding(),
+                ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
+                ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
+                ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
+                resource => {
+                    panic!("resource {resource:?} is not part of canonical wavefront layout")
+                }
+            },
+        };
+        let make_bind_group = |name: &'static str,
+                               stage: &StagePipeline,
+                               stage_source: &'static str|
+         -> wgpu::BindGroup {
+            let source = super::shader::compose_source(stage_source);
+            let used_bindings = super::shader::resource_binding_numbers(&source);
+            let entries = canonical_wavefront_bindings()
+                .into_iter()
+                .filter(|binding| used_bindings.contains(&binding.binding))
+                .map(make_entry)
+                .collect::<Vec<_>>();
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout: &stage.bind_group_layout,
+                entries: &entries,
             })
-            .collect::<Vec<_>>();
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pbrt-r4 primary-ray bind group"),
-            layout: &pipeline.bind_group_layout,
-            entries: &bind_group_entries,
-        });
+        };
+        let bind_groups = [
+            (
+                "prepare_sample",
+                &pipeline.prepare_sample,
+                include_str!("shaders/prepare_sample.wgsl"),
+            ),
+            (
+                "generate_primary_rays",
+                &pipeline.generate_primary_rays,
+                include_str!("shaders/generate_primary_rays.wgsl"),
+            ),
+            (
+                "reset_shadow_queue",
+                &pipeline.reset_shadow_queue,
+                include_str!("shaders/reset_shadow_queue.wgsl"),
+            ),
+            (
+                "reset_classification_queues",
+                &pipeline.reset_classification_queues,
+                include_str!("shaders/reset_classification_queues.wgsl"),
+            ),
+            (
+                "intersect_primary_rays",
+                &pipeline.intersect_primary_rays,
+                include_str!("shaders/intersect_primary_rays.wgsl"),
+            ),
+            (
+                "handle_escaped",
+                &pipeline.handle_escaped,
+                include_str!("shaders/handle_escaped.wgsl"),
+            ),
+            (
+                "shade_surface",
+                &pipeline.shade_surface,
+                include_str!("shaders/shade_surface.wgsl"),
+            ),
+            (
+                "handle_emissive",
+                &pipeline.handle_emissive,
+                include_str!("shaders/handle_emissive.wgsl"),
+            ),
+            (
+                "evaluate_materials",
+                &pipeline.evaluate_materials,
+                include_str!("shaders/evaluate_materials.wgsl"),
+            ),
+            (
+                "intersect_shadow",
+                &pipeline.intersect_shadow,
+                include_str!("shaders/intersect_shadow.wgsl"),
+            ),
+            (
+                "sample_diffuse_bounce",
+                &pipeline.sample_diffuse_bounce,
+                include_str!("shaders/sample_diffuse_bounce.wgsl"),
+            ),
+            (
+                "sample_dielectric_bounce",
+                &pipeline.sample_dielectric_bounce,
+                include_str!("shaders/sample_dielectric_bounce.wgsl"),
+            ),
+            (
+                "sample_layered_bounce",
+                &pipeline.sample_layered_bounce,
+                include_str!("shaders/sample_layered_bounce.wgsl"),
+            ),
+            (
+                "sample_thin_dielectric_bounce",
+                &pipeline.sample_thin_dielectric_bounce,
+                include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
+            ),
+            (
+                "swap_ray_queues",
+                &pipeline.swap_ray_queues,
+                include_str!("shaders/swap_ray_queues.wgsl"),
+            ),
+            (
+                "reset_next_ray_queue",
+                &pipeline.reset_next_ray_queue,
+                include_str!("shaders/reset_next_ray_queue.wgsl"),
+            ),
+            (
+                "accumulate_sample",
+                &pipeline.accumulate_sample,
+                include_str!("shaders/accumulate_sample.wgsl"),
+            ),
+        ]
+        .into_iter()
+        .map(|(name, stage, source)| (name, make_bind_group(name, stage, source)))
+        .collect::<HashMap<_, _>>();
         Ok(Self {
             context,
             scene,
@@ -144,10 +236,16 @@ impl WavefrontPathIntegrator {
             queues,
             film,
             pipeline,
-            bind_group,
+            bind_groups,
             rendered: false,
             show_progress,
         })
+    }
+
+    fn bind_group(&self, name: &'static str) -> &wgpu::BindGroup {
+        self.bind_groups
+            .get(name)
+            .expect("stage bind group is registered")
     }
 
     pub fn add_display(&mut self, display: &Arc<RwLock<dyn Display>>) {
@@ -188,15 +286,15 @@ impl WavefrontPathIntegrator {
             }
             dispatch(
                 &mut encoder,
-                &self.pipeline.prepare_sample,
-                &self.bind_group,
+                &self.pipeline.prepare_sample.pipeline,
+                self.bind_group("prepare_sample"),
                 workgroups_x,
                 workgroups_y,
             );
             dispatch(
                 &mut encoder,
-                &self.pipeline.generate_primary_rays,
-                &self.bind_group,
+                &self.pipeline.generate_primary_rays.pipeline,
+                self.bind_group("generate_primary_rays"),
                 workgroups_x,
                 workgroups_y,
             );
@@ -204,101 +302,101 @@ impl WavefrontPathIntegrator {
                 if depth != 0 {
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.reset_shadow_queue,
-                        &self.bind_group,
+                        &self.pipeline.reset_shadow_queue.pipeline,
+                        self.bind_group("reset_shadow_queue"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.reset_classification_queues,
-                        &self.bind_group,
+                        &self.pipeline.reset_classification_queues.pipeline,
+                        self.bind_group("reset_classification_queues"),
                         workgroups_x,
                         workgroups_y,
                     );
                 }
                 dispatch(
                     &mut encoder,
-                    &self.pipeline.intersect_primary_rays,
-                    &self.bind_group,
+                    &self.pipeline.intersect_primary_rays.pipeline,
+                    self.bind_group("intersect_primary_rays"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
-                    &self.pipeline.handle_escaped,
-                    &self.bind_group,
+                    &self.pipeline.handle_escaped.pipeline,
+                    self.bind_group("handle_escaped"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
-                    &self.pipeline.shade_surface,
-                    &self.bind_group,
+                    &self.pipeline.shade_surface.pipeline,
+                    self.bind_group("shade_surface"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
-                    &self.pipeline.handle_emissive,
-                    &self.bind_group,
+                    &self.pipeline.handle_emissive.pipeline,
+                    self.bind_group("handle_emissive"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
-                    &self.pipeline.evaluate_materials,
-                    &self.bind_group,
+                    &self.pipeline.evaluate_materials.pipeline,
+                    self.bind_group("evaluate_materials"),
                     workgroups_x,
                     workgroups_y,
                 );
                 if depth < self.scene.render_settings.max_depth {
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.intersect_shadow,
-                        &self.bind_group,
+                        &self.pipeline.intersect_shadow.pipeline,
+                        self.bind_group("intersect_shadow"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.sample_diffuse_bounce,
-                        &self.bind_group,
+                        &self.pipeline.sample_diffuse_bounce.pipeline,
+                        self.bind_group("sample_diffuse_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.sample_dielectric_bounce,
-                        &self.bind_group,
+                        &self.pipeline.sample_dielectric_bounce.pipeline,
+                        self.bind_group("sample_dielectric_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.sample_layered_bounce,
-                        &self.bind_group,
+                        &self.pipeline.sample_layered_bounce.pipeline,
+                        self.bind_group("sample_layered_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.sample_thin_dielectric_bounce,
-                        &self.bind_group,
+                        &self.pipeline.sample_thin_dielectric_bounce.pipeline,
+                        self.bind_group("sample_thin_dielectric_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.swap_ray_queues,
-                        &self.bind_group,
+                        &self.pipeline.swap_ray_queues.pipeline,
+                        self.bind_group("swap_ray_queues"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
-                        &self.pipeline.reset_next_ray_queue,
-                        &self.bind_group,
+                        &self.pipeline.reset_next_ray_queue.pipeline,
+                        self.bind_group("reset_next_ray_queue"),
                         workgroups_x,
                         workgroups_y,
                     );
@@ -306,8 +404,8 @@ impl WavefrontPathIntegrator {
             }
             dispatch(
                 &mut encoder,
-                &self.pipeline.accumulate_sample,
-                &self.bind_group,
+                &self.pipeline.accumulate_sample.pipeline,
+                self.bind_group("accumulate_sample"),
                 workgroups_x,
                 workgroups_y,
             );

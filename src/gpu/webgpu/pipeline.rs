@@ -3,25 +3,29 @@ use crate::util::error::PbrtError;
 use super::shader;
 use super::stages::{all_stage_specs, canonical_wavefront_bindings, BindingClass, RequiredLimits};
 
-pub struct Pipeline {
+pub struct StagePipeline {
+    pub pipeline: wgpu::ComputePipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
-    pub generate_primary_rays: wgpu::ComputePipeline,
-    pub intersect_primary_rays: wgpu::ComputePipeline,
-    pub handle_escaped: wgpu::ComputePipeline,
-    pub prepare_sample: wgpu::ComputePipeline,
-    pub shade_surface: wgpu::ComputePipeline,
-    pub handle_emissive: wgpu::ComputePipeline,
-    pub evaluate_materials: wgpu::ComputePipeline,
-    pub intersect_shadow: wgpu::ComputePipeline,
-    pub sample_diffuse_bounce: wgpu::ComputePipeline,
-    pub sample_dielectric_bounce: wgpu::ComputePipeline,
-    pub sample_layered_bounce: wgpu::ComputePipeline,
-    pub sample_thin_dielectric_bounce: wgpu::ComputePipeline,
-    pub swap_ray_queues: wgpu::ComputePipeline,
-    pub reset_next_ray_queue: wgpu::ComputePipeline,
-    pub reset_shadow_queue: wgpu::ComputePipeline,
-    pub reset_classification_queues: wgpu::ComputePipeline,
-    pub accumulate_sample: wgpu::ComputePipeline,
+}
+
+pub struct Pipeline {
+    pub generate_primary_rays: StagePipeline,
+    pub intersect_primary_rays: StagePipeline,
+    pub handle_escaped: StagePipeline,
+    pub prepare_sample: StagePipeline,
+    pub shade_surface: StagePipeline,
+    pub handle_emissive: StagePipeline,
+    pub evaluate_materials: StagePipeline,
+    pub intersect_shadow: StagePipeline,
+    pub sample_diffuse_bounce: StagePipeline,
+    pub sample_dielectric_bounce: StagePipeline,
+    pub sample_layered_bounce: StagePipeline,
+    pub sample_thin_dielectric_bounce: StagePipeline,
+    pub swap_ray_queues: StagePipeline,
+    pub reset_next_ray_queue: StagePipeline,
+    pub reset_shadow_queue: StagePipeline,
+    pub reset_classification_queues: StagePipeline,
+    pub accumulate_sample: StagePipeline,
 }
 
 impl Pipeline {
@@ -30,30 +34,44 @@ impl Pipeline {
         // layout. The canonical registry supplies the current ABI entries.
         RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let layout_bindings = canonical_wavefront_bindings();
-        let layout_entries = layout_bindings.iter().map(layout_entry).collect::<Vec<_>>();
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("pbrt-r4 primary-ray bind group layout"),
-            entries: &layout_entries,
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pbrt-r4 primary-ray pipeline layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
-        let compute = |label, stage_source, entry_point| {
-            let shader = shader::create_module(device, label, stage_source);
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                module: &shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
+        let canonical_bindings = canonical_wavefront_bindings();
+        let compute =
+            |label: &'static str, stage_source: &'static str, entry_point: &'static str| {
+                let source = shader::compose_source(stage_source);
+                let used_bindings = shader::resource_binding_numbers(&source);
+                let layout_entries = canonical_bindings
+                    .iter()
+                    .filter(|binding| used_bindings.contains(&binding.binding))
+                    .map(layout_entry)
+                    .collect::<Vec<_>>();
+                let bind_group_layout =
+                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some(label),
+                        entries: &layout_entries,
+                    });
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some(label),
+                    bind_group_layouts: &[Some(&bind_group_layout)],
+                    immediate_size: 0,
+                });
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(label),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
+                });
+                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&layout),
+                    module: &module,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+                StagePipeline {
+                    pipeline,
+                    bind_group_layout,
+                }
+            };
         let pipeline = Self {
-            bind_group_layout,
             generate_primary_rays: compute(
                 "pbrt-r4 generate primary rays",
                 include_str!("shaders/generate_primary_rays.wgsl"),

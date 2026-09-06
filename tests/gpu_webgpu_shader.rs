@@ -18,7 +18,10 @@ const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
 const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
-const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
+const COMMON_SHADER: &str = concat!(
+    include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
+    include_str!("../src/gpu/webgpu/shaders/wavefront.wgsl")
+);
 const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
 
 #[test]

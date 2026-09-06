@@ -1,5 +1,6 @@
 const RESOURCES_SHADER: &str = include_str!("shaders/resources.wgsl");
-const COMMON_SHADER: &str = include_str!("shaders/common.wgsl");
+const TYPES_SHADER: &str = include_str!("shaders/types.wgsl");
+const WAVEFRONT_SHADER: &str = include_str!("shaders/wavefront.wgsl");
 const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
 const LAYERED_SHADER: &str = include_str!("shaders/layered.wgsl");
 
@@ -25,7 +26,8 @@ pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) ->
     if include_layered {
         roots.push(LAYERED_SHADER);
     }
-    let common_source = prune_common_source(COMMON_SHADER, &roots);
+    let common_input = format!("{TYPES_SHADER}\n{WAVEFRONT_SHADER}");
+    let common_source = prune_common_source(&common_input, &roots);
     let mut references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     if include_layered {
         references.push('\n');
@@ -72,6 +74,28 @@ pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) ->
         Ok(composed) => composed.source,
         Err(error) => unreachable!("built-in WebGPU shader module graph is invalid: {error}"),
     }
+}
+
+/// Returns the group-0 binding numbers declared by a composed WGSL module.
+///
+/// The composed source is the ABI for an individual compute stage, so this
+/// parser intentionally operates on the generated declarations rather than
+/// duplicating a stage-to-resource table in Rust.
+pub fn resource_binding_numbers(source: &str) -> Vec<u32> {
+    let mut bindings = std::collections::BTreeSet::new();
+    let marker = "@group(0) @binding(";
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find(marker) {
+        let start = cursor + relative + marker.len();
+        let Some(end) = source[start..].find(')') else {
+            break;
+        };
+        if let Ok(binding) = source[start..start + end].trim().parse::<u32>() {
+            bindings.insert(binding);
+        }
+        cursor = start + end + 1;
+    }
+    bindings.into_iter().collect()
 }
 
 fn prune_common_source(source: &str, roots: &[&str]) -> String {
@@ -149,8 +173,14 @@ fn split_functions(source: &str) -> (String, Vec<FunctionSource>) {
     let mut prefix = String::new();
     let mut functions = Vec::new();
     let mut cursor = 0;
-    while let Some(relative) = source[cursor..].find("\nfn ") {
-        let start = cursor + relative + 1;
+    while cursor < source.len() {
+        let start = if source[cursor..].starts_with("fn ") {
+            cursor
+        } else if let Some(relative) = source[cursor..].find("\nfn ") {
+            cursor + relative + 1
+        } else {
+            break;
+        };
         prefix.push_str(&source[cursor..start]);
         let name_start = start + 3;
         let name_end = source[name_start..]
