@@ -448,6 +448,32 @@ fn flatten_node_extracts_dielectric_eta() {
 }
 
 #[test]
+fn flatten_node_rejects_invalid_dielectric_eta() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_float("float eta", 0.0);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("invalid dielectric eta"));
+}
+
+#[test]
 fn flatten_node_preserves_unsupported_material_kind() {
     let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
