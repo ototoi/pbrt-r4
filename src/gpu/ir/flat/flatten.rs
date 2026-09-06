@@ -1026,9 +1026,45 @@ fn material_index(
     let index = u32::try_from(builder.materials.len()).map_err(|_| {
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
-    let kind = material_kind.unwrap_or(&source_material.kind);
+    let requested_kind = material_kind.unwrap_or(&source_material.kind);
     let source_kind = source_material.kind.as_str();
-    let data = material_data(source_material, kind)?;
+    let (kind, data) = match material_data(source_material, requested_kind) {
+        Ok(super::MaterialData::Unsupported) => {
+            log::warn!(
+                concat!(
+                    "GPU material \"{}\" of kind \"{}\" is unsupported; ",
+                    "using diffuse reflectance (1, 1, 0)."
+                ),
+                source_material.name,
+                requested_kind,
+            );
+            (
+                "diffuse",
+                super::MaterialData::Diffuse(super::DiffuseMaterialData {
+                    reflectance: [1.0, 1.0, 0.0],
+                }),
+            )
+        }
+        Ok(data) => (requested_kind, data),
+        Err(error) if error.to_string().contains("unsupported") => {
+            log::warn!(
+                concat!(
+                    "GPU material \"{}\" of kind \"{}\" cannot be represented ({}); ",
+                    "using diffuse reflectance (1, 1, 0)."
+                ),
+                source_material.name,
+                requested_kind,
+                error,
+            );
+            (
+                "diffuse",
+                super::MaterialData::Diffuse(super::DiffuseMaterialData {
+                    reflectance: [1.0, 1.0, 0.0],
+                }),
+            )
+        }
+        Err(error) => return Err(error),
+    };
     let attributes = build_material_attributes_for_data(source_material, kind, &data, builder)?;
     let scattering_model = register_scattering_model(source_material, &data, kind, builder)?;
     builder.materials.push(Material {

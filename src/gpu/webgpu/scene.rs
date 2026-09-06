@@ -7,10 +7,9 @@ use crate::util::error::PbrtError;
 use super::abi::{
     camera_uniform, inverse_transpose_linear, light_table_uniform, material_table_uniform,
     row_major_to_columns, viewport_uniform, AreaLight, Geometry, Instance, LayeredBxDFData,
-    LightRecord, LightTableUniform, MaterialRecord,
-    MaterialTableUniform, PointLight, ScatteringModelRecord, ScatteringNodeRecord,
-    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_POINT,
+    LightRecord, LightTableUniform, MaterialRecord, MaterialTableUniform, PointLight,
+    ScatteringModelRecord, ScatteringNodeRecord, TriangleDistributionEntry, Vertex,
+    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -199,61 +198,61 @@ impl Scene {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 vertex SBO"),
-            contents: cast_slice(&vertices),
+            contents: buffer_contents(&vertices),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 local index SBO"),
-            contents: cast_slice(&indices),
+            contents: buffer_contents(&indices),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
         });
         let geometry_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 geometry SBO"),
-            contents: cast_slice(&geometries),
+            contents: buffer_contents(&geometries),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 instance SBO"),
-            contents: cast_slice(&instances),
+            contents: buffer_contents(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material record SBO"),
-            contents: cast_slice(&materials),
+            contents: buffer_contents(&materials),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let diffuse_material_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 diffuse material data SBO"),
-                contents: cast_slice(&diffuse_materials),
+                contents: buffer_contents(&diffuse_materials),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let dielectric_material_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 dielectric material data SBO"),
-                contents: cast_slice(&dielectric_materials),
+                contents: buffer_contents(&dielectric_materials),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let scattering_model_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 scattering model SBO"),
-                contents: cast_slice(&scattering_models),
+                contents: buffer_contents(&scattering_models),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let scattering_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 scattering node SBO"),
-            contents: cast_slice(&scattering_nodes),
+            contents: buffer_contents(&scattering_nodes),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let scattering_child_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 scattering child SBO"),
-                contents: cast_slice(&flat.scattering_child_refs.node_ids),
+                contents: buffer_contents(&flat.scattering_child_refs.node_ids),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let layered_bxdf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 layered BxDF SBO"),
-            contents: cast_slice(&layered_bxdf),
+            contents: buffer_contents(&layered_bxdf),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let distribution_entries = flat
@@ -268,22 +267,22 @@ impl Scene {
             .collect::<Vec<_>>();
         let light_record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light record SBO"),
-            contents: cast_slice(&light_records),
+            contents: buffer_contents(&light_records),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let point_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 point light SBO"),
-            contents: cast_slice(&point_lights),
+            contents: buffer_contents(&point_lights),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let area_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 area light SBO"),
-            contents: cast_slice(&area_lights),
+            contents: buffer_contents(&area_lights),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let distribution_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 triangle distribution SBO"),
-            contents: cast_slice(&distribution_entries),
+            contents: buffer_contents(&distribution_entries),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
@@ -346,17 +345,17 @@ impl Scene {
         let light_bvh_header_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 light BVH header SBO"),
-                contents: cast_slice(&light_bvh_header),
+                contents: buffer_contents(&light_bvh_header),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let light_bvh_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light BVH node SBO"),
-            contents: cast_slice(&light_bvh_nodes),
+            contents: buffer_contents(&light_bvh_nodes),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let light_leaf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light BVH leaf SBO"),
-            contents: cast_slice(&light_leaf),
+            contents: buffer_contents(&light_leaf),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let acceleration = acceleration::build(
@@ -417,6 +416,17 @@ impl Scene {
             0,
             bytemuck::cast_slice(&self.materials),
         );
+    }
+}
+
+fn buffer_contents<T: bytemuck::Pod>(values: &[T]) -> &[u8] {
+    if values.is_empty() {
+        // WebGPU validates the minimum binding size against the declared
+        // storage-array stride, so a four-byte sentinel is insufficient for
+        // an empty array of a larger record type.
+        cast_slice(&[0u32; 16])
+    } else {
+        cast_slice(values)
     }
 }
 
