@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use pbrt_r4::gpu::ir::flat::{flatten_node, validate_scattering_graph, MaterialData};
+use pbrt_r4::gpu::ir::flat::{flatten_node, validate_scattering_graph, AttributeKind};
 use pbrt_r4::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
     CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
@@ -422,11 +422,21 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
         .expect("diffuse reflectance should be normalized into Flat IR");
     assert_eq!(scene.materials[0].kind, "diffuse");
     let expected_reflectance = Spectrum::from_rgb(&[0.5, 0.5, 0.5], SpectrumType::Albedo).to_rgb();
+    assert_eq!(scene.materials[0].attributes.len(), 1);
     assert_eq!(
-        scene.materials[0].data,
-        MaterialData::Diffuse(pbrt_r4::gpu::ir::flat::DiffuseMaterialData {
-            reflectance: expected_reflectance,
-        })
+        scene.materials[0].attributes[0].kind,
+        AttributeKind::Spectrum
+    );
+    let attribute = scene.materials[0].attributes[0];
+    let spectrum = scene.attribute_tables.spectra[attribute.index as usize].0;
+    assert_eq!(
+        spectrum,
+        [
+            expected_reflectance[0],
+            expected_reflectance[1],
+            expected_reflectance[2],
+            0.0
+        ]
     );
     assert_eq!(scene.materials[0].scattering_model, 0);
     assert_eq!(scene.scattering_models[0].surface_root, 0);
@@ -459,9 +469,12 @@ fn flatten_node_extracts_dielectric_eta() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[0].attributes[0].kind, AttributeKind::Scalar);
+    let attribute = scene.materials[0].attributes[0];
     assert_eq!(
-        scene.materials[0].data,
-        MaterialData::Dielectric(pbrt_r4::gpu::ir::flat::DielectricMaterialData { eta: 1.33 })
+        scene.attribute_tables.scalars[attribute.index as usize],
+        1.33
     );
     assert_eq!(scene.materials[0].scattering_model, 0);
     assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
@@ -476,10 +489,8 @@ fn flatten_node_extracts_thin_dielectric_leaf() {
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert!(matches!(
-        scene.materials[0].data,
-        MaterialData::ThinDielectric(_)
-    ));
+    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[0].attributes[0].kind, AttributeKind::Scalar);
     assert_eq!(scene.scattering_nodes[0].kind, "thindielectric");
     assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
 }
