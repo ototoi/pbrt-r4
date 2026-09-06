@@ -243,6 +243,10 @@ var<storage, read> dielectric_materials: array<DielectricMaterialData>;
 var<storage, read> scattering_models: array<ScatteringModelRecord>;
 @group(0) @binding(17)
 var<storage, read> scattering_nodes: array<ScatteringNodeRecord>;
+@group(0) @binding(18)
+var<storage, read> scattering_children: array<u32>;
+@group(0) @binding(19)
+var<storage, read> layered_bxdf_words: array<u32>;
 
 const CURRENT_COUNT: u32 = 0u;
 const CURRENT_OVERFLOW: u32 = 2u;
@@ -772,7 +776,7 @@ fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
         return 0u;
     }
     let child_offset = load_scattering_node_word(node_index, 3u);
-    return scene_data[material_table.scattering_child_offset_words + child_offset + child_index];
+    return scattering_children[child_offset + child_index];
 }
 
 fn load_layered_bxdf(index: u32) -> LayeredBxDFData {
@@ -780,19 +784,19 @@ fn load_layered_bxdf(index: u32) -> LayeredBxDFData {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return LayeredBxDFData(0.0, 0.0, 0u, 0u, vec4<f32>(0.0), 0u, 0u, 0u, 0u);
     }
-    let base = material_table.layered_bxdf_offset_words + index * 12u;
+    let base = index * 12u;
     return LayeredBxDFData(
-        bitcast<f32>(scene_data[base]),
-        bitcast<f32>(scene_data[base + 1u]),
-        scene_data[base + 2u],
-        scene_data[base + 3u],
+        bitcast<f32>(layered_bxdf_words[base]),
+        bitcast<f32>(layered_bxdf_words[base + 1u]),
+        layered_bxdf_words[base + 2u],
+        layered_bxdf_words[base + 3u],
         vec4<f32>(
-            bitcast<f32>(scene_data[base + 4u]),
-            bitcast<f32>(scene_data[base + 5u]),
-            bitcast<f32>(scene_data[base + 6u]),
-            bitcast<f32>(scene_data[base + 7u]),
+            bitcast<f32>(layered_bxdf_words[base + 4u]),
+            bitcast<f32>(layered_bxdf_words[base + 5u]),
+            bitcast<f32>(layered_bxdf_words[base + 6u]),
+            bitcast<f32>(layered_bxdf_words[base + 7u]),
         ),
-        scene_data[base + 8u], 0u, 0u, 0u,
+        layered_bxdf_words[base + 8u], 0u, 0u, 0u,
     );
 }
 
@@ -802,13 +806,13 @@ fn load_layered_data_index(material_index: u32) -> u32 {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
         return 0u;
     }
-    let root = scene_data[material_table.scattering_model_offset_words + model_index * 4u];
+    let root = scattering_models[model_index].surface_root;
     return load_scattering_node_word(root, 2u);
 }
 
 fn load_layered_bottom_reflectance(material_index: u32) -> vec3<f32> {
     let model_index = load_material_model(material_index);
-    let root = scene_data[material_table.scattering_model_offset_words + model_index * 4u];
+    let root = scattering_models[model_index].surface_root;
     let bottom = load_scattering_child(root, 1u);
     if (load_scattering_node_word(bottom, 0u) != 0u) {
         atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
@@ -824,7 +828,7 @@ fn load_layered_bottom_reflectance(material_index: u32) -> vec3<f32> {
 
 fn load_layered_eta(material_index: u32) -> f32 {
     let model = load_material_model(material_index);
-    let root = scene_data[material_table.scattering_model_offset_words + model * 4u];
+    let root = scattering_models[model].surface_root;
     let top = load_scattering_child(root, 0u);
     let data_index = load_scattering_node_word(top, 2u);
     if (load_scattering_node_word(top, 0u) != 1u || data_index >= material_table.dielectric_material_count) {
