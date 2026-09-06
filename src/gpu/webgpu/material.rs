@@ -22,11 +22,11 @@ impl MaterialTable {
                 }
                 "dielectric" => {
                     node.child_count == 0
-                        && (node.data_index as usize) < node_table_len(scene, "dielectric")
+                        && (node.data_index as usize) < dielectric_table_len(scene)
                 }
                 "thindielectric" => {
                     node.child_count == 0
-                        && (node.data_index as usize) < node_table_len(scene, "thindielectric")
+                        && (node.data_index as usize) < dielectric_table_len(scene)
                 }
                 "layered" => {
                     if node.child_count != 2
@@ -105,8 +105,7 @@ fn build_abi_tables(
     PbrtError,
 > {
     let mut diffuse = vec![DiffuseMaterialData::zeroed(); node_table_len(scene, "diffuse")];
-    let dielectric_len =
-        node_table_len(scene, "dielectric").max(node_table_len(scene, "thindielectric"));
+    let dielectric_len = dielectric_table_len(scene);
     let mut dielectric = vec![DielectricMaterialData::zeroed(); dielectric_len];
     let mut layered = vec![LayeredBxDFData::zeroed(); node_table_len(scene, "layered")];
     for (node_id, node) in scene.scattering_nodes.iter().enumerate() {
@@ -154,6 +153,12 @@ fn node_table_len(scene: &flat::Scene, kind: &str) -> usize {
         .iter()
         .filter(|node| node.kind == kind)
         .count()
+}
+
+fn dielectric_table_len(scene: &flat::Scene) -> usize {
+    node_table_len(scene, "dielectric")
+        .checked_add(node_table_len(scene, "thindielectric"))
+        .unwrap_or(usize::MAX)
 }
 
 fn owner_material<'a>(scene: &'a flat::Scene, node_id: u32) -> Option<&'a flat::Material> {
