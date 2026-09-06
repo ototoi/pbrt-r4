@@ -5,11 +5,12 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, inverse_transpose_linear, row_major_to_columns, scene_uniform,
-    viewport_uniform, AreaLight, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
-    LayeredBxDFData, LightRecord, MaterialRecord, PointLight, ScatteringModelRecord,
-    ScatteringNodeRecord, SceneUniform, TriangleDistributionEntry, Vertex, ViewportUniform,
-    INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    camera_uniform, inverse_transpose_linear, light_table_uniform, material_table_uniform,
+    row_major_to_columns, viewport_uniform, AreaLight, DielectricMaterialData, DiffuseMaterialData,
+    Geometry, Instance, LayeredBxDFData, LightRecord, LightTableUniform, MaterialRecord,
+    MaterialTableUniform, PointLight, ScatteringModelRecord, ScatteringNodeRecord,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -20,7 +21,8 @@ use super::output::Output;
 pub struct Scene {
     pub camera: super::abi::CameraUniform,
     pub viewport: ViewportUniform,
-    pub scene_uniform: SceneUniform,
+    pub material_table: MaterialTableUniform,
+    pub light_table: LightTableUniform,
     pub output: Output,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -413,7 +415,7 @@ impl Scene {
             limits.max_buffer_size,
             u64::from(limits.max_storage_buffer_binding_size),
         )?;
-        let mut scene_uniform = scene_uniform(
+        let mut material_table = material_table_uniform(
             materials.len(),
             diffuse_material_data_offset,
             diffuse_materials.len(),
@@ -429,30 +431,31 @@ impl Scene {
             0,
             layered_bxdf_data_offset,
             layered_bxdf.len(),
+        )?;
+        let mut light_table = light_table_uniform(
             light_records.len(),
             point_lights.len(),
             area_lights.len(),
             light_record_data_offset,
             point_light_data_offset,
             area_light_data_offset,
-            scene_data.len(),
         )?;
-        scene_uniform.debug_scattering_model = INVALID_INDEX;
+        material_table.debug_scattering_model = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
-                scene_uniform.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
+                light_table.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
             }
-            scene_uniform.light_sampler_data_offset =
+            light_table.light_sampler_data_offset =
                 to_u32_offset(light_sampler_data_offset, "light sampler data offset")?;
-            scene_uniform.light_bvh_node_offset =
+            light_table.light_bvh_node_offset =
                 to_u32_offset(light_bvh_node_offset, "light BVH node offset")?;
-            scene_uniform.light_bvh_node_count =
+            light_table.light_bvh_node_count =
                 u32::try_from(packed.node_words.len()).map_err(|_| {
                     PbrtError::error("WebGPU Light BVH node count does not fit in u32.")
                 })?;
-            scene_uniform.light_leaf_offset =
+            light_table.light_leaf_offset =
                 to_u32_offset(light_leaf_offset, "light handle-to-leaf offset")?;
-            scene_uniform.light_leaf_count =
+            light_table.light_leaf_count =
                 u32::try_from(packed.handle_to_leaf.len()).map_err(|_| {
                     PbrtError::error("WebGPU Light BVH leaf count does not fit in u32.")
                 })?;
@@ -474,7 +477,8 @@ impl Scene {
         Ok(Self {
             camera,
             viewport,
-            scene_uniform,
+            material_table,
+            light_table,
             output: Output::from_flat(flat.output),
             vertex_buffer,
             index_buffer,
@@ -497,7 +501,7 @@ impl Scene {
     }
 
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
-        self.scene_uniform.debug_scattering_model = kind.tag();
+        self.material_table.debug_scattering_model = kind.tag();
         for material in &mut self.materials {
             material.kind_tag = kind.tag();
         }
