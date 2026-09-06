@@ -5,6 +5,30 @@ pub struct Material {
     pub source_kind: String,
     pub source_data: MaterialSourceData,
     pub scattering_model: u32,
+    pub attributes: Vec<AttributeRef>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttributeKind {
+    Scalar,
+    Spectrum,
+    Texture,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AttributeRef {
+    pub kind: AttributeKind,
+    pub index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpectrumValue(pub [f32; 4]);
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AttributeTables {
+    pub scalars: Vec<f32>,
+    pub spectra: Vec<SpectrumValue>,
+    pub textures: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

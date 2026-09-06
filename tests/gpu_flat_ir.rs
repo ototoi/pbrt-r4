@@ -97,6 +97,10 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 
     assert_eq!(scene.vertices.len(), 6);
     assert_eq!(scene.indices, vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(scene.attribute_tables.spectra.len(), 1);
+    assert_eq!(scene.attribute_tables.scalars.len(), 1);
+    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[1].attributes.len(), 1);
     assert_eq!(
         scene.geometries,
         vec![
