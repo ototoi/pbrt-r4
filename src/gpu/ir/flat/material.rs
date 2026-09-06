@@ -11,6 +11,7 @@ pub struct Material {
 pub enum MaterialData {
     Diffuse(DiffuseMaterialData),
     Dielectric(DielectricMaterialData),
+    ThinDielectric(DielectricMaterialData),
     Layered(LayeredBxDFData),
     Unsupported,
 }
@@ -19,6 +20,7 @@ pub enum MaterialData {
 pub enum MaterialSourceData {
     Diffuse(DiffuseMaterialSourceData),
     Dielectric(DielectricMaterialSourceData),
+    ThinDielectric(DielectricMaterialSourceData),
     Layered(LayeredMaterialSourceData),
     Unsupported,
 }
