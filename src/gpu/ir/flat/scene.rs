@@ -1,6 +1,6 @@
 use super::{
-    AreaLight, Camera, DielectricMaterialData, DiffuseMaterialData, Geometry, Instance,
-    LayeredBxDFData, LightBVH, LightBounds, LightRecord, Material, Output, PointLight,
+    AreaLight, AttributeTables, Camera, DielectricMaterialData, DiffuseMaterialData, Geometry,
+    Instance, LayeredBxDFData, LightBVH, LightBounds, LightRecord, Material, Output, PointLight,
     PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel, ScatteringChildRefs,
     ScatteringModel, ScatteringNode, TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
@@ -22,6 +22,8 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<Material>,
+    pub material_attributes: Vec<Vec<super::AttributeRef>>,
+    pub attribute_tables: AttributeTables,
     pub diffuse_bxdf_data: Vec<DiffuseMaterialData>,
     pub dielectric_bxdf_data: Vec<DielectricMaterialData>,
     pub layered_bxdf_data: Vec<LayeredBxDFData>,

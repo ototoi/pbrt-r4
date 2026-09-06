@@ -1,10 +1,11 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
-    transform_swaps_handedness, AreaLight, AreaTriangleInput, Camera, Geometry, Instance,
-    LightBoundInput, LightKind, LightRecord, Material, PointLight, PrimitiveDistributionMap,
-    RenderSettings, ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode,
-    Scene, Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport,
-    EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
+    transform_swaps_handedness, AreaLight, AreaTriangleInput, AttributeKind, AttributeRef,
+    AttributeTables, Camera, Geometry, Instance, LightBoundInput, LightKind, LightRecord, Material,
+    PointLight, PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel,
+    ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene, SpectrumValue, Transform,
+    TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport, EVENT_DIFFUSE,
+    EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
 };
 use crate::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
@@ -65,6 +66,8 @@ pub fn flatten_node_with_material_override(
         geometries: builder.geometries,
         instances: builder.instances,
         materials: builder.materials,
+        material_attributes: Vec::new(),
+        attribute_tables: AttributeTables::default(),
         diffuse_bxdf_data: builder.diffuse_bxdf_data,
         dielectric_bxdf_data: builder.dielectric_bxdf_data,
         layered_bxdf_data: builder.layered_bxdf_data,
@@ -81,6 +84,7 @@ pub fn flatten_node_with_material_override(
     };
     let mut scene = scene;
     scene.resolved_scattering_models = resolve_scattering_models(&scene)?;
+    scene.material_attributes = build_material_attributes(&mut scene)?;
     scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
     scene.validate_scattering_models()?;
     scene.validate_static_views()?;
@@ -124,6 +128,46 @@ fn resolve_scattering_models(scene: &Scene) -> Result<Vec<ResolvedScatteringMode
             })
         })
         .collect()
+}
+
+fn build_material_attributes(scene: &mut Scene) -> Result<Vec<Vec<AttributeRef>>, PbrtError> {
+    let models = scene.resolved_scattering_models.clone();
+    let mut all = Vec::with_capacity(scene.materials.len());
+    for material in &mut scene.materials {
+        let model = models
+            .get(material.scattering_model as usize)
+            .ok_or_else(|| PbrtError::error("Material references an invalid scattering model."))?;
+        let refs = match (&material.data, model.root_kind.as_str()) {
+            (super::MaterialData::Diffuse(data), "diffuse") => {
+                let index = u32::try_from(scene.attribute_tables.spectra.len())
+                    .map_err(|_| PbrtError::error("Flat spectrum attribute table exceeds u32."))?;
+                scene.attribute_tables.spectra.push(SpectrumValue([
+                    data.reflectance[0],
+                    data.reflectance[1],
+                    data.reflectance[2],
+                    0.0,
+                ]));
+                vec![AttributeRef {
+                    kind: AttributeKind::Spectrum,
+                    index,
+                }]
+            }
+            (super::MaterialData::Dielectric(data), "dielectric")
+            | (super::MaterialData::ThinDielectric(data), "thin-dielectric") => {
+                let index = u32::try_from(scene.attribute_tables.scalars.len())
+                    .map_err(|_| PbrtError::error("Flat scalar attribute table exceeds u32."))?;
+                scene.attribute_tables.scalars.push(data.eta);
+                vec![AttributeRef {
+                    kind: AttributeKind::Scalar,
+                    index,
+                }]
+            }
+            _ => Vec::new(),
+        };
+        material.attributes = refs.clone();
+        all.push(refs);
+    }
+    Ok(all)
 }
 
 fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
@@ -971,6 +1015,7 @@ fn material_index(
         source_kind: source_kind.to_string(),
         source_data,
         scattering_model,
+        attributes: Vec::new(),
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
