@@ -26,9 +26,8 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(device: &wgpu::Device) -> Result<Self, PbrtError> {
-        // Keep pipeline construction tied to the same complete contract registry
-        // used during adapter limit negotiation. Layout generation will consume
-        // these specs in the next migration step.
+        // Validate the complete stage contract before creating the deployed
+        // layout. The canonical registry supplies the current ABI entries.
         RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let layout_bindings = canonical_wavefront_bindings();
