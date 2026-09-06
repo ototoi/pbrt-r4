@@ -421,6 +421,7 @@ impl Scene {
             area_light_data_offset,
             scene_data.len(),
         )?;
+        scene_uniform.debug_scattering_model = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
                 scene_uniform.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
@@ -479,6 +480,7 @@ impl Scene {
     }
 
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
+        self.scene_uniform.debug_scattering_model = kind.tag();
         for material in &mut self.materials {
             material.kind_tag = kind.tag();
         }

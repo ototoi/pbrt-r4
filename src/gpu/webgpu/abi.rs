@@ -102,7 +102,8 @@ pub struct Instance {
 pub struct MaterialRecord {
     pub kind_tag: u32,
     pub data_index: u32,
-    pub padding: [u32; 2],
+    pub scattering_model: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
