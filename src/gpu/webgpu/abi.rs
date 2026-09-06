@@ -140,6 +140,18 @@ pub struct ScatteringNodeRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LayeredBxDFData {
+    pub thickness: f32,
+    pub g: f32,
+    pub max_depth: u32,
+    pub n_samples: u32,
+    pub albedo: [f32; 4],
+    pub two_sided: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct RayWorkItem {
     pub origin: [f32; 4],
     pub direction: [f32; 4],

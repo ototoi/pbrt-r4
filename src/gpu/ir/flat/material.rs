@@ -11,6 +11,7 @@ pub struct Material {
 pub enum MaterialData {
     Diffuse(DiffuseMaterialData),
     Dielectric(DielectricMaterialData),
+    Layered(LayeredBxDFData),
     Unsupported,
 }
 
@@ -18,6 +19,7 @@ pub enum MaterialData {
 pub enum MaterialSourceData {
     Diffuse(DiffuseMaterialSourceData),
     Dielectric(DielectricMaterialSourceData),
+    Layered(LayeredMaterialSourceData),
     Unsupported,
 }
 
@@ -45,6 +47,26 @@ pub struct DiffuseMaterialSourceData {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DielectricMaterialSourceData {
     pub eta: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayeredBxDFData {
+    pub thickness: f32,
+    pub albedo: [f32; 3],
+    pub g: f32,
+    pub max_depth: u32,
+    pub n_samples: u32,
+    pub two_sided: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayeredMaterialSourceData {
+    pub thickness: f32,
+    pub albedo: [f32; 3],
+    pub g: f32,
+    pub max_depth: u32,
+    pub n_samples: u32,
+    pub two_sided: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

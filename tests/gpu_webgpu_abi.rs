@@ -121,6 +121,10 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<ScatteringModelRecord>(), 16);
     assert_eq!(std::mem::size_of::<ScatteringNodeRecord>(), 32);
     assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LayeredBxDFData>(),
+        48
+    );
+    assert_eq!(
         std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::DiffuseMaterialData>(),
         16
     );
