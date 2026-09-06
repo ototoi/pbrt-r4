@@ -209,6 +209,48 @@ fn build_material_attributes(scene: &mut Scene) -> Result<Vec<Vec<AttributeRef>>
                     index,
                     name: "albedo".to_string(),
                 });
+                if let Some(top_node_id) = model.child_nodes.first() {
+                    if let Some(top_node) = scene.scattering_nodes.get(*top_node_id as usize) {
+                        if let Some(data) =
+                            scene.dielectric_bxdf_data.get(top_node.data_index as usize)
+                        {
+                            let index = u32::try_from(scene.attribute_tables.scalars.len())
+                                .map_err(|_| {
+                                    PbrtError::error("Flat scalar attribute table exceeds u32.")
+                                })?;
+                            scene.attribute_tables.scalars.push(data.eta);
+                            refs.push(AttributeRef {
+                                kind: AttributeKind::Scalar,
+                                index,
+                                name: "eta".to_string(),
+                            });
+                        }
+                    }
+                }
+                if let Some(bottom_node_id) = model.child_nodes.get(1) {
+                    if let Some(bottom_node) = scene.scattering_nodes.get(*bottom_node_id as usize)
+                    {
+                        if let Some(data) =
+                            scene.diffuse_bxdf_data.get(bottom_node.data_index as usize)
+                        {
+                            let index = u32::try_from(scene.attribute_tables.spectra.len())
+                                .map_err(|_| {
+                                    PbrtError::error("Flat spectrum attribute table exceeds u32.")
+                                })?;
+                            scene.attribute_tables.spectra.push(SpectrumValue([
+                                data.reflectance[0],
+                                data.reflectance[1],
+                                data.reflectance[2],
+                                0.0,
+                            ]));
+                            refs.push(AttributeRef {
+                                kind: AttributeKind::Spectrum,
+                                index,
+                                name: "reflectance".to_string(),
+                            });
+                        }
+                    }
+                }
                 refs
             }
             _ => Vec::new(),
