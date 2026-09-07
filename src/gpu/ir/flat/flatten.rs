@@ -3,10 +3,11 @@ use super::{
     transform_swaps_handedness, AreaLight, AreaTriangleInput, AttributeKind, AttributeRef,
     AttributeTables, Camera, Geometry, Instance, LightBoundInput, LightKind, LightRecord, Material,
     PointLight, PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel,
-    ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene, SpectrumValue, Transform,
-    TriangleDistributionEntry, TriangleDistributionRange, Vertex, Viewport, EVENT_DIFFUSE,
-    EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
+    ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene, SpectrumTableBuilder,
+    SpectrumValue, Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex,
+    Viewport, EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
 };
+use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
     Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
@@ -47,12 +48,16 @@ pub fn flatten_node_with_material_override(
     let viewport = builder
         .viewport
         .ok_or_else(|| PbrtError::error("No film was found while flattening GPU Node IR."))?;
+    let film = builder.film.ok_or_else(|| {
+        PbrtError::error("No RGB film data was found while flattening GPU Node IR.")
+    })?;
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
     let scene = Scene {
         camera,
         viewport,
+        film,
         output,
         render_settings,
         point_lights: builder.point_lights,
@@ -68,6 +73,7 @@ pub fn flatten_node_with_material_override(
         materials: builder.materials,
         material_attributes: builder.material_attributes,
         attribute_tables: builder.attribute_tables,
+        spectrum_table: builder.spectrum_table_builder.finish(),
         scattering_models: builder.scattering_models,
         scattering_nodes: builder.scattering_nodes,
         scattering_child_refs: ScatteringChildRefs {
@@ -311,6 +317,7 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
 struct FlatBuilder {
     camera: Option<Camera>,
     viewport: Option<Viewport>,
+    film: Option<super::Film>,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     geometries: Vec<Geometry>,
@@ -319,6 +326,7 @@ struct FlatBuilder {
     materials: Vec<Material>,
     material_attributes: Vec<Vec<AttributeRef>>,
     attribute_tables: AttributeTables,
+    spectrum_table_builder: SpectrumTableBuilder,
     scattering_models: Vec<ScatteringModel>,
     scattering_nodes: Vec<ScatteringNode>,
     scattering_child_refs: Vec<u32>,
@@ -512,6 +520,12 @@ fn flatten_node_ref(
         }
     }
     if let Some(film) = film {
+        if film.name != "rgb" {
+            return Err(PbrtError::error(&format!(
+                "WebGPU four-way rendering supports only RGB film, got \"{}\".",
+                film.name
+            )));
+        }
         let resolution = viewport_resolution(&film.params)?;
         if builder.viewport.is_some() {
             return Err(PbrtError::error(
@@ -519,6 +533,23 @@ fn flatten_node_ref(
             ));
         }
         builder.viewport = Some(Viewport { resolution });
+        let sensor_name = film.params.get_one_string("sensor", "cie1931");
+        let iso = film.params.get_one_float("iso", 100.0);
+        let white_balance = film.params.get_one_float("whitebalance", 0.0);
+        let sensor = PixelSensor::create(&sensor_name, iso, white_balance)?;
+        let mut sensor_response = [0; 3];
+        for (id, response) in sensor_response.iter_mut().zip(sensor.response_spectra()) {
+            *id = builder.spectrum_table_builder.intern_dense(response, 0)?;
+        }
+        builder.film = Some(super::Film {
+            sensor_response,
+            output_rgb_from_sensor_rgb: sensor.output_rgb_from_sensor_rgb(),
+            imaging_ratio: sensor.imaging_ratio(),
+            scale: film.params.get_one_float("scale", 1.0),
+            max_sample_luminance: film
+                .params
+                .get_one_float("maxcomponentvalue", f32::INFINITY),
+        });
     }
     if let Some(camera) = camera {
         let fov = camera.params.get_one_float("fov", 90.0) as f32;

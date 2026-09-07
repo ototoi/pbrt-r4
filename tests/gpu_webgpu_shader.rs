@@ -26,6 +26,24 @@ const COMMON_SHADER: &str = concat!(
     include_str!("../src/gpu/webgpu/shaders/wavefront.wgsl")
 );
 const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
+const SPECTRUM_TEST_SHADER: &str = r#"
+    @compute @workgroup_size(1) fn test_stage() {
+        let value = evaluate_spectrum(0u, vec4<f32>(360.0, 400.5, 700.0, 830.0));
+        let divided = safe_div_spectrum(value, vec4<f32>(1.0, 0.0, 2.0, 4.0));
+        if (spectrum_is_constant(0u) && average_spectrum(divided) > max_spectrum(divided)) {
+            set_render_error();
+        }
+    }
+"#;
+
+#[test]
+fn dense_spectrum_module_declares_only_its_two_tables() {
+    let source = compose_source(SPECTRUM_TEST_SHADER);
+    assert!(source.contains("var<storage, read> spectrum_samples: array<f32>;"));
+    assert!(source.contains("var<storage, read> spectrum_metadata: array<u32>;"));
+    assert!(source.contains("fn safe_div_spectrum"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
+}
 
 #[test]
 fn required_limits_are_derived_from_each_composed_stage() {

@@ -129,6 +129,14 @@ impl PixelSensor {
         self.xyz_from_sensor_rgb
     }
 
+    pub fn response_spectra(&self) -> [&DenseSampledSpectrum; 3] {
+        [&self.r_bar, &self.g_bar, &self.b_bar]
+    }
+
+    pub fn output_rgb_from_sensor_rgb(&self) -> [[Float; 3]; 3] {
+        self.output_rgb_from_sensor_rgb
+    }
+
     /// pbrt-v4 `PixelSensor::ToSensorRGB` (film.h:95) -- the raw
     /// sensor-space RGB scaled by `imagingRatio`. Callers that
     /// want the output color space's RGB multiply by

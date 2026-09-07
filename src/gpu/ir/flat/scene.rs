@@ -1,7 +1,7 @@
 use super::{
-    AreaLight, AttributeTables, Camera, Geometry, Instance, LightBVH, LightBounds, LightRecord,
-    Material, Output, PointLight, PrimitiveDistributionMap, RenderSettings,
-    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode,
+    AreaLight, AttributeTables, Camera, Film, Geometry, Instance, LightBVH, LightBounds,
+    LightRecord, Material, Output, PointLight, PrimitiveDistributionMap, RenderSettings,
+    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, SpectrumTable,
     TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
 
@@ -9,6 +9,7 @@ use super::{
 pub struct Scene {
     pub camera: Camera,
     pub viewport: Viewport,
+    pub film: Film,
     pub output: Output,
     pub render_settings: RenderSettings,
     pub point_lights: Vec<PointLight>,
@@ -24,6 +25,7 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub material_attributes: Vec<Vec<super::AttributeRef>>,
     pub attribute_tables: AttributeTables,
+    pub spectrum_table: SpectrumTable,
     pub scattering_models: Vec<ScatteringModel>,
     pub scattering_nodes: Vec<ScatteringNode>,
     pub scattering_child_refs: ScatteringChildRefs,

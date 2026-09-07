@@ -5,11 +5,12 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, inverse_transpose_linear, light_table_uniform, material_table_uniform,
-    row_major_to_columns, viewport_uniform, AreaLight, Geometry, Instance, LightRecord,
-    LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform, PointLight,
-    ScatteringModelRecord, ScatteringNodeRecord, TriangleDistributionEntry, Vertex,
-    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
+    material_table_uniform, row_major_to_columns, viewport_uniform, AreaLight, FilmUniform,
+    Geometry, Instance, LightRecord, LightTableUniform, MaterialAttributeRef, MaterialRecord,
+    MaterialTableUniform, PointLight, ScatteringModelRecord, ScatteringNodeRecord,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -20,6 +21,7 @@ use super::output::Output;
 pub struct Scene {
     pub camera: super::abi::CameraUniform,
     pub viewport: ViewportUniform,
+    pub film: FilmUniform,
     pub material_table: MaterialTableUniform,
     pub light_table: LightTableUniform,
     pub output: Output,
@@ -34,6 +36,8 @@ pub struct Scene {
     pub scattering_node_buffer: wgpu::Buffer,
     pub scattering_child_buffer: wgpu::Buffer,
     pub spectrum_attribute_buffer: wgpu::Buffer,
+    pub spectrum_sample_buffer: wgpu::Buffer,
+    pub spectrum_metadata_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
     pub point_light_buffer: wgpu::Buffer,
@@ -227,6 +231,7 @@ impl Scene {
         }
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
+        let film = film_uniform(&flat.film);
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
         {
             return Err(PbrtError::error(
@@ -298,6 +303,24 @@ impl Scene {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 texture attributes SBO"),
                 contents: buffer_contents(&texture_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        flat.spectrum_table.validate()?;
+        let spectrum_metadata = flat
+            .spectrum_table
+            .metadata
+            .iter()
+            .map(|metadata| metadata.flags)
+            .collect::<Vec<_>>();
+        let spectrum_sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 dense spectrum samples SBO"),
+            contents: buffer_contents(&flat.spectrum_table.samples),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let spectrum_metadata_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 spectrum metadata SBO"),
+                contents: buffer_contents(&spectrum_metadata),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let distribution_entries = flat
@@ -409,6 +432,7 @@ impl Scene {
         Ok(Self {
             camera,
             viewport,
+            film,
             material_table,
             light_table,
             output: Output::from_flat(flat.output),
@@ -423,6 +447,8 @@ impl Scene {
             scattering_node_buffer,
             scattering_child_buffer,
             spectrum_attribute_buffer,
+            spectrum_sample_buffer,
+            spectrum_metadata_buffer,
             texture_attribute_buffer,
             light_record_buffer,
             point_light_buffer,

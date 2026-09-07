@@ -29,6 +29,14 @@ struct ViewportUniform {
     _padding2: u32,
 };
 
+struct FilmUniform {
+    sensor_response: vec4<u32>,
+    imaging_ratio: f32,
+    max_sample_luminance: f32,
+    _padding0: u32,
+    _padding1: u32,
+};
+
 struct MaterialTableUniform {
     material_offset_words: u32, material_count: u32,
     scattering_model_offset_words: u32, scattering_model_count: u32,

@@ -1,6 +1,7 @@
 const RESOURCES_SHADER: &str = include_str!("shaders/resources.wgsl");
 const TYPES_SHADER: &str = include_str!("shaders/types.wgsl");
 const WAVEFRONT_SHADER: &str = include_str!("shaders/wavefront.wgsl");
+const SPECTRUM_SHADER: &str = include_str!("shaders/spectrum.wgsl");
 const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
 const LAYERED_SHADER: &str = include_str!("shaders/layered.wgsl");
 
@@ -27,7 +28,7 @@ pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) ->
     if include_layered {
         roots.push(LAYERED_SHADER);
     }
-    let common_input = format!("{TYPES_SHADER}\n{WAVEFRONT_SHADER}");
+    let common_input = format!("{TYPES_SHADER}\n{WAVEFRONT_SHADER}\n{SPECTRUM_SHADER}");
     let common_source = prune_common_source(&common_input, &roots);
     let mut references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     if include_layered {

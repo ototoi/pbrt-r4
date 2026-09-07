@@ -14,6 +14,8 @@ var<storage, read> indices: array<u32>;
 var<storage, read> geometries: array<Geometry>;
 @group(0) @binding(6)
 var<storage, read> instances: array<Instance>;
+@group(0) @binding(7)
+var<uniform> film_params: FilmUniform;
 @group(0) @binding(8)
 var<storage, read_write> surfaces: array<SurfaceWorkItem>;
 @group(0) @binding(9)
@@ -68,3 +70,7 @@ var<storage, read> light_bvh_header: array<u32>;
 var<storage, read> light_bvh_nodes: array<u32>;
 @group(0) @binding(34)
 var<storage, read> light_bvh_leaves: array<u32>;
+@group(0) @binding(35)
+var<storage, read> spectrum_samples: array<f32>;
+@group(0) @binding(36)
+var<storage, read> spectrum_metadata: array<u32>;
