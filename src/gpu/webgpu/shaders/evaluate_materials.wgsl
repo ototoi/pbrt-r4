@@ -130,8 +130,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     if (material_kind == MATERIAL_KIND_LAYERED) {
         let data = load_layered_bxdf(surface.material, lambda);
-        let eta_node = load_layered_eta_node(surface.material);
-        let eta = max(load_dielectric_eta(eta_node, lambda).x, 1.0);
+        let eta = max(load_layered_eta(surface.material, lambda).x, 1.0);
         let local_wo = scattering_local(wo, shading_n);
         let local_wi = scattering_local(wi, shading_n);
         f = layered_f(data, eta, load_layered_bottom_reflectance(surface.material, lambda),

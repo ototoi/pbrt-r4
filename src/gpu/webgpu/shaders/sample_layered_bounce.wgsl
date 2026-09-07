@@ -10,9 +10,8 @@ fn sample_layered_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         || load_material_kind(surface.material) != MATERIAL_KIND_LAYERED) { return; }
     let lambda = load_sample_lambda(pixel_index);
     let data = load_layered_bxdf(surface.material, lambda);
-    let eta_node = load_layered_eta_node(surface.material);
-    if (!dielectric_eta_is_constant(eta_node)) { terminate_secondary_wavelengths(pixel_index); }
-    var eta = load_dielectric_eta(eta_node, load_sample_lambda(pixel_index)).x;
+    if (!layered_eta_is_constant(surface.material)) { terminate_secondary_wavelengths(pixel_index); }
+    var eta = load_layered_eta(surface.material, load_sample_lambda(pixel_index)).x;
     if (eta == 0.0) { eta = 1.0; }
     let reflectance = load_layered_bottom_reflectance(surface.material, load_sample_lambda(pixel_index));
     let samples = load_ray_samples(pixel_index);
