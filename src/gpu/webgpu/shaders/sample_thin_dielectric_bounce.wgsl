@@ -13,7 +13,7 @@ fn sample_thin_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<
     var eta = load_dielectric_eta(eta_node, load_sample_lambda(pixel_index)).x;
     if (eta == 0.0) { eta = 1.0; }
     let wo = normalize(-ray.direction.xyz);
-    let r0 = layered_fresnel(dot(wo, normalize(surface.normal.xyz)), eta);
+    let r0 = dielectric_fresnel(dot(wo, normalize(surface.normal.xyz)), eta);
     let r = select(r0, r0 + (1.0 - r0) * (1.0 - r0) * r0 / max(1.0 - r0 * r0, 1e-7), r0 < 1.0);
     let t = 1.0 - r;
     if (!(eta > 0.0) || eta != eta || !(r >= 0.0) || !(r <= 1.0)) {

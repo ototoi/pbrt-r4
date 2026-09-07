@@ -14,28 +14,6 @@ impl MaterialTable {
         for node in &scene.scattering_nodes {
             let valid = match node.kind.as_str() {
                 "diffuse" | "dielectric" | "thindielectric" | "conductor" => node.child_count == 0,
-                "layered" => {
-                    if node.child_count != 2 {
-                        false
-                    } else {
-                        let children = node.child_offset.checked_add(2).and_then(|end| {
-                            scene
-                                .scattering_child_refs
-                                .node_ids
-                                .get(node.child_offset as usize..end as usize)
-                        });
-                        children.is_some_and(|children| {
-                            scene
-                                .scattering_nodes
-                                .get(children[0] as usize)
-                                .is_some_and(|n| n.kind == "dielectric")
-                                && scene
-                                    .scattering_nodes
-                                    .get(children[1] as usize)
-                                    .is_some_and(|n| n.kind == "diffuse")
-                        })
-                    }
-                }
                 _ => false,
             };
             if !valid {
@@ -98,17 +76,6 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             (1, flat::AttributeKind::Spectrum),
             (2, flat::AttributeKind::Scalar),
         ][..],
-        "coateddiffuse" => &[
-            (0, flat::AttributeKind::Scalar),
-            (1, flat::AttributeKind::Scalar),
-            (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
-            (4, flat::AttributeKind::Scalar),
-            (5, flat::AttributeKind::Spectrum),
-            (6, flat::AttributeKind::Spectrum),
-            (7, flat::AttributeKind::Spectrum),
-            (8, flat::AttributeKind::Scalar),
-        ][..],
         other => {
             return Err(PbrtError::error(&format!(
                 "Unsupported WebGPU material kind in attribute validation: {other}."
@@ -157,7 +124,6 @@ pub enum MaterialKind {
     Diffuse,
     Lambert,
     Dielectric,
-    Layered,
     ThinDielectric,
     Conductor,
 }
@@ -169,7 +135,6 @@ impl MaterialKind {
             Self::Uv => 1,
             Self::Diffuse | Self::Lambert => 2,
             Self::Dielectric => 3,
-            Self::Layered => 4,
             Self::ThinDielectric => 5,
             Self::Conductor => 6,
         }
@@ -182,7 +147,9 @@ impl MaterialKind {
             "diffuse" => Ok(Self::Diffuse),
             "lambert" => Ok(Self::Lambert),
             "dielectric" => Ok(Self::Dielectric),
-            "coateddiffuse" => Ok(Self::Layered),
+            "coateddiffuse" => Err(PbrtError::error(
+                "coateddiffuse is not supported by the WebGPU backend.",
+            )),
             "thindielectric" => Ok(Self::ThinDielectric),
             "conductor" => Ok(Self::Conductor),
             other => Err(PbrtError::error(&format!(
@@ -215,7 +182,6 @@ pub fn scattering_node_tag(kind: &str) -> Result<u32, PbrtError> {
         "dielectric" => Ok(1),
         "thindielectric" => Ok(3),
         "conductor" => Ok(4),
-        "layered" => Ok(2),
         other => Err(PbrtError::error(&format!(
             "Unsupported initial WebGPU scattering node kind: {other}."
         ))),
