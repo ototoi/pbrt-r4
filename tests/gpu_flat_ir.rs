@@ -12,7 +12,7 @@ use pbrt_r4::gpu::ir::node::{
     SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
-use pbrt_r4::util::spectrum::{Spectrum, SpectrumType};
+use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
 fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
     let mut node = Node::new(name);
@@ -193,6 +193,9 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
     );
     assert_eq!(scene.primitive_distribution_map.offsets, vec![0, 2]);
     assert_eq!(scene.primitive_distribution_map.entries, vec![0, 1]);
+    let scale = &scene.lights[0].attributes[1];
+    let expected = 1.0 / spectrum_to_photometric(&Spectrum::from(1.0));
+    assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
 }
 
 #[test]
@@ -383,6 +386,10 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     assert_eq!(scene.render_settings.seed, 13);
     assert_eq!(scene.render_settings.light_sampler, "uniform");
     assert_eq!(scene.light_positions, vec![[1.0, 2.0, 3.0]]);
+    let scale = &scene.lights[0].attributes[1];
+    let intensity = Spectrum::from_rgb(&[2.0, 2.0, 2.0], SpectrumType::Illuminant);
+    let expected = 1.0 / spectrum_to_photometric(&intensity);
+    assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
 }
 
 #[test]
