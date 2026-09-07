@@ -433,6 +433,9 @@ fn load_material_kind(index: u32) -> u32 {
     if (node_kind == 2u) {
         return MATERIAL_KIND_LAYERED;
     }
+    if (node_kind == 4u) {
+        return MATERIAL_KIND_CONDUCTOR;
+    }
     atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
     return MATERIAL_KIND_NORMAL;
 }
@@ -468,6 +471,26 @@ fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
     return load_node_spectrum(scattering_models[model].surface_root, 0u);
 }
 fn load_dielectric_eta(node_index: u32) -> f32 { return load_node_scalar(node_index, 0u); }
+fn load_conductor_eta(node_index: u32) -> vec3<f32> { return load_node_spectrum(node_index, 0u); }
+fn load_conductor_k(node_index: u32) -> vec3<f32> { return load_node_spectrum(node_index, 1u); }
+fn load_conductor_roughness(node_index: u32) -> f32 { return load_node_scalar(node_index, 2u); }
+fn conductor_fresnel(cosine_input: f32, eta: vec3<f32>, k: vec3<f32>) -> vec3<f32> {
+    let c = clamp(abs(cosine_input), 0.0, 1.0);
+    let c2 = c * c;
+    let s2 = 1.0 - c2;
+    let eta2 = eta * eta;
+    let k2 = k * k;
+    let t0 = eta2 - k2 - vec3<f32>(s2);
+    let a2b2 = sqrt(t0 * t0 + 4.0 * eta2 * k2);
+    let a = sqrt(max(vec3<f32>(0.0), 0.5 * (a2b2 + t0)));
+    let t1 = a2b2 + vec3<f32>(c2);
+    let t2 = 2.0 * c * a;
+    let rs = (t1 - t2) / max(t1 + t2, vec3<f32>(1e-7));
+    let t3 = c2 * a2b2 + vec3<f32>(s2 * s2);
+    let t4 = t2 * s2;
+    let rp = rs * (t3 - t4) / max(t3 + t4, vec3<f32>(1e-7));
+    return 0.5 * (rs + rp);
+}
 fn load_scattering_node_word(index: u32, word: u32) -> u32 {
     if (index >= arrayLength(&scattering_nodes)) { atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return 0u; }
     let node = scattering_nodes[index];
