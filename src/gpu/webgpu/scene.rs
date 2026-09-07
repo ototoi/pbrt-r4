@@ -8,14 +8,14 @@ use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
     material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, DenseSpectrum,
     FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel, LightTableUniform,
-    MaterialRecord, MaterialTableUniform, ScatteringModelRecord, ScatteringNodeRecord,
-    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_POINT,
+    MaterialRecord, MaterialTableUniform, TriangleDistributionEntry, Vertex, ViewportUniform,
+    INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
-use super::material::{scattering_node_tag, MaterialKind, MaterialTable};
+use super::material::MaterialKind;
+use super::material::MaterialTable;
 use super::output::Output;
 
 pub struct Scene {
@@ -34,9 +34,6 @@ pub struct Scene {
     pub material_buffer: wgpu::Buffer,
     pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
-    pub scattering_model_buffer: wgpu::Buffer,
-    pub scattering_node_buffer: wgpu::Buffer,
-    pub scattering_child_buffer: wgpu::Buffer,
     pub spectrum_attributes_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
@@ -49,8 +46,6 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<MaterialRecord>,
-    pub scattering_models: Vec<ScatteringModelRecord>,
-    pub scattering_nodes: Vec<ScatteringNodeRecord>,
     pub attribute_refs: Vec<AttributeRef>,
     pub light_sampling_models: Vec<LightSamplingModel>,
     pub light_records: Vec<LightRecord>,
@@ -120,72 +115,13 @@ impl Scene {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::Material => 3,
                     },
                     index: attribute.index,
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
         let texture_attributes = flat.texture_attributes.clone();
-        let scattering_models = flat
-            .scattering_models
-            .iter()
-            .map(|model| ScatteringModelRecord {
-                surface_root: model.surface_root,
-                bssrdf_root: model.bssrdf_root,
-                padding: [0; 2],
-            })
-            .collect::<Vec<_>>();
-        let mut node_attribute_ranges = vec![(0u32, 0u32); flat.scattering_nodes.len()];
-        for (material_index, _material) in materials.iter().enumerate() {
-            let Some(flat_material) = flat.materials.get(material_index) else {
-                continue;
-            };
-            let attribute_offset = flat
-                .materials
-                .iter()
-                .take(material_index)
-                .map(|material| material.attributes.len() as u32)
-                .sum::<u32>();
-            let mut pending;
-            let Some(model) = flat
-                .scattering_models
-                .get(flat_material.scattering_model as usize)
-            else {
-                continue;
-            };
-            pending = vec![model.surface_root];
-            while let Some(node_id) = pending.pop() {
-                let Some(node) = flat.scattering_nodes.get(node_id as usize) else {
-                    continue;
-                };
-                node_attribute_ranges[node_id as usize] =
-                    (attribute_offset, flat_material.attributes.len() as u32);
-                let end = node.child_offset.saturating_add(node.child_count);
-                if let Some(children) = flat
-                    .scattering_child_refs
-                    .node_ids
-                    .get(node.child_offset as usize..end as usize)
-                {
-                    pending.extend(children.iter().copied());
-                }
-            }
-        }
-        let scattering_nodes = flat
-            .scattering_nodes
-            .iter()
-            .enumerate()
-            .map(|(node_id, node)| {
-                Ok(ScatteringNodeRecord {
-                    kind_tag: scattering_node_tag(&node.kind)?,
-                    event_flags: node.event_flags,
-                    attribute_offset: node_attribute_ranges[node_id].0,
-                    child_offset: node.child_offset,
-                    child_count: node.child_count,
-                    attribute_count: node_attribute_ranges[node_id].1,
-                    padding: [0; 2],
-                })
-            })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
@@ -220,7 +156,6 @@ impl Scene {
                 sampling_model: record.sampling_model,
             })
             .collect::<Vec<_>>();
-        let scattering_child_words_total = flat.scattering_child_refs.node_ids.len();
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
         let film = film_uniform(&flat.film);
@@ -267,23 +202,6 @@ impl Scene {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 scalar attributes SBO"),
                 contents: buffer_contents(&scalar_attributes),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-        let scattering_model_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 scattering model SBO"),
-                contents: buffer_contents(&scattering_models),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-        let scattering_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 scattering node SBO"),
-            contents: buffer_contents(&scattering_nodes),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let scattering_child_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 scattering child SBO"),
-                contents: buffer_contents(&flat.scattering_child_refs.node_ids),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let texture_attribute_buffer =
@@ -348,19 +266,9 @@ impl Scene {
             &flat.render_settings,
             flat.light_bvh.bounded_handles.len(),
         )?;
-        let mut material_table = material_table_uniform(
-            materials.len(),
-            0,
-            scattering_models.len(),
-            0,
-            scattering_nodes.len(),
-            0,
-            scattering_child_words_total,
-            INVALID_INDEX as usize,
-            0,
-        )?;
+        let mut material_table = material_table_uniform(materials.len())?;
         let mut light_table = light_table_uniform(light_records.len(), 0)?;
-        material_table.debug_scattering_model = INVALID_INDEX;
+        material_table.debug_material_kind = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
                 light_table.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
@@ -432,9 +340,6 @@ impl Scene {
             material_buffer,
             attribute_ref_buffer,
             scalar_attribute_buffer,
-            scattering_model_buffer,
-            scattering_node_buffer,
-            scattering_child_buffer,
             spectrum_attributes_buffer,
             texture_attribute_buffer,
             light_record_buffer,
@@ -447,8 +352,6 @@ impl Scene {
             geometries,
             instances,
             materials,
-            scattering_models,
-            scattering_nodes,
             attribute_refs: attribute_refs,
             light_sampling_models,
             light_records,
@@ -459,7 +362,7 @@ impl Scene {
     }
 
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
-        self.material_table.debug_scattering_model = kind.tag();
+        self.material_table.debug_material_kind = kind.tag();
         for material in &mut self.materials {
             material.kind_tag = kind.tag();
         }

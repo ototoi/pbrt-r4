@@ -49,9 +49,6 @@ pub enum ResourceId {
     ScalarAttribute,
     SpectrumAttributes,
     TextureAttribute,
-    ScatteringModel,
-    ScatteringNode,
-    ScatteringChild,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -227,9 +224,6 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (21, ResourceId::MaterialRecord),
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),
-        (24, ResourceId::ScatteringModel),
-        (25, ResourceId::ScatteringNode),
-        (26, ResourceId::ScatteringChild),
         (28, ResourceId::LightRecord),
         (29, ResourceId::LightSamplingModel),
         (30, ResourceId::TriangleDistribution),

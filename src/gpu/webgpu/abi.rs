@@ -36,17 +36,8 @@ pub struct ViewportUniform {
 pub struct MaterialTableUniform {
     pub material_offset_words: u32,
     pub material_count: u32,
-    pub scattering_model_offset_words: u32,
-    pub scattering_model_count: u32,
-    pub scattering_node_offset_words: u32,
-    pub scattering_node_count: u32,
-    pub scattering_child_offset_words: u32,
-    pub scattering_child_count: u32,
-    pub bssrdf_node_offset_words: u32,
-    pub bssrdf_node_count: u32,
-    pub debug_scattering_model: u32,
-    pub scattering_reserved: u32,
-    pub reserved: [u32; 6],
+    pub debug_material_kind: u32,
+    pub reserved: [u32; 15],
 }
 
 #[repr(C)]
@@ -99,7 +90,7 @@ pub struct MaterialRecord {
     pub kind_tag: u32,
     pub attribute_offset: u32,
     pub attribute_count: u32,
-    pub scattering_model: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
@@ -114,26 +105,6 @@ pub struct AttributeRef {
 pub struct DenseSpectrum {
     pub samples: [f32; flat::DENSE_SAMPLE_COUNT],
     pub flags: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct ScatteringModelRecord {
-    pub surface_root: u32,
-    pub bssrdf_root: u32,
-    pub padding: [u32; 2],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct ScatteringNodeRecord {
-    pub kind_tag: u32,
-    pub event_flags: u32,
-    pub attribute_offset: u32,
-    pub child_offset: u32,
-    pub child_count: u32,
-    pub attribute_count: u32,
-    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -377,17 +348,7 @@ pub fn viewport_uniform(
     })
 }
 
-pub fn material_table_uniform(
-    material_count: usize,
-    scattering_model_offset_words: usize,
-    scattering_model_count: usize,
-    scattering_node_offset_words: usize,
-    scattering_node_count: usize,
-    scattering_child_offset_words: usize,
-    scattering_child_count: usize,
-    bssrdf_node_offset_words: usize,
-    bssrdf_node_count: usize,
-) -> Result<MaterialTableUniform, PbrtError> {
+pub fn material_table_uniform(material_count: usize) -> Result<MaterialTableUniform, PbrtError> {
     let to_u32 = |value: usize, label: &str| {
         u32::try_from(value)
             .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
@@ -395,26 +356,8 @@ pub fn material_table_uniform(
     Ok(MaterialTableUniform {
         material_offset_words: 0,
         material_count: to_u32(material_count, "material count")?,
-        scattering_model_offset_words: to_u32(
-            scattering_model_offset_words,
-            "scattering-model offset",
-        )?,
-        scattering_model_count: to_u32(scattering_model_count, "scattering-model count")?,
-        scattering_node_offset_words: to_u32(
-            scattering_node_offset_words,
-            "scattering-node offset",
-        )?,
-        scattering_node_count: to_u32(scattering_node_count, "scattering-node count")?,
-        scattering_child_offset_words: to_u32(
-            scattering_child_offset_words,
-            "scattering-child offset",
-        )?,
-        scattering_child_count: to_u32(scattering_child_count, "scattering-child count")?,
-        bssrdf_node_offset_words: to_u32(bssrdf_node_offset_words, "BSSRDF-node offset")?,
-        bssrdf_node_count: to_u32(bssrdf_node_count, "BSSRDF-node count")?,
-        debug_scattering_model: INVALID_INDEX,
-        scattering_reserved: 0,
-        reserved: [0; 6],
+        debug_material_kind: INVALID_INDEX,
+        reserved: [0; 15],
     })
 }
 
