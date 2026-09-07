@@ -1,8 +1,7 @@
 use super::{
-    AttributeTables, Camera, Film, Geometry, Instance, Light, LightBVH, LightBounds,
-    LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
-    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, SpectrumTable,
-    TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
+    Camera, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightSamplingModel, Material,
+    Output, PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel, ScatteringChildRefs,
+    ScatteringModel, ScatteringNode, TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -25,8 +24,9 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<Material>,
-    pub attribute_tables: AttributeTables,
-    pub spectrum_table: SpectrumTable,
+    pub scalar_attributes: Vec<f32>,
+    pub texture_attributes: Vec<u32>,
+    pub spectrum_table: super::SpectrumTable,
     pub scattering_models: Vec<ScatteringModel>,
     pub scattering_nodes: Vec<ScatteringNode>,
     pub scattering_child_refs: ScatteringChildRefs,

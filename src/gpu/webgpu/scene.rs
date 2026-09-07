@@ -124,8 +124,8 @@ impl Scene {
                     index: attribute.index,
                 }),
         );
-        let scalar_attributes = flat.attribute_tables.scalars.clone();
-        let texture_attributes = flat.attribute_tables.textures.clone();
+        let scalar_attributes = flat.scalar_attributes.clone();
+        let texture_attributes = flat.texture_attributes.clone();
         let scattering_models = flat
             .scattering_models
             .iter()

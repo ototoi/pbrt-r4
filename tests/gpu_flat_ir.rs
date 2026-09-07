@@ -101,7 +101,7 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.film.sensor_response, [0, 1, 2]);
     assert_eq!(scene.film.imaging_ratio, 1.0);
     scene.spectrum_table.validate().unwrap();
-    assert_eq!(scene.attribute_tables.scalars.len(), 0);
+    assert_eq!(scene.scalar_attributes.len(), 0);
     assert_eq!(scene.materials[0].attributes.len(), 1);
     assert_eq!(scene.materials[1].attributes.len(), 1);
     assert_eq!(
@@ -526,7 +526,7 @@ fn flatten_node_builds_coateddiffuse_layered_graph() {
             .iter()
             .find(|attribute| attribute.name == name)
             .unwrap();
-        scene.attribute_tables.scalars[attribute.index as usize]
+        scene.scalar_attributes[attribute.index as usize]
     };
     assert_eq!(scalar("thickness"), 0.01);
     assert_eq!(scalar("maxdepth"), 10.0);
@@ -672,7 +672,7 @@ fn flatten_node_extracts_conductor_attributes() {
             .iter()
             .all(|v| v.is_finite() && *v > 0.0));
     }
-    assert_eq!(scene.attribute_tables.scalars[0], 0.0);
+    assert_eq!(scene.scalar_attributes[0], 0.0);
 }
 
 #[test]

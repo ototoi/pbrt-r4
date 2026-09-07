@@ -1,11 +1,11 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
-    transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, AttributeTables,
-    Camera, Geometry, Instance, Light, LightBoundInput, LightGeometryKind, LightKind,
-    LightSamplingModel, Material, PrimitiveDistributionMap, RenderSettings,
-    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene,
-    SpectrumTableBuilder, Transform, TriangleDistributionEntry, Vertex, Viewport, EVENT_DIFFUSE,
-    EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
+    transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, Camera, Geometry,
+    Instance, Light, LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Material,
+    PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel, ScatteringChildRefs,
+    ScatteringModel, ScatteringNode, Scene, SpectrumTableBuilder, Transform,
+    TriangleDistributionEntry, Vertex, Viewport, EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR,
+    EVENT_TRANSMISSION, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
@@ -83,7 +83,8 @@ pub fn flatten_node_with_material_override(
         instances: builder.instances,
         materials: builder.materials,
         attribute_refs,
-        attribute_tables: builder.attribute_tables,
+        scalar_attributes: builder.scalar_attributes,
+        texture_attributes: builder.texture_attributes,
         spectrum_table: builder.spectrum_table_builder.finish(),
         scattering_models: builder.scattering_models,
         scattering_nodes: builder.scattering_nodes,
@@ -148,9 +149,9 @@ fn push_scalar_attribute(
     name: &str,
     value: f32,
 ) -> Result<AttributeRef, PbrtError> {
-    let index = u32::try_from(builder.attribute_tables.scalars.len())
+    let index = u32::try_from(builder.scalar_attributes.len())
         .map_err(|_| PbrtError::error("Flat scalar attribute table exceeds u32."))?;
-    builder.attribute_tables.scalars.push(value);
+    builder.scalar_attributes.push(value);
     Ok(AttributeRef {
         kind: AttributeKind::Scalar,
         index,
@@ -373,7 +374,8 @@ struct FlatBuilder {
     instances: Vec<Instance>,
     materials: Vec<Material>,
     material_attributes: Vec<Vec<AttributeRef>>,
-    attribute_tables: AttributeTables,
+    scalar_attributes: Vec<f32>,
+    texture_attributes: Vec<u32>,
     spectrum_table_builder: SpectrumTableBuilder,
     scattering_models: Vec<ScatteringModel>,
     scattering_nodes: Vec<ScatteringNode>,
