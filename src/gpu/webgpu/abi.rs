@@ -27,7 +27,8 @@ pub struct ViewportUniform {
     pub sample_index: u32,
     pub max_depth: u32,
     pub seed: u32,
-    pub padding: [u32; 3],
+    pub disable_wavelength_jitter: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -53,10 +54,6 @@ pub struct MaterialTableUniform {
 pub struct LightTableUniform {
     pub light_record_offset_words: u32,
     pub light_count: u32,
-    pub point_light_offset_words: u32,
-    pub point_light_count: u32,
-    pub area_light_offset_words: u32,
-    pub area_light_count: u32,
     pub light_sampler_kind: u32,
     pub light_sampler_data_offset: u32,
     pub light_bvh_node_offset: u32,
@@ -107,7 +104,7 @@ pub struct MaterialRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MaterialAttributeRef {
+pub struct AttributeRef {
     pub kind: u32,
     pub index: u32,
 }
@@ -181,28 +178,24 @@ pub struct SurfaceWorkItem {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct PointLight {
-    pub position: [f32; 4],
-    pub intensity: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct LightRecord {
     pub kind: u32,
-    pub payload: u32,
-    pub padding: [u32; 2],
+    pub attribute_offset: u32,
+    pub attribute_count: u32,
+    pub sampling_model: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct AreaLight {
-    pub instance: u32,
+pub struct LightSamplingModel {
+    pub kind: u32,
+    pub geometry_kind: u32,
+    pub geometry_index: u32,
     pub distribution_offset_words: u32,
     pub distribution_count: u32,
     pub total_area: f32,
-    pub emission: [f32; 3],
     pub flags: u32,
+    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -229,7 +222,8 @@ pub struct FilmUniform {
     pub sensor_response: [u32; 4],
     pub imaging_ratio: f32,
     pub max_sample_luminance: f32,
-    pub padding: [u32; 2],
+    pub mode: u32,
+    pub padding: u32,
 }
 
 pub fn film_uniform(film: &crate::gpu::ir::flat::Film) -> FilmUniform {
@@ -242,7 +236,8 @@ pub fn film_uniform(film: &crate::gpu::ir::flat::Film) -> FilmUniform {
         ],
         imaging_ratio: film.imaging_ratio,
         max_sample_luminance: film.max_sample_luminance,
-        padding: [0; 2],
+        mode: 0,
+        padding: 0,
     }
 }
 
@@ -268,6 +263,8 @@ pub struct RenderError {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct PixelSampleState {
     pub radiance: [f32; 4],
+    pub lambda: [f32; 4],
+    pub lambda_pdf: [f32; 4],
     pub direct: [f32; 4],
     pub indirect: [f32; 4],
 }
@@ -368,7 +365,8 @@ pub fn viewport_uniform(
         sample_index: 0,
         max_depth: settings.max_depth,
         seed: settings.seed,
-        padding: [0; 3],
+        disable_wavelength_jitter: u32::from(settings.disable_wavelength_jitter),
+        padding: [0; 2],
     })
 }
 
@@ -415,11 +413,7 @@ pub fn material_table_uniform(
 
 pub fn light_table_uniform(
     light_count: usize,
-    point_light_count: usize,
-    area_light_count: usize,
     light_record_offset_words: usize,
-    point_light_offset_words: usize,
-    area_light_offset_words: usize,
 ) -> Result<LightTableUniform, PbrtError> {
     let to_u32 = |value: usize, label: &str| {
         u32::try_from(value)
@@ -428,10 +422,6 @@ pub fn light_table_uniform(
     Ok(LightTableUniform {
         light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
         light_count: to_u32(light_count, "light count")?,
-        point_light_offset_words: to_u32(point_light_offset_words, "point-light offset")?,
-        point_light_count: to_u32(point_light_count, "point-light count")?,
-        area_light_offset_words: to_u32(area_light_offset_words, "area-light offset")?,
-        area_light_count: to_u32(area_light_count, "area-light count")?,
         light_sampler_kind: LIGHT_SAMPLER_KIND_UNIFORM,
         light_sampler_data_offset: INVALID_INDEX,
         light_bvh_node_offset: INVALID_INDEX,

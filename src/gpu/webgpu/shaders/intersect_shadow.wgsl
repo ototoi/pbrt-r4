@@ -34,7 +34,7 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
         store_sample_radiance(
             pixel_index,
-            load_sample_radiance(pixel_index) + vec4<f32>(shadow_direct, 0.0),
+            load_sample_radiance(pixel_index) + shadow_direct,
         );
     } else {
     }

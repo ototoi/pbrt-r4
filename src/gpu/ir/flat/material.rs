@@ -21,13 +21,9 @@ pub struct AttributeRef {
     pub name: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SpectrumValue(pub [f32; 4]);
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AttributeTables {
     pub scalars: Vec<f32>,
-    pub spectra: Vec<SpectrumValue>,
     pub textures: Vec<u32>,
 }
 

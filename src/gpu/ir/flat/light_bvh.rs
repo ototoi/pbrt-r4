@@ -1,4 +1,4 @@
-use super::{LightBounds, LightRecord, INVALID_INDEX};
+use super::{Light, LightBounds, INVALID_INDEX};
 use crate::util::error::PbrtError;
 
 const N_BUCKETS: usize = 12;
@@ -59,7 +59,7 @@ impl LightBVHNode {
 }
 
 pub fn build_light_bvh(
-    lights: &[LightRecord],
+    lights: &[Light],
     light_bounds: &[LightBounds],
 ) -> Result<LightBVH, PbrtError> {
     if lights.len() != light_bounds.len() {
@@ -207,7 +207,7 @@ pub fn light_bvh_pmf(
 
 fn build_subtree(
     bvh: &mut LightBVH,
-    _lights: &[LightRecord],
+    _lights: &[Light],
     light_bounds: &[LightBounds],
     handles: Vec<u32>,
     parent: u32,

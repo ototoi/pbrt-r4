@@ -15,6 +15,26 @@ fn store_sample_radiance(pixel_index: u32, radiance: vec4<f32>) {
     pixel_sample_states[pixel_index].radiance = radiance;
 }
 
+fn load_sample_lambda(pixel_index: u32) -> vec4<f32> {
+    return pixel_sample_states[pixel_index].lambda;
+}
+
+fn load_sample_lambda_pdf(pixel_index: u32) -> vec4<f32> {
+    return pixel_sample_states[pixel_index].lambda_pdf;
+}
+
+fn store_sample_wavelengths(pixel_index: u32, lambda: vec4<f32>, pdf: vec4<f32>) {
+    pixel_sample_states[pixel_index].lambda = lambda;
+    pixel_sample_states[pixel_index].lambda_pdf = pdf;
+}
+
+fn terminate_secondary_wavelengths(pixel_index: u32) {
+    var pdf = load_sample_lambda_pdf(pixel_index);
+    if (pdf.y == 0.0 && pdf.z == 0.0 && pdf.w == 0.0) { return; }
+    pdf = vec4<f32>(pdf.x / 4.0, 0.0, 0.0, 0.0);
+    pixel_sample_states[pixel_index].lambda_pdf = pdf;
+}
+
 fn load_ray_samples(pixel_index: u32) -> RaySamples {
     let state = pixel_sample_states[pixel_index];
     return RaySamples(state.direct, state.indirect);
@@ -37,7 +57,7 @@ fn shadow_ray_count() -> u32 {
     return atomicLoad(&queue_counters.shadow.count);
 }
 
-fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, t: f32, direct: vec3<f32>) {
+fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, t: f32, direct: vec4<f32>) {
     let index = atomicAdd(&queue_counters.shadow.count, 1u);
     if (index < queue_counters.shadow.capacity) {
         shadow_rays[index] = ShadowRayWorkItem(
@@ -45,7 +65,7 @@ fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, 
             vec4<f32>(direction, 0.0),
             t,
             vec3<u32>(0u),
-            vec4<f32>(direct, 0.0),
+            direct,
             pixel_index,
             vec3<u32>(0u),
         );
@@ -62,8 +82,8 @@ fn load_shadow_t(index: u32) -> f32 {
     return shadow_rays[index].max_t;
 }
 
-fn load_shadow_direct(index: u32) -> vec3<f32> {
-    return shadow_rays[index].direct.xyz;
+fn load_shadow_direct(index: u32) -> vec4<f32> {
+    return shadow_rays[index].direct;
 }
 
 fn load_shadow_origin(index: u32) -> vec3<f32> {
@@ -137,13 +157,9 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
     next_rays[index] = ray;
 }
 
-fn load_area_emission(index: u32) -> vec4<f32> {
-    return vec4<f32>(area_lights[index].emission, 0.0);
-}
-
 fn load_area_word(index: u32, word: u32) -> u32 {
-    let area = area_lights[index];
-    if (word == 0u) { return area.instance; }
+    let area = light_sampling_models[index];
+    if (word == 0u) { return area.geometry_index; }
     if (word == 1u) { return area.distribution_offset_words; }
     if (word == 2u) { return area.distribution_count; }
     if (word == 3u) { return bitcast<u32>(area.total_area); }
@@ -202,6 +218,12 @@ fn load_area_two_sided(index: u32) -> bool {
     return (load_area_word(index, 7u) & 1u) != 0u;
 }
 
+fn load_point_position(index: u32) -> vec3<f32> {
+    let model = light_sampling_models[index];
+    if (model.geometry_index >= arrayLength(&light_positions)) { set_render_error(); return vec3<f32>(0.0); }
+    return light_positions[model.geometry_index].xyz;
+}
+
 fn pixel_count() -> u32 {
     return viewport.width * viewport.height;
 }
@@ -244,21 +266,21 @@ fn load_material_kind(index: u32) -> u32 {
     return MATERIAL_KIND_NORMAL;
 }
 
-fn load_material_attribute(node_index: u32, ordinal: u32) -> MaterialAttributeRef {
-    if (node_index >= arrayLength(&scattering_nodes)) { set_render_error(); return MaterialAttributeRef(0u, 0u); }
+fn load_material_attribute(node_index: u32, ordinal: u32) -> AttributeRef {
+    if (node_index >= arrayLength(&scattering_nodes)) { set_render_error(); return AttributeRef(0u, 0u); }
     let node = scattering_nodes[node_index];
-    if (ordinal >= node.attribute_count || node.attribute_offset + ordinal >= arrayLength(&material_attributes)) { set_render_error(); return MaterialAttributeRef(0u, 0u); }
-    return material_attributes[node.attribute_offset + ordinal];
+    if (ordinal >= node.attribute_count || node.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
+    return attribute_refs[node.attribute_offset + ordinal];
 }
 fn load_node_scalar(node_index: u32, ordinal: u32) -> f32 {
     let attr_ref = load_material_attribute(node_index, ordinal);
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
 }
-fn load_node_spectrum(node_index: u32, ordinal: u32) -> vec3<f32> {
+fn load_node_spectrum(node_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
     let attr_ref = load_material_attribute(node_index, ordinal);
-    if (attr_ref.kind != 1u || attr_ref.index >= arrayLength(&spectrum_attributes)) { set_render_error(); return vec3<f32>(0.0); }
-    return spectrum_attributes[attr_ref.index].xyz;
+    if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
+    return evaluate_spectrum(attr_ref.index, lambda);
 }
 fn load_material_surface_node(index: u32) -> u32 {
     let model = load_material_model(index);
@@ -269,30 +291,31 @@ fn load_material_model(index: u32) -> u32 {
     if (index >= arrayLength(&materials)) { set_render_error(); return 0u; }
     return materials[index].scattering_model;
 }
-fn load_diffuse_reflectance(material_index: u32) -> vec3<f32> {
-    if (material_table.debug_scattering_model == MATERIAL_KIND_LAMBERT) { return vec3<f32>(0.5); }
+fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32> {
+    if (material_table.debug_scattering_model == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
     let model = load_material_model(material_index);
-    return load_node_spectrum(scattering_models[model].surface_root, 0u);
+    return load_node_spectrum(scattering_models[model].surface_root, 0u, lambda);
 }
-fn load_dielectric_eta(node_index: u32) -> f32 { return load_node_scalar(node_index, 0u); }
-fn load_conductor_eta(node_index: u32) -> vec3<f32> { return load_node_spectrum(node_index, 0u); }
-fn load_conductor_k(node_index: u32) -> vec3<f32> { return load_node_spectrum(node_index, 1u); }
+fn load_dielectric_eta(node_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(node_index, 0u, lambda); }
+fn dielectric_eta_is_constant(node_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(node_index, 0u).index); }
+fn load_conductor_eta(node_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(node_index, 0u, lambda); }
+fn load_conductor_k(node_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(node_index, 1u, lambda); }
 fn load_conductor_roughness(node_index: u32) -> f32 { return load_node_scalar(node_index, 2u); }
-fn conductor_fresnel(cosine_input: f32, eta: vec3<f32>, k: vec3<f32>) -> vec3<f32> {
+fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f32> {
     let c = clamp(abs(cosine_input), 0.0, 1.0);
     let c2 = c * c;
     let s2 = 1.0 - c2;
     let eta2 = eta * eta;
     let k2 = k * k;
-    let t0 = eta2 - k2 - vec3<f32>(s2);
+    let t0 = eta2 - k2 - vec4<f32>(s2);
     let a2b2 = sqrt(t0 * t0 + 4.0 * eta2 * k2);
-    let a = sqrt(max(vec3<f32>(0.0), 0.5 * (a2b2 + t0)));
-    let t1 = a2b2 + vec3<f32>(c2);
+    let a = sqrt(max(vec4<f32>(0.0), 0.5 * (a2b2 + t0)));
+    let t1 = a2b2 + vec4<f32>(c2);
     let t2 = 2.0 * c * a;
-    let rs = (t1 - t2) / max(t1 + t2, vec3<f32>(1e-7));
-    let t3 = c2 * a2b2 + vec3<f32>(s2 * s2);
+    let rs = (t1 - t2) / max(t1 + t2, vec4<f32>(1e-7));
+    let t3 = c2 * a2b2 + vec4<f32>(s2 * s2);
     let t4 = t2 * s2;
-    let rp = rs * (t3 - t4) / max(t3 + t4, vec3<f32>(1e-7));
+    let rp = rs * (t3 - t4) / max(t3 + t4, vec4<f32>(1e-7));
     return 0.5 * (rs + rp);
 }
 fn load_scattering_node_word(index: u32, word: u32) -> u32 {
@@ -307,22 +330,23 @@ fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
     if (child_index >= child_count) { set_render_error(); return 0u; }
     return scattering_children[load_scattering_node_word(node_index, 3u) + child_index];
 }
-fn load_layered_bxdf(material_index: u32) -> LayeredParams {
+fn load_layered_bxdf(material_index: u32, lambda: vec4<f32>) -> LayeredParams {
     let root = scattering_models[load_material_model(material_index)].surface_root;
-    return LayeredParams(load_node_scalar(root, 0u), load_node_scalar(root, 1u), u32(max(load_node_scalar(root, 2u), 0.0)), u32(max(load_node_scalar(root, 3u), 0.0)), vec4<f32>(load_node_spectrum(root, 5u), 0.0), u32(max(load_node_scalar(root, 4u), 0.0)), 0u, 0u, 0u);
+    return LayeredParams(load_node_scalar(root, 0u), load_node_scalar(root, 1u), u32(max(load_node_scalar(root, 2u), 0.0)), u32(max(load_node_scalar(root, 3u), 0.0)), load_node_spectrum(root, 5u, lambda), u32(max(load_node_scalar(root, 4u), 0.0)), 0u, 0u, 0u);
 }
-fn load_layered_bottom_reflectance(material_index: u32) -> vec3<f32> {
+fn load_layered_bottom_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32> {
     let root = scattering_models[load_material_model(material_index)].surface_root;
     let bottom = load_scattering_child(root, 1u);
-    if (load_scattering_node_word(bottom, 0u) != 0u) { set_render_error(); return vec3<f32>(0.0); }
-    return load_node_spectrum(bottom, 7u);
+    if (load_scattering_node_word(bottom, 0u) != 0u) { set_render_error(); return vec4<f32>(0.0); }
+    return load_node_spectrum(bottom, 7u, lambda);
 }
-fn load_layered_eta(material_index: u32) -> f32 {
+fn load_layered_eta_node(material_index: u32) -> u32 {
     let root = scattering_models[load_material_model(material_index)].surface_root;
     let top = load_scattering_child(root, 0u);
-    if (load_scattering_node_word(top, 0u) != 1u) { set_render_error(); return 1.0; }
-    return load_node_scalar(top, 6u);
+    if (load_scattering_node_word(top, 0u) != 1u) { set_render_error(); return 0u; }
+    return top;
 }
+fn load_layered_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(load_layered_eta_node(material_index), 6u, lambda); }
 
 fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
     return path_hash(path_hash(path_hash(viewport.seed) ^ pixel)
@@ -344,16 +368,29 @@ fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(dot(w, t), dot(w, cross(n, t)), dot(w, n));
 }
 
-fn load_point_light(index: u32) -> PointLight {
-    return point_lights[index];
-}
-
 fn load_light_kind(index: u32) -> u32 {
     return light_records[index].kind;
 }
 
 fn load_light_payload(index: u32) -> u32 {
-    return light_records[index].payload;
+    return light_records[index].sampling_model;
+}
+
+fn load_light_attribute(index: u32, ordinal: u32) -> AttributeRef {
+    if (index >= arrayLength(&light_records)) { set_render_error(); return AttributeRef(0u, 0u); }
+    let record = light_records[index];
+    if (ordinal >= record.attribute_count || record.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
+    return attribute_refs[record.attribute_offset + ordinal];
+}
+fn load_light_spectrum(index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
+    let attr = load_light_attribute(index, ordinal);
+    if (attr.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
+    return evaluate_spectrum(attr.index, lambda);
+}
+fn load_light_scale(index: u32) -> f32 {
+    let attr = load_light_attribute(index, 1u);
+    if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
+    return scalar_attributes[attr.index];
 }
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {

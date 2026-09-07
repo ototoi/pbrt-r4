@@ -78,6 +78,7 @@ impl WavefrontPathIntegrator {
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
         if let Some(kind) = debug_material {
             scene.replace_material_kind(queue, kind);
+            scene.film.mode = 1;
         }
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
@@ -106,7 +107,13 @@ impl WavefrontPathIntegrator {
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
         let queues = Queues::new(device, pixel_count)?;
-        let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
+        let film = Film::new(
+            device,
+            [scene.viewport.width, scene.viewport.height],
+            scene.film_output_matrix,
+            scene.film_scale,
+            scene.film.mode != 0,
+        )?;
         let pipeline = Pipeline::new(device)?;
         let make_entry = |binding: super::stages::BindingSpec| wgpu::BindGroupEntry {
             binding: binding.binding,
@@ -135,21 +142,18 @@ impl WavefrontPathIntegrator {
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
                 ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
-                ResourceId::MaterialAttribute => {
-                    scene.material_attribute_buffer.as_entire_binding()
-                }
+                ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
                 ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
                 ResourceId::ScatteringModel => scene.scattering_model_buffer.as_entire_binding(),
                 ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
                 ResourceId::ScatteringChild => scene.scattering_child_buffer.as_entire_binding(),
-                ResourceId::SpectrumAttribute => {
-                    scene.spectrum_attribute_buffer.as_entire_binding()
-                }
                 ResourceId::SpectrumSamples => scene.spectrum_sample_buffer.as_entire_binding(),
                 ResourceId::SpectrumMetadata => scene.spectrum_metadata_buffer.as_entire_binding(),
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
-                ResourceId::PointLight => scene.point_light_buffer.as_entire_binding(),
-                ResourceId::AreaLight => scene.area_light_buffer.as_entire_binding(),
+                ResourceId::LightSamplingModel => {
+                    scene.light_sampling_model_buffer.as_entire_binding()
+                }
+                ResourceId::LightPosition => scene.light_position_buffer.as_entire_binding(),
                 ResourceId::TriangleDistribution => scene.distribution_buffer.as_entire_binding(),
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),

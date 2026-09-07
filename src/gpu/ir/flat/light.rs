@@ -1,3 +1,5 @@
+use super::AttributeRef;
+
 pub const INVALID_INDEX: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6,31 +8,28 @@ pub enum LightKind {
     Area,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LightRecord {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Light {
     pub kind: LightKind,
-    pub payload: u32,
+    pub attributes: Vec<AttributeRef>,
+    pub sampling_model: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightGeometryKind {
+    Position,
+    Instance,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct PointLight {
-    pub position: [f32; 3],
-    pub intensity: [f32; 3],
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AreaLight {
-    pub instance: u32,
-    pub distribution: TriangleDistributionRange,
-    pub emission: [f32; 3],
-    pub two_sided: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TriangleDistributionRange {
-    pub offset: u32,
-    pub count: u32,
+pub struct LightSamplingModel {
+    pub kind: LightKind,
+    pub geometry_kind: LightGeometryKind,
+    pub geometry_index: u32,
+    pub distribution_offset: u32,
+    pub distribution_count: u32,
     pub total_area: f32,
+    pub flags: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,8 +39,6 @@ pub struct TriangleDistributionEntry {
     pub area: f32,
 }
 
-/// Maps an area-light-local primitive number to its distribution entry.
-/// `INVALID_INDEX` denotes a primitive excluded from sampling.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimitiveDistributionMap {
     pub offsets: Vec<u32>,

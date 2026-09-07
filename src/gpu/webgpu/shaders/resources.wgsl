@@ -45,7 +45,7 @@ var<uniform> light_table: LightTableUniform;
 @group(0) @binding(21)
 var<storage, read> materials: array<MaterialRecord>;
 @group(0) @binding(22)
-var<storage, read> material_attributes: array<MaterialAttributeRef>;
+var<storage, read> attribute_refs: array<AttributeRef>;
 @group(0) @binding(23)
 var<storage, read> scalar_attributes: array<f32>;
 @group(0) @binding(24)
@@ -54,23 +54,21 @@ var<storage, read> scattering_models: array<ScatteringModelRecord>;
 var<storage, read> scattering_nodes: array<ScatteringNodeRecord>;
 @group(0) @binding(26)
 var<storage, read> scattering_children: array<u32>;
-@group(0) @binding(27)
-var<storage, read> spectrum_attributes: array<vec4<f32>>;
 @group(0) @binding(28)
 var<storage, read> light_records: array<LightRecord>;
 @group(0) @binding(29)
-var<storage, read> point_lights: array<PointLight>;
+var<storage, read> light_sampling_models: array<LightSamplingModel>;
 @group(0) @binding(30)
-var<storage, read> area_lights: array<AreaLight>;
-@group(0) @binding(31)
 var<storage, read> triangle_distributions: array<TriangleDistributionEntry>;
-@group(0) @binding(32)
+@group(0) @binding(31)
 var<storage, read> light_bvh_header: array<u32>;
-@group(0) @binding(33)
+@group(0) @binding(32)
 var<storage, read> light_bvh_nodes: array<u32>;
-@group(0) @binding(34)
+@group(0) @binding(33)
 var<storage, read> light_bvh_leaves: array<u32>;
-@group(0) @binding(35)
+@group(0) @binding(34)
 var<storage, read> spectrum_samples: array<f32>;
-@group(0) @binding(36)
+@group(0) @binding(35)
 var<storage, read> spectrum_metadata: array<u32>;
+@group(0) @binding(36)
+var<storage, read> light_positions: array<vec4<f32>>;
