@@ -147,8 +147,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::ScatteringModel => scene.scattering_model_buffer.as_entire_binding(),
                 ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
                 ResourceId::ScatteringChild => scene.scattering_child_buffer.as_entire_binding(),
-                ResourceId::SpectrumSamples => scene.spectrum_sample_buffer.as_entire_binding(),
-                ResourceId::SpectrumMetadata => scene.spectrum_metadata_buffer.as_entire_binding(),
+                ResourceId::Spectra => scene.spectrum_sample_buffer.as_entire_binding(),
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
                 ResourceId::LightSamplingModel => {
                     scene.light_sampling_model_buffer.as_entire_binding()

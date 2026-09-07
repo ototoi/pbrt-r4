@@ -11,67 +11,59 @@ pub const SPECTRUM_FLAG_CONSTANT: u32 = 1 << 0;
 
 pub type SpectrumId = u32;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SpectrumMetadata {
-    pub flags: u32,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SpectrumTable {
-    pub samples: Vec<f32>,
-    pub metadata: Vec<SpectrumMetadata>,
-}
-
-impl SpectrumTable {
-    pub fn spectrum_count(&self) -> usize {
-        self.metadata.len()
-    }
-
-    pub fn validate(&self) -> Result<(), PbrtError> {
-        let expected = self
-            .metadata
-            .len()
-            .checked_mul(DENSE_SAMPLE_COUNT)
-            .ok_or_else(|| PbrtError::error("Flat spectrum table size overflowed."))?;
-        if self.samples.len() != expected {
-            return Err(PbrtError::error(
-                "Flat spectrum sample and metadata counts are inconsistent.",
-            ));
-        }
-        if self.samples.iter().any(|sample| !sample.is_finite()) {
-            return Err(PbrtError::error(
-                "Flat spectrum table contains a non-finite sample.",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn evaluate(&self, id: SpectrumId, lambda: f32) -> Result<f32, PbrtError> {
-        let spectrum =
-            usize::try_from(id).map_err(|_| PbrtError::error("Spectrum ID does not fit usize."))?;
-        if spectrum >= self.metadata.len() {
-            return Err(PbrtError::error("Spectrum ID is outside the dense table."));
-        }
-        if !(DENSE_LAMBDA_MIN as f32..=DENSE_LAMBDA_MAX as f32).contains(&lambda) {
-            return Ok(0.0);
-        }
-        let x = lambda - DENSE_LAMBDA_MIN as f32;
-        let i0 = x.floor() as usize;
-        let i1 = (i0 + 1).min(DENSE_SAMPLE_COUNT - 1);
-        let base = spectrum * DENSE_SAMPLE_COUNT;
-        Ok(self.samples[base + i0] * (1.0 - x.fract()) + self.samples[base + i1] * x.fract())
-    }
-}
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SpectrumKey {
     flags: u32,
     samples: Box<[u32]>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DenseSpectrum {
+    pub samples: [f32; DENSE_SAMPLE_COUNT],
+    pub flags: u32,
+}
+
+pub fn validate_dense_spectra(spectra: &[DenseSpectrum]) -> Result<(), PbrtError> {
+    if spectra
+        .iter()
+        .flat_map(|spectrum| spectrum.samples)
+        .any(|sample| !sample.is_finite())
+    {
+        return Err(PbrtError::error(
+            "Flat spectrum table contains a non-finite sample.",
+        ));
+    }
+    Ok(())
+}
+
+pub fn evaluate_dense_spectrum(
+    spectra: &[DenseSpectrum],
+    id: SpectrumId,
+    lambda: f32,
+) -> Result<f32, PbrtError> {
+    let spectrum =
+        usize::try_from(id).map_err(|_| PbrtError::error("Spectrum ID does not fit usize."))?;
+    let samples = spectra
+        .get(spectrum)
+        .ok_or_else(|| PbrtError::error("Spectrum ID is outside the dense table."))?;
+    if !(DENSE_LAMBDA_MIN as f32..=DENSE_LAMBDA_MAX as f32).contains(&lambda) {
+        return Ok(0.0);
+    }
+    let x = lambda - DENSE_LAMBDA_MIN as f32;
+    let i0 = x.floor() as usize;
+    let i1 = (i0 + 1).min(DENSE_SAMPLE_COUNT - 1);
+    Ok(samples.samples[i0] * (1.0 - x.fract()) + samples.samples[i1] * x.fract())
+}
+
+impl DenseSpectrum {
+    pub fn new(samples: [f32; DENSE_SAMPLE_COUNT], flags: u32) -> Self {
+        Self { samples, flags }
+    }
+}
+
 #[derive(Default)]
 pub struct SpectrumTableBuilder {
-    table: SpectrumTable,
+    table: Vec<DenseSpectrum>,
     ids: HashMap<SpectrumKey, SpectrumId>,
 }
 
@@ -90,9 +82,9 @@ impl SpectrumTableBuilder {
         spectrum: &DenselySampledSpectrum,
         flags: u32,
     ) -> Result<SpectrumId, PbrtError> {
-        let mut samples = Vec::with_capacity(DENSE_SAMPLE_COUNT);
+        let mut samples = [0.0; DENSE_SAMPLE_COUNT];
         let mut bits = Vec::with_capacity(DENSE_SAMPLE_COUNT);
-        for index in 0..DENSE_SAMPLE_COUNT {
+        for (index, sample) in samples.iter_mut().enumerate() {
             let value = spectrum[index] as f32;
             if !value.is_finite() {
                 return Err(PbrtError::error(
@@ -100,7 +92,7 @@ impl SpectrumTableBuilder {
                 ));
             }
             let value = if value == 0.0 { 0.0 } else { value };
-            samples.push(value);
+            *sample = value;
             bits.push(value.to_bits());
         }
         let key = SpectrumKey {
@@ -110,15 +102,14 @@ impl SpectrumTableBuilder {
         if let Some(id) = self.ids.get(&key) {
             return Ok(*id);
         }
-        let id = u32::try_from(self.table.metadata.len())
+        let id = u32::try_from(self.table.len())
             .map_err(|_| PbrtError::error("Flat spectrum table exceeds the u32 ID range."))?;
-        self.table.samples.extend(samples);
-        self.table.metadata.push(SpectrumMetadata { flags });
+        self.table.push(DenseSpectrum::new(samples, flags));
         self.ids.insert(key, id);
         Ok(id)
     }
 
-    pub fn finish(self) -> SpectrumTable {
+    pub fn finish(self) -> Vec<DenseSpectrum> {
         self.table
     }
 }

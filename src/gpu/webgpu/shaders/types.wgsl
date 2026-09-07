@@ -96,6 +96,11 @@ struct ScatteringModelRecord {
 struct MaterialRecord { kind_tag: u32, attribute_offset: u32, attribute_count: u32, scattering_model: u32, };
 struct AttributeRef { kind: u32, index: u32, };
 
+struct DenseSpectrum {
+    samples: array<f32, 471>,
+    flags: u32,
+};
+
 struct ScatteringNodeRecord {
     kind_tag: u32,
     event_flags: u32,

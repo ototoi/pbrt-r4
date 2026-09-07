@@ -26,7 +26,7 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub scalar_attributes: Vec<f32>,
     pub texture_attributes: Vec<u32>,
-    pub spectrum_table: super::SpectrumTable,
+    pub spectra: Vec<super::DenseSpectrum>,
     pub scattering_models: Vec<ScatteringModel>,
     pub scattering_nodes: Vec<ScatteringNode>,
     pub scattering_child_refs: ScatteringChildRefs,

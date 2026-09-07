@@ -6,10 +6,11 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
-    material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, FilmUniform,
-    Geometry, Instance, LightRecord, LightSamplingModel, LightTableUniform, MaterialRecord,
-    MaterialTableUniform, ScatteringModelRecord, ScatteringNodeRecord, TriangleDistributionEntry,
-    Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, DenseSpectrum,
+    FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel, LightTableUniform,
+    MaterialRecord, MaterialTableUniform, ScatteringModelRecord, ScatteringNodeRecord,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -37,7 +38,6 @@ pub struct Scene {
     pub scattering_node_buffer: wgpu::Buffer,
     pub scattering_child_buffer: wgpu::Buffer,
     pub spectrum_sample_buffer: wgpu::Buffer,
-    pub spectrum_metadata_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
     pub light_sampling_model_buffer: wgpu::Buffer,
@@ -286,24 +286,20 @@ impl Scene {
                 contents: buffer_contents(&texture_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        flat.spectrum_table.validate()?;
-        let spectrum_metadata = flat
-            .spectrum_table
-            .metadata
+        flat::validate_dense_spectra(&flat.spectra)?;
+        let spectra = flat
+            .spectra
             .iter()
-            .map(|metadata| metadata.flags)
+            .map(|spectrum| DenseSpectrum {
+                samples: spectrum.samples,
+                flags: spectrum.flags,
+            })
             .collect::<Vec<_>>();
         let spectrum_sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 dense spectrum samples SBO"),
-            contents: buffer_contents(&flat.spectrum_table.samples),
+            label: Some("pbrt-r4 dense spectra SBO"),
+            contents: buffer_contents(&spectra),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let spectrum_metadata_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 spectrum metadata SBO"),
-                contents: buffer_contents(&spectrum_metadata),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
         let distribution_entries = flat
             .triangle_distributions
             .iter()
@@ -433,7 +429,6 @@ impl Scene {
             scattering_node_buffer,
             scattering_child_buffer,
             spectrum_sample_buffer,
-            spectrum_metadata_buffer,
             texture_attribute_buffer,
             light_record_buffer,
             light_sampling_model_buffer,

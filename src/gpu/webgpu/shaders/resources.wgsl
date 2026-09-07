@@ -67,8 +67,6 @@ var<storage, read> light_bvh_nodes: array<u32>;
 @group(0) @binding(33)
 var<storage, read> light_bvh_leaves: array<u32>;
 @group(0) @binding(34)
-var<storage, read> spectrum_samples: array<f32>;
-@group(0) @binding(35)
-var<storage, read> spectrum_metadata: array<u32>;
+var<storage, read> spectra: array<DenseSpectrum>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;
