@@ -87,7 +87,7 @@ pub struct Instance {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialRecord {
-    pub kind_tag: u32,
+    pub kind: u32,
     pub attribute_offset: u32,
     pub attribute_count: u32,
     pub padding: u32,

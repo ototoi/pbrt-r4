@@ -236,7 +236,7 @@ fn load_material_kind(index: u32) -> u32 {
         set_render_error();
         return MATERIAL_KIND_NORMAL;
     }
-    return materials[index].kind_tag;
+    return materials[index].kind;
 }
 
 fn load_material_attribute(material_index: u32, ordinal: u32) -> AttributeRef {

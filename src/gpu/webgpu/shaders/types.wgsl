@@ -84,7 +84,7 @@ struct Instance {
     normal_from_object: mat4x4<f32>,
 };
 
-struct MaterialRecord { kind_tag: u32, attribute_offset: u32, attribute_count: u32, _padding: u32, };
+struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, _padding: u32, };
 struct AttributeRef { kind: u32, index: u32, };
 
 struct DenseSpectrum {
