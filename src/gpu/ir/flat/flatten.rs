@@ -1172,7 +1172,27 @@ fn material_index(
         requested_kind,
         "diffuse" | "dielectric" | "thindielectric" | "conductor" | "coateddiffuse"
     );
-    let (kind, attributes) = if !supported {
+    let texture_fallback = if supported && has_texture_attribute(source_material) {
+        match UnsupportedTexturePolicy::from_environment()? {
+            UnsupportedTexturePolicy::Error => false,
+            UnsupportedTexturePolicy::DiagnosticMagenta => {
+                log::warn!(
+                    "GPU material \"{}\" contains unsupported textures; using diffuse reflectance (1, 0, 1).",
+                    source_material.name
+                );
+                true
+            }
+        }
+    } else {
+        false
+    };
+    let (kind, attributes) = if texture_fallback {
+        let magenta = Spectrum::from_rgb(&[1.0, 0.0, 1.0], SpectrumType::Albedo);
+        (
+            "diffuse",
+            vec![push_spectrum_attribute(builder, "reflectance", &magenta)?],
+        )
+    } else if !supported {
         log::warn!(
             concat!(
                 "GPU material \"{}\" of kind \"{}\" is unsupported; ",
@@ -1310,6 +1330,14 @@ fn reject_scalar_textures(source_material: &NodeMaterial, keys: &[&str]) -> Resu
         )));
     }
     Ok(())
+}
+
+fn has_texture_attribute(source_material: &NodeMaterial) -> bool {
+    source_material
+        .params
+        .get_keys()
+        .iter()
+        .any(|key| source_material.params.get_key_type(key) == "texture")
 }
 
 fn spectrum_attribute(
