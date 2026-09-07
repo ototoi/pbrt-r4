@@ -1,4 +1,4 @@
-use pbrt_r4::gpu::ir::flat::{LightKind, LightRecord, RenderSettings};
+use pbrt_r4::gpu::ir::flat::{Light, LightKind, RenderSettings};
 use pbrt_r4::gpu::webgpu::light_sampler::{
     resolve_light_sampler, resolve_scene_light_sampler, LightSamplerKind,
 };
@@ -9,14 +9,16 @@ fn settings(light_sampler: &str) -> RenderSettings {
         max_depth: 1,
         seed: 0,
         light_sampler: light_sampler.to_string(),
+        disable_wavelength_jitter: false,
     }
 }
 
-fn lights(count: usize) -> Vec<LightRecord> {
+fn lights(count: usize) -> Vec<Light> {
     (0..count)
-        .map(|payload| LightRecord {
+        .map(|payload| Light {
             kind: LightKind::Point,
-            payload: payload as u32,
+            attributes: Vec::new(),
+            sampling_model: payload as u32,
         })
         .collect()
 }

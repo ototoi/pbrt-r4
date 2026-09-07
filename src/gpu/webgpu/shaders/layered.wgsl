@@ -34,7 +34,7 @@ fn layered_random(seed: u32, stream: u32, sample_index: u32, depth: u32, event: 
     return f32(layered_hash(c ^ event) >> 8u) / 16777216.0;
 }
 
-fn layered_max(v: vec3<f32>) -> f32 { return max(v.x, max(v.y, v.z)); }
+fn layered_max(v: vec4<f32>) -> f32 { return max_spectrum(v); }
 
 fn layered_tr(dz: f32, w: vec3<f32>) -> f32 {
     if (abs(dz) <= 1.17549435e-38) { return 1.0; }
@@ -79,13 +79,13 @@ fn layered_top_sample(wo: vec3<f32>, eta: f32, uc: f32, mask: u32, radiance: boo
         pt / (pr + pt), etap, SCATTER_TRANSMISSION | SCATTER_SPECULAR, 1u);
 }
 
-fn layered_bottom_sample(wo: vec3<f32>, reflectance: vec3<f32>, u: vec2<f32>) -> LayeredSample {
+fn layered_bottom_sample(wo: vec3<f32>, reflectance: vec4<f32>, u: vec2<f32>) -> LayeredSample {
     let r = sqrt(u.x);
     let phi = 2.0 * LAYERED_PI * u.y;
     let wi = vec3<f32>(r * cos(phi), r * sin(phi),
         select(1.0, -1.0, wo.z < 0.0) * sqrt(max(0.0, 1.0 - u.x)));
     if (wi.z == 0.0 || layered_max(reflectance) == 0.0) { return layered_invalid(); }
-    return LayeredSample(vec4<f32>(reflectance / LAYERED_PI, 0.0), vec4<f32>(wi, 0.0),
+    return LayeredSample(reflectance / LAYERED_PI, vec4<f32>(wi, 0.0),
         abs(wi.z) / LAYERED_PI, 1.0, SCATTER_REFLECTION | SCATTER_DIFFUSE, 1u);
 }
 
@@ -114,7 +114,7 @@ fn layered_hg_sample(wo: vec3<f32>, g_input: f32, u: vec2<f32>) -> vec3<f32> {
     return x * (s * cos(phi)) + y * (s * sin(phi)) + wo * c;
 }
 
-fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
+fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec4<f32>,
     wo_input: vec3<f32>, uc: f32, u: vec2<f32>, seed: u32) -> LayeredSample {
     let flip = data.two_sided != 0u && wo_input.z < 0.0;
     let wo = select(wo_input, -wo_input, flip);
@@ -126,7 +126,7 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
         if (flip) { bs.wi = -bs.wi; }
         return bs;
     }
-    var f = bs.f.xyz * abs(bs.wi.z);
+    var f = bs.f * abs(bs.wi.z);
     var pdf = bs.pdf;
     var w = bs.wi.xyz;
     var z = data.thickness;
@@ -139,7 +139,7 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
             pdf *= 1.0 - q;
         }
         if (w.z == 0.0) { return layered_invalid(); }
-        if (layered_max(data.albedo.xyz) > 0.0) {
+        if (layered_max(data.albedo) > 0.0) {
             let dz = -log(1.0 - layered_random(seed, LAYERED_SAMPLE_STREAM, 0u, depth, 1u)) * abs(w.z);
             let zp = z + sign(w.z) * dz;
             if (zp == z) { return layered_invalid(); }
@@ -149,7 +149,7 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
                 let wi = layered_hg_sample(-w, data.g, phase_u);
                 let p = layered_hg(dot(-w, wi), data.g);
                 if (p == 0.0 || wi.z == 0.0) { return layered_invalid(); }
-                f *= data.albedo.xyz * p;
+                f *= data.albedo * p;
                 pdf *= p;
                 specular_path = false;
                 w = wi;
@@ -167,34 +167,34 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
         if (z == 0.0) { bs = layered_bottom_sample(-w, reflectance, interface_u); }
         else { bs = layered_top_sample(-w, eta, interface_uc, SCATTER_REFLECTION | SCATTER_TRANSMISSION, true); }
         if (bs.valid == 0u || bs.wi.z == 0.0) { return layered_invalid(); }
-        f *= bs.f.xyz;
+        f *= bs.f;
         pdf *= bs.pdf;
         specular_path = specular_path && (bs.flags & SCATTER_SPECULAR) != 0u;
         w = bs.wi.xyz;
         if ((bs.flags & SCATTER_TRANSMISSION) != 0u) {
             let flags = SCATTER_REFLECTION | select(SCATTER_GLOSSY, SCATTER_SPECULAR, specular_path);
-            return LayeredSample(vec4<f32>(f, 0.0), vec4<f32>(select(w, -w, flip), 0.0), pdf, 1.0, flags, 1u);
+            return LayeredSample(f, vec4<f32>(select(w, -w, flip), 0.0), pdf, 1.0, flags, 1u);
         }
         f *= abs(w.z);
     }
     return layered_invalid();
 }
 
-fn layered_f(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
-    wo_input: vec3<f32>, wi_input: vec3<f32>, seed: u32) -> vec3<f32> {
+fn layered_f(data: LayeredParams, eta: f32, reflectance: vec4<f32>,
+    wo_input: vec3<f32>, wi_input: vec3<f32>, seed: u32) -> vec4<f32> {
     let flip = data.two_sided != 0u && wo_input.z < 0.0;
     let wo = select(wo_input, -wo_input, flip);
     let wi = select(wi_input, -wi_input, flip);
-    if (wo.z * wi.z <= 0.0) { return vec3<f32>(0.0); }
+    if (wo.z * wi.z <= 0.0) { return vec4<f32>(0.0); }
     if (wo.z < 0.0) { return reflectance / LAYERED_PI; }
     let wos = layered_top_sample(wo, eta, 0.0, SCATTER_TRANSMISSION, true);
     let wis = layered_top_sample(wi, eta, 0.0, SCATTER_TRANSMISSION, false);
-    if (wos.valid == 0u || wis.valid == 0u) { return vec3<f32>(0.0); }
+    if (wos.valid == 0u || wis.valid == 0u) { return vec4<f32>(0.0); }
     // The smooth exit has no non-delta f/PDF. Thus v4's two PowerHeuristic
     // branches reduce to weight=1, and the complementary exit-f terms vanish.
-    var result = vec3<f32>(0.0);
+    var result = vec4<f32>(0.0);
     for (var sample_index = 0u; sample_index < data.n_samples; sample_index++) {
-        var beta = wos.f.xyz * abs(wos.wi.z) / wos.pdf;
+        var beta = wos.f * abs(wos.wi.z) / wos.pdf;
         var z = data.thickness;
         var w = wos.wi.xyz;
         for (var depth = 0u; depth < data.max_depth; depth++) {
@@ -203,7 +203,7 @@ fn layered_f(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
                 if (layered_random(seed, LAYERED_F_STREAM, sample_index, depth, 0u) < q) { break; }
                 beta /= 1.0 - q;
             }
-            if (layered_max(data.albedo.xyz) == 0.0) {
+            if (layered_max(data.albedo) == 0.0) {
                 z = select(0.0, data.thickness, z == 0.0);
                 beta *= layered_tr(data.thickness, w);
             } else {
@@ -211,13 +211,13 @@ fn layered_f(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
                 let zp = z + sign(w.z) * dz;
                 if (zp == z) { continue; }
                 if (zp > 0.0 && zp < data.thickness) {
-                    result += beta * data.albedo.xyz * layered_hg(dot(-w, -wis.wi.xyz), data.g)
-                        * layered_tr(zp - data.thickness, wis.wi.xyz) * wis.f.xyz / wis.pdf;
+                    result += beta * data.albedo * layered_hg(dot(-w, -wis.wi.xyz), data.g)
+                        * layered_tr(zp - data.thickness, wis.wi.xyz) * wis.f / wis.pdf;
                     let phase_u = vec2<f32>(layered_random(seed, LAYERED_F_STREAM, sample_index, depth, 2u),
                         layered_random(seed, LAYERED_F_STREAM, sample_index, depth, 3u));
                     let phase_wi = layered_hg_sample(-w, data.g, phase_u);
                     if (phase_wi.z == 0.0 || layered_hg(dot(-w, phase_wi), data.g) == 0.0) { continue; }
-                    beta *= data.albedo.xyz;
+                    beta *= data.albedo;
                     w = phase_wi;
                     z = zp;
                     continue;
@@ -227,16 +227,16 @@ fn layered_f(data: LayeredParams, eta: f32, reflectance: vec3<f32>,
             if (z == data.thickness) {
                 let bs = layered_top_sample(-w, eta, 0.0, SCATTER_REFLECTION, true);
                 if (bs.valid == 0u) { break; }
-                beta *= bs.f.xyz * abs(bs.wi.z) / bs.pdf;
+                beta *= bs.f * abs(bs.wi.z) / bs.pdf;
                 w = bs.wi.xyz;
             } else {
                 result += beta * (reflectance / LAYERED_PI) * abs(wis.wi.z)
-                    * layered_tr(data.thickness, wis.wi.xyz) * wis.f.xyz / wis.pdf;
+                    * layered_tr(data.thickness, wis.wi.xyz) * wis.f / wis.pdf;
                 let u = vec2<f32>(layered_random(seed, LAYERED_F_STREAM, sample_index, depth, 5u),
                     layered_random(seed, LAYERED_F_STREAM, sample_index, depth, 6u));
                 let bs = layered_bottom_sample(-w, reflectance, u);
                 if (bs.valid == 0u) { break; }
-                beta *= bs.f.xyz * abs(bs.wi.z) / bs.pdf;
+                beta *= bs.f * abs(bs.wi.z) / bs.pdf;
                 w = bs.wi.xyz;
             }
         }

@@ -51,11 +51,11 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);
     surfaces[pixel_index].material = instance.material;
     surfaces[pixel_index].flags = 0u;
-    append_material_eval(pixel_index);
+    append_material_eval(ray_index);
 
     if (material_kind != MATERIAL_KIND_NORMAL && material_kind != MATERIAL_KIND_UV
         && instance.area_light != 0xffffffffu) {
-        append_hit_area_light(pixel_index);
+        append_hit_area_light(ray_index);
     }
 
     if (material_kind == MATERIAL_KIND_NORMAL) {

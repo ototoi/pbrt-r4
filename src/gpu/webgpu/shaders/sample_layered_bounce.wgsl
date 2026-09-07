@@ -8,16 +8,19 @@ fn sample_layered_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     if (surface.hit == 0u || surface.flags != 0u
         || load_material_kind(surface.material) != MATERIAL_KIND_LAYERED) { return; }
-    let data = load_layered_bxdf(surface.material);
-    let eta = load_layered_eta(surface.material);
-    let reflectance = load_layered_bottom_reflectance(surface.material);
+    let lambda = load_sample_lambda(pixel_index);
+    let data = load_layered_bxdf(surface.material, lambda);
+    if (!layered_eta_is_constant(surface.material)) { terminate_secondary_wavelengths(pixel_index); }
+    var eta = load_layered_eta(surface.material, load_sample_lambda(pixel_index)).x;
+    if (eta == 0.0) { eta = 1.0; }
+    let reflectance = load_layered_bottom_reflectance(surface.material, load_sample_lambda(pixel_index));
     let samples = load_ray_samples(pixel_index);
     let normal = normalize(surface.normal.xyz);
     let wo = scattering_local(-ray.direction.xyz, normal);
     let bs = layered_sample(data, eta, reflectance, wo, samples.indirect.x, samples.indirect.yz,
         layered_path_seed(pixel_index, ray.depth));
-    if (bs.valid == 0u || bs.pdf == 0.0 || layered_max(bs.f.xyz) == 0.0) { return; }
-    var beta = ray.throughput.xyz * bs.f.xyz * abs(bs.wi.z) / bs.pdf;
+    if (bs.valid == 0u || bs.pdf == 0.0 || layered_max(bs.f) == 0.0) { return; }
+    var beta = ray.throughput * bs.f * abs(bs.wi.z) / bs.pdf;
     if (ray.depth >= 1u) {
         let rr_beta = layered_max(beta) / ray.inv_w_u;
         if (rr_beta < 1.0) {
@@ -35,14 +38,14 @@ fn sample_layered_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
-        vec4<f32>(direction, 0.0), vec4<f32>(beta, ray.throughput.w),
+        vec4<f32>(direction, 0.0), beta,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.inv_w_u, ray.inv_w_u / pdf, prev_pdf, vec3<u32>(0u),
+        ray.inv_w_u, ray.inv_w_u / pdf, prev_pdf, 0u, 0u, 0u,
     );
-    let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
+    let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
-        atomicStore(&wavefront_queue[NEXT_OVERFLOW], 1u);
+        atomicStore(&queue_counters.next.overflow, 1u);
         return;
     }
     store_ray_samples(pixel_index, generate_ray_samples(pixel_index, ray.depth + 1u));

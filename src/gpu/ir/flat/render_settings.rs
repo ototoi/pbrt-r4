@@ -4,4 +4,5 @@ pub struct RenderSettings {
     pub max_depth: u32,
     pub seed: u32,
     pub light_sampler: String,
+    pub disable_wavelength_jitter: bool,
 }

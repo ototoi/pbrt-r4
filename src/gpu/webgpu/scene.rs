@@ -5,11 +5,12 @@ use crate::gpu::ir::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, inverse_transpose_linear, light_table_uniform, material_table_uniform,
-    row_major_to_columns, viewport_uniform, AreaLight, Geometry, Instance, LightRecord,
-    LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform, PointLight,
-    ScatteringModelRecord, ScatteringNodeRecord, TriangleDistributionEntry, Vertex,
-    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
+    material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, DenseSpectrum,
+    FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel, LightTableUniform,
+    MaterialRecord, MaterialTableUniform, ScatteringModelRecord, ScatteringNodeRecord,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -20,6 +21,9 @@ use super::output::Output;
 pub struct Scene {
     pub camera: super::abi::CameraUniform,
     pub viewport: ViewportUniform,
+    pub film: FilmUniform,
+    pub film_output_matrix: [[f32; 3]; 3],
+    pub film_scale: f32,
     pub material_table: MaterialTableUniform,
     pub light_table: LightTableUniform,
     pub output: Output,
@@ -28,16 +32,16 @@ pub struct Scene {
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub material_buffer: wgpu::Buffer,
-    pub material_attribute_buffer: wgpu::Buffer,
+    pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
     pub scattering_model_buffer: wgpu::Buffer,
     pub scattering_node_buffer: wgpu::Buffer,
     pub scattering_child_buffer: wgpu::Buffer,
-    pub spectrum_attribute_buffer: wgpu::Buffer,
+    pub spectrum_attributes_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
-    pub point_light_buffer: wgpu::Buffer,
-    pub area_light_buffer: wgpu::Buffer,
+    pub light_sampling_model_buffer: wgpu::Buffer,
+    pub light_position_buffer: wgpu::Buffer,
     pub distribution_buffer: wgpu::Buffer,
     pub light_bvh_header_buffer: wgpu::Buffer,
     pub light_bvh_node_buffer: wgpu::Buffer,
@@ -47,9 +51,8 @@ pub struct Scene {
     pub materials: Vec<MaterialRecord>,
     pub scattering_models: Vec<ScatteringModelRecord>,
     pub scattering_nodes: Vec<ScatteringNodeRecord>,
-    pub material_attributes: Vec<MaterialAttributeRef>,
-    pub point_lights: Vec<PointLight>,
-    pub area_lights: Vec<AreaLight>,
+    pub attribute_refs: Vec<AttributeRef>,
+    pub light_sampling_models: Vec<LightSamplingModel>,
     pub light_records: Vec<LightRecord>,
     pub light_sampler_kind: LightSamplerKind,
     pub render_settings: flat::RenderSettings,
@@ -98,15 +101,31 @@ impl Scene {
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
-        let material_attributes = material_table.attributes;
-        let scalar_attributes = flat.attribute_tables.scalars.clone();
-        let spectrum_attributes = flat
-            .attribute_tables
-            .spectra
+        let mut attribute_refs = material_table.attributes;
+        let light_attribute_offsets = flat
+            .lights
             .iter()
-            .map(|v| v.0)
+            .scan(attribute_refs.len() as u32, |offset, light| {
+                let current = *offset;
+                *offset = offset.saturating_add(light.attributes.len() as u32);
+                Some(current)
+            })
             .collect::<Vec<_>>();
-        let texture_attributes = flat.attribute_tables.textures.clone();
+        attribute_refs.extend(
+            flat.lights
+                .iter()
+                .flat_map(|light| light.attributes.iter())
+                .map(|attribute| AttributeRef {
+                    kind: match attribute.kind {
+                        flat::AttributeKind::Scalar => 0,
+                        flat::AttributeKind::Spectrum => 1,
+                        flat::AttributeKind::Texture => 2,
+                    },
+                    index: attribute.index,
+                }),
+        );
+        let scalar_attributes = flat.scalar_attributes.clone();
+        let texture_attributes = flat.texture_attributes.clone();
         let scattering_models = flat
             .scattering_models
             .iter()
@@ -117,10 +136,16 @@ impl Scene {
             })
             .collect::<Vec<_>>();
         let mut node_attribute_ranges = vec![(0u32, 0u32); flat.scattering_nodes.len()];
-        for (material_index, material) in materials.iter().enumerate() {
+        for (material_index, _material) in materials.iter().enumerate() {
             let Some(flat_material) = flat.materials.get(material_index) else {
                 continue;
             };
+            let attribute_offset = flat
+                .materials
+                .iter()
+                .take(material_index)
+                .map(|material| material.attributes.len() as u32)
+                .sum::<u32>();
             let mut pending;
             let Some(model) = flat
                 .scattering_models
@@ -134,7 +159,7 @@ impl Scene {
                     continue;
                 };
                 node_attribute_ranges[node_id as usize] =
-                    (material.attribute_offset, material.attribute_count);
+                    (attribute_offset, flat_material.attributes.len() as u32);
                 let end = node.child_offset.saturating_add(node.child_count);
                 if let Some(children) = flat
                     .scattering_child_refs
@@ -161,72 +186,46 @@ impl Scene {
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
-        let point_lights = flat
-            .point_lights
+        let light_sampling_models = flat
+            .light_sampling_models
             .iter()
-            .map(|light| PointLight {
-                position: [light.position[0], light.position[1], light.position[2], 1.0],
-                intensity: [
-                    light.intensity[0],
-                    light.intensity[1],
-                    light.intensity[2],
-                    0.0,
-                ],
-            })
-            .collect::<Vec<_>>();
-        let mut area_lights = flat
-            .area_lights
-            .iter()
-            .map(|light| AreaLight {
-                instance: light.instance,
-                distribution_offset_words: 0,
-                distribution_count: light.distribution.count,
-                total_area: light.distribution.total_area,
-                emission: light.emission,
-                flags: u32::from(light.two_sided),
+            .map(|model| LightSamplingModel {
+                kind: match model.kind {
+                    flat::LightKind::Point => LIGHT_KIND_POINT,
+                    flat::LightKind::Area => LIGHT_KIND_AREA,
+                },
+                geometry_kind: match model.geometry_kind {
+                    flat::LightGeometryKind::Position => 0,
+                    flat::LightGeometryKind::Instance => 1,
+                },
+                geometry_index: model.geometry_index,
+                distribution_offset_words: model.distribution_offset,
+                distribution_count: model.distribution_count,
+                total_area: model.total_area,
+                flags: model.flags,
+                reserved: 0,
             })
             .collect::<Vec<_>>();
         let light_records = flat
             .lights
             .iter()
-            .map(|record| LightRecord {
+            .enumerate()
+            .map(|(light_index, record)| LightRecord {
                 kind: match record.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
                 },
-                payload: record.payload,
-                padding: [0; 2],
+                attribute_offset: light_attribute_offsets[light_index],
+                attribute_count: u32::try_from(record.attributes.len()).unwrap_or(0),
+                sampling_model: record.sampling_model,
             })
             .collect::<Vec<_>>();
-        let light_sampler_kind = resolve_scene_light_sampler_count(
-            &flat.render_settings,
-            flat.light_bvh.bounded_handles.len(),
-        )?;
-        for (index, record) in flat.lights.iter().enumerate() {
-            match record.kind {
-                flat::LightKind::Point if record.payload as usize >= point_lights.len() => {
-                    return Err(PbrtError::error(&format!(
-                        "Flat light record {index} references an invalid point light."
-                    )));
-                }
-                flat::LightKind::Area if record.payload as usize >= area_lights.len() => {
-                    return Err(PbrtError::error(&format!(
-                        "Flat light record {index} references an invalid area light."
-                    )));
-                }
-                _ => {}
-            }
-        }
         let scattering_child_words_total = flat.scattering_child_refs.node_ids.len();
-        for (area_index, area_light) in area_lights.iter_mut().enumerate() {
-            let flat_area = flat
-                .area_lights
-                .get(area_index)
-                .ok_or_else(|| PbrtError::error("WebGPU area-light table is inconsistent."))?;
-            area_light.distribution_offset_words = flat_area.distribution.offset;
-        }
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
+        let film = film_uniform(&flat.film);
+        let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
+        let film_scale = flat.film.scale;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
         {
             return Err(PbrtError::error(
@@ -259,12 +258,11 @@ impl Scene {
             contents: buffer_contents(&materials),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let material_attribute_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 material attribute refs SBO"),
-                contents: buffer_contents(&material_attributes),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let attribute_ref_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material attribute refs SBO"),
+            contents: buffer_contents(&attribute_refs),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let scalar_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 scalar attributes SBO"),
@@ -288,16 +286,25 @@ impl Scene {
                 contents: buffer_contents(&flat.scattering_child_refs.node_ids),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let spectrum_attribute_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 spectrum attributes SBO"),
-                contents: buffer_contents(&spectrum_attributes),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
         let texture_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 texture attributes SBO"),
                 contents: buffer_contents(&texture_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        flat::validate_dense_spectra(&flat.spectrum_attributes)?;
+        let spectrum_attributes = flat
+            .spectrum_attributes
+            .iter()
+            .map(|spectrum| DenseSpectrum {
+                samples: spectrum.samples,
+                flags: spectrum.flags,
+            })
+            .collect::<Vec<_>>();
+        let spectrum_attributes_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 dense spectra SBO"),
+                contents: buffer_contents(&spectrum_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let distribution_entries = flat
@@ -315,14 +322,20 @@ impl Scene {
             contents: buffer_contents(&light_records),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let point_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 point light SBO"),
-            contents: buffer_contents(&point_lights),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let area_light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 area light SBO"),
-            contents: buffer_contents(&area_lights),
+        let light_sampling_model_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 light sampling model SBO"),
+                contents: buffer_contents(&light_sampling_models),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let light_positions = flat
+            .light_positions
+            .iter()
+            .map(|p| [p[0], p[1], p[2], 1.0])
+            .collect::<Vec<_>>();
+        let light_position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 light position SBO"),
+            contents: buffer_contents(&light_positions),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let distribution_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -331,6 +344,10 @@ impl Scene {
             usage: wgpu::BufferUsages::STORAGE,
         });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
+        let light_sampler_kind = resolve_scene_light_sampler_count(
+            &flat.render_settings,
+            flat.light_bvh.bounded_handles.len(),
+        )?;
         let mut material_table = material_table_uniform(
             materials.len(),
             0,
@@ -342,14 +359,7 @@ impl Scene {
             INVALID_INDEX as usize,
             0,
         )?;
-        let mut light_table = light_table_uniform(
-            light_records.len(),
-            point_lights.len(),
-            area_lights.len(),
-            0,
-            0,
-            0,
-        )?;
+        let mut light_table = light_table_uniform(light_records.len(), 0)?;
         material_table.debug_scattering_model = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
@@ -409,6 +419,9 @@ impl Scene {
         Ok(Self {
             camera,
             viewport,
+            film,
+            film_output_matrix,
+            film_scale,
             material_table,
             light_table,
             output: Output::from_flat(flat.output),
@@ -417,16 +430,16 @@ impl Scene {
             geometry_buffer,
             instance_buffer,
             material_buffer,
-            material_attribute_buffer,
+            attribute_ref_buffer,
             scalar_attribute_buffer,
             scattering_model_buffer,
             scattering_node_buffer,
             scattering_child_buffer,
-            spectrum_attribute_buffer,
+            spectrum_attributes_buffer,
             texture_attribute_buffer,
             light_record_buffer,
-            point_light_buffer,
-            area_light_buffer,
+            light_sampling_model_buffer,
+            light_position_buffer,
             distribution_buffer,
             light_bvh_header_buffer,
             light_bvh_node_buffer,
@@ -436,9 +449,8 @@ impl Scene {
             materials,
             scattering_models,
             scattering_nodes,
-            material_attributes,
-            point_lights,
-            area_lights,
+            attribute_refs: attribute_refs,
+            light_sampling_models,
             light_records,
             light_sampler_kind,
             render_settings: flat.render_settings,
@@ -499,22 +511,22 @@ fn validate_instance_area_lights(
             "Flat instance {instance_index} area-light range contains a non-area light."
         )));
     }
-    let area_light = flat
-        .area_lights
-        .get(record.payload as usize)
+    let model = flat
+        .light_sampling_models
+        .get(record.sampling_model as usize)
         .ok_or_else(|| {
             PbrtError::error(&format!(
                 "Flat instance {instance_index} references an invalid area-light payload."
             ))
         })?;
-    if area_light.instance as usize != instance_index {
+    if model.geometry_index as usize != instance_index {
         return Err(PbrtError::error(&format!(
             "Flat instance {instance_index} area-light range does not match its triangles."
         )));
     }
-    let offset = usize::try_from(area_light.distribution.offset)
+    let offset = usize::try_from(model.distribution_offset)
         .map_err(|_| PbrtError::error("Flat area-light distribution offset does not fit usize."))?;
-    let count = usize::try_from(area_light.distribution.count)
+    let count = usize::try_from(model.distribution_count)
         .map_err(|_| PbrtError::error("Flat area-light distribution count does not fit usize."))?;
     if count == 0 {
         return Err(PbrtError::error(&format!(
@@ -532,8 +544,7 @@ fn validate_instance_area_lights(
                 "Flat instance {instance_index} area-light distribution range is invalid."
             ))
         })?;
-    if !area_light.distribution.total_area.is_finite() || area_light.distribution.total_area <= 0.0
-    {
+    if !model.total_area.is_finite() || model.total_area <= 0.0 {
         return Err(PbrtError::error(&format!(
             "Flat instance {instance_index} area-light total area is invalid."
         )));
@@ -555,10 +566,7 @@ fn validate_instance_area_lights(
         previous_cdf = entry.cdf;
         area_sum += entry.area;
     }
-    if previous_cdf != 1.0
-        || (area_sum - area_light.distribution.total_area).abs()
-            > area_light.distribution.total_area.abs() * 1e-5
-    {
+    if previous_cdf != 1.0 || (area_sum - model.total_area).abs() > model.total_area.abs() * 1e-5 {
         return Err(PbrtError::error(&format!(
             "Flat instance {instance_index} area-light distribution does not match total area."
         )));

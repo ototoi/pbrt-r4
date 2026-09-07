@@ -1,4 +1,5 @@
-use pbrt_r4::gpu::webgpu::shader::compose_source;
+use pbrt_r4::gpu::webgpu::shader::{compose_source, required_limits_for_sources};
+use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 
 const INTERSECT_SHADOW_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/intersect_shadow.wgsl");
@@ -25,6 +26,50 @@ const COMMON_SHADER: &str = concat!(
     include_str!("../src/gpu/webgpu/shaders/wavefront.wgsl")
 );
 const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
+const SPECTRUM_TEST_SHADER: &str = r#"
+    @compute @workgroup_size(1) fn test_stage() {
+        let value = evaluate_spectrum(0u, vec4<f32>(360.0, 400.5, 700.0, 830.0));
+        let divided = safe_div_spectrum(value, vec4<f32>(1.0, 0.0, 2.0, 4.0));
+        if (spectrum_is_constant(0u) && average_spectrum(divided) > max_spectrum(divided)) {
+            set_render_error();
+        }
+    }
+"#;
+
+#[test]
+fn dense_spectrum_module_declares_one_structured_table() {
+    let source = compose_source(SPECTRUM_TEST_SHADER);
+    assert!(source.contains("var<storage, read> spectrum_attributes: array<DenseSpectrum>;"));
+    assert!(source.contains("struct DenseSpectrum"));
+    assert!(source.contains("fn safe_div_spectrum"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
+}
+
+#[test]
+fn required_limits_are_derived_from_each_composed_stage() {
+    let bindings = canonical_wavefront_bindings();
+    let limits = required_limits_for_sources(&bindings, &[GENERATE_PRIMARY_RAYS_SHADER]).unwrap();
+
+    assert_eq!(limits.storage_buffers_per_shader_stage, 8);
+    assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
+    assert_eq!(limits.bind_groups, 1);
+}
+
+#[test]
+fn required_limits_reject_unregistered_group_zero_bindings() {
+    let bindings = canonical_wavefront_bindings();
+    let source = r#"
+        @group(0) @binding(99) var<storage, read> unknown_resource: array<u32>;
+        @compute @workgroup_size(1) fn test_stage() {
+            let value = unknown_resource[0];
+        }
+    "#;
+
+    let error = required_limits_for_sources(&bindings, &[source]).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("unregistered group 0 binding 99"));
+}
 
 #[test]
 fn immutable_scene_metadata_is_separate_from_viewport_state() {
@@ -36,15 +81,14 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(!viewport.contains("light_count"));
     assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
     assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
-    assert!(RESOURCES_SHADER.contains("@group(0) @binding(11)"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(19)"));
     assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
     assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
-    assert!(RESOURCES_SHADER.contains("@group(0) @binding(13)"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(21)"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
-    assert!(COMMON_SHADER.contains("struct MaterialAttributeRef {"));
-    assert!(RESOURCES_SHADER
-        .contains("var<storage, read> material_attributes: array<MaterialAttributeRef>;"));
+    assert!(COMMON_SHADER.contains("struct AttributeRef {"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> attribute_refs: array<AttributeRef>;"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
     assert!(!COMMON_SHADER.contains("scene_data"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
@@ -56,33 +100,52 @@ fn composed_stage_contains_only_referenced_resources() {
     let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
     assert!(source.contains("var<uniform> camera: CameraUniform;"));
     assert!(source.contains("var<uniform> viewport: ViewportUniform;"));
-    assert!(source.contains("var<storage, read_write> wavefront_queue: array<atomic<u32>>;"));
+    assert!(source.contains("var<storage, read_write> queue_counters: QueueCounters;"));
+    assert!(source.contains("var<storage, read_write> current_rays: array<RayWorkItem>;"));
+    assert!(
+        source.contains("var<storage, read_write> pixel_sample_states: array<PixelSampleState>;")
+    );
     assert!(!source.contains("var<storage, read> light_records: array<LightRecord>;"));
     assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
 }
 
 #[test]
-fn shadow_direction_is_loaded_from_its_vec4_aligned_queue_slot() {
+fn shadow_direction_is_loaded_from_the_typed_shadow_queue() {
     let source = compose_source(INTERSECT_SHADOW_SHADER);
 
-    assert!(source.contains("const SHADOW_DIRECTION_WORD: u32 = 4u;"));
     assert!(source.contains("load_shadow_direction(ray_index)"));
-    assert!(!source.contains("load_shadow_vec3(ray_index, 3u)"));
+    assert!(source.contains("return shadow_rays[index].direction.xyz;"));
+    assert!(!source.contains("bitcast<f32>(atomicLoad"));
 }
 
 #[test]
-fn escaped_queue_follows_the_classification_queues() {
+fn escaped_queue_is_a_typed_ray_index_queue() {
     let source = compose_source(ESCAPED_TEST_SHADER);
-    let escaped_offset = source
-        .split("fn escaped_data_offset() -> u32 {")
-        .nth(1)
-        .and_then(|tail| tail.split('}').next())
-        .expect("escaped_data_offset must be present in the composed shader");
+    assert!(source.contains("escaped_ray_indices[index] = ray_index;"));
+    assert!(source.contains("queue_counters.escaped.capacity"));
+    assert!(!source.contains("escaped_data_offset"));
+}
 
-    assert!(escaped_offset.contains("shadow_data_offset()"));
-    assert!(escaped_offset.contains("pixel_count() * SHADOW_WORDS"));
-    assert!(escaped_offset.contains("classification_capacity() * 2u"));
-    assert!(!escaped_offset.contains("RAY_WORDS"));
+#[test]
+fn classification_queues_resolve_current_rays_in_constant_time() {
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(evaluate.contains("let ray_index = load_material_eval_ray(queue_index);"));
+    assert!(evaluate.contains("let ray = load_current_ray(ray_index);"));
+    assert!(!evaluate.contains("find_current_ray_for_pixel"));
+
+    let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
+    assert!(emissive.contains("let ray_index = load_hit_area_ray(queue_index);"));
+    assert!(!emissive.contains("find_current_ray_for_pixel"));
+}
+
+#[test]
+fn shadow_queue_carries_the_complete_rgb_contribution() {
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(evaluate.contains("ray.throughput * direct"));
+
+    let shadow = compose_source(INTERSECT_SHADOW_SHADER);
+    assert!(shadow.contains("load_sample_radiance(pixel_index) + shadow_direct"));
+    assert!(!shadow.contains("load_current_ray"));
 }
 
 #[test]
@@ -135,10 +198,11 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
 
 #[test]
 fn diffuse_shaders_load_type_specific_reflectance() {
-    assert!(COMMON_SHADER.contains("fn load_diffuse_reflectance(material_index: u32)"));
+    assert!(COMMON_SHADER
+        .contains("fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>)"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = load_diffuse_reflectance"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * vec4<f32>(reflectance, 1.0)"));
+    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * reflectance"));
 }
 
 #[test]
@@ -152,17 +216,20 @@ fn non_layered_stage_does_not_include_layered_module() {
 #[test]
 fn layered_shader_resolves_top_and_bottom_nodes() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
-    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(material_index: u32)"));
+    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(material_index: u32, lambda: vec4<f32>)"));
     assert!(COMMON_SHADER.contains("fn load_layered_bottom_reflectance"));
+    assert!(COMMON_SHADER.contains("fn layered_eta_is_constant(material_index: u32)"));
     assert!(COMMON_SHADER.contains("load_scattering_child(root, 0u)"));
     assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_bottom_reflectance"));
+    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_eta(surface.material"));
+    assert!(!SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_dielectric_eta(eta_node"));
     assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("layered_sample("));
 }
 
 #[test]
 fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
-    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(node_index: u32)"));
+    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(node_index: u32, lambda: vec4<f32>)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
