@@ -17,13 +17,6 @@ pub struct AttributeRef {
     pub name: String,
 }
 
-/// Scalar and texture tables shared by all flattened attribute owners.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AttributeTables {
-    pub scalars: Vec<f32>,
-    pub textures: Vec<u32>,
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum UnsupportedTexturePolicy {
     #[default]
