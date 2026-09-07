@@ -652,15 +652,23 @@ fn flatten_node_rejects_invalid_dielectric_eta() {
 }
 
 #[test]
-fn flatten_node_falls_back_for_unsupported_material_kind() {
+fn flatten_node_extracts_conductor_attributes() {
     let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.materials[0].kind, "diffuse");
-    assert_eq!(scene.attribute_tables.spectra[0].0, [1.0, 1.0, 0.0, 0.0]);
+    assert_eq!(scene.materials[0].kind, "conductor");
+    assert_eq!(scene.materials[0].attributes.len(), 3);
+    assert_eq!(scene.scattering_nodes[0].kind, "conductor");
+    assert!(scene.attribute_tables.spectra[0].0[..3]
+        .iter()
+        .all(|value| value.is_finite() && *value > 0.0));
+    assert!(scene.attribute_tables.spectra[1].0[..3]
+        .iter()
+        .all(|value| value.is_finite() && *value > 0.0));
+    assert_eq!(scene.attribute_tables.scalars[0], 0.0);
 }
 
 #[test]
