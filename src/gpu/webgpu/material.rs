@@ -30,7 +30,7 @@ impl MaterialTable {
                     });
                 }
                 Ok(MaterialRecord {
-                    kind_tag: MaterialKind::from_flat(&material.kind)?.tag(),
+                    kind: MaterialKind::from_flat(&material.kind)?.tag(),
                     attribute_offset: offset,
                     attribute_count: material.attributes.len() as u32,
                     padding: 0,

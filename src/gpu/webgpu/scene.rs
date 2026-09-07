@@ -364,7 +364,7 @@ impl Scene {
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
         self.material_table.debug_material_kind = kind.tag();
         for material in &mut self.materials {
-            material.kind_tag = kind.tag();
+            material.kind = kind.tag();
         }
         queue.write_buffer(
             &self.material_buffer,
