@@ -32,12 +32,23 @@ pub enum ResourceId {
     PointLight,
     AreaLight,
     LightBvh,
+    LightBvhHeader,
+    LightBvhNode,
     LightLeaf,
     PrimitiveDistributionMap,
     TriangleDistribution,
     LightCandidate,
     ConstantBxdf,
     Film,
+    MaterialTable,
+    MaterialRecord,
+    MaterialAttribute,
+    ScalarAttribute,
+    SpectrumAttribute,
+    TextureAttribute,
+    ScatteringModel,
+    ScatteringNode,
+    ScatteringChild,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,10 +120,122 @@ pub struct RequiredLimits {
 /// StageSpec negotiation remains intentionally independent while the fixed
 /// layout is being migrated. The device request must still cover every entry
 /// in that layout, including resources used only by some composed stages.
-pub const FIXED_LAYOUT_STORAGE_BUFFERS_PER_SHADER_STAGE: u32 = 24;
-pub const FIXED_LAYOUT_UNIFORM_BUFFERS_PER_SHADER_STAGE: u32 = 4;
+
+/// Canonical binding registry for the currently deployed wavefront layout.
+///
+/// The registry is the migration seam between the old single-group shader ABI
+/// and the stage-specific layouts. Pipeline construction must consume this list
+/// instead of duplicating binding numbers.
+pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
+    let mut bindings = Vec::with_capacity(26);
+    let mut push = |binding, resource, class, access| {
+        bindings.push(BindingSpec {
+            group: 0,
+            binding,
+            resource,
+            class,
+            access,
+        });
+    };
+    push(
+        0,
+        ResourceId::CameraParams,
+        BindingClass::Uniform,
+        Access::Read,
+    );
+    push(
+        1,
+        ResourceId::SampleParams,
+        BindingClass::Uniform,
+        Access::Read,
+    );
+    push(
+        2,
+        ResourceId::Tlas,
+        BindingClass::AccelerationStructure,
+        Access::Read,
+    );
+    for (binding, resource) in [
+        (3, ResourceId::Vertex),
+        (4, ResourceId::Index),
+        (5, ResourceId::Geometry),
+        (6, ResourceId::Instance),
+    ] {
+        push(binding, resource, BindingClass::Storage, Access::Read);
+    }
+    push(
+        8,
+        ResourceId::Surface,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        9,
+        ResourceId::Film,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        10,
+        ResourceId::RaySamples,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        11,
+        ResourceId::MaterialTable,
+        BindingClass::Uniform,
+        Access::Read,
+    );
+    push(
+        12,
+        ResourceId::LightSamplingParams,
+        BindingClass::Uniform,
+        Access::Read,
+    );
+    for (binding, resource) in [
+        (13, ResourceId::MaterialRecord),
+        (14, ResourceId::MaterialAttribute),
+        (15, ResourceId::ScalarAttribute),
+        (16, ResourceId::ScatteringModel),
+        (17, ResourceId::ScatteringNode),
+        (18, ResourceId::ScatteringChild),
+        (19, ResourceId::SpectrumAttribute),
+        (20, ResourceId::LightRecord),
+        (21, ResourceId::PointLight),
+        (22, ResourceId::AreaLight),
+        (23, ResourceId::TriangleDistribution),
+        (24, ResourceId::LightBvhHeader),
+        (25, ResourceId::LightBvhNode),
+        (26, ResourceId::LightLeaf),
+    ] {
+        push(binding, resource, BindingClass::Storage, Access::Read);
+    }
+    bindings
+}
 
 impl RequiredLimits {
+    pub fn from_bindings(bindings: &[BindingSpec]) -> Result<Self, PbrtError> {
+        let mut required = Self::default();
+        for (index, left) in bindings.iter().enumerate() {
+            for right in &bindings[index + 1..] {
+                if left.group == right.group && left.binding == right.binding {
+                    return Err(PbrtError::error(&format!(
+                        "Duplicate binding group {} binding {} in layout registry.",
+                        left.group, left.binding
+                    )));
+                }
+            }
+            required.bind_groups = required.bind_groups.max(left.group + 1);
+            match left.class {
+                BindingClass::Storage => required.storage_buffers_per_shader_stage += 1,
+                BindingClass::Uniform => required.uniform_buffers_per_shader_stage += 1,
+                BindingClass::AccelerationStructure => {}
+            }
+        }
+        Ok(required)
+    }
+
     pub fn from_stages(stages: &[StageSpec]) -> Result<Self, PbrtError> {
         let mut required = Self::default();
         for stage in stages {
