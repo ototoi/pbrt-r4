@@ -98,7 +98,6 @@ pub enum StageId {
     ScatterDiffuse,
     ScatterDielectric,
     ScatterThinDielectric,
-    ScatterLayered,
     TraceShadow,
     DebugSurface,
     AccumulateFilm,
@@ -712,11 +711,6 @@ pub fn all_stage_specs() -> Vec<StageSpec> {
         StageSpec {
             id: StageId::ScatterThinDielectric,
             entry_point: "scatter_thin_dielectric",
-            bindings: SCATTER_BINDINGS,
-        },
-        StageSpec {
-            id: StageId::ScatterLayered,
-            entry_point: "scatter_layered",
             bindings: SCATTER_BINDINGS,
         },
         StageSpec {

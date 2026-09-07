@@ -13,7 +13,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let material_kind = load_material_kind(surface.material);
     if (surface.hit == 0u
-        || (material_kind != MATERIAL_KIND_DIFFUSE && material_kind != MATERIAL_KIND_LAYERED
+        || (material_kind != MATERIAL_KIND_DIFFUSE
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {
         return;
     }
@@ -127,15 +127,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let g_i = 2.0 * cos_i / (cos_i + sqrt(cos_i * cos_i + alpha2 * (1.0 - cos_i * cos_i)));
         f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
         bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
-    }
-    if (material_kind == MATERIAL_KIND_LAYERED) {
-        let data = load_layered_bxdf(surface.material, lambda);
-        let eta = max(load_layered_eta(surface.material, lambda).x, 1.0);
-        let local_wo = scattering_local(wo, shading_n);
-        let local_wi = scattering_local(wi, shading_n);
-        f = layered_f(data, eta, load_layered_bottom_reflectance(surface.material, lambda),
-            local_wo, local_wi, layered_path_seed(pixel_index, ray.depth));
-        bsdf_pdf = layered_pdf(data, eta, local_wo, local_wi);
     }
     var mis_weight = 1.0;
     if (light_kind == LIGHT_KIND_AREA) {

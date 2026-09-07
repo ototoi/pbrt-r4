@@ -6,7 +6,6 @@ const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
 const MATERIAL_KIND_LAMBERT: u32 = 2u;
 const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
-const MATERIAL_KIND_LAYERED: u32 = 4u;
 const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;
 const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
 const LIGHT_KIND_AREA: u32 = 1u;
@@ -179,18 +178,6 @@ struct AreaTriangleSelection {
     primitive: u32,
     area: f32,
     pmf: f32,
-};
-
-struct LayeredParams {
-    thickness: f32,
-    g: f32,
-    max_depth: u32,
-    n_samples: u32,
-    albedo: vec4<f32>,
-    two_sided: u32,
-    padding0: u32,
-    padding1: u32,
-    padding2: u32,
 };
 
 struct QueueState {

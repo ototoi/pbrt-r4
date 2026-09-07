@@ -3,7 +3,6 @@ const TYPES_SHADER: &str = include_str!("shaders/types.wgsl");
 const WAVEFRONT_SHADER: &str = include_str!("shaders/wavefront.wgsl");
 const SPECTRUM_SHADER: &str = include_str!("shaders/spectrum.wgsl");
 const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
-const LAYERED_SHADER: &str = include_str!("shaders/layered.wgsl");
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,21 +19,10 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
-    compose_source_with_layered(stage_source, stage_source.contains("layered_"))
-}
-
-pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) -> String {
-    let mut roots = vec![stage_source, TRIANGLE_SAMPLING_SHADER];
-    if include_layered {
-        roots.push(LAYERED_SHADER);
-    }
+    let roots = vec![stage_source, TRIANGLE_SAMPLING_SHADER];
     let common_input = format!("{TYPES_SHADER}\n{WAVEFRONT_SHADER}\n{SPECTRUM_SHADER}");
     let common_source = prune_common_source(&common_input, &roots);
-    let mut references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
-    if include_layered {
-        references.push('\n');
-        references.push_str(LAYERED_SHADER);
-    }
+    let references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     let resource_source = select_resources(RESOURCES_SHADER, &references);
     // The module graph is built entirely from the literals above. A missing
     // dependency or cycle is therefore a source invariant, not a runtime scene
@@ -57,18 +45,9 @@ pub fn compose_source_with_layered(stage_source: &str, include_layered: bool) ->
                 dependencies: vec!["common".to_string()],
             },
             ShaderModuleSpec {
-                id: "layered".to_string(),
-                source: LAYERED_SHADER.to_string(),
-                dependencies: vec!["common".to_string()],
-            },
-            ShaderModuleSpec {
                 id: "stage".to_string(),
                 source: stage_source.to_string(),
-                dependencies: if include_layered {
-                    vec!["triangle_sampling".to_string(), "layered".to_string()]
-                } else {
-                    vec!["triangle_sampling".to_string()]
-                },
+                dependencies: vec!["triangle_sampling".to_string()],
             },
         ],
         "stage",
