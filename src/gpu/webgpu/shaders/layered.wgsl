@@ -85,7 +85,7 @@ fn layered_bottom_sample(wo: vec3<f32>, reflectance: vec4<f32>, u: vec2<f32>) ->
     let wi = vec3<f32>(r * cos(phi), r * sin(phi),
         select(1.0, -1.0, wo.z < 0.0) * sqrt(max(0.0, 1.0 - u.x)));
     if (wi.z == 0.0 || layered_max(reflectance) == 0.0) { return layered_invalid(); }
-    return LayeredSample(vec4<f32>(reflectance / LAYERED_PI, 0.0), vec4<f32>(wi, 0.0),
+    return LayeredSample(reflectance / LAYERED_PI, vec4<f32>(wi, 0.0),
         abs(wi.z) / LAYERED_PI, 1.0, SCATTER_REFLECTION | SCATTER_DIFFUSE, 1u);
 }
 
@@ -126,7 +126,7 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec4<f32>,
         if (flip) { bs.wi = -bs.wi; }
         return bs;
     }
-    var f = bs.f.xyz * abs(bs.wi.z);
+    var f = bs.f * abs(bs.wi.z);
     var pdf = bs.pdf;
     var w = bs.wi.xyz;
     var z = data.thickness;
@@ -149,7 +149,7 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec4<f32>,
                 let wi = layered_hg_sample(-w, data.g, phase_u);
                 let p = layered_hg(dot(-w, wi), data.g);
                 if (p == 0.0 || wi.z == 0.0) { return layered_invalid(); }
-                f *= data.albedo.xyz * p;
+                f *= data.albedo * p;
                 pdf *= p;
                 specular_path = false;
                 w = wi;
@@ -167,13 +167,13 @@ fn layered_sample(data: LayeredParams, eta: f32, reflectance: vec4<f32>,
         if (z == 0.0) { bs = layered_bottom_sample(-w, reflectance, interface_u); }
         else { bs = layered_top_sample(-w, eta, interface_uc, SCATTER_REFLECTION | SCATTER_TRANSMISSION, true); }
         if (bs.valid == 0u || bs.wi.z == 0.0) { return layered_invalid(); }
-        f *= bs.f.xyz;
+        f *= bs.f;
         pdf *= bs.pdf;
         specular_path = specular_path && (bs.flags & SCATTER_SPECULAR) != 0u;
         w = bs.wi.xyz;
         if ((bs.flags & SCATTER_TRANSMISSION) != 0u) {
             let flags = SCATTER_REFLECTION | select(SCATTER_GLOSSY, SCATTER_SPECULAR, specular_path);
-            return LayeredSample(vec4<f32>(f, 0.0), vec4<f32>(select(w, -w, flip), 0.0), pdf, 1.0, flags, 1u);
+            return LayeredSample(f, vec4<f32>(select(w, -w, flip), 0.0), pdf, 1.0, flags, 1u);
         }
         f *= abs(w.z);
     }

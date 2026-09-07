@@ -8,7 +8,8 @@ fn sample_layered_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     if (surface.hit == 0u || surface.flags != 0u
         || load_material_kind(surface.material) != MATERIAL_KIND_LAYERED) { return; }
-    let data = load_layered_bxdf(surface.material);
+    let lambda = load_sample_lambda(pixel_index);
+    let data = load_layered_bxdf(surface.material, lambda);
     let eta_node = load_layered_eta_node(surface.material);
     if (!dielectric_eta_is_constant(eta_node)) { terminate_secondary_wavelengths(pixel_index); }
     var eta = load_dielectric_eta(eta_node, load_sample_lambda(pixel_index)).x;

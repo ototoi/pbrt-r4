@@ -33,8 +33,8 @@ struct FilmUniform {
     sensor_response: vec4<u32>,
     imaging_ratio: f32,
     max_sample_luminance: f32,
-    _padding0: u32,
-    _padding1: u32,
+    mode: u32,
+    _padding: u32,
 };
 
 struct MaterialTableUniform {
