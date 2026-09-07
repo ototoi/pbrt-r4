@@ -191,6 +191,38 @@ struct QueueState {
     _padding: u32,
 };
 
+struct QueueCounters {
+    current: QueueState,
+    next: QueueState,
+    shadow: QueueState,
+    material: QueueState,
+    hit_area: QueueState,
+    escaped: QueueState,
+};
+
+struct RenderError {
+    value: atomic<u32>,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
+};
+
+struct PixelSampleState {
+    radiance: vec4<f32>,
+    direct: vec4<f32>,
+    indirect: vec4<f32>,
+};
+
+struct ShadowRayWorkItem {
+    origin: vec4<f32>,
+    direction: vec4<f32>,
+    max_t: f32,
+    _padding0: vec3<u32>,
+    direct: vec4<f32>,
+    pixel_index: u32,
+    _padding1: vec3<u32>,
+};
+
 struct LightSelection {
     index: u32,
     pmf: f32,
@@ -207,22 +239,3 @@ struct DecodedLightBVHNode {
     payload: u32,
     is_leaf: bool,
 };
-
-
-const CURRENT_COUNT: u32 = 0u;
-const CURRENT_OVERFLOW: u32 = 2u;
-const NEXT_COUNT: u32 = 4u;
-const NEXT_OVERFLOW: u32 = 6u;
-const SHADOW_COUNT: u32 = 8u;
-const SHADOW_OVERFLOW: u32 = 10u;
-const MATERIAL_COUNT: u32 = 12u;
-const MATERIAL_OVERFLOW: u32 = 14u;
-const HIT_AREA_COUNT: u32 = 16u;
-const HIT_AREA_OVERFLOW: u32 = 18u;
-const ESCAPED_COUNT: u32 = 20u;
-const ESCAPED_OVERFLOW: u32 = 22u;
-const RENDER_ERROR: u32 = 23u;
-const QUEUE_STATE_WORDS: u32 = 24u;
-const RAY_WORDS: u32 = 36u;
-const SAMPLE_STATE_OFFSET: u32 = QUEUE_STATE_WORDS;
-const SAMPLE_STATE_WORDS: u32 = 16u;

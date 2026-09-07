@@ -1,22 +1,20 @@
-use pbrt_r4::gpu::webgpu::queue::{packed_wavefront_layout, QUEUE_STATE_WORDS};
+use pbrt_r4::gpu::webgpu::queue::TypedQueueSizes;
 
 #[test]
-fn packed_wavefront_regions_follow_the_shader_layout() {
-    let layout = packed_wavefront_layout(3, 2).unwrap();
+fn typed_queue_sizes_follow_the_host_abi() {
+    let sizes = TypedQueueSizes::new(3).unwrap();
 
-    assert_eq!(QUEUE_STATE_WORDS, 24);
-    assert_eq!(layout.sample_state_offset_words, 24);
-    assert_eq!(layout.ray_data_offset_words, 72);
-    assert_eq!(layout.shadow_data_offset_words, 288);
-    assert_eq!(layout.material_data_offset_words, 348);
-    assert_eq!(layout.hit_area_data_offset_words, 357);
-    assert_eq!(layout.escaped_data_offset_words, 366);
-    assert_eq!(layout.total_words, 375);
-    assert_eq!(layout.state_readback_size_bytes(), 96);
-    assert_eq!(layout.wavefront_size_bytes().unwrap(), 1500);
+    assert_eq!(sizes.surfaces, 3 * 112);
+    assert_eq!(sizes.pixel_sample_states, 3 * 48);
+    assert_eq!(sizes.current_rays, 3 * 144);
+    assert_eq!(sizes.next_rays, 3 * 144);
+    assert_eq!(sizes.shadow_rays, 3 * 80);
+    assert_eq!(sizes.material_ray_indices, 3 * 4);
+    assert_eq!(sizes.hit_area_ray_indices, 3 * 4);
+    assert_eq!(sizes.escaped_ray_indices, 3 * 4);
 }
 
 #[test]
-fn packed_wavefront_layout_must_fit_shader_u32_word_offsets() {
-    assert!(packed_wavefront_layout(u64::from(u32::MAX), 1).is_err());
+fn typed_queue_sizes_must_fit_shader_u32_indices() {
+    assert!(TypedQueueSizes::new(u64::from(u32::MAX) + 1).is_err());
 }

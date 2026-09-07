@@ -7,7 +7,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (queue_index >= material_eval_count()) {
         return;
     }
-    let pixel_index = load_material_eval_pixel(queue_index);
+    let ray_index = load_material_eval_ray(queue_index);
+    let ray = load_current_ray(ray_index);
+    let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     let material_kind = load_material_kind(surface.material);
     if (surface.hit == 0u
@@ -20,11 +22,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         reflectance = load_diffuse_reflectance(surface.material);
     }
     let material_node = load_material_surface_node(surface.material);
-    let ray_index = find_current_ray_for_pixel(pixel_index);
-    if (ray_index == 0xffffffffu) {
-        return;
-    }
-    let ray = load_current_ray(ray_index);
     let samples = load_ray_samples(pixel_index);
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
         return;
@@ -162,6 +159,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         shadow_origin,
         shadow_vector / shadow_distance,
         shadow_distance,
-        direct,
+        (ray.throughput.xyz * direct),
     );
 }

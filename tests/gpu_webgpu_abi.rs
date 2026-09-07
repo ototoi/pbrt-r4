@@ -1,9 +1,9 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AreaLight, CameraUniform, Geometry, Instance,
     LightRecord, LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform,
-    PixelSampleState, PointLight, QueueState, RayWorkItem, ScatteringModelRecord,
-    ScatteringNodeRecord, ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry, Vertex,
-    ViewportUniform,
+    PixelSampleState, PointLight, QueueCounters, QueueState, RayWorkItem, RenderError,
+    ScatteringModelRecord, ScatteringNodeRecord, ShadowRayWorkItem, SurfaceWorkItem,
+    TriangleDistributionEntry, Vertex, ViewportUniform,
 };
 
 #[test]
@@ -35,7 +35,11 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(std::mem::size_of::<AreaLight>(), 32);
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
-    assert_eq!(std::mem::size_of::<PixelSampleState>(), 32);
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 96);
+    assert_eq!(std::mem::size_of::<RenderError>(), 16);
+    assert_eq!(std::mem::offset_of!(RenderError, value), 0);
+    assert_eq!(std::mem::offset_of!(RenderError, padding), 4);
+    assert_eq!(std::mem::size_of::<PixelSampleState>(), 48);
     assert_eq!(std::mem::size_of::<TriangleDistributionEntry>(), 16);
 }
 

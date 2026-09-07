@@ -14,7 +14,7 @@ fn sample_thin_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<
     let r = select(r0, r0 + (1.0 - r0) * (1.0 - r0) * r0 / max(1.0 - r0 * r0, 1e-7), r0 < 1.0);
     let t = 1.0 - r;
     if (!(eta > 0.0) || eta != eta || !(r >= 0.0) || !(r <= 1.0)) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u); return;
+        set_render_error(); return;
     }
     let samples = load_ray_samples(pixel_index);
     let reflection = samples.indirect.x < r;
@@ -29,8 +29,8 @@ fn sample_thin_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<
         pixel_index, ray.depth + 1u, ray.inv_w_u, ray.inv_w_u / probability,
         probability, vec3<u32>(0u),
     );
-    let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
-    if (next_index >= pixel_count()) { atomicStore(&wavefront_queue[NEXT_OVERFLOW], 1u); return; }
+    let next_index = atomicAdd(&queue_counters.next.count, 1u);
+    if (next_index >= pixel_count()) { atomicStore(&queue_counters.next.overflow, 1u); return; }
     store_ray_samples(pixel_index, generate_ray_samples(pixel_index, ray.depth + 1u));
     store_next_ray(next_index, next_ray);
 }

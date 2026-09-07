@@ -225,12 +225,28 @@ pub struct QueueState {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct QueueCounters {
+    pub current: QueueState,
+    pub next: QueueState,
+    pub shadow: QueueState,
+    pub material: QueueState,
+    pub hit_area: QueueState,
+    pub escaped: QueueState,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct RenderError {
+    pub value: u32,
+    pub padding: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct PixelSampleState {
     pub radiance: [f32; 4],
-    pub pixel_index: u32,
-    pub sample_index: u32,
-    pub error: u32,
-    pub padding: u32,
+    pub direct: [f32; 4],
+    pub indirect: [f32; 4],
 }
 
 pub fn camera_uniform(
