@@ -4,7 +4,9 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (queue_index >= hit_area_light_count()) {
         return;
     }
-    let pixel_index = load_hit_area_pixel(queue_index);
+    let ray_index = load_hit_area_ray(queue_index);
+    let ray = load_current_ray(ray_index);
+    let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     let instance = instances[surface.instance_custom_data];
     if (instance.area_light == 0xffffffffu) {
@@ -12,11 +14,6 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let light_handle = instance.area_light;
     let area_light = load_light_payload(light_handle);
-    let ray_index = find_current_ray_for_pixel(pixel_index);
-    if (ray_index == 0xffffffffu) {
-        return;
-    }
-    let ray = load_current_ray(ray_index);
     if (!load_area_two_sided(area_light)
         && dot(surface.geometric_normal.xyz, -ray.direction.xyz) <= 0.0) {
         return;
@@ -52,5 +49,6 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
     }
     store_sample_radiance(pixel_index, load_sample_radiance(pixel_index)
-        + ray.throughput * load_area_emission(area_light) * weight);
+        + ray.throughput * load_light_spectrum(light_handle, 0u, load_sample_lambda(pixel_index))
+            * load_light_scale(light_handle) * weight);
 }

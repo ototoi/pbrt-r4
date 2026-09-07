@@ -9,6 +9,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     if (surface.hit == 0u || surface.flags != 0u
         || load_material_kind(surface.material) != MATERIAL_KIND_CONDUCTOR) { return; }
     let node = load_material_surface_node(surface.material);
+    let lambda = load_sample_lambda(pixel_index);
     let roughness = load_conductor_roughness(node);
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
@@ -33,7 +34,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let direction = normalize(reflect(-wo, half_world));
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
-    var f = conductor_fresnel(cos_i, load_conductor_eta(node), load_conductor_k(node)) / cos_i;
+    var f = conductor_fresnel(cos_i, load_conductor_eta(node, lambda), load_conductor_k(node, lambda)) / cos_i;
     if (roughness > 1e-3) {
         let wi_local = scattering_local(direction, normal);
         let wo_local = scattering_local(wo, normal);
@@ -43,21 +44,21 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         let d = a2 / (PI * pow(h_local.z * h_local.z * (a2 - 1.0) + 1.0, 2.0));
         let g = 2.0 * abs(wo_local.z) / (abs(wo_local.z) + sqrt(wo_local.z * wo_local.z + a2 * (1.0 - wo_local.z * wo_local.z)))
             * 2.0 * abs(wi_local.z) / (abs(wi_local.z) + sqrt(wi_local.z * wi_local.z + a2 * (1.0 - wi_local.z * wi_local.z)));
-        f = conductor_fresnel(abs(dot(wo_local, h_local)), load_conductor_eta(node), load_conductor_k(node)) * d * g
+        f = conductor_fresnel(abs(dot(wo_local, h_local)), load_conductor_eta(node, lambda), load_conductor_k(node, lambda)) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
-        ray.throughput * vec4<f32>(f * cos_i / pdf, 1.0),
+        ray.throughput * f * cos_i / pdf,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.inv_w_u, ray.inv_w_u / pdf, pdf, vec3<u32>(0u),
+        ray.inv_w_u, ray.inv_w_u / pdf, pdf, 0u, 0u, 0u,
     );
-    let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
+    let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
-        atomicStore(&wavefront_queue[NEXT_OVERFLOW], 1u);
+        atomicStore(&queue_counters.next.overflow, 1u);
         return;
     }
     store_ray_samples(pixel_index, generate_ray_samples(pixel_index, ray.depth + 1u));

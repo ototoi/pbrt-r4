@@ -14,21 +14,27 @@ pub struct Film {
     readback: wgpu::Buffer,
     display: MultipleDisplay,
     pixels: Vec<f32>,
-    pixel_count: u64,
     completed_samples: u32,
+    output_matrix: [[f32; 3]; 3],
+    scale: f32,
+    display_mode: bool,
 }
 
 impl Film {
-    pub fn new(device: &wgpu::Device, resolution: [u32; 2]) -> Result<Self, PbrtError> {
+    pub fn new(
+        device: &wgpu::Device,
+        resolution: [u32; 2],
+        output_matrix: [[f32; 3]; 3],
+        scale: f32,
+        display_mode: bool,
+    ) -> Result<Self, PbrtError> {
         let pixel_count = u64::from(resolution[0])
             .checked_mul(u64::from(resolution[1]))
             .ok_or_else(|| PbrtError::error("WebGPU film resolution overflowed."))?;
         let pixel_byte_size = pixel_count
             .checked_mul(4 * std::mem::size_of::<f32>() as u64)
             .ok_or_else(|| PbrtError::error("WebGPU framebuffer size overflowed."))?;
-        let framebuffer_size = pixel_byte_size
-            .checked_mul(2)
-            .ok_or_else(|| PbrtError::error("WebGPU Film accumulation size overflowed."))?;
+        let framebuffer_size = pixel_byte_size;
         Ok(Self {
             resolution,
             framebuffer: device.create_buffer(&wgpu::BufferDescriptor {
@@ -47,8 +53,10 @@ impl Film {
             }),
             display: MultipleDisplay::new(),
             pixels: vec![0.0; pixel_count as usize * 3],
-            pixel_count,
             completed_samples: 0,
+            output_matrix,
+            scale,
+            display_mode,
         })
     }
 
@@ -88,7 +96,7 @@ impl Film {
     pub fn copy_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_buffer_to_buffer(
             &self.framebuffer,
-            self.pixel_count * 4 * std::mem::size_of::<f32>() as u64,
+            0,
             &self.readback,
             0,
             self.readback.size(),
@@ -126,8 +134,17 @@ impl Film {
         let values = bytemuck::try_cast_slice::<u8, f32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU framebuffer readback was not f32-aligned."))?;
         for (source, destination) in values.chunks_exact(4).zip(self.pixels.chunks_exact_mut(3)) {
-            for (source, destination) in source[..3].iter().zip(destination.iter_mut()) {
-                *destination = *source / completed_samples as f32;
+            let weight = source[3].max(1e-7);
+            let sensor = [source[0] / weight, source[1] / weight, source[2] / weight];
+            for channel in 0..3 {
+                destination[channel] = if self.display_mode {
+                    sensor[channel]
+                } else {
+                    self.scale
+                        * (self.output_matrix[channel][0] * sensor[0]
+                            + self.output_matrix[channel][1] * sensor[1]
+                            + self.output_matrix[channel][2] * sensor[2])
+                };
             }
         }
         drop(mapped);

@@ -1,9 +1,9 @@
 use pbrt_r4::gpu::webgpu::abi::{
-    inverse_transpose_linear, row_major_to_columns, AreaLight, CameraUniform, Geometry, Instance,
-    LightRecord, LightTableUniform, MaterialAttributeRef, MaterialRecord, MaterialTableUniform,
-    PixelSampleState, PointLight, QueueState, RayWorkItem, ScatteringModelRecord,
-    ScatteringNodeRecord, ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry, Vertex,
-    ViewportUniform,
+    inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform, DenseSpectrum,
+    FilmUniform, Geometry, Instance, LightRecord, LightTableUniform, MaterialRecord,
+    MaterialTableUniform, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
+    ScatteringModelRecord, ScatteringNodeRecord, ShadowRayWorkItem, SurfaceWorkItem,
+    TriangleDistributionEntry, Vertex, ViewportUniform,
 };
 
 #[test]
@@ -20,22 +20,30 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
-    assert_eq!(std::mem::size_of::<LightTableUniform>(), 64);
+    assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 144);
     assert_eq!(std::mem::size_of::<MaterialRecord>(), 16);
     assert_eq!(std::mem::size_of::<ScatteringModelRecord>(), 16);
     assert_eq!(std::mem::size_of::<ScatteringNodeRecord>(), 32);
-    assert_eq!(std::mem::size_of::<MaterialAttributeRef>(), 8);
+    assert_eq!(std::mem::size_of::<AttributeRef>(), 8);
+    assert_eq!(std::mem::size_of::<DenseSpectrum>(), 1888);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 112);
-    assert_eq!(std::mem::size_of::<PointLight>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
-    assert_eq!(std::mem::size_of::<AreaLight>(), 32);
+    assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LightSamplingModel>(),
+        32
+    );
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
-    assert_eq!(std::mem::size_of::<PixelSampleState>(), 32);
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 96);
+    assert_eq!(std::mem::size_of::<RenderError>(), 16);
+    assert_eq!(std::mem::offset_of!(RenderError, value), 0);
+    assert_eq!(std::mem::offset_of!(RenderError, padding), 4);
+    assert_eq!(std::mem::size_of::<PixelSampleState>(), 80);
+    assert_eq!(std::mem::size_of::<FilmUniform>(), 32);
     assert_eq!(std::mem::size_of::<TriangleDistributionEntry>(), 16);
 }
 
@@ -49,9 +57,23 @@ fn webgpu_storage_array_strides_are_16_byte_aligned() {
         std::mem::size_of::<ShadowRayWorkItem>(),
         std::mem::size_of::<SurfaceWorkItem>(),
         std::mem::size_of::<PixelSampleState>(),
+        std::mem::size_of::<DenseSpectrum>(),
     ] {
         assert_eq!(size % 16, 0, "storage stride {size} is not 16-byte aligned");
     }
+}
+
+#[test]
+fn webgpu_work_item_padding_uses_scalar_shader_fields() {
+    let types = include_str!("../src/gpu/webgpu/shaders/types.wgsl");
+    assert!(!types.contains("_padding: vec3<u32>"));
+    assert!(!types.contains("_padding0: vec3<u32>"));
+    assert!(!types.contains("_padding1: vec3<u32>"));
+    assert!(!types.contains("_padding: array<u32, 3>"));
+    assert!(!types.contains("_padding0: array<u32, 3>"));
+    assert!(!types.contains("_padding1: array<u32, 3>"));
+    assert!(types.contains("_padding2: u32"));
+    assert!(types.contains("_padding5: u32"));
 }
 
 #[test]

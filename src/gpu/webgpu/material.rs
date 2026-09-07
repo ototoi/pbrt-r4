@@ -1,11 +1,11 @@
 use crate::util::error::PbrtError;
 
-use super::abi::{MaterialAttributeRef, MaterialRecord};
+use super::abi::{AttributeRef, MaterialRecord};
 use crate::gpu::ir::flat;
 
 pub struct MaterialTable {
     pub records: Vec<MaterialRecord>,
-    pub attributes: Vec<MaterialAttributeRef>,
+    pub attributes: Vec<AttributeRef>,
 }
 
 impl MaterialTable {
@@ -49,6 +49,7 @@ impl MaterialTable {
             .materials
             .iter()
             .map(|material| {
+                validate_material_attributes(material)?;
                 let model = scene
                     .scattering_models
                     .get(material.scattering_model as usize)
@@ -68,7 +69,7 @@ impl MaterialTable {
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
                     };
-                    attributes.push(MaterialAttributeRef {
+                    attributes.push(AttributeRef {
                         kind,
                         index: attr.index,
                     });
@@ -85,6 +86,67 @@ impl MaterialTable {
             records,
             attributes,
         })
+    }
+}
+
+fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtError> {
+    let expected = match material.kind.as_str() {
+        "diffuse" => &[(0, flat::AttributeKind::Spectrum)][..],
+        "dielectric" | "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
+        "conductor" => &[
+            (0, flat::AttributeKind::Spectrum),
+            (1, flat::AttributeKind::Spectrum),
+            (2, flat::AttributeKind::Scalar),
+        ][..],
+        "coateddiffuse" => &[
+            (0, flat::AttributeKind::Scalar),
+            (1, flat::AttributeKind::Scalar),
+            (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Scalar),
+            (4, flat::AttributeKind::Scalar),
+            (5, flat::AttributeKind::Spectrum),
+            (6, flat::AttributeKind::Spectrum),
+            (7, flat::AttributeKind::Spectrum),
+            (8, flat::AttributeKind::Scalar),
+        ][..],
+        other => {
+            return Err(PbrtError::error(&format!(
+                "Unsupported WebGPU material kind in attribute validation: {other}."
+            )))
+        }
+    };
+    if material.attributes.len() != expected.len()
+        || material
+            .attributes
+            .iter()
+            .zip(expected)
+            .any(|(actual, (_, expected_kind))| actual.kind != *expected_kind)
+    {
+        let actual = material
+            .attributes
+            .iter()
+            .map(|attribute| {
+                format!(
+                    "{}:{}",
+                    attribute.name,
+                    format_attribute_kind(attribute.kind)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(PbrtError::error(&format!(
+            "Material \"{}\" kind \"{}\" has invalid GPU attributes: [{actual}].",
+            material.source_kind, material.kind
+        )));
+    }
+    Ok(())
+}
+
+fn format_attribute_kind(kind: flat::AttributeKind) -> &'static str {
+    match kind {
+        flat::AttributeKind::Scalar => "scalar",
+        flat::AttributeKind::Spectrum => "spectrum",
+        flat::AttributeKind::Texture => "texture",
     }
 }
 

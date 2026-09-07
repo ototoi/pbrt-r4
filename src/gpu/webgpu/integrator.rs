@@ -17,9 +17,30 @@ use super::material::MaterialKind;
 use super::pipeline::{Pipeline, StagePipeline};
 use super::queue::Queues;
 use super::scene::Scene;
-use super::stages::{canonical_wavefront_bindings, RequiredLimits, ResourceId};
+use super::stages::{canonical_wavefront_bindings, ResourceId};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+
+const DEPLOYED_STAGE_SOURCES: &[&str] = &[
+    include_str!("shaders/prepare_sample.wgsl"),
+    include_str!("shaders/generate_primary_rays.wgsl"),
+    include_str!("shaders/reset_shadow_queue.wgsl"),
+    include_str!("shaders/reset_classification_queues.wgsl"),
+    include_str!("shaders/intersect_primary_rays.wgsl"),
+    include_str!("shaders/handle_escaped.wgsl"),
+    include_str!("shaders/shade_surface.wgsl"),
+    include_str!("shaders/handle_emissive.wgsl"),
+    include_str!("shaders/evaluate_materials.wgsl"),
+    include_str!("shaders/intersect_shadow.wgsl"),
+    include_str!("shaders/sample_diffuse_bounce.wgsl"),
+    include_str!("shaders/sample_dielectric_bounce.wgsl"),
+    include_str!("shaders/sample_conductor_bounce.wgsl"),
+    include_str!("shaders/sample_layered_bounce.wgsl"),
+    include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
+    include_str!("shaders/swap_ray_queues.wgsl"),
+    include_str!("shaders/reset_next_ray_queue.wgsl"),
+    include_str!("shaders/accumulate_sample.wgsl"),
+];
 
 pub struct WavefrontPathIntegrator {
     context: Context,
@@ -46,7 +67,10 @@ impl WavefrontPathIntegrator {
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
         let canonical_bindings = canonical_wavefront_bindings();
-        let required_limits = RequiredLimits::from_bindings(&canonical_bindings)?;
+        let required_limits = super::shader::required_limits_for_sources(
+            &canonical_bindings,
+            DEPLOYED_STAGE_SOURCES,
+        )?;
         let context = Context::new(required_limits)?;
         let device = &context.device;
         let queue = &context.queue;
@@ -54,6 +78,7 @@ impl WavefrontPathIntegrator {
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
         if let Some(kind) = debug_material {
             scene.replace_material_kind(queue, kind);
+            scene.film.mode = 1;
         }
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
@@ -64,6 +89,11 @@ impl WavefrontPathIntegrator {
             label: Some("pbrt-r4 viewport UBO"),
             contents: bytes_of(&scene.viewport),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let film_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 film UBO"),
+            contents: bytemuck::bytes_of(&scene.film),
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         let material_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material table UBO"),
@@ -76,8 +106,14 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
-        let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
+        let queues = Queues::new(device, pixel_count)?;
+        let film = Film::new(
+            device,
+            [scene.viewport.width, scene.viewport.height],
+            scene.film_output_matrix,
+            scene.film_scale,
+            scene.film.mode != 0,
+        )?;
         let pipeline = Pipeline::new(device)?;
         let make_entry = |binding: super::stages::BindingSpec| wgpu::BindGroupEntry {
             binding: binding.binding,
@@ -91,25 +127,34 @@ impl WavefrontPathIntegrator {
                 ResourceId::Index => scene.index_buffer.as_entire_binding(),
                 ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
                 ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
+                ResourceId::FilmParams => film_params_buffer.as_entire_binding(),
                 ResourceId::Surface => queues.surfaces.as_entire_binding(),
                 ResourceId::Film => film.framebuffer.as_entire_binding(),
-                ResourceId::RaySamples => queues.wavefront.as_entire_binding(),
+                ResourceId::QueueCounters => queues.counters.as_entire_binding(),
+                ResourceId::RenderError => queues.render_error.as_entire_binding(),
+                ResourceId::PixelSampleState => queues.pixel_sample_states.as_entire_binding(),
+                ResourceId::CurrentRay => queues.current_rays.as_entire_binding(),
+                ResourceId::NextRay => queues.next_rays.as_entire_binding(),
+                ResourceId::ShadowQueue => queues.shadow_rays.as_entire_binding(),
+                ResourceId::MaterialRayQueue => queues.material_ray_indices.as_entire_binding(),
+                ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
+                ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
                 ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
-                ResourceId::MaterialAttribute => {
-                    scene.material_attribute_buffer.as_entire_binding()
-                }
+                ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
                 ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
                 ResourceId::ScatteringModel => scene.scattering_model_buffer.as_entire_binding(),
                 ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
                 ResourceId::ScatteringChild => scene.scattering_child_buffer.as_entire_binding(),
-                ResourceId::SpectrumAttribute => {
-                    scene.spectrum_attribute_buffer.as_entire_binding()
+                ResourceId::SpectrumAttributes => {
+                    scene.spectrum_attributes_buffer.as_entire_binding()
                 }
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
-                ResourceId::PointLight => scene.point_light_buffer.as_entire_binding(),
-                ResourceId::AreaLight => scene.area_light_buffer.as_entire_binding(),
+                ResourceId::LightSamplingModel => {
+                    scene.light_sampling_model_buffer.as_entire_binding()
+                }
+                ResourceId::LightPosition => scene.light_position_buffer.as_entire_binding(),
                 ResourceId::TriangleDistribution => scene.distribution_buffer.as_entire_binding(),
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),

@@ -18,9 +18,12 @@ fn sample_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<u32>)
         return;
     }
 
-    let eta = load_dielectric_eta(load_material_surface_node(surface.material));
+    let eta_node = load_material_surface_node(surface.material);
+    if (!dielectric_eta_is_constant(eta_node)) { terminate_secondary_wavelengths(pixel_index); }
+    var eta = load_dielectric_eta(eta_node, load_sample_lambda(pixel_index)).x;
+    if (eta == 0.0) { eta = 1.0; }
     if (!(eta > 0.0) || eta != eta) {
-        atomicStore(&wavefront_queue[RENDER_ERROR], 1u);
+        set_render_error();
         return;
     }
     let wo = normalize(-ray.direction.xyz);
@@ -67,11 +70,11 @@ fn sample_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<u32>)
         ray.inv_w_u,
         ray.inv_w_u / next_pdf,
         next_pdf,
-        vec3<u32>(0u, 0u, 0u),
+        0u, 0u, 0u,
     );
-    let next_index = atomicAdd(&wavefront_queue[NEXT_COUNT], 1u);
+    let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
-        atomicStore(&wavefront_queue[NEXT_OVERFLOW], 1u);
+        atomicStore(&queue_counters.next.overflow, 1u);
         return;
     }
     store_ray_samples(pixel_index, generate_ray_samples(pixel_index, ray.depth + 1u));

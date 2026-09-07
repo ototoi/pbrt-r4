@@ -1,6 +1,6 @@
 use pbrt_r4::gpu::ir::flat::{
-    build_light_bounds, build_light_bvh, light_bvh_pmf, sample_light_bvh, LightBVHNode,
-    LightBoundInput, LightKind, LightRecord,
+    build_light_bounds, build_light_bvh, light_bvh_pmf, sample_light_bvh, Light, LightBVHNode,
+    LightBoundInput, LightKind,
 };
 
 fn point_inputs() -> Vec<LightBoundInput> {
@@ -39,9 +39,10 @@ fn empty_and_zero_power_lights_produce_empty_bvh() {
         scale: 1.0,
     }])
     .unwrap();
-    let records = [LightRecord {
+    let records = [Light {
         kind: LightKind::Point,
-        payload: 0,
+        attributes: Vec::new(),
+        sampling_model: 0,
     }];
     let bvh = build_light_bvh(&records, &zero).unwrap();
     assert!(bvh.nodes.is_empty());
@@ -52,9 +53,10 @@ fn empty_and_zero_power_lights_produce_empty_bvh() {
 fn bvh_has_dfs_layout_and_handle_mapping() {
     let bounds = build_light_bounds(&point_inputs()).unwrap();
     let records = vec![
-        LightRecord {
+        Light {
             kind: LightKind::Point,
-            payload: 0,
+            attributes: Vec::new(),
+            sampling_model: 0,
         };
         3
     ];
@@ -76,9 +78,10 @@ fn bvh_has_dfs_layout_and_handle_mapping() {
 #[test]
 fn mismatched_light_and_bounds_are_rejected() {
     let bounds = build_light_bounds(&point_inputs()).unwrap();
-    let records = [LightRecord {
+    let records = [Light {
         kind: LightKind::Point,
-        payload: 0,
+        attributes: Vec::new(),
+        sampling_model: 0,
     }];
     assert!(build_light_bvh(&records, &bounds).is_err());
 }
@@ -107,9 +110,10 @@ fn reference_sampling_and_pmf_are_consistent() {
     ];
     let bounds = build_light_bounds(&inputs).unwrap();
     let records = vec![
-        LightRecord {
+        Light {
             kind: LightKind::Point,
-            payload: 0,
+            attributes: Vec::new(),
+            sampling_model: 0,
         };
         3
     ];

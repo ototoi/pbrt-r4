@@ -5,27 +5,24 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let pixel_index = global_id.y * viewport.width + global_id.x;
     if (pixel_index == 0u) {
-        atomicStore(&wavefront_queue[CURRENT_COUNT], 0u);
-        atomicStore(&wavefront_queue[CURRENT_OVERFLOW], 0u);
-        atomicStore(&wavefront_queue[NEXT_COUNT], 0u);
-        atomicStore(&wavefront_queue[NEXT_OVERFLOW], 0u);
-        atomicStore(&wavefront_queue[SHADOW_COUNT], 0u);
-        atomicStore(&wavefront_queue[SHADOW_OVERFLOW], 0u);
-        atomicStore(&wavefront_queue[MATERIAL_COUNT], 0u);
-        atomicStore(&wavefront_queue[MATERIAL_OVERFLOW], 0u);
-        atomicStore(&wavefront_queue[HIT_AREA_COUNT], 0u);
-        atomicStore(&wavefront_queue[HIT_AREA_OVERFLOW], 0u);
-        atomicStore(&wavefront_queue[ESCAPED_COUNT], 0u);
-        atomicStore(&wavefront_queue[ESCAPED_OVERFLOW], 0u);
+        atomicStore(&queue_counters.current.count, 0u);
+        atomicStore(&queue_counters.current.overflow, 0u);
+        atomicStore(&queue_counters.next.count, 0u);
+        atomicStore(&queue_counters.next.overflow, 0u);
+        atomicStore(&queue_counters.shadow.count, 0u);
+        atomicStore(&queue_counters.shadow.overflow, 0u);
+        atomicStore(&queue_counters.material.count, 0u);
+        atomicStore(&queue_counters.material.overflow, 0u);
+        atomicStore(&queue_counters.hit_area.count, 0u);
+        atomicStore(&queue_counters.hit_area.overflow, 0u);
+        atomicStore(&queue_counters.escaped.count, 0u);
+        atomicStore(&queue_counters.escaped.overflow, 0u);
         if (viewport.sample_index == 0u) {
-            atomicStore(&wavefront_queue[RENDER_ERROR], 0u);
+            atomicStore(&render_error.value, 0u);
         }
     }
     store_sample_radiance(pixel_index, vec4<f32>(0.0));
-    store_sample_metadata(pixel_index);
-    for (var word = 8u; word < SAMPLE_STATE_WORDS; word++) {
-        atomicStore(&wavefront_queue[sample_state_word(pixel_index, word)], 0u);
-    }
+    store_ray_samples(pixel_index, RaySamples(vec4<f32>(0.0), vec4<f32>(0.0)));
     surfaces[pixel_index].hit = 0u;
     surfaces[pixel_index].flags = 0u;
 }

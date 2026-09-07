@@ -7,7 +7,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (queue_index >= material_eval_count()) {
         return;
     }
-    let pixel_index = load_material_eval_pixel(queue_index);
+    let ray_index = load_material_eval_ray(queue_index);
+    let ray = load_current_ray(ray_index);
+    let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     let material_kind = load_material_kind(surface.material);
     if (surface.hit == 0u
@@ -15,16 +17,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {
         return;
     }
-    var reflectance = vec3<f32>(0.0);
+    let lambda = load_sample_lambda(pixel_index);
+    var reflectance = vec4<f32>(0.0);
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
-        reflectance = load_diffuse_reflectance(surface.material);
+        reflectance = load_diffuse_reflectance(surface.material, lambda);
     }
     let material_node = load_material_surface_node(surface.material);
-    let ray_index = find_current_ray_for_pixel(pixel_index);
-    if (ray_index == 0xffffffffu) {
-        return;
-    }
-    let ray = load_current_ray(ray_index);
     let samples = load_ray_samples(pixel_index);
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
         return;
@@ -46,12 +44,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var light_position = vec3<f32>(0.0);
     var light_error = vec3<f32>(0.0);
     var light_normal = vec3<f32>(0.0);
-    var light_radiance = vec3<f32>(0.0);
+    var light_radiance = vec4<f32>(0.0);
     var sampled_light_pdf = light_selection.pmf;
     if (light_kind == LIGHT_KIND_POINT) {
-        let light = load_point_light(light_payload);
-        light_position = light.position.xyz;
-        light_radiance = light.intensity.xyz;
+        light_position = load_point_position(light_index);
+        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
         let distribution_count = load_area_distribution_count(light_payload);
@@ -72,7 +69,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let b = triangle_sample.xyz;
         light_normal = triangle_geometric_normal(triangle);
         light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
-        light_radiance = load_area_emission(light_payload).xyz;
+        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
         light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)
             + abs(triangle.p2.xyz * b.z)) * gamma(6.0);
         let area_wi = normalize(light_position - light_sample_origin);
@@ -116,8 +113,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
     if (material_kind == MATERIAL_KIND_CONDUCTOR) {
-        let eta = load_conductor_eta(material_node);
-        let k = load_conductor_k(material_node);
+        let eta = load_conductor_eta(material_node, lambda);
+        let k = load_conductor_k(material_node, lambda);
         let h = scattering_local(normalize(wo + wi), shading_n);
         let fresnel = conductor_fresnel(dot(scattering_local(wo, shading_n), h), eta, k);
         let alpha = max(load_conductor_roughness(material_node), 1e-3);
@@ -132,11 +129,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
     }
     if (material_kind == MATERIAL_KIND_LAYERED) {
-        let data = load_layered_bxdf(surface.material);
-        let eta = load_layered_eta(surface.material);
+        let data = load_layered_bxdf(surface.material, lambda);
+        let eta = max(load_layered_eta(surface.material, lambda).x, 1.0);
         let local_wo = scattering_local(wo, shading_n);
         let local_wi = scattering_local(wi, shading_n);
-        f = layered_f(data, eta, load_layered_bottom_reflectance(surface.material),
+        f = layered_f(data, eta, load_layered_bottom_reflectance(surface.material, lambda),
             local_wo, local_wi, layered_path_seed(pixel_index, ray.depth));
         bsdf_pdf = layered_pdf(data, eta, local_wo, local_wi);
     }
@@ -162,6 +159,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         shadow_origin,
         shadow_vector / shadow_distance,
         shadow_distance,
-        direct,
+        (ray.throughput * direct),
     );
 }
