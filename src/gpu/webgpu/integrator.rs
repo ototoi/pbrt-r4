@@ -143,8 +143,8 @@ impl WavefrontPathIntegrator {
                 ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
                 ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
                 ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
-                ResourceId::SpectrumAttributes => {
-                    scene.spectrum_attributes_buffer.as_entire_binding()
+                ResourceId::SpectrumAttribute => {
+                    scene.spectrum_attribute_buffer.as_entire_binding()
                 }
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
                 ResourceId::LightSamplingModel => {

@@ -34,7 +34,7 @@ pub struct Scene {
     pub material_buffer: wgpu::Buffer,
     pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
-    pub spectrum_attributes_buffer: wgpu::Buffer,
+    pub spectrum_attribute_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
     pub light_sampling_model_buffer: wgpu::Buffer,
@@ -219,7 +219,7 @@ impl Scene {
                 flags: spectrum.flags,
             })
             .collect::<Vec<_>>();
-        let spectrum_attributes_buffer =
+        let spectrum_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 dense spectra SBO"),
                 contents: buffer_contents(&spectrum_attributes),
@@ -340,7 +340,7 @@ impl Scene {
             material_buffer,
             attribute_ref_buffer,
             scalar_attribute_buffer,
-            spectrum_attributes_buffer,
+            spectrum_attribute_buffer,
             texture_attribute_buffer,
             light_record_buffer,
             light_sampling_model_buffer,
