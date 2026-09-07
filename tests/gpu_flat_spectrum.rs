@@ -1,6 +1,6 @@
 use pbrt_r4::gpu::ir::flat::{
-    SpectrumTableBuilder, DENSE_LAMBDA_MAX, DENSE_LAMBDA_MIN, DENSE_SAMPLE_COUNT,
-    SPECTRUM_FLAG_CONSTANT,
+    validate_dense_spectra, SpectrumTableBuilder, DENSE_LAMBDA_MAX, DENSE_LAMBDA_MIN,
+    DENSE_SAMPLE_COUNT, SPECTRUM_FLAG_CONSTANT,
 };
 use pbrt_r4::util::spectrum::{DenselySampledSpectrum, Spectrum};
 
@@ -23,9 +23,9 @@ fn spectrum_ids_are_stable_and_deduplicate_values() {
     assert_ne!(builder.intern(&different).unwrap(), first_id);
 
     let table = builder.finish();
-    assert_eq!(table.spectrum_count(), 2);
-    assert_eq!(table.samples.len(), 2 * DENSE_SAMPLE_COUNT);
-    table.validate().unwrap();
+    assert_eq!(table.len(), 2);
+    assert_eq!(table[0].samples.len(), DENSE_SAMPLE_COUNT);
+    validate_dense_spectra(&table).unwrap();
 }
 
 #[test]
@@ -39,11 +39,8 @@ fn constant_metadata_is_semantic_and_part_of_the_dedup_key() {
     assert_ne!(constant_id, dense_id);
 
     let table = builder.finish();
-    assert_eq!(
-        table.metadata[constant_id as usize].flags,
-        SPECTRUM_FLAG_CONSTANT
-    );
-    assert_eq!(table.metadata[dense_id as usize].flags, 0);
+    assert_eq!(table[constant_id as usize].flags, SPECTRUM_FLAG_CONSTANT);
+    assert_eq!(table[dense_id as usize].flags, 0);
 }
 
 #[test]

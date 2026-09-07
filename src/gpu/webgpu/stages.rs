@@ -47,8 +47,7 @@ pub enum ResourceId {
     MaterialRecord,
     AttributeRef,
     ScalarAttribute,
-    SpectrumSamples,
-    SpectrumMetadata,
+    Spectra,
     TextureAttribute,
     ScatteringModel,
     ScatteringNode,
@@ -238,8 +237,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (31, ResourceId::LightBvhHeader),
         (32, ResourceId::LightBvhNode),
         (33, ResourceId::LightLeaf),
-        (34, ResourceId::SpectrumSamples),
-        (35, ResourceId::SpectrumMetadata),
+        (34, ResourceId::Spectra),
         (36, ResourceId::LightPosition),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);

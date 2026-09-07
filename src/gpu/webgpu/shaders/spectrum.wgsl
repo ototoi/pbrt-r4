@@ -4,7 +4,7 @@ const DENSE_SAMPLE_COUNT: u32 = 471u;
 const SPECTRUM_FLAG_CONSTANT: u32 = 1u;
 
 fn evaluate_spectrum_lane(id: u32, lambda: f32) -> f32 {
-    if (id >= arrayLength(&spectrum_metadata)) {
+    if (id >= arrayLength(&spectra)) {
         set_render_error();
         return 0.0;
     }
@@ -14,12 +14,7 @@ fn evaluate_spectrum_lane(id: u32, lambda: f32) -> f32 {
     let x = lambda - DENSE_LAMBDA_MIN;
     let i0 = u32(floor(x));
     let i1 = min(i0 + 1u, DENSE_SAMPLE_COUNT - 1u);
-    let base = id * DENSE_SAMPLE_COUNT;
-    if (base + i1 >= arrayLength(&spectrum_samples)) {
-        set_render_error();
-        return 0.0;
-    }
-    return mix(spectrum_samples[base + i0], spectrum_samples[base + i1], fract(x));
+    return mix(spectra[id].samples[i0], spectra[id].samples[i1], fract(x));
 }
 
 fn evaluate_spectrum(id: u32, lambda: vec4<f32>) -> vec4<f32> {
@@ -32,11 +27,11 @@ fn evaluate_spectrum(id: u32, lambda: vec4<f32>) -> vec4<f32> {
 }
 
 fn spectrum_is_constant(id: u32) -> bool {
-    if (id >= arrayLength(&spectrum_metadata)) {
+    if (id >= arrayLength(&spectra)) {
         set_render_error();
         return false;
     }
-    return (spectrum_metadata[id] & SPECTRUM_FLAG_CONSTANT) != 0u;
+    return (spectra[id].flags & SPECTRUM_FLAG_CONSTANT) != 0u;
 }
 
 fn safe_div_spectrum(value: vec4<f32>, pdf: vec4<f32>) -> vec4<f32> {

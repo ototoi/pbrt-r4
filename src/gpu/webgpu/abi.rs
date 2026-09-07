@@ -111,6 +111,13 @@ pub struct AttributeRef {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DenseSpectrum {
+    pub samples: [f32; flat::DENSE_SAMPLE_COUNT],
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ScatteringModelRecord {
     pub surface_root: u32,
     pub bssrdf_root: u32,

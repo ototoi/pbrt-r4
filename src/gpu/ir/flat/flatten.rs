@@ -85,7 +85,7 @@ pub fn flatten_node_with_material_override(
         attribute_refs,
         scalar_attributes: builder.scalar_attributes,
         texture_attributes: builder.texture_attributes,
-        spectrum_table: builder.spectrum_table_builder.finish(),
+        spectra: builder.spectrum_table_builder.finish(),
         scattering_models: builder.scattering_models,
         scattering_nodes: builder.scattering_nodes,
         scattering_child_refs: ScatteringChildRefs {
