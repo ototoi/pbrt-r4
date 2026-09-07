@@ -1,13 +1,14 @@
 use pbrt_r4::gpu::ir::flat::{
-    build_light_bounds, build_light_bvh, LightBoundInput, LightKind, LightRecord,
+    build_light_bounds, build_light_bvh, Light, LightBoundInput, LightKind,
 };
 use pbrt_r4::gpu::webgpu::light_bvh::pack_light_bvh;
 
-fn records(count: usize) -> Vec<LightRecord> {
+fn records(count: usize) -> Vec<Light> {
     (0..count)
-        .map(|index| LightRecord {
+        .map(|index| Light {
             kind: LightKind::Point,
-            payload: index as u32,
+            attributes: Vec::new(),
+            sampling_model: index as u32,
         })
         .collect()
 }

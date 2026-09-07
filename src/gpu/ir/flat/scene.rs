@@ -1,6 +1,6 @@
 use super::{
-    AreaLight, AttributeTables, Camera, Film, Geometry, Instance, LightBVH, LightBounds,
-    LightRecord, Material, Output, PointLight, PrimitiveDistributionMap, RenderSettings,
+    AttributeTables, Camera, Film, Geometry, Instance, Light, LightBVH, LightBounds,
+    LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
     ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, SpectrumTable,
     TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
@@ -12,10 +12,12 @@ pub struct Scene {
     pub film: Film,
     pub output: Output,
     pub render_settings: RenderSettings,
-    pub point_lights: Vec<PointLight>,
-    pub area_lights: Vec<AreaLight>,
+    pub light_sampling_models: Vec<LightSamplingModel>,
+    pub light_positions: Vec<[f32; 3]>,
     pub triangle_distributions: Vec<TriangleDistributionEntry>,
-    pub lights: Vec<LightRecord>,
+    pub lights: Vec<Light>,
+    /// One upload arena shared by material and light attribute references.
+    pub attribute_refs: Vec<super::AttributeRef>,
     pub light_bounds: Vec<LightBounds>,
     pub light_bvh: LightBVH,
     pub vertices: Vec<Vertex>,
@@ -23,7 +25,6 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub materials: Vec<Material>,
-    pub material_attributes: Vec<Vec<super::AttributeRef>>,
     pub attribute_tables: AttributeTables,
     pub spectrum_table: SpectrumTable,
     pub scattering_models: Vec<ScatteringModel>,
@@ -48,7 +49,12 @@ impl Scene {
                 "Resolved scattering model count does not match the source graph.",
             ));
         }
-        if self.primitive_distribution_map.offsets.len() != self.area_lights.len() + 1 {
+        let area_count = self
+            .lights
+            .iter()
+            .filter(|light| light.kind == super::LightKind::Area)
+            .count();
+        if self.primitive_distribution_map.offsets.len() != area_count + 1 {
             return Err(crate::util::error::PbrtError::error(
                 "Primitive distribution map offsets do not match area lights.",
             ));

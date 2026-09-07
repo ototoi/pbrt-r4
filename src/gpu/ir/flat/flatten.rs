@@ -1,11 +1,11 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
-    transform_swaps_handedness, AreaLight, AreaTriangleInput, AttributeKind, AttributeRef,
-    AttributeTables, Camera, Geometry, Instance, LightBoundInput, LightKind, LightRecord, Material,
-    PointLight, PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel,
-    ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene, SpectrumTableBuilder,
-    SpectrumValue, Transform, TriangleDistributionEntry, TriangleDistributionRange, Vertex,
-    Viewport, EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
+    transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, AttributeTables,
+    Camera, Geometry, Instance, Light, LightBoundInput, LightGeometryKind, LightKind,
+    LightSamplingModel, Material, PrimitiveDistributionMap, RenderSettings,
+    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene,
+    SpectrumTableBuilder, Transform, TriangleDistributionEntry, Vertex, Viewport, EVENT_DIFFUSE,
+    EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
@@ -54,14 +54,25 @@ pub fn flatten_node_with_material_override(
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
+    let attribute_refs = builder
+        .materials
+        .iter()
+        .flat_map(|material| material.attributes.iter().cloned())
+        .chain(
+            builder
+                .lights
+                .iter()
+                .flat_map(|light| light.attributes.iter().cloned()),
+        )
+        .collect();
     let scene = Scene {
         camera,
         viewport,
         film,
         output,
         render_settings,
-        point_lights: builder.point_lights,
-        area_lights: builder.area_lights,
+        light_sampling_models: builder.light_sampling_models,
+        light_positions: builder.light_positions,
         triangle_distributions: builder.triangle_distributions,
         lights: builder.lights,
         light_bounds,
@@ -71,7 +82,7 @@ pub fn flatten_node_with_material_override(
         geometries: builder.geometries,
         instances: builder.instances,
         materials: builder.materials,
-        material_attributes: builder.material_attributes,
+        attribute_refs,
         attribute_tables: builder.attribute_tables,
         spectrum_table: builder.spectrum_table_builder.finish(),
         scattering_models: builder.scattering_models,
@@ -132,54 +143,80 @@ fn resolve_scattering_models(scene: &Scene) -> Result<Vec<ResolvedScatteringMode
         .collect()
 }
 
+fn push_scalar_attribute(
+    builder: &mut FlatBuilder,
+    name: &str,
+    value: f32,
+) -> Result<AttributeRef, PbrtError> {
+    let index = u32::try_from(builder.attribute_tables.scalars.len())
+        .map_err(|_| PbrtError::error("Flat scalar attribute table exceeds u32."))?;
+    builder.attribute_tables.scalars.push(value);
+    Ok(AttributeRef {
+        kind: AttributeKind::Scalar,
+        index,
+        name: name.to_string(),
+    })
+}
+
+fn push_spectrum_attribute(
+    builder: &mut FlatBuilder,
+    name: &str,
+    value: &Spectrum,
+) -> Result<AttributeRef, PbrtError> {
+    let index = builder.spectrum_table_builder.intern(value)?;
+    Ok(AttributeRef {
+        kind: AttributeKind::Spectrum,
+        index,
+        name: name.to_string(),
+    })
+}
+
 fn build_material_attributes(
     source_material: &NodeMaterial,
     kind: &str,
     builder: &mut FlatBuilder,
 ) -> Result<Vec<AttributeRef>, PbrtError> {
-    let mut push_scalar = |name: &str, value: f32| -> Result<AttributeRef, PbrtError> {
-        let index = u32::try_from(builder.attribute_tables.scalars.len())
-            .map_err(|_| PbrtError::error("Flat scalar attribute table exceeds u32."))?;
-        builder.attribute_tables.scalars.push(value);
-        Ok(AttributeRef {
-            kind: AttributeKind::Scalar,
-            index,
-            name: name.to_string(),
-        })
-    };
-    let mut push_spectrum = |name: &str, value: [f32; 3]| -> Result<AttributeRef, PbrtError> {
-        let index = u32::try_from(builder.attribute_tables.spectra.len())
-            .map_err(|_| PbrtError::error("Flat spectrum attribute table exceeds u32."))?;
-        builder
-            .attribute_tables
-            .spectra
-            .push(SpectrumValue([value[0], value[1], value[2], 0.0]));
-        Ok(AttributeRef {
-            kind: AttributeKind::Spectrum,
-            index,
-            name: name.to_string(),
-        })
-    };
     match kind {
-        "diffuse" => Ok(vec![push_spectrum(
-            "reflectance",
-            diffuse_reflectance(source_material)?,
-        )?]),
+        "diffuse" => {
+            let reflectance = diffuse_reflectance(source_material)?;
+            Ok(vec![push_spectrum_attribute(
+                builder,
+                "reflectance",
+                &reflectance,
+            )?])
+        }
         "dielectric" | "thindielectric" => {
-            reject_scalar_textures(source_material, &["eta"])?;
-            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
-            if !eta.is_finite() || eta <= 0.0 {
+            let eta = spectrum_attribute(
+                source_material,
+                "eta",
+                &Spectrum::from(1.5),
+                SpectrumType::Unbounded,
+            )?;
+            let dense_eta = eta.to_dense();
+            if (0..crate::util::spectrum::DENSE_SPECTRUM_SAMPLES)
+                .any(|index| !dense_eta[index].is_finite() || dense_eta[index] <= 0.0)
+            {
                 return Err(PbrtError::error(&format!(
-                    "Material \"{}\" has an invalid dielectric eta: {eta}.",
+                    "Material \"{}\" has invalid dielectric eta.",
                     source_material.name
                 )));
             }
-            Ok(vec![push_scalar("eta", eta)?])
+            Ok(vec![push_spectrum_attribute(builder, "eta", &eta)?])
         }
         "conductor" => {
             reject_scalar_textures(source_material, &["roughness", "uroughness", "vroughness"])?;
-            let eta = spectrum_attribute(source_material, "eta", &Spectrum::from(0.2))?;
-            let k = spectrum_attribute(source_material, "k", &Spectrum::from(3.0))?;
+            let eta = spectrum_attribute(
+                source_material,
+                "eta",
+                &Spectrum::from(0.2),
+                SpectrumType::Unbounded,
+            )?;
+            let k = spectrum_attribute(
+                source_material,
+                "k",
+                &Spectrum::from(3.0),
+                SpectrumType::Unbounded,
+            )?;
             let roughness = source_material.params.get_one_float("roughness", 0.0) as f32;
             if !roughness.is_finite() || roughness < 0.0 {
                 return Err(PbrtError::error(&format!(
@@ -188,9 +225,9 @@ fn build_material_attributes(
                 )));
             }
             Ok(vec![
-                push_spectrum("eta", eta)?,
-                push_spectrum("k", k)?,
-                push_scalar("roughness", roughness)?,
+                push_spectrum_attribute(builder, "eta", &eta)?,
+                push_spectrum_attribute(builder, "k", &k)?,
+                push_scalar_attribute(builder, "roughness", roughness)?,
             ])
         }
         "coateddiffuse" => {
@@ -198,7 +235,6 @@ fn build_material_attributes(
                 source_material,
                 &[
                     "thickness",
-                    "eta",
                     "g",
                     "maxdepth",
                     "nsamples",
@@ -208,16 +244,25 @@ fn build_material_attributes(
                 ],
             )?;
             let thickness = source_material.params.get_one_float("thickness", 0.01) as f32;
-            let eta = source_material.params.get_one_float("eta", 1.5) as f32;
             let g = source_material.params.get_one_float("g", 0.0) as f32;
             let max_depth = source_material.params.get_one_int("maxdepth", 10);
             let n_samples = source_material.params.get_one_int("nsamples", 1);
             let roughness = source_material.params.get_one_float("roughness", 0.0) as f32;
-            let albedo = spectrum_attribute(source_material, "albedo", &Spectrum::from(0.0))?;
+            let albedo = spectrum_attribute(
+                source_material,
+                "albedo",
+                &Spectrum::from(0.0),
+                SpectrumType::Albedo,
+            )?;
+            let eta = spectrum_attribute(
+                source_material,
+                "eta",
+                &Spectrum::from(1.5),
+                SpectrumType::Unbounded,
+            )?;
+            let reflectance = diffuse_reflectance(source_material)?;
             if !thickness.is_finite()
                 || thickness <= 0.0
-                || !eta.is_finite()
-                || eta <= 0.0
                 || !g.is_finite()
                 || g <= -1.0
                 || g >= 1.0
@@ -225,34 +270,26 @@ fn build_material_attributes(
                 || n_samples <= 0
                 || !roughness.is_finite()
                 || roughness < 0.0
-                || !albedo
-                    .iter()
-                    .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+                || !albedo.is_valid()
+                || !eta.is_valid()
+                || !reflectance.is_valid()
             {
                 return Err(PbrtError::error(&format!(
                     "Material \"{}\" has invalid coateddiffuse parameters.",
                     source_material.name
                 )));
             }
-            let mut refs = Vec::with_capacity(8);
-            let scalar_values = [
-                ("thickness", thickness),
-                ("g", g),
-                ("maxdepth", max_depth as f32),
-                ("nsamples", n_samples as f32),
-                ("twosided", 1.0),
-            ];
-            for (name, value) in scalar_values {
-                refs.push(push_scalar(name, value)?);
-            }
-            refs.push(push_spectrum("albedo", albedo)?);
-            refs.push(push_scalar("eta", eta)?);
-            refs.push(push_spectrum(
-                "reflectance",
-                diffuse_reflectance(source_material)?,
-            )?);
-            refs.push(push_scalar("roughness", roughness)?);
-            Ok(refs)
+            Ok(vec![
+                push_scalar_attribute(builder, "thickness", thickness)?,
+                push_scalar_attribute(builder, "g", g)?,
+                push_scalar_attribute(builder, "maxdepth", max_depth as f32)?,
+                push_scalar_attribute(builder, "nsamples", n_samples as f32)?,
+                push_scalar_attribute(builder, "twosided", 1.0)?,
+                push_spectrum_attribute(builder, "albedo", &albedo)?,
+                push_spectrum_attribute(builder, "eta", &eta)?,
+                push_spectrum_attribute(builder, "reflectance", &reflectance)?,
+                push_scalar_attribute(builder, "roughness", roughness)?,
+            ])
         }
         _ => Err(PbrtError::error(&format!(
             "unsupported GPU material kind: {kind}"
@@ -261,13 +298,24 @@ fn build_material_attributes(
 }
 
 fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
-    let mut offsets = Vec::with_capacity(scene.area_lights.len() + 1);
+    let area_count = scene
+        .lights
+        .iter()
+        .filter(|light| light.kind == LightKind::Area)
+        .count();
+    let mut offsets = Vec::with_capacity(area_count + 1);
     let mut entries = Vec::new();
     offsets.push(0);
-    for (area_index, area_light) in scene.area_lights.iter().enumerate() {
+    let area_lights = scene
+        .lights
+        .iter()
+        .filter(|light| light.kind == LightKind::Area)
+        .map(|light| scene.light_sampling_models[light.sampling_model as usize].clone())
+        .collect::<Vec<_>>();
+    for (area_index, area_light) in area_lights.iter().enumerate() {
         let instance = scene
             .instances
-            .get(area_light.instance as usize)
+            .get(area_light.geometry_index as usize)
             .ok_or_else(|| {
                 PbrtError::error(&format!(
                     "Area light {area_index} references an invalid instance."
@@ -284,9 +332,9 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
         let triangle_count = geometry.index_count / 3;
         let base = entries.len();
         entries.resize(base + triangle_count as usize, INVALID_INDEX);
-        let start = usize::try_from(area_light.distribution.offset)
+        let start = usize::try_from(area_light.distribution_offset)
             .map_err(|_| PbrtError::error("Area-light distribution offset exceeds usize."))?;
-        let count = usize::try_from(area_light.distribution.count)
+        let count = usize::try_from(area_light.distribution_count)
             .map_err(|_| PbrtError::error("Area-light distribution count exceeds usize."))?;
         let end = start
             .checked_add(count)
@@ -334,10 +382,10 @@ struct FlatBuilder {
     source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
-    point_lights: Vec<PointLight>,
-    area_lights: Vec<AreaLight>,
+    light_sampling_models: Vec<LightSamplingModel>,
+    light_positions: Vec<[f32; 3]>,
     triangle_distributions: Vec<TriangleDistributionEntry>,
-    lights: Vec<LightRecord>,
+    lights: Vec<Light>,
     light_bound_inputs: Vec<LightBoundInput>,
 }
 
@@ -568,20 +616,36 @@ fn flatten_node_ref(
         });
     }
     if let Some(light) = light {
-        let point_light_index = u32::try_from(builder.point_lights.len())
-            .map_err(|_| PbrtError::error("The flattened GPU point-light table exceeds u32."))?;
-        let (point, intensity_max, scale) = point_light(&light, &world_transform, &name)?;
-        builder.point_lights.push(point);
+        let (position, intensity, intensity_max, scale) =
+            point_light(&light, &world_transform, &name)?;
+        let position_index = u32::try_from(builder.light_positions.len())
+            .map_err(|_| PbrtError::error("The flattened GPU light position table exceeds u32."))?;
+        builder.light_positions.push(position);
+        let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+            PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
+        })?;
+        builder.light_sampling_models.push(LightSamplingModel {
+            kind: LightKind::Point,
+            geometry_kind: LightGeometryKind::Position,
+            geometry_index: position_index,
+            distribution_offset: 0,
+            distribution_count: 0,
+            total_area: 0.0,
+            flags: 0,
+        });
         builder.light_bound_inputs.push(LightBoundInput::Point {
             handle: u32::try_from(builder.lights.len())
                 .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
-            world_position: builder.point_lights.last().unwrap().position,
+            world_position: position,
             intensity_max,
             scale,
         });
-        builder.lights.push(LightRecord {
+        let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
+        let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
+        builder.lights.push(Light {
             kind: LightKind::Point,
-            payload: point_light_index,
+            attributes: vec![i_attr, scale_attr],
+            sampling_model,
         });
     }
     for (component_index, shape, material, area_light, reverse_orientation, _input_normals) in
@@ -667,23 +731,27 @@ fn flatten_node_ref(
             if let Some(last) = builder.triangle_distributions.last_mut() {
                 last.cdf = 1.0;
             }
-            let area_light_index = u32::try_from(builder.area_lights.len())
-                .map_err(|_| PbrtError::error("The flattened GPU area-light table exceeds u32."))?;
-            builder.area_lights.push(AreaLight {
-                instance: instance_index,
-                distribution: TriangleDistributionRange {
-                    offset: distribution_offset,
-                    count: u32::try_from(bound_triangles.len()).map_err(|_| {
-                        PbrtError::error("The flattened GPU area-light distribution exceeds u32.")
-                    })?,
-                    total_area,
-                },
-                emission,
-                two_sided,
-            });
-            builder.lights.push(LightRecord {
+            let sampling_model =
+                u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
+                })?;
+            builder.light_sampling_models.push(LightSamplingModel {
                 kind: LightKind::Area,
-                payload: area_light_index,
+                geometry_kind: LightGeometryKind::Instance,
+                geometry_index: instance_index,
+                distribution_offset,
+                distribution_count: u32::try_from(bound_triangles.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU area-light distribution exceeds u32.")
+                })?,
+                total_area,
+                flags: u32::from(two_sided),
+            });
+            let emission_attr = push_spectrum_attribute(builder, "L", &emission)?;
+            let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
+            builder.lights.push(Light {
+                kind: LightKind::Area,
+                attributes: vec![emission_attr, scale_attr],
+                sampling_model,
             });
             builder.light_bound_inputs.push(LightBoundInput::AreaGroup {
                 handle: light_handle,
@@ -781,6 +849,7 @@ fn render_settings(
             .map_err(|_| PbrtError::error("GPU max depth does not fit in u32."))?,
         seed: u32::try_from(seed).map_err(|_| PbrtError::error("GPU seed does not fit in u32."))?,
         light_sampler,
+        disable_wavelength_jitter: crate::options::PbrtOptions::get().disable_wavelength_jitter,
     })
 }
 
@@ -788,7 +857,7 @@ fn point_light(
     light: &NodeLight,
     parent_transform: &Transform,
     node_name: &str,
-) -> Result<(PointLight, f32, f32), PbrtError> {
+) -> Result<([f32; 3], Spectrum, f32, f32), PbrtError> {
     if light.name != "point" {
         return Err(PbrtError::error(&format!(
             "Unsupported GPU light \"{}\" on node \"{}\".",
@@ -821,36 +890,19 @@ fn point_light(
         scale *= power / (4.0 * std::f32::consts::PI);
     }
     let intensity_max = intensity.max_value() as f32;
-    let rgb = intensity.to_rgb();
-    let intensity = [
-        (rgb[0] * scale) as f32,
-        (rgb[1] * scale) as f32,
-        (rgb[2] * scale) as f32,
-    ];
-    if !position
-        .iter()
-        .chain(intensity.iter())
-        .all(|value| value.is_finite())
-    {
+    if !position.iter().all(|value| value.is_finite()) || !scale.is_finite() {
         return Err(PbrtError::error(&format!(
             "Point light on node \"{}\" contains a non-finite value.",
             node_name
         )));
     }
-    Ok((
-        PointLight {
-            position,
-            intensity,
-        },
-        intensity_max,
-        scale as f32,
-    ))
+    Ok((position, intensity, intensity_max, scale as f32))
 }
 
 fn area_light_record(
     light: &NodeAreaLight,
     node_name: &str,
-) -> Result<([f32; 3], f32, f32, bool), PbrtError> {
+) -> Result<(Spectrum, f32, f32, bool), PbrtError> {
     if light.name != "diffuse" {
         return Err(PbrtError::error(&format!(
             "Unsupported GPU area light \"{}\" on node \"{}\".",
@@ -883,21 +935,15 @@ fn area_light_record(
             "GPU area light power on node \"{node_name}\" is not implemented."
         )));
     }
-    let rgb = emission_spectrum.to_rgb();
     let emission_max = emission_spectrum.max_value() as f32;
-    let emission = [
-        (rgb[0] * scale) as f32,
-        (rgb[1] * scale) as f32,
-        (rgb[2] * scale) as f32,
-    ];
-    if !emission.iter().all(|value| value.is_finite()) {
+    if !scale.is_finite() {
         return Err(PbrtError::error(&format!(
             "GPU area light on node \"{}\" contains a non-finite emission value.",
             node_name
         )));
     }
     Ok((
-        emission,
+        emission_spectrum,
         emission_max,
         scale as f32,
         light.params.get_one_bool("twosided", false),
@@ -1120,36 +1166,29 @@ fn material_index(
     })?;
     let requested_kind = material_kind.unwrap_or(&source_material.kind);
     let source_kind = source_material.kind.as_str();
-    let (kind, attributes) =
-        match build_material_attributes(source_material, requested_kind, builder) {
-            Ok(attributes) => (requested_kind, attributes),
-            Err(error) if error.to_string().contains("unsupported") => {
-                log::warn!(
-                    concat!(
-                        "GPU material \"{}\" of kind \"{}\" is unsupported; ",
-                        "using diffuse reflectance (1, 1, 0)."
-                    ),
-                    source_material.name,
-                    requested_kind,
-                );
-                ("diffuse", {
-                    let index =
-                        u32::try_from(builder.attribute_tables.spectra.len()).map_err(|_| {
-                            PbrtError::error("Flat spectrum attribute table exceeds u32.")
-                        })?;
-                    builder
-                        .attribute_tables
-                        .spectra
-                        .push(SpectrumValue([1.0, 1.0, 0.0, 0.0]));
-                    vec![AttributeRef {
-                        kind: AttributeKind::Spectrum,
-                        index,
-                        name: "reflectance".to_string(),
-                    }]
-                })
-            }
-            Err(error) => return Err(error),
-        };
+    let supported = matches!(
+        requested_kind,
+        "diffuse" | "dielectric" | "thindielectric" | "conductor" | "coateddiffuse"
+    );
+    let (kind, attributes) = if !supported {
+        log::warn!(
+            concat!(
+                "GPU material \"{}\" of kind \"{}\" is unsupported; ",
+                "using diffuse reflectance (1, 1, 0)."
+            ),
+            source_material.name,
+            requested_kind,
+        );
+        ("diffuse", {
+            let yellow = Spectrum::from_rgb(&[1.0, 1.0, 0.0], SpectrumType::Albedo);
+            vec![push_spectrum_attribute(builder, "reflectance", &yellow)?]
+        })
+    } else {
+        (
+            requested_kind,
+            build_material_attributes(source_material, requested_kind, builder)?,
+        )
+    };
     let scattering_model = register_scattering_model(kind, builder)?;
     builder.materials.push(Material {
         kind: kind.to_string(),
@@ -1242,9 +1281,14 @@ fn push_scattering_model(builder: &mut FlatBuilder, node_id: u32) -> Result<u32,
     Ok(model_id)
 }
 
-fn diffuse_reflectance(source_material: &NodeMaterial) -> Result<[f32; 3], PbrtError> {
+fn diffuse_reflectance(source_material: &NodeMaterial) -> Result<Spectrum, PbrtError> {
     let default_reflectance = Spectrum::from(0.5);
-    spectrum_attribute(source_material, "reflectance", &default_reflectance)
+    spectrum_attribute(
+        source_material,
+        "reflectance",
+        &default_reflectance,
+        SpectrumType::Albedo,
+    )
 }
 
 fn reject_scalar_textures(source_material: &NodeMaterial, keys: &[&str]) -> Result<(), PbrtError> {
@@ -1270,23 +1314,27 @@ fn spectrum_attribute(
     source_material: &NodeMaterial,
     key: &str,
     default: &Spectrum,
-) -> Result<[f32; 3], PbrtError> {
+    spectrum_type: SpectrumType,
+) -> Result<Spectrum, PbrtError> {
     let has_texture = source_material.params.get_keys().iter().any(|stored_key| {
         source_material.params.get_key_type(stored_key) == "texture"
             && source_material.params.get_key_name(stored_key) == key
     });
     if !has_texture {
-        return Ok(source_material
-            .params
-            .get_one_spectrum(key, default)
-            .to_rgb());
+        return Ok(source_material.params.get_one_spectrum(key, default));
     }
     match super::UnsupportedTexturePolicy::from_environment()? {
         super::UnsupportedTexturePolicy::Error => Err(PbrtError::error(&format!(
             "Material \"{}\" uses unsupported texture attribute \"{key}\".",
             source_material.name
         ))),
-        super::UnsupportedTexturePolicy::DiagnosticMagenta => Ok([1.0, 0.0, 1.0]),
+        super::UnsupportedTexturePolicy::DiagnosticMagenta => {
+            log::warn!(
+                "Material \"{}\" texture attribute \"{key}\" uses diagnostic magenta.",
+                source_material.name
+            );
+            Ok(Spectrum::from_rgb(&[1.0, 0.0, 1.0], spectrum_type))
+        }
     }
 }
 

@@ -49,5 +49,6 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
     }
     store_sample_radiance(pixel_index, load_sample_radiance(pixel_index)
-        + ray.throughput * load_area_emission(area_light) * weight);
+        + ray.throughput * load_light_spectrum(light_handle, 0u, load_sample_lambda(pixel_index))
+            * load_light_scale(light_handle) * weight);
 }

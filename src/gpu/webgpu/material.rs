@@ -1,11 +1,11 @@
 use crate::util::error::PbrtError;
 
-use super::abi::{MaterialAttributeRef, MaterialRecord};
+use super::abi::{AttributeRef, MaterialRecord};
 use crate::gpu::ir::flat;
 
 pub struct MaterialTable {
     pub records: Vec<MaterialRecord>,
-    pub attributes: Vec<MaterialAttributeRef>,
+    pub attributes: Vec<AttributeRef>,
 }
 
 impl MaterialTable {
@@ -68,7 +68,7 @@ impl MaterialTable {
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
                     };
-                    attributes.push(MaterialAttributeRef {
+                    attributes.push(AttributeRef {
                         kind,
                         index: attr.index,
                     });

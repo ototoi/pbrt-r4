@@ -29,7 +29,7 @@ pub fn resolve_light_sampler(
 
 pub fn resolve_scene_light_sampler(
     settings: &flat::RenderSettings,
-    registered_lights: &[flat::LightRecord],
+    registered_lights: &[flat::Light],
 ) -> Result<LightSamplerKind, PbrtError> {
     resolve_light_sampler(&settings.light_sampler, registered_lights.len())
 }

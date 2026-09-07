@@ -24,9 +24,9 @@ struct ViewportUniform {
     sample_index: u32,
     max_depth: u32,
     seed: u32,
-    _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
+    disable_wavelength_jitter: u32,
+    mode: u32,
+    _padding: u32,
 };
 
 struct FilmUniform {
@@ -51,10 +51,6 @@ struct MaterialTableUniform {
 struct LightTableUniform {
     light_record_offset_words: u32,
     light_count: u32,
-    point_light_offset_words: u32,
-    point_light_count: u32,
-    area_light_offset_words: u32,
-    area_light_count: u32,
     light_sampler_kind: u32,
     light_sampler_data_offset: u32,
     light_bvh_node_offset: u32,
@@ -98,7 +94,7 @@ struct ScatteringModelRecord {
 };
 
 struct MaterialRecord { kind_tag: u32, attribute_offset: u32, attribute_count: u32, scattering_model: u32, };
-struct MaterialAttributeRef { kind: u32, index: u32, };
+struct AttributeRef { kind: u32, index: u32, };
 
 struct ScatteringNodeRecord {
     kind_tag: u32,
@@ -147,24 +143,22 @@ struct SurfaceWorkItem {
     _padding: vec2<u32>,
 };
 
-struct PointLight {
-    position: vec4<f32>,
-    intensity: vec4<f32>,
-};
-
 struct LightRecord {
     kind: u32,
-    payload: u32,
-    _padding: vec2<u32>,
+    attribute_offset: u32,
+    attribute_count: u32,
+    sampling_model: u32,
 };
 
-struct AreaLight {
-    instance: u32,
+struct LightSamplingModel {
+    kind: u32,
+    geometry_kind: u32,
+    geometry_index: u32,
     distribution_offset_words: u32,
     distribution_count: u32,
     total_area: f32,
-    emission: vec3<f32>,
     flags: u32,
+    reserved: u32,
 };
 
 struct TriangleDistributionEntry {
@@ -217,6 +211,8 @@ struct RenderError {
 
 struct PixelSampleState {
     radiance: vec4<f32>,
+    lambda: vec4<f32>,
+    lambda_pdf: vec4<f32>,
     direct: vec4<f32>,
     indirect: vec4<f32>,
 };
