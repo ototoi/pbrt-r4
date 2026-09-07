@@ -6,6 +6,8 @@ const EVALUATE_MATERIALS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_materials.wgsl");
 const GENERATE_PRIMARY_RAYS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
+const ESCAPED_TEST_SHADER: &str =
+    r#"@compute @workgroup_size(1) fn test_stage() { append_escaped_ray(0u); }"#;
 const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
@@ -16,7 +18,11 @@ const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
 const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
-const COMMON_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/common.wgsl");
+const COMMON_SHADER: &str = concat!(
+    include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
+    include_str!("../src/gpu/webgpu/shaders/wavefront.wgsl")
+);
+const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
 
 #[test]
 fn immutable_scene_metadata_is_separate_from_viewport_state() {
@@ -28,19 +34,29 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(!viewport.contains("light_count"));
     assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
     assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
-    assert!(COMMON_SHADER.contains("@group(0) @binding(11)"));
-    assert!(COMMON_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
-    assert!(COMMON_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(11)"));
+    assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
+    assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
     assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
-    assert!(COMMON_SHADER.contains("@group(0) @binding(13)"));
-    assert!(COMMON_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(13)"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
     assert!(COMMON_SHADER.contains("struct MaterialAttributeRef {"));
-    assert!(COMMON_SHADER
+    assert!(RESOURCES_SHADER
         .contains("var<storage, read> material_attributes: array<MaterialAttributeRef>;"));
-    assert!(COMMON_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
     assert!(!COMMON_SHADER.contains("scene_data"));
-    assert!(COMMON_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
     assert!(!COMMON_SHADER.contains("material_light_data"));
+}
+
+#[test]
+fn composed_stage_contains_only_referenced_resources() {
+    let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    assert!(source.contains("var<uniform> camera: CameraUniform;"));
+    assert!(source.contains("var<uniform> viewport: ViewportUniform;"));
+    assert!(source.contains("var<storage, read_write> wavefront_queue: array<atomic<u32>>;"));
+    assert!(!source.contains("var<storage, read> light_records: array<LightRecord>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
 }
 
 #[test]
@@ -54,7 +70,7 @@ fn shadow_direction_is_loaded_from_its_vec4_aligned_queue_slot() {
 
 #[test]
 fn escaped_queue_follows_the_classification_queues() {
-    let source = compose_source(INTERSECT_SHADOW_SHADER);
+    let source = compose_source(ESCAPED_TEST_SHADER);
     let escaped_offset = source
         .split("fn escaped_data_offset() -> u32 {")
         .nth(1)
