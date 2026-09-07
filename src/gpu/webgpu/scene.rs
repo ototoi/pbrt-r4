@@ -136,10 +136,16 @@ impl Scene {
             })
             .collect::<Vec<_>>();
         let mut node_attribute_ranges = vec![(0u32, 0u32); flat.scattering_nodes.len()];
-        for (material_index, material) in materials.iter().enumerate() {
+        for (material_index, _material) in materials.iter().enumerate() {
             let Some(flat_material) = flat.materials.get(material_index) else {
                 continue;
             };
+            let attribute_offset = flat
+                .materials
+                .iter()
+                .take(material_index)
+                .map(|material| material.attributes.len() as u32)
+                .sum::<u32>();
             let mut pending;
             let Some(model) = flat
                 .scattering_models
@@ -153,7 +159,7 @@ impl Scene {
                     continue;
                 };
                 node_attribute_ranges[node_id as usize] =
-                    (material.attribute_offset, material.attribute_count);
+                    (attribute_offset, flat_material.attributes.len() as u32);
                 let end = node.child_offset.saturating_add(node.child_count);
                 if let Some(children) = flat
                     .scattering_child_refs
