@@ -1,7 +1,8 @@
 use super::{
-    Camera, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightSamplingModel, Material,
-    Output, PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel, ScatteringChildRefs,
-    ScatteringModel, ScatteringNode, TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
+    AttributeRef, Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds,
+    LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
+    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode,
+    TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,7 +17,7 @@ pub struct Scene {
     pub triangle_distributions: Vec<TriangleDistributionEntry>,
     pub lights: Vec<Light>,
     /// One upload arena shared by material and light attribute references.
-    pub attribute_refs: Vec<super::AttributeRef>,
+    pub attribute_refs: Vec<AttributeRef>,
     pub light_bounds: Vec<LightBounds>,
     pub light_bvh: LightBVH,
     pub vertices: Vec<Vertex>,
@@ -26,7 +27,7 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub scalar_attributes: Vec<f32>,
     pub texture_attributes: Vec<u32>,
-    pub spectra: Vec<super::DenseSpectrum>,
+    pub spectrum_attributes: Vec<DenseSpectrum>,
     pub scattering_models: Vec<ScatteringModel>,
     pub scattering_nodes: Vec<ScatteringNode>,
     pub scattering_child_refs: ScatteringChildRefs,
@@ -52,7 +53,7 @@ impl Scene {
         let area_count = self
             .lights
             .iter()
-            .filter(|light| light.kind == super::LightKind::Area)
+            .filter(|light| light.kind == LightKind::Area)
             .count();
         if self.primitive_distribution_map.offsets.len() != area_count + 1 {
             return Err(crate::util::error::PbrtError::error(

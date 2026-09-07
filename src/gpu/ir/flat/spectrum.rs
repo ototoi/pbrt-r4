@@ -23,8 +23,8 @@ pub struct DenseSpectrum {
     pub flags: u32,
 }
 
-pub fn validate_dense_spectra(spectra: &[DenseSpectrum]) -> Result<(), PbrtError> {
-    if spectra
+pub fn validate_dense_spectra(spectrum_attributes: &[DenseSpectrum]) -> Result<(), PbrtError> {
+    if spectrum_attributes
         .iter()
         .flat_map(|spectrum| spectrum.samples)
         .any(|sample| !sample.is_finite())
@@ -37,13 +37,13 @@ pub fn validate_dense_spectra(spectra: &[DenseSpectrum]) -> Result<(), PbrtError
 }
 
 pub fn evaluate_dense_spectrum(
-    spectra: &[DenseSpectrum],
+    spectrum_attributes: &[DenseSpectrum],
     id: SpectrumId,
     lambda: f32,
 ) -> Result<f32, PbrtError> {
     let spectrum =
         usize::try_from(id).map_err(|_| PbrtError::error("Spectrum ID does not fit usize."))?;
-    let samples = spectra
+    let samples = spectrum_attributes
         .get(spectrum)
         .ok_or_else(|| PbrtError::error("Spectrum ID is outside the dense table."))?;
     if !(DENSE_LAMBDA_MIN as f32..=DENSE_LAMBDA_MAX as f32).contains(&lambda) {
@@ -62,12 +62,12 @@ impl DenseSpectrum {
 }
 
 #[derive(Default)]
-pub struct SpectrumTableBuilder {
+pub struct DenseSpectrumBuilder {
     table: Vec<DenseSpectrum>,
     ids: HashMap<SpectrumKey, SpectrumId>,
 }
 
-impl SpectrumTableBuilder {
+impl DenseSpectrumBuilder {
     pub fn intern(&mut self, spectrum: &Spectrum) -> Result<SpectrumId, PbrtError> {
         let flags = if spectrum.is_constant_spectrum() {
             SPECTRUM_FLAG_CONSTANT

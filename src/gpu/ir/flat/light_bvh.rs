@@ -1,11 +1,11 @@
-use super::{Light, LightBounds, INVALID_INDEX};
+use super::{Bounds3, Light, LightBounds, INVALID_INDEX};
 use crate::util::error::PbrtError;
 
 const N_BUCKETS: usize = 12;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightBVH {
-    pub all_bounds: Option<super::Bounds3>,
+    pub all_bounds: Option<Bounds3>,
     pub nodes: Vec<LightBVHNode>,
     pub handle_to_leaf: Vec<u32>,
     pub bounded_handles: Vec<u32>,
@@ -76,7 +76,7 @@ pub fn build_light_bvh(
     }
 
     let mut bounded_handles = Vec::new();
-    let mut all_bounds: Option<super::Bounds3> = None;
+    let mut all_bounds: Option<Bounds3> = None;
     for (handle, bounds) in light_bounds.iter().copied().enumerate() {
         if bounds.phi > 0.0 {
             let handle = u32::try_from(handle)
@@ -371,7 +371,7 @@ fn union_bucket_range(
     result
 }
 
-fn evaluate_cost(bounds: LightBounds, parent: super::Bounds3, dimension: usize) -> f32 {
+fn evaluate_cost(bounds: LightBounds, parent: Bounds3, dimension: usize) -> f32 {
     let diagonal = parent.diagonal();
     if diagonal[dimension] == 0.0 {
         return 0.0;

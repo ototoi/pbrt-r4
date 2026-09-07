@@ -1,11 +1,11 @@
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
-    transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, Camera, Geometry,
-    Instance, Light, LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Material,
-    PrimitiveDistributionMap, RenderSettings, ResolvedScatteringModel, ScatteringChildRefs,
-    ScatteringModel, ScatteringNode, Scene, SpectrumTableBuilder, Transform,
-    TriangleDistributionEntry, Vertex, Viewport, EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR,
-    EVENT_TRANSMISSION, INVALID_INDEX,
+    transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, Camera,
+    DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput, LightGeometryKind,
+    LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
+    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene,
+    Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
+    EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
@@ -85,7 +85,7 @@ pub fn flatten_node_with_material_override(
         attribute_refs,
         scalar_attributes: builder.scalar_attributes,
         texture_attributes: builder.texture_attributes,
-        spectra: builder.spectrum_table_builder.finish(),
+        spectrum_attributes: builder.spectrum_table_builder.finish(),
         scattering_models: builder.scattering_models,
         scattering_nodes: builder.scattering_nodes,
         scattering_child_refs: ScatteringChildRefs {
@@ -366,7 +366,7 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
 struct FlatBuilder {
     camera: Option<Camera>,
     viewport: Option<Viewport>,
-    film: Option<super::Film>,
+    film: Option<Film>,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     geometries: Vec<Geometry>,
@@ -376,11 +376,11 @@ struct FlatBuilder {
     material_attributes: Vec<Vec<AttributeRef>>,
     scalar_attributes: Vec<f32>,
     texture_attributes: Vec<u32>,
-    spectrum_table_builder: SpectrumTableBuilder,
+    spectrum_table_builder: DenseSpectrumBuilder,
     scattering_models: Vec<ScatteringModel>,
     scattering_nodes: Vec<ScatteringNode>,
     scattering_child_refs: Vec<u32>,
-    output: Option<super::Output>,
+    output: Option<Output>,
     source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
@@ -559,7 +559,7 @@ fn flatten_node_ref(
         }
         if builder
             .output
-            .replace(super::Output {
+            .replace(Output {
                 filename: output.filename,
             })
             .is_some()
@@ -591,7 +591,7 @@ fn flatten_node_ref(
         for (id, response) in sensor_response.iter_mut().zip(sensor.response_spectra()) {
             *id = builder.spectrum_table_builder.intern_dense(response, 0)?;
         }
-        builder.film = Some(super::Film {
+        builder.film = Some(Film {
             sensor_response,
             output_rgb_from_sensor_rgb: sensor.output_rgb_from_sensor_rgb(),
             imaging_ratio: sensor.imaging_ratio(),
@@ -1325,12 +1325,12 @@ fn spectrum_attribute(
     if !has_texture {
         return Ok(source_material.params.get_one_spectrum(key, default));
     }
-    match super::UnsupportedTexturePolicy::from_environment()? {
-        super::UnsupportedTexturePolicy::Error => Err(PbrtError::error(&format!(
+    match UnsupportedTexturePolicy::from_environment()? {
+        UnsupportedTexturePolicy::Error => Err(PbrtError::error(&format!(
             "Material \"{}\" uses unsupported texture attribute \"{key}\".",
             source_material.name
         ))),
-        super::UnsupportedTexturePolicy::DiagnosticMagenta => {
+        UnsupportedTexturePolicy::DiagnosticMagenta => {
             log::warn!(
                 "Material \"{}\" texture attribute \"{key}\" uses diagnostic magenta.",
                 source_material.name
