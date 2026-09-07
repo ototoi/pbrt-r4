@@ -64,6 +64,19 @@ fn webgpu_storage_array_strides_are_16_byte_aligned() {
 }
 
 #[test]
+fn webgpu_work_item_padding_uses_scalar_shader_fields() {
+    let types = include_str!("../src/gpu/webgpu/shaders/types.wgsl");
+    assert!(!types.contains("_padding: vec3<u32>"));
+    assert!(!types.contains("_padding0: vec3<u32>"));
+    assert!(!types.contains("_padding1: vec3<u32>"));
+    assert!(!types.contains("_padding: array<u32, 3>"));
+    assert!(!types.contains("_padding0: array<u32, 3>"));
+    assert!(!types.contains("_padding1: array<u32, 3>"));
+    assert!(types.contains("_padding2: u32"));
+    assert!(types.contains("_padding5: u32"));
+}
+
+#[test]
 fn webgpu_normal_matrix_is_inverse_transpose_of_linear_transform() {
     let normal = inverse_transpose_linear(
         [

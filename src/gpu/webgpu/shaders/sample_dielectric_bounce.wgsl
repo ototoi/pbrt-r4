@@ -70,7 +70,7 @@ fn sample_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<u32>)
         ray.inv_w_u,
         ray.inv_w_u / next_pdf,
         next_pdf,
-        vec3<u32>(0u, 0u, 0u),
+        0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
