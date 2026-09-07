@@ -39,7 +39,7 @@ const SPECTRUM_TEST_SHADER: &str = r#"
 #[test]
 fn dense_spectrum_module_declares_one_structured_table() {
     let source = compose_source(SPECTRUM_TEST_SHADER);
-    assert!(source.contains("var<storage, read> spectra: array<DenseSpectrum>;"));
+    assert!(source.contains("var<storage, read> spectrum_attributes: array<DenseSpectrum>;"));
     assert!(source.contains("struct DenseSpectrum"));
     assert!(source.contains("fn safe_div_spectrum"));
     assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));

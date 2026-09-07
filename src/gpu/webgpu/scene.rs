@@ -37,7 +37,7 @@ pub struct Scene {
     pub scattering_model_buffer: wgpu::Buffer,
     pub scattering_node_buffer: wgpu::Buffer,
     pub scattering_child_buffer: wgpu::Buffer,
-    pub spectrum_sample_buffer: wgpu::Buffer,
+    pub spectrum_attributes_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
     pub light_record_buffer: wgpu::Buffer,
     pub light_sampling_model_buffer: wgpu::Buffer,
@@ -286,20 +286,21 @@ impl Scene {
                 contents: buffer_contents(&texture_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        flat::validate_dense_spectra(&flat.spectra)?;
-        let spectra = flat
-            .spectra
+        flat::validate_dense_spectra(&flat.spectrum_attributes)?;
+        let spectrum_attributes = flat
+            .spectrum_attributes
             .iter()
             .map(|spectrum| DenseSpectrum {
                 samples: spectrum.samples,
                 flags: spectrum.flags,
             })
             .collect::<Vec<_>>();
-        let spectrum_sample_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 dense spectra SBO"),
-            contents: buffer_contents(&spectra),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let spectrum_attributes_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 dense spectra SBO"),
+                contents: buffer_contents(&spectrum_attributes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let distribution_entries = flat
             .triangle_distributions
             .iter()
@@ -428,7 +429,7 @@ impl Scene {
             scattering_model_buffer,
             scattering_node_buffer,
             scattering_child_buffer,
-            spectrum_sample_buffer,
+            spectrum_attributes_buffer,
             texture_attribute_buffer,
             light_record_buffer,
             light_sampling_model_buffer,

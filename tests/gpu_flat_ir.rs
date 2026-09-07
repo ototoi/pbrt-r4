@@ -100,10 +100,10 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 
     assert_eq!(scene.vertices.len(), 6);
     assert_eq!(scene.indices, vec![0, 1, 2, 3, 4, 5]);
-    assert_eq!(scene.spectra.len(), 5);
+    assert_eq!(scene.spectrum_attributes.len(), 5);
     assert_eq!(scene.film.sensor_response, [0, 1, 2]);
     assert_eq!(scene.film.imaging_ratio, 1.0);
-    validate_dense_spectra(&scene.spectra).unwrap();
+    validate_dense_spectra(&scene.spectrum_attributes).unwrap();
     assert_eq!(scene.scalar_attributes.len(), 0);
     assert_eq!(scene.materials[0].attributes.len(), 1);
     assert_eq!(scene.materials[1].attributes.len(), 1);
@@ -434,9 +434,11 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
     assert_eq!(scene.materials[0].attributes[0].name, "reflectance");
     let attribute = &scene.materials[0].attributes[0];
     let base = attribute.index as usize * pbrt_r4::gpu::ir::flat::DENSE_SAMPLE_COUNT;
-    assert!(scene.spectra[attribute.index as usize].samples[..3]
-        .iter()
-        .all(|v| v.is_finite()));
+    assert!(
+        scene.spectrum_attributes[attribute.index as usize].samples[..3]
+            .iter()
+            .all(|v| v.is_finite())
+    );
     assert_eq!(scene.materials[0].scattering_model, 0);
     assert_eq!(scene.scattering_models[0].surface_root, 0);
     assert_eq!(scene.scattering_nodes[0].kind, "diffuse");
@@ -475,7 +477,9 @@ fn flatten_node_extracts_dielectric_eta() {
     assert_eq!(scene.materials[0].attributes[0].name, "eta");
     let attribute = &scene.materials[0].attributes[0];
     assert!(
-        (evaluate_dense_spectrum(&scene.spectra, attribute.index, 550.0).unwrap() - 1.33).abs()
+        (evaluate_dense_spectrum(&scene.spectrum_attributes, attribute.index, 550.0).unwrap()
+            - 1.33)
+            .abs()
             < 1e-5
     );
     assert_eq!(scene.materials[0].scattering_model, 0);
@@ -666,9 +670,11 @@ fn flatten_node_extracts_conductor_attributes() {
     assert_eq!(scene.scattering_nodes[0].kind, "conductor");
     for attribute in &scene.materials[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::ir::flat::DENSE_SAMPLE_COUNT;
-        assert!(scene.spectra[attribute.index as usize].samples[..3]
-            .iter()
-            .all(|v| v.is_finite() && *v > 0.0));
+        assert!(
+            scene.spectrum_attributes[attribute.index as usize].samples[..3]
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.0)
+        );
     }
     assert_eq!(scene.scalar_attributes[0], 0.0);
 }
