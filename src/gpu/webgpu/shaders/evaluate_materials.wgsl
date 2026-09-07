@@ -22,7 +22,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(surface.material, lambda);
     }
-    let material_node = load_material_surface_node(surface.material);
     let samples = load_ray_samples(pixel_index);
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
         return;
@@ -113,11 +112,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
     if (material_kind == MATERIAL_KIND_CONDUCTOR) {
-        let eta = load_conductor_eta(material_node, lambda);
-        let k = load_conductor_k(material_node, lambda);
+        let eta = load_conductor_eta(surface.material, lambda);
+        let k = load_conductor_k(surface.material, lambda);
         let h = scattering_local(normalize(wo + wi), shading_n);
         let fresnel = conductor_fresnel(dot(scattering_local(wo, shading_n), h), eta, k);
-        let alpha = max(load_conductor_roughness(material_node), 1e-3);
+        let alpha = max(load_conductor_roughness(surface.material), 1e-3);
         let cos_h = max(abs(h.z), 1e-5);
         let alpha2 = alpha * alpha;
         let d = alpha2 / (PI * pow(cos_h * cos_h * (alpha2 - 1.0) + 1.0, 2.0));
