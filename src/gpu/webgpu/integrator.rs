@@ -198,6 +198,11 @@ impl WavefrontPathIntegrator {
                 include_str!("shaders/sample_dielectric_bounce.wgsl"),
             ),
             (
+                "sample_conductor_bounce",
+                &pipeline.sample_conductor_bounce,
+                include_str!("shaders/sample_conductor_bounce.wgsl"),
+            ),
+            (
                 "sample_layered_bounce",
                 &pipeline.sample_layered_bounce,
                 include_str!("shaders/sample_layered_bounce.wgsl"),
@@ -369,6 +374,13 @@ impl WavefrontPathIntegrator {
                         &mut encoder,
                         &self.pipeline.sample_dielectric_bounce.pipeline,
                         self.bind_group("sample_dielectric_bounce"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_conductor_bounce.pipeline,
+                        self.bind_group("sample_conductor_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );

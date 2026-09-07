@@ -116,6 +116,35 @@ impl Scene {
                 padding: [0; 2],
             })
             .collect::<Vec<_>>();
+        let mut node_attribute_ranges = vec![(0u32, 0u32); flat.scattering_nodes.len()];
+        for (material_index, material) in materials.iter().enumerate() {
+            let Some(flat_material) = flat.materials.get(material_index) else {
+                continue;
+            };
+            let mut pending;
+            let Some(model) = flat
+                .scattering_models
+                .get(flat_material.scattering_model as usize)
+            else {
+                continue;
+            };
+            pending = vec![model.surface_root];
+            while let Some(node_id) = pending.pop() {
+                let Some(node) = flat.scattering_nodes.get(node_id as usize) else {
+                    continue;
+                };
+                node_attribute_ranges[node_id as usize] =
+                    (material.attribute_offset, material.attribute_count);
+                let end = node.child_offset.saturating_add(node.child_count);
+                if let Some(children) = flat
+                    .scattering_child_refs
+                    .node_ids
+                    .get(node.child_offset as usize..end as usize)
+                {
+                    pending.extend(children.iter().copied());
+                }
+            }
+        }
         let scattering_nodes = flat
             .scattering_nodes
             .iter()
@@ -124,40 +153,10 @@ impl Scene {
                 Ok(ScatteringNodeRecord {
                     kind_tag: scattering_node_tag(&node.kind)?,
                     event_flags: node.event_flags,
-                    attribute_offset: flat
-                        .materials
-                        .iter()
-                        .enumerate()
-                        .find_map(|(material_index, material)| {
-                            let model = flat
-                                .scattering_models
-                                .get(material.scattering_model as usize)?;
-                            let root = flat.scattering_nodes.get(model.surface_root as usize)?;
-                            let owns = root.child_offset <= node_id as u32
-                                && (node_id as u32) < root.child_offset + root.child_count;
-                            (model.surface_root == node_id as u32 || owns)
-                                .then(|| materials.get(material_index).map(|m| m.attribute_offset))
-                                .flatten()
-                        })
-                        .unwrap_or(0),
+                    attribute_offset: node_attribute_ranges[node_id].0,
                     child_offset: node.child_offset,
                     child_count: node.child_count,
-                    attribute_count: flat
-                        .materials
-                        .iter()
-                        .enumerate()
-                        .find_map(|(material_index, material)| {
-                            let model = flat
-                                .scattering_models
-                                .get(material.scattering_model as usize)?;
-                            let root = flat.scattering_nodes.get(model.surface_root as usize)?;
-                            let owns = root.child_offset <= node_id as u32
-                                && (node_id as u32) < root.child_offset + root.child_count;
-                            (model.surface_root == node_id as u32 || owns)
-                                .then(|| materials.get(material_index).map(|m| m.attribute_count))
-                                .flatten()
-                        })
-                        .unwrap_or(0),
+                    attribute_count: node_attribute_ranges[node_id].1,
                     padding: [0; 2],
                 })
             })

@@ -17,6 +17,8 @@ const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_layered_bounce.wgsl");
 const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
+const SAMPLE_CONDUCTOR_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_conductor_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const COMMON_SHADER: &str = concat!(
     include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
@@ -165,6 +167,16 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
+}
+
+#[test]
+fn conductor_shader_uses_complex_fresnel_attributes() {
+    let source = compose_source(SAMPLE_CONDUCTOR_BOUNCE_SHADER);
+    assert!(source.contains("MATERIAL_KIND_CONDUCTOR"));
+    assert!(source.contains("load_conductor_eta"));
+    assert!(source.contains("load_conductor_k"));
+    assert!(source.contains("conductor_fresnel"));
+    assert!(source.contains("fn sample_conductor_bounce"));
 }
 
 #[test]

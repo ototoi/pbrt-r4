@@ -170,25 +170,43 @@ fn build_material_attributes(
             }
             Ok(vec![push_scalar("eta", eta)?])
         }
-        "coateddiffuse" => {
-            reject_scalar_textures(
-                source_material,
-                &["thickness", "eta", "g", "maxdepth", "nsamples"],
-            )?;
-            if source_material.params.has_parameter("roughness")
-                || source_material.params.has_parameter("uroughness")
-                || source_material.params.has_parameter("vroughness")
-            {
+        "conductor" => {
+            reject_scalar_textures(source_material, &["roughness", "uroughness", "vroughness"])?;
+            let eta = spectrum_attribute(source_material, "eta", &Spectrum::from(0.2))?;
+            let k = spectrum_attribute(source_material, "k", &Spectrum::from(3.0))?;
+            let roughness = source_material.params.get_one_float("roughness", 0.0) as f32;
+            if !roughness.is_finite() || roughness < 0.0 {
                 return Err(PbrtError::error(&format!(
-                    "Material \"{}\" uses unsupported coateddiffuse roughness.",
+                    "Material \"{}\" has invalid conductor roughness.",
                     source_material.name
                 )));
             }
+            Ok(vec![
+                push_spectrum("eta", eta)?,
+                push_spectrum("k", k)?,
+                push_scalar("roughness", roughness)?,
+            ])
+        }
+        "coateddiffuse" => {
+            reject_scalar_textures(
+                source_material,
+                &[
+                    "thickness",
+                    "eta",
+                    "g",
+                    "maxdepth",
+                    "nsamples",
+                    "roughness",
+                    "uroughness",
+                    "vroughness",
+                ],
+            )?;
             let thickness = source_material.params.get_one_float("thickness", 0.01) as f32;
             let eta = source_material.params.get_one_float("eta", 1.5) as f32;
             let g = source_material.params.get_one_float("g", 0.0) as f32;
             let max_depth = source_material.params.get_one_int("maxdepth", 10);
             let n_samples = source_material.params.get_one_int("nsamples", 1);
+            let roughness = source_material.params.get_one_float("roughness", 0.0) as f32;
             let albedo = spectrum_attribute(source_material, "albedo", &Spectrum::from(0.0))?;
             if !thickness.is_finite()
                 || thickness <= 0.0
@@ -199,6 +217,8 @@ fn build_material_attributes(
                 || g >= 1.0
                 || max_depth <= 0
                 || n_samples <= 0
+                || !roughness.is_finite()
+                || roughness < 0.0
                 || !albedo
                     .iter()
                     .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
@@ -225,6 +245,7 @@ fn build_material_attributes(
                 "reflectance",
                 diffuse_reflectance(source_material)?,
             )?);
+            refs.push(push_scalar("roughness", roughness)?);
             Ok(refs)
         }
         _ => Err(PbrtError::error(&format!(
@@ -1138,6 +1159,7 @@ fn register_scattering_model(kind: &str, builder: &mut FlatBuilder) -> Result<u3
     let event_flags = match kind {
         "diffuse" => EVENT_REFLECTION | EVENT_DIFFUSE,
         "dielectric" | "thindielectric" => EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_SPECULAR,
+        "conductor" => EVENT_REFLECTION | EVENT_SPECULAR,
         _ => {
             return Err(PbrtError::error(&format!(
                 "Unsupported GPU material kind: {kind}."

@@ -11,13 +11,15 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let material_kind = load_material_kind(surface.material);
     if (surface.hit == 0u
-        || (material_kind != MATERIAL_KIND_DIFFUSE && material_kind != MATERIAL_KIND_LAYERED)) {
+        || (material_kind != MATERIAL_KIND_DIFFUSE && material_kind != MATERIAL_KIND_LAYERED
+            && material_kind != MATERIAL_KIND_CONDUCTOR)) {
         return;
     }
     var reflectance = vec3<f32>(0.0);
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(surface.material);
     }
+    let material_node = load_material_surface_node(surface.material);
     let ray_index = find_current_ray_for_pixel(pixel_index);
     if (ray_index == 0xffffffffu) {
         return;
@@ -113,6 +115,22 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
+    if (material_kind == MATERIAL_KIND_CONDUCTOR) {
+        let eta = load_conductor_eta(material_node);
+        let k = load_conductor_k(material_node);
+        let h = scattering_local(normalize(wo + wi), shading_n);
+        let fresnel = conductor_fresnel(dot(scattering_local(wo, shading_n), h), eta, k);
+        let alpha = max(load_conductor_roughness(material_node), 1e-3);
+        let cos_h = max(abs(h.z), 1e-5);
+        let alpha2 = alpha * alpha;
+        let d = alpha2 / (PI * pow(cos_h * cos_h * (alpha2 - 1.0) + 1.0, 2.0));
+        let cos_o = max(abs(cos_wo), 1e-5);
+        let cos_i = max(abs(cos_wi), 1e-5);
+        let g_o = 2.0 * cos_o / (cos_o + sqrt(cos_o * cos_o + alpha2 * (1.0 - cos_o * cos_o)));
+        let g_i = 2.0 * cos_i / (cos_i + sqrt(cos_i * cos_i + alpha2 * (1.0 - cos_i * cos_i)));
+        f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
+        bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
+    }
     if (material_kind == MATERIAL_KIND_LAYERED) {
         let data = load_layered_bxdf(surface.material);
         let eta = load_layered_eta(surface.material);
