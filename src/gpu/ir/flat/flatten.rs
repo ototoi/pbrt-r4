@@ -3,9 +3,8 @@ use super::{
     transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, Camera,
     DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput, LightGeometryKind,
     LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
-    ResolvedScatteringModel, ScatteringChildRefs, ScatteringModel, ScatteringNode, Scene,
-    Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
-    EVENT_DIFFUSE, EVENT_REFLECTION, EVENT_SPECULAR, EVENT_TRANSMISSION, INVALID_INDEX,
+    Scene, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
+    INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
@@ -86,62 +85,15 @@ pub fn flatten_node_with_material_override(
         scalar_attributes: builder.scalar_attributes,
         texture_attributes: builder.texture_attributes,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
-        scattering_models: builder.scattering_models,
-        scattering_nodes: builder.scattering_nodes,
-        scattering_child_refs: ScatteringChildRefs {
-            node_ids: builder.scattering_child_refs,
-        },
-        resolved_scattering_models: Vec::new(),
         primitive_distribution_map: PrimitiveDistributionMap {
             offsets: vec![0],
             entries: Vec::new(),
         },
     };
     let mut scene = scene;
-    scene.resolved_scattering_models = resolve_scattering_models(&scene)?;
     scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
-    scene.validate_scattering_models()?;
     scene.validate_static_views()?;
     Ok(scene)
-}
-
-fn resolve_scattering_models(scene: &Scene) -> Result<Vec<ResolvedScatteringModel>, PbrtError> {
-    scene
-        .scattering_models
-        .iter()
-        .enumerate()
-        .map(|(model_index, model)| {
-            let root = scene
-                .scattering_nodes
-                .get(model.surface_root as usize)
-                .ok_or_else(|| {
-                    PbrtError::error(&format!(
-                        "Scattering model {model_index} has an invalid surface root."
-                    ))
-                })?;
-            let end = root
-                .child_offset
-                .checked_add(root.child_count)
-                .ok_or_else(|| PbrtError::error("Scattering child range overflowed."))?;
-            let child_nodes = scene
-                .scattering_child_refs
-                .node_ids
-                .get(root.child_offset as usize..end as usize)
-                .ok_or_else(|| {
-                    PbrtError::error(&format!(
-                        "Scattering model {model_index} has an invalid child range."
-                    ))
-                })?
-                .to_vec();
-            Ok(ResolvedScatteringModel {
-                root_node: model.surface_root,
-                root_kind: root.kind.clone(),
-                event_flags: root.event_flags,
-                data_index: root.data_index,
-                child_nodes,
-            })
-        })
-        .collect()
 }
 
 fn push_scalar_attribute(
@@ -312,13 +264,9 @@ struct FlatBuilder {
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     materials: Vec<Material>,
-    material_attributes: Vec<Vec<AttributeRef>>,
     scalar_attributes: Vec<f32>,
     texture_attributes: Vec<u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
-    scattering_models: Vec<ScatteringModel>,
-    scattering_nodes: Vec<ScatteringNode>,
-    scattering_child_refs: Vec<u32>,
     output: Option<Output>,
     source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
@@ -1153,72 +1101,13 @@ fn material_index(
             build_material_attributes(source_material, requested_kind, builder)?,
         )
     };
-    let scattering_model = register_scattering_model(kind, builder)?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
-        scattering_model,
         attributes: attributes.clone(),
     });
-    builder.material_attributes.push(attributes);
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
-}
-
-fn register_scattering_model(kind: &str, builder: &mut FlatBuilder) -> Result<u32, PbrtError> {
-    let event_flags = match kind {
-        "diffuse" => EVENT_REFLECTION | EVENT_DIFFUSE,
-        "dielectric" | "thindielectric" => EVENT_REFLECTION | EVENT_TRANSMISSION | EVENT_SPECULAR,
-        "conductor" => EVENT_REFLECTION | EVENT_SPECULAR,
-        _ => {
-            return Err(PbrtError::error(&format!(
-                "Unsupported GPU material kind: {kind}."
-            )))
-        }
-    };
-    let node_id = push_scattering_node(builder, kind, event_flags, 0)?;
-    push_scattering_model(builder, node_id)
-}
-
-fn push_scattering_node(
-    builder: &mut FlatBuilder,
-    kind: &str,
-    event_flags: u32,
-    data_index: u32,
-) -> Result<u32, PbrtError> {
-    let child_offset = u32::try_from(builder.scattering_child_refs.len())
-        .map_err(|_| PbrtError::error("The flattened scattering-child table exceeds u32."))?;
-    push_scattering_node_with_children(builder, kind, event_flags, data_index, child_offset, 0)
-}
-
-fn push_scattering_node_with_children(
-    builder: &mut FlatBuilder,
-    kind: &str,
-    event_flags: u32,
-    data_index: u32,
-    child_offset: u32,
-    child_count: u32,
-) -> Result<u32, PbrtError> {
-    let node_id = u32::try_from(builder.scattering_nodes.len())
-        .map_err(|_| PbrtError::error("The flattened scattering-node table exceeds u32."))?;
-    builder.scattering_nodes.push(ScatteringNode {
-        kind: kind.to_string(),
-        event_flags,
-        data_index,
-        child_offset,
-        child_count,
-    });
-    Ok(node_id)
-}
-
-fn push_scattering_model(builder: &mut FlatBuilder, node_id: u32) -> Result<u32, PbrtError> {
-    let model_id = u32::try_from(builder.scattering_models.len())
-        .map_err(|_| PbrtError::error("The flattened scattering-model table exceeds u32."))?;
-    builder.scattering_models.push(ScatteringModel {
-        surface_root: node_id,
-        bssrdf_root: INVALID_INDEX,
-    });
-    Ok(model_id)
 }
 
 fn diffuse_reflectance(source_material: &NodeMaterial) -> Result<Spectrum, PbrtError> {

@@ -206,7 +206,7 @@ fn diffuse_shaders_load_type_specific_reflectance() {
 #[test]
 fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
-    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(node_index: u32, lambda: vec4<f32>)"));
+    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));

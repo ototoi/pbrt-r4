@@ -1,8 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use pbrt_r4::gpu::ir::flat::{
-    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, validate_scattering_graph,
-    AttributeKind,
+    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind,
 };
 use pbrt_r4::gpu::ir::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
@@ -134,14 +133,9 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.instances[1].material, 1);
     assert_eq!(scene.materials[0].kind, "diffuse");
     assert_eq!(scene.materials[1].kind, "dielectric");
-    assert_eq!(scene.materials[0].scattering_model, 0);
-    assert_eq!(scene.materials[1].scattering_model, 1);
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
-    assert_eq!(scene.resolved_scattering_models.len(), 2);
-    assert_eq!(scene.resolved_scattering_models[0].root_kind, "diffuse");
-    assert_eq!(scene.resolved_scattering_models[1].root_kind, "dielectric");
     assert!(scene.primitive_distribution_map.offsets == vec![0]);
 }
 
@@ -446,11 +440,6 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
             .iter()
             .all(|v| v.is_finite())
     );
-    assert_eq!(scene.materials[0].scattering_model, 0);
-    assert_eq!(scene.scattering_models[0].surface_root, 0);
-    assert_eq!(scene.scattering_nodes[0].kind, "diffuse");
-    assert_eq!(scene.scattering_nodes[0].event_flags, 0b00101);
-    assert_eq!(scene.scattering_nodes[0].data_index, 0);
 }
 
 #[test]
@@ -489,9 +478,6 @@ fn flatten_node_extracts_dielectric_eta() {
             .abs()
             < 1e-5
     );
-    assert_eq!(scene.materials[0].scattering_model, 0);
-    assert_eq!(scene.scattering_nodes[0].kind, "dielectric");
-    assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
 }
 
 #[test]
@@ -507,8 +493,6 @@ fn flatten_node_extracts_thin_dielectric_leaf() {
         AttributeKind::Spectrum
     );
     assert_eq!(scene.materials[0].attributes[0].name, "eta");
-    assert_eq!(scene.scattering_nodes[0].kind, "thindielectric");
-    assert_eq!(scene.scattering_nodes[0].event_flags, 0b10011);
 }
 
 #[test]
@@ -522,8 +506,6 @@ fn flatten_node_falls_back_for_unsupported_coateddiffuse() {
 
     assert_eq!(scene.materials[0].source_kind, "coateddiffuse");
     assert_eq!(scene.materials[0].kind, "diffuse");
-    assert_eq!(scene.scattering_nodes.len(), 1);
-    assert_eq!(scene.scattering_nodes[0].kind, "diffuse");
     assert_eq!(scene.materials[0].attributes[0].name, "reflectance");
 }
 
@@ -552,43 +534,6 @@ fn material_table_uses_generic_attribute_ranges() {
                 <= table.attributes.len()
         );
     }
-}
-
-#[test]
-fn scattering_graph_validation_rejects_cycles_and_invalid_ranges() {
-    let cyclic_nodes = vec![pbrt_r4::gpu::ir::flat::ScatteringNode {
-        kind: "mix".to_string(),
-        event_flags: 0,
-        data_index: 0,
-        child_offset: 0,
-        child_count: 1,
-    }];
-    let cyclic_model = vec![pbrt_r4::gpu::ir::flat::ScatteringModel {
-        surface_root: 0,
-        bssrdf_root: u32::MAX,
-    }];
-    let error = validate_scattering_graph(
-        &cyclic_model,
-        &cyclic_nodes,
-        &pbrt_r4::gpu::ir::flat::ScatteringChildRefs { node_ids: vec![0] },
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("Cycle detected"));
-
-    let invalid_range = vec![pbrt_r4::gpu::ir::flat::ScatteringNode {
-        kind: "diffuse".to_string(),
-        event_flags: 0,
-        data_index: 0,
-        child_offset: 1,
-        child_count: 1,
-    }];
-    let error = validate_scattering_graph(
-        &cyclic_model,
-        &invalid_range,
-        &pbrt_r4::gpu::ir::flat::ScatteringChildRefs { node_ids: vec![] },
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("invalid child range"));
 }
 
 #[test]
@@ -627,7 +572,6 @@ fn flatten_node_extracts_conductor_attributes() {
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.materials[0].kind, "conductor");
     assert_eq!(scene.materials[0].attributes.len(), 3);
-    assert_eq!(scene.scattering_nodes[0].kind, "conductor");
     for attribute in &scene.materials[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::ir::flat::DENSE_SAMPLE_COUNT;
         assert!(

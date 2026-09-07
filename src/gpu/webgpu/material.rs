@@ -10,42 +10,19 @@ pub struct MaterialTable {
 
 impl MaterialTable {
     pub fn from_flat(scene: &flat::Scene) -> Result<Self, PbrtError> {
-        scene.validate_scattering_models()?;
-        for node in &scene.scattering_nodes {
-            let valid = match node.kind.as_str() {
-                "diffuse" | "dielectric" | "thindielectric" | "conductor" => node.child_count == 0,
-                _ => false,
-            };
-            if !valid {
-                return Err(PbrtError::error(
-                    "Invalid or unsupported WebGPU scattering node data or children.",
-                ));
-            }
-        }
         let mut attributes = Vec::new();
         let records = scene
             .materials
             .iter()
             .map(|material| {
                 validate_material_attributes(material)?;
-                let model = scene
-                    .scattering_models
-                    .get(material.scattering_model as usize)
-                    .ok_or_else(|| {
-                        PbrtError::error("Material references an invalid scattering model.")
-                    })?;
-                scene
-                    .scattering_nodes
-                    .get(model.surface_root as usize)
-                    .ok_or_else(|| {
-                        PbrtError::error("Material references an invalid surface root.")
-                    })?;
                 let offset = attributes.len() as u32;
                 for attr in &material.attributes {
                     let kind = match attr.kind {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::Material => 3,
                     };
                     attributes.push(AttributeRef {
                         kind,
@@ -56,7 +33,7 @@ impl MaterialTable {
                     kind_tag: MaterialKind::from_flat(&material.kind)?.tag(),
                     attribute_offset: offset,
                     attribute_count: material.attributes.len() as u32,
-                    scattering_model: material.scattering_model,
+                    padding: 0,
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
@@ -114,6 +91,7 @@ fn format_attribute_kind(kind: flat::AttributeKind) -> &'static str {
         flat::AttributeKind::Scalar => "scalar",
         flat::AttributeKind::Spectrum => "spectrum",
         flat::AttributeKind::Texture => "texture",
+        flat::AttributeKind::Material => "material",
     }
 }
 
@@ -173,17 +151,5 @@ impl MaterialKind {
                 "PBRT_R4_GPU_DEBUG_MATERIAL must be valid UTF-8.",
             )),
         }
-    }
-}
-
-pub fn scattering_node_tag(kind: &str) -> Result<u32, PbrtError> {
-    match kind {
-        "diffuse" => Ok(0),
-        "dielectric" => Ok(1),
-        "thindielectric" => Ok(3),
-        "conductor" => Ok(4),
-        other => Err(PbrtError::error(&format!(
-            "Unsupported initial WebGPU scattering node kind: {other}."
-        ))),
     }
 }
