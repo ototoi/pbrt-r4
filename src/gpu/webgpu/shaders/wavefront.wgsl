@@ -347,6 +347,7 @@ fn load_layered_eta_node(material_index: u32) -> u32 {
     return top;
 }
 fn load_layered_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(load_layered_eta_node(material_index), 6u, lambda); }
+fn layered_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(load_layered_eta_node(material_index), 6u).index); }
 
 fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
     return path_hash(path_hash(path_hash(viewport.seed) ^ pixel)
