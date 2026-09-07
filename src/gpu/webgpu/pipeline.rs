@@ -19,6 +19,7 @@ pub struct Pipeline {
     pub intersect_shadow: StagePipeline,
     pub sample_diffuse_bounce: StagePipeline,
     pub sample_dielectric_bounce: StagePipeline,
+    pub sample_conductor_bounce: StagePipeline,
     pub sample_layered_bounce: StagePipeline,
     pub sample_thin_dielectric_bounce: StagePipeline,
     pub swap_ray_queues: StagePipeline,
@@ -121,6 +122,11 @@ impl Pipeline {
                 "pbrt-r4 sample dielectric bounce",
                 include_str!("shaders/sample_dielectric_bounce.wgsl"),
                 "sample_dielectric_bounce",
+            ),
+            sample_conductor_bounce: compute(
+                "pbrt-r4 sample conductor bounce",
+                include_str!("shaders/sample_conductor_bounce.wgsl"),
+                "sample_conductor_bounce",
             ),
             sample_layered_bounce: compute(
                 "pbrt-r4 sample layered bounce",

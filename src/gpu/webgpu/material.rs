@@ -13,7 +13,7 @@ impl MaterialTable {
         scene.validate_scattering_models()?;
         for node in &scene.scattering_nodes {
             let valid = match node.kind.as_str() {
-                "diffuse" | "dielectric" | "thindielectric" => node.child_count == 0,
+                "diffuse" | "dielectric" | "thindielectric" | "conductor" => node.child_count == 0,
                 "layered" => {
                     if node.child_count != 2 {
                         false
@@ -97,6 +97,7 @@ pub enum MaterialKind {
     Dielectric,
     Layered,
     ThinDielectric,
+    Conductor,
 }
 
 impl MaterialKind {
@@ -108,6 +109,7 @@ impl MaterialKind {
             Self::Dielectric => 3,
             Self::Layered => 4,
             Self::ThinDielectric => 5,
+            Self::Conductor => 6,
         }
     }
 
@@ -120,6 +122,7 @@ impl MaterialKind {
             "dielectric" => Ok(Self::Dielectric),
             "coateddiffuse" => Ok(Self::Layered),
             "thindielectric" => Ok(Self::ThinDielectric),
+            "conductor" => Ok(Self::Conductor),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
@@ -149,6 +152,7 @@ pub fn scattering_node_tag(kind: &str) -> Result<u32, PbrtError> {
         "diffuse" => Ok(0),
         "dielectric" => Ok(1),
         "thindielectric" => Ok(3),
+        "conductor" => Ok(4),
         "layered" => Ok(2),
         other => Err(PbrtError::error(&format!(
             "Unsupported initial WebGPU scattering node kind: {other}."
