@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_LAYERED_LOCAL_STEPS: i64 = 1_048_576;
+const MAX_GPU_RENDER_DEPTH: i32 = 32;
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)
@@ -830,9 +831,18 @@ fn render_settings(
     let samples_per_pixel = sampler
         .map(|sampler| sampler.params.get_one_int("pixelsamples", 4))
         .unwrap_or(4);
-    let max_depth = integrator
+    let configured_max_depth = integrator
         .map(|integrator| integrator.params.get_one_int("maxdepth", 5))
         .unwrap_or(5);
+    let max_depth = configured_max_depth.min(MAX_GPU_RENDER_DEPTH);
+    if configured_max_depth > MAX_GPU_RENDER_DEPTH {
+        log::warn!(
+            "GPU maxdepth {} exceeds the backend limit {}; clamping to {}.",
+            configured_max_depth,
+            MAX_GPU_RENDER_DEPTH,
+            MAX_GPU_RENDER_DEPTH
+        );
+    }
     let seed = sampler
         .map(|sampler| sampler.params.get_one_int("seed", 0))
         .unwrap_or(0);
