@@ -32,14 +32,10 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let intersection = rayQueryGetCommittedIntersection(&query);
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
-        let ray_index = find_current_ray_for_pixel(pixel_index);
-        if (ray_index != 0xffffffffu) {
-            let ray = load_current_ray(ray_index);
-            store_sample_radiance(
-                pixel_index,
-                load_sample_radiance(pixel_index) + ray.throughput * vec4<f32>(shadow_direct, 0.0),
-            );
-        }
+        store_sample_radiance(
+            pixel_index,
+            load_sample_radiance(pixel_index) + vec4<f32>(shadow_direct, 0.0),
+        );
     } else {
     }
 }

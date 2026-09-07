@@ -30,9 +30,9 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         0.0,
         vec3<u32>(0u, 0u, 0u),
     );
-    let current_queue_index = atomicAdd(&wavefront_queue[CURRENT_COUNT], 1u);
+    let current_queue_index = atomicAdd(&queue_counters.current.count, 1u);
     if (current_queue_index >= pixel_count()) {
-        atomicStore(&wavefront_queue[CURRENT_OVERFLOW], 1u);
+        atomicStore(&queue_counters.current.overflow, 1u);
         return;
     }
     store_current_ray(current_queue_index, ray);

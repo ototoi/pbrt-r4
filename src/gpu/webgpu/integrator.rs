@@ -17,9 +17,30 @@ use super::material::MaterialKind;
 use super::pipeline::{Pipeline, StagePipeline};
 use super::queue::Queues;
 use super::scene::Scene;
-use super::stages::{canonical_wavefront_bindings, RequiredLimits, ResourceId};
+use super::stages::{canonical_wavefront_bindings, ResourceId};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+
+const DEPLOYED_STAGE_SOURCES: &[&str] = &[
+    include_str!("shaders/prepare_sample.wgsl"),
+    include_str!("shaders/generate_primary_rays.wgsl"),
+    include_str!("shaders/reset_shadow_queue.wgsl"),
+    include_str!("shaders/reset_classification_queues.wgsl"),
+    include_str!("shaders/intersect_primary_rays.wgsl"),
+    include_str!("shaders/handle_escaped.wgsl"),
+    include_str!("shaders/shade_surface.wgsl"),
+    include_str!("shaders/handle_emissive.wgsl"),
+    include_str!("shaders/evaluate_materials.wgsl"),
+    include_str!("shaders/intersect_shadow.wgsl"),
+    include_str!("shaders/sample_diffuse_bounce.wgsl"),
+    include_str!("shaders/sample_dielectric_bounce.wgsl"),
+    include_str!("shaders/sample_conductor_bounce.wgsl"),
+    include_str!("shaders/sample_layered_bounce.wgsl"),
+    include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
+    include_str!("shaders/swap_ray_queues.wgsl"),
+    include_str!("shaders/reset_next_ray_queue.wgsl"),
+    include_str!("shaders/accumulate_sample.wgsl"),
+];
 
 pub struct WavefrontPathIntegrator {
     context: Context,
@@ -46,7 +67,10 @@ impl WavefrontPathIntegrator {
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
         let canonical_bindings = canonical_wavefront_bindings();
-        let required_limits = RequiredLimits::from_bindings(&canonical_bindings)?;
+        let required_limits = super::shader::required_limits_for_sources(
+            &canonical_bindings,
+            DEPLOYED_STAGE_SOURCES,
+        )?;
         let context = Context::new(required_limits)?;
         let device = &context.device;
         let queue = &context.queue;
@@ -76,7 +100,7 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count, scene.render_settings.max_depth)?;
+        let queues = Queues::new(device, pixel_count)?;
         let film = Film::new(device, [scene.viewport.width, scene.viewport.height])?;
         let pipeline = Pipeline::new(device)?;
         let make_entry = |binding: super::stages::BindingSpec| wgpu::BindGroupEntry {
@@ -93,7 +117,15 @@ impl WavefrontPathIntegrator {
                 ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
                 ResourceId::Surface => queues.surfaces.as_entire_binding(),
                 ResourceId::Film => film.framebuffer.as_entire_binding(),
-                ResourceId::RaySamples => queues.wavefront.as_entire_binding(),
+                ResourceId::QueueCounters => queues.counters.as_entire_binding(),
+                ResourceId::RenderError => queues.render_error.as_entire_binding(),
+                ResourceId::PixelSampleState => queues.pixel_sample_states.as_entire_binding(),
+                ResourceId::CurrentRay => queues.current_rays.as_entire_binding(),
+                ResourceId::NextRay => queues.next_rays.as_entire_binding(),
+                ResourceId::ShadowQueue => queues.shadow_rays.as_entire_binding(),
+                ResourceId::MaterialRayQueue => queues.material_ray_indices.as_entire_binding(),
+                ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
+                ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
                 ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),

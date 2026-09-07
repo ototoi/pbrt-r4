@@ -7,6 +7,7 @@ const LAYERED_SHADER: &str = include_str!("shaders/layered.wgsl");
 use std::collections::{HashMap, HashSet};
 
 use super::shader_composer::{compose, ShaderModuleSpec};
+use super::stages::{BindingSpec, RequiredLimits};
 
 pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> wgpu::ShaderModule {
     let descriptor = wgpu::ShaderModuleDescriptor {
@@ -96,6 +97,40 @@ pub fn resource_binding_numbers(source: &str) -> Vec<u32> {
         cursor = start + end + 1;
     }
     bindings.into_iter().collect()
+}
+
+pub fn required_limits_for_sources(
+    canonical_bindings: &[BindingSpec],
+    stage_sources: &[&str],
+) -> Result<RequiredLimits, crate::util::error::PbrtError> {
+    let mut required = RequiredLimits::default();
+    for stage_source in stage_sources {
+        let source = compose_source(stage_source);
+        let used_bindings = resource_binding_numbers(&source);
+        let bindings = used_bindings
+            .iter()
+            .map(|binding| {
+                canonical_bindings
+                    .iter()
+                    .find(|candidate| candidate.group == 0 && candidate.binding == *binding)
+                    .copied()
+                    .ok_or_else(|| {
+                        crate::util::error::PbrtError::error(&format!(
+                            "Shader uses unregistered group 0 binding {binding}."
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let stage = RequiredLimits::from_bindings(&bindings)?;
+        required.storage_buffers_per_shader_stage = required
+            .storage_buffers_per_shader_stage
+            .max(stage.storage_buffers_per_shader_stage);
+        required.uniform_buffers_per_shader_stage = required
+            .uniform_buffers_per_shader_stage
+            .max(stage.uniform_buffers_per_shader_stage);
+        required.bind_groups = required.bind_groups.max(stage.bind_groups);
+    }
+    Ok(required)
 }
 
 fn prune_common_source(source: &str, roots: &[&str]) -> String {

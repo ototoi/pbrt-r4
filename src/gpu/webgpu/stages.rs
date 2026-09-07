@@ -20,13 +20,16 @@ pub enum ResourceId {
     Index,
     Geometry,
     Instance,
+    QueueCounters,
     CurrentRay,
     NextRay,
     ShadowQueue,
+    MaterialRayQueue,
+    HitAreaRayQueue,
+    EscapedRayQueue,
     HitRecord,
     Surface,
     PixelSampleState,
-    RaySamples,
     ShadingContext,
     LightRecord,
     PointLight,
@@ -127,7 +130,7 @@ pub struct RequiredLimits {
 /// and the stage-specific layouts. Pipeline construction must consume this list
 /// instead of duplicating binding numbers.
 pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
-    let mut bindings = Vec::with_capacity(26);
+    let mut bindings = Vec::with_capacity(34);
     let mut push = |binding, resource, class, access| {
         bindings.push(BindingSpec {
             group: 0,
@@ -177,37 +180,59 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     );
     push(
         10,
-        ResourceId::RaySamples,
+        ResourceId::QueueCounters,
         BindingClass::Storage,
         Access::ReadWrite,
     );
     push(
         11,
+        ResourceId::RenderError,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        12,
+        ResourceId::PixelSampleState,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    for (binding, resource) in [
+        (13, ResourceId::CurrentRay),
+        (14, ResourceId::NextRay),
+        (15, ResourceId::ShadowQueue),
+        (16, ResourceId::MaterialRayQueue),
+        (17, ResourceId::HitAreaRayQueue),
+        (18, ResourceId::EscapedRayQueue),
+    ] {
+        push(binding, resource, BindingClass::Storage, Access::ReadWrite);
+    }
+    push(
+        19,
         ResourceId::MaterialTable,
         BindingClass::Uniform,
         Access::Read,
     );
     push(
-        12,
+        20,
         ResourceId::LightSamplingParams,
         BindingClass::Uniform,
         Access::Read,
     );
     for (binding, resource) in [
-        (13, ResourceId::MaterialRecord),
-        (14, ResourceId::MaterialAttribute),
-        (15, ResourceId::ScalarAttribute),
-        (16, ResourceId::ScatteringModel),
-        (17, ResourceId::ScatteringNode),
-        (18, ResourceId::ScatteringChild),
-        (19, ResourceId::SpectrumAttribute),
-        (20, ResourceId::LightRecord),
-        (21, ResourceId::PointLight),
-        (22, ResourceId::AreaLight),
-        (23, ResourceId::TriangleDistribution),
-        (24, ResourceId::LightBvhHeader),
-        (25, ResourceId::LightBvhNode),
-        (26, ResourceId::LightLeaf),
+        (21, ResourceId::MaterialRecord),
+        (22, ResourceId::MaterialAttribute),
+        (23, ResourceId::ScalarAttribute),
+        (24, ResourceId::ScatteringModel),
+        (25, ResourceId::ScatteringNode),
+        (26, ResourceId::ScatteringChild),
+        (27, ResourceId::SpectrumAttribute),
+        (28, ResourceId::LightRecord),
+        (29, ResourceId::PointLight),
+        (30, ResourceId::AreaLight),
+        (31, ResourceId::TriangleDistribution),
+        (32, ResourceId::LightBvhHeader),
+        (33, ResourceId::LightBvhNode),
+        (34, ResourceId::LightLeaf),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }
@@ -306,7 +331,7 @@ const SAMPLE_DIRECT_LIGHT_BINDINGS: &[BindingSpec] = &[
     BindingSpec {
         group: 1,
         binding: 2,
-        resource: ResourceId::RaySamples,
+        resource: ResourceId::PixelSampleState,
         class: BindingClass::Storage,
         access: Access::Read,
     },
@@ -549,7 +574,7 @@ const SCATTER_BINDINGS: &[BindingSpec] = &[
     BindingSpec {
         group: 1,
         binding: 3,
-        resource: ResourceId::RaySamples,
+        resource: ResourceId::PixelSampleState,
         class: BindingClass::Storage,
         access: Access::Read,
     },
