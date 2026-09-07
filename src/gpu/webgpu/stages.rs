@@ -48,6 +48,8 @@ pub enum ResourceId {
     MaterialAttribute,
     ScalarAttribute,
     SpectrumAttribute,
+    SpectrumSamples,
+    SpectrumMetadata,
     TextureAttribute,
     ScatteringModel,
     ScatteringNode,
@@ -130,7 +132,7 @@ pub struct RequiredLimits {
 /// and the stage-specific layouts. Pipeline construction must consume this list
 /// instead of duplicating binding numbers.
 pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
-    let mut bindings = Vec::with_capacity(34);
+    let mut bindings = Vec::with_capacity(37);
     let mut push = |binding, resource, class, access| {
         bindings.push(BindingSpec {
             group: 0,
@@ -166,6 +168,12 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }
+    push(
+        7,
+        ResourceId::FilmParams,
+        BindingClass::Uniform,
+        Access::Read,
+    );
     push(
         8,
         ResourceId::Surface,
@@ -233,6 +241,8 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (32, ResourceId::LightBvhHeader),
         (33, ResourceId::LightBvhNode),
         (34, ResourceId::LightLeaf),
+        (35, ResourceId::SpectrumSamples),
+        (36, ResourceId::SpectrumMetadata),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }

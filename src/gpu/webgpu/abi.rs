@@ -225,6 +225,29 @@ pub struct QueueState {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct FilmUniform {
+    pub sensor_response: [u32; 4],
+    pub imaging_ratio: f32,
+    pub max_sample_luminance: f32,
+    pub padding: [u32; 2],
+}
+
+pub fn film_uniform(film: &crate::gpu::ir::flat::Film) -> FilmUniform {
+    FilmUniform {
+        sensor_response: [
+            film.sensor_response[0],
+            film.sensor_response[1],
+            film.sensor_response[2],
+            0,
+        ],
+        imaging_ratio: film.imaging_ratio,
+        max_sample_luminance: film.max_sample_luminance,
+        padding: [0; 2],
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct QueueCounters {
     pub current: QueueState,
     pub next: QueueState,

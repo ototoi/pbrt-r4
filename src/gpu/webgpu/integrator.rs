@@ -89,6 +89,11 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.viewport),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let film_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 film UBO"),
+            contents: bytemuck::bytes_of(&scene.film),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         let material_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material table UBO"),
             contents: bytes_of(&scene.material_table),
@@ -115,6 +120,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::Index => scene.index_buffer.as_entire_binding(),
                 ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
                 ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
+                ResourceId::FilmParams => film_params_buffer.as_entire_binding(),
                 ResourceId::Surface => queues.surfaces.as_entire_binding(),
                 ResourceId::Film => film.framebuffer.as_entire_binding(),
                 ResourceId::QueueCounters => queues.counters.as_entire_binding(),
@@ -139,6 +145,8 @@ impl WavefrontPathIntegrator {
                 ResourceId::SpectrumAttribute => {
                     scene.spectrum_attribute_buffer.as_entire_binding()
                 }
+                ResourceId::SpectrumSamples => scene.spectrum_sample_buffer.as_entire_binding(),
+                ResourceId::SpectrumMetadata => scene.spectrum_metadata_buffer.as_entire_binding(),
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
                 ResourceId::PointLight => scene.point_light_buffer.as_entire_binding(),
                 ResourceId::AreaLight => scene.area_light_buffer.as_entire_binding(),
