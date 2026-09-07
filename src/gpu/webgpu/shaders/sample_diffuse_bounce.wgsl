@@ -65,7 +65,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.inv_w_u,
         ray.inv_w_u / max(next_pdf, 1e-7),
         next_pdf,
-        vec3<u32>(0u, 0u, 0u),
+        0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

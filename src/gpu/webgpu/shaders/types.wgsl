@@ -130,7 +130,9 @@ struct RayWorkItem {
     inv_w_u: f32,
     inv_w_l: f32,
     prev_pdf: f32,
-    _padding: vec3<u32>,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 
 struct SurfaceWorkItem {
@@ -226,10 +228,14 @@ struct ShadowRayWorkItem {
     origin: vec4<f32>,
     direction: vec4<f32>,
     max_t: f32,
-    _padding0: vec3<u32>,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
     direct: vec4<f32>,
     pixel_index: u32,
-    _padding1: vec3<u32>,
+    _padding3: u32,
+    _padding4: u32,
+    _padding5: u32,
 };
 
 struct LightSelection {

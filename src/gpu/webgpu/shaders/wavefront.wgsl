@@ -64,10 +64,10 @@ fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, 
             vec4<f32>(origin, 0.0),
             vec4<f32>(direction, 0.0),
             t,
-            vec3<u32>(0u),
+            0u, 0u, 0u,
             direct,
             pixel_index,
-            vec3<u32>(0u),
+            0u, 0u, 0u,
         );
     } else {
         atomicStore(&queue_counters.shadow.overflow, 1u);

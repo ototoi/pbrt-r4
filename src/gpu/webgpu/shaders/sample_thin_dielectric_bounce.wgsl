@@ -30,7 +30,7 @@ fn sample_thin_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<
         ray.throughput * f / probability, surface.position,
         surface.position_error, surface.geometric_normal, surface.normal,
         pixel_index, ray.depth + 1u, ray.inv_w_u, ray.inv_w_u / probability,
-        probability, vec3<u32>(0u),
+        probability, 0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) { atomicStore(&queue_counters.next.overflow, 1u); return; }
