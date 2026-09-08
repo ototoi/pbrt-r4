@@ -106,7 +106,14 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count)?;
+        let tree_stride = scene
+            .materials
+            .iter()
+            .map(|record| u64::from(record.tree_size))
+            .max()
+            .unwrap_or(3)
+            .max(3);
+        let queues = Queues::new_with_tree_stride(device, pixel_count, tree_stride)?;
         let film = Film::new(
             device,
             [scene.viewport.width, scene.viewport.height],

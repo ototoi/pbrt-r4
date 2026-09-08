@@ -29,6 +29,10 @@ pub struct TypedQueueSizes {
 
 impl TypedQueueSizes {
     pub fn new(pixel_count: u64) -> Result<Self, PbrtError> {
+        Self::new_with_tree_stride(pixel_count, EVALUATED_ATTRIBUTES_STRIDE)
+    }
+
+    pub fn new_with_tree_stride(pixel_count: u64, tree_stride: u64) -> Result<Self, PbrtError> {
         u32::try_from(pixel_count)
             .map_err(|_| PbrtError::error("WebGPU pixel count does not fit queue indices."))?;
         let bytes = |element_size: usize, label: &str| {
@@ -53,7 +57,7 @@ impl TypedQueueSizes {
                 std::mem::size_of::<EvaluatedAttributesWorkItem>(),
                 "evaluated attributes",
             )?
-            .checked_mul(EVALUATED_ATTRIBUTES_STRIDE)
+            .checked_mul(tree_stride.max(1))
             .ok_or_else(|| PbrtError::error("WebGPU evaluated attributes size overflowed."))?,
             hit_area_ray_indices: bytes(std::mem::size_of::<u32>(), "hit-area queue")?,
             escaped_ray_indices: bytes(std::mem::size_of::<u32>(), "escaped queue")?,
@@ -78,7 +82,15 @@ pub struct Queues {
 
 impl Queues {
     pub fn new(device: &wgpu::Device, pixel_count: u64) -> Result<Self, PbrtError> {
-        let sizes = TypedQueueSizes::new(pixel_count)?;
+        Self::new_with_tree_stride(device, pixel_count, EVALUATED_ATTRIBUTES_STRIDE)
+    }
+
+    pub fn new_with_tree_stride(
+        device: &wgpu::Device,
+        pixel_count: u64,
+        tree_stride: u64,
+    ) -> Result<Self, PbrtError> {
+        let sizes = TypedQueueSizes::new_with_tree_stride(pixel_count, tree_stride)?;
         let capacity = u32::try_from(pixel_count)
             .map_err(|_| PbrtError::error("WebGPU queue capacity does not fit in u32."))?;
         let state = QueueState {
