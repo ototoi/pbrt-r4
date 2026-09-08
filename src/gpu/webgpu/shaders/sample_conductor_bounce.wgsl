@@ -6,17 +6,19 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    let material_index = resolve_material_leaf(surface.material);
+    var material_index = resolve_material_leaf(surface.material);
     let evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    var leaf_evaluated = evaluated;
     if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
         if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
         let selected = load_evaluated_attributes(evaluated.selected_child_work_item);
-        if (selected.material_index != material_index) { return; }
+        material_index = selected.material_index;
+        leaf_evaluated = selected;
     }
     if (surface.hit == 0u || surface.flags != 0u
         || load_material_kind(material_index) != MATERIAL_KIND_CONDUCTOR) { return; }
     let lambda = load_sample_lambda(pixel_index);
-    let roughness = evaluated.values[2].x;
+    let roughness = leaf_evaluated.values[2].x;
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
     let tangent = make_tangent(normal);
