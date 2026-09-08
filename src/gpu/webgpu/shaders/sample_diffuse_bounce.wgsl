@@ -20,12 +20,16 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    var leaf_evaluated = evaluated;
+    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_DIFFUSE) {
+        leaf_evaluated = load_evaluated_attributes(evaluated.child_work_item1);
+    }
     if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
         if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
         let selected = load_evaluated_attributes(evaluated.selected_child_work_item);
         if (selected.material_index != material_index) { return; }
     }
-    let reflectance = evaluated.values[0];
+    let reflectance = leaf_evaluated.values[0];
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
@@ -48,6 +52,13 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
     let next_pdf = abs(dot(normal, direction)) / PI;
     var next_throughput = ray.throughput * reflectance;
+    let surface_kind = load_material_kind(surface.material);
+    if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+        let coat = load_evaluated_attributes(surface.evaluated_attributes_root + 1u);
+        let eta = max(coat.values[0].x, 1.0001);
+        let coat_f = dielectric_fresnel(abs(dot(normal, wo)), eta);
+        next_throughput = next_throughput * (1.0 - coat_f);
+    }
     if (ray.depth >= 1u) {
         let rr_beta = max(
             max_spectrum(next_throughput),
