@@ -556,7 +556,9 @@ fn material_table_uses_generic_attribute_ranges() {
             .map(|m| m.attributes.len())
             .sum::<usize>()
     );
-    for record in &table.records {
+    for (record, material) in table.records.iter().zip(&scene.materials) {
+        assert_eq!(record.tree_size, material.tree_size);
+        assert!(record.tree_size >= 1);
         assert!(
             (record.attribute_offset as usize) + (record.attribute_count as usize)
                 <= table.attributes.len()
