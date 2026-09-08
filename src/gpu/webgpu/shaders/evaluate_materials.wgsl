@@ -40,6 +40,17 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.values[2].x = load_conductor_roughness(current_index);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC || evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
             evaluated.values[0] = load_dielectric_eta(current_index, lambda);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+            evaluated.values[0].x = load_material_scalar(current_index, 2u);
+            evaluated.values[1] = load_material_spectrum(current_index, 3u, lambda);
+            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[3].x = load_material_scalar(current_index, 5u);
+            evaluated.values[4].x = load_material_scalar(current_index, 6u);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+            evaluated.values[0].x = load_material_scalar(current_index, 2u);
+            evaluated.values[1].x = load_material_scalar(current_index, 3u);
+            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[3].x = load_material_scalar(current_index, 5u);
         }
         let current_kind = load_material_kind(current_index);
         if (current_kind == MATERIAL_KIND_MIX || current_kind == MATERIAL_KIND_COATED_DIFFUSE || current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
