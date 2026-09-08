@@ -156,6 +156,20 @@ pub struct SurfaceWorkItem {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct EvaluatedAttributesWorkItem {
+    pub surface_index: u32,
+    pub material_index: u32,
+    pub parent_work_item: u32,
+    pub parent_slot: u32,
+    pub child_work_item0: u32,
+    pub child_work_item1: u32,
+    pub bxdf_kind: u32,
+    pub selected_child_work_item: u32,
+    pub values: [[f32; 4]; 10],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct LightRecord {
     pub kind: u32,
     pub attribute_offset: u32,
