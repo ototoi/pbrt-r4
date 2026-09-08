@@ -140,6 +140,50 @@ fn build_material_attributes(
             }
             Ok(vec![push_scalar_attribute(builder, "amount", amount)?])
         }
+        "coateddiffuse" => {
+            let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
+            let g = source_material.params.get_one_float("g", 0.0) as f32;
+            let max_depth = source_material.params.get_one_int("maxdepth", 10) as f32;
+            let n_samples = source_material.params.get_one_int("nsamples", 1) as f32;
+            if ![thickness, g, max_depth, n_samples]
+                .iter()
+                .all(|v| v.is_finite())
+            {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid coateddiffuse parameters.",
+                    source_material.name
+                )));
+            }
+            let albedo = diffuse_reflectance(source_material)?;
+            Ok(vec![
+                push_scalar_attribute(builder, "thickness", thickness)?,
+                push_spectrum_attribute(builder, "albedo", &albedo)?,
+                push_scalar_attribute(builder, "g", g)?,
+                push_scalar_attribute(builder, "maxdepth", max_depth)?,
+                push_scalar_attribute(builder, "nsamples", n_samples)?,
+            ])
+        }
+        "coatedconductor" => {
+            let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
+            let g = source_material.params.get_one_float("g", 0.0) as f32;
+            let max_depth = source_material.params.get_one_int("maxdepth", 10) as f32;
+            let n_samples = source_material.params.get_one_int("nsamples", 1) as f32;
+            if ![thickness, g, max_depth, n_samples]
+                .iter()
+                .all(|v| v.is_finite())
+            {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid coatedconductor parameters.",
+                    source_material.name
+                )));
+            }
+            Ok(vec![
+                push_scalar_attribute(builder, "thickness", thickness)?,
+                push_scalar_attribute(builder, "g", g)?,
+                push_scalar_attribute(builder, "maxdepth", max_depth)?,
+                push_scalar_attribute(builder, "nsamples", n_samples)?,
+            ])
+        }
         "diffuse" => {
             let reflectance = diffuse_reflectance(source_material)?;
             Ok(vec![push_spectrum_attribute(
@@ -1070,7 +1114,13 @@ fn material_index(
     let source_kind = source_material.kind.as_str();
     let supported = matches!(
         requested_kind,
-        "diffuse" | "dielectric" | "thindielectric" | "conductor" | "mix"
+        "diffuse"
+            | "dielectric"
+            | "thindielectric"
+            | "conductor"
+            | "mix"
+            | "coateddiffuse"
+            | "coatedconductor"
     );
     let texture_fallback = if supported && has_texture_attribute(source_material) {
         match UnsupportedTexturePolicy::from_environment()? {
@@ -1111,7 +1161,29 @@ fn material_index(
             build_material_attributes(source_material, requested_kind, builder)?,
         )
     };
-    if kind == "mix" {
+    if matches!(kind, "coateddiffuse" | "coatedconductor") {
+        let child_kinds: &[&str] = if kind == "coateddiffuse" {
+            &["dielectric", "diffuse"]
+        } else {
+            &["dielectric", "conductor"]
+        };
+        let mut children = Vec::with_capacity(2);
+        for child_kind in child_kinds {
+            let child = Arc::new(NodeMaterial {
+                name: format!("{}:{}", source_material.name, child_kind),
+                kind: (*child_kind).to_string(),
+                params: source_material.params.clone(),
+                material_attributes: Vec::new(),
+            });
+            children.push(AttributeRef {
+                kind: AttributeKind::Material,
+                index: material_index(&child, builder, Some(child_kind))?,
+                name: (*child_kind).to_string(),
+            });
+        }
+        children.append(&mut attributes);
+        attributes = children;
+    } else if kind == "mix" {
         let mut material_attributes = Vec::new();
         for (name, child) in &source_material.material_attributes {
             let child_index = material_index(child, builder, None)?;
