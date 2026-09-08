@@ -130,6 +130,16 @@ fn build_material_attributes(
     builder: &mut FlatBuilder,
 ) -> Result<Vec<AttributeRef>, PbrtError> {
     match kind {
+        "mix" => {
+            let amount = source_material.params.get_one_float("amount", 0.5) as f32;
+            if !amount.is_finite() {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid mix amount.",
+                    source_material.name
+                )));
+            }
+            Ok(vec![push_scalar_attribute(builder, "amount", amount)?])
+        }
         "diffuse" => {
             let reflectance = diffuse_reflectance(source_material)?;
             Ok(vec![push_spectrum_attribute(
@@ -1060,7 +1070,7 @@ fn material_index(
     let source_kind = source_material.kind.as_str();
     let supported = matches!(
         requested_kind,
-        "diffuse" | "dielectric" | "thindielectric" | "conductor"
+        "diffuse" | "dielectric" | "thindielectric" | "conductor" | "mix"
     );
     let texture_fallback = if supported && has_texture_attribute(source_material) {
         match UnsupportedTexturePolicy::from_environment()? {
@@ -1076,7 +1086,7 @@ fn material_index(
     } else {
         false
     };
-    let (kind, attributes) = if texture_fallback {
+    let (kind, mut attributes) = if texture_fallback {
         let magenta = Spectrum::from_rgb(&[1.0, 0.0, 1.0], SpectrumType::Albedo);
         (
             "diffuse",
@@ -1101,6 +1111,24 @@ fn material_index(
             build_material_attributes(source_material, requested_kind, builder)?,
         )
     };
+    if kind == "mix" {
+        let mut material_attributes = Vec::new();
+        for (name, child) in &source_material.material_attributes {
+            let child_index = material_index(child, builder, None)?;
+            material_attributes.push(AttributeRef {
+                kind: AttributeKind::Material,
+                index: child_index,
+                name: name.clone(),
+            });
+        }
+        if material_attributes.len() != 2 {
+            return Err(PbrtError::error(
+                "GPU mix material must contain exactly two material references.",
+            ));
+        }
+        material_attributes.append(&mut attributes);
+        attributes = material_attributes;
+    }
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
