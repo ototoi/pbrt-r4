@@ -14,7 +14,6 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         if (selected.material_index != material_index) { return; }
     }
     if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR
         || load_material_kind(material_index) != MATERIAL_KIND_CONDUCTOR) { return; }
     let lambda = load_sample_lambda(pixel_index);
     let roughness = evaluated.values[2].x;
@@ -54,11 +53,17 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         f = conductor_fresnel(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
+    var next_throughput = ray.throughput * f * cos_i / pdf;
+    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR) {
+        let coat = load_evaluated_attributes(surface.evaluated_attributes_root + 1u);
+        let coat_f = dielectric_fresnel(abs(dot(normal, wo)), max(coat.values[0].x, 1.0001));
+        next_throughput = next_throughput * (1.0 - coat_f);
+    }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
-        ray.throughput * f * cos_i / pdf,
+        next_throughput,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
         ray.inv_w_u, ray.inv_w_u / pdf, pdf, 0u, 0u, 0u,
