@@ -33,7 +33,7 @@ impl MaterialTable {
                     kind: MaterialKind::from_flat(&material.kind)?.tag(),
                     attribute_offset: offset,
                     attribute_count: material.attributes.len() as u32,
-                    padding: 0,
+                    tree_size: material.tree_size,
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;

@@ -1225,10 +1225,26 @@ fn material_index(
     let index = u32::try_from(builder.materials.len()).map_err(|_| {
         PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
     })?;
+    let tree_size = 1u32
+        .checked_add(
+            attributes
+                .iter()
+                .filter(|attribute| attribute.kind == AttributeKind::Material)
+                .map(|attribute| {
+                    builder
+                        .materials
+                        .get(attribute.index as usize)
+                        .map(|material| material.tree_size)
+                        .unwrap_or(0)
+                })
+                .sum::<u32>(),
+        )
+        .ok_or_else(|| PbrtError::error("GPU material tree size overflowed."))?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
         attributes: attributes.clone(),
+        tree_size,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)

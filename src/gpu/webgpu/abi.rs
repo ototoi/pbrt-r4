@@ -90,7 +90,7 @@ pub struct MaterialRecord {
     pub kind: u32,
     pub attribute_offset: u32,
     pub attribute_count: u32,
-    pub padding: u32,
+    pub tree_size: u32,
 }
 
 #[repr(C)]
