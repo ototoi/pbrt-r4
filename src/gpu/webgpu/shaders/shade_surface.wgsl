@@ -52,7 +52,8 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     surfaces[pixel_index].material = instance.material;
     surfaces[pixel_index].flags = 0u;
     let material_queue_index = append_material_eval(ray_index);
-    surfaces[pixel_index].evaluated_attributes_root = material_queue_index * EVALUATED_ATTRIBUTES_STRIDE;
+    surfaces[pixel_index].evaluated_attributes_root = material_queue_index
+        * max(material_table.eawi_stride, EVALUATED_ATTRIBUTES_STRIDE);
 
     if (material_kind != MATERIAL_KIND_NORMAL && material_kind != MATERIAL_KIND_UV
         && instance.area_light != 0xffffffffu) {

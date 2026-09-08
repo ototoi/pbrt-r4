@@ -80,6 +80,15 @@ impl WavefrontPathIntegrator {
             scene.replace_material_kind(queue, kind);
             scene.film.mode = 1;
         }
+        let tree_stride = scene
+            .materials
+            .iter()
+            .map(|record| u64::from(record.tree_size))
+            .max()
+            .unwrap_or(3)
+            .max(3);
+        scene.material_table.reserved[0] = u32::try_from(tree_stride)
+            .map_err(|_| PbrtError::error("GPU material tree stride exceeds u32 range."))?;
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
@@ -106,13 +115,6 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let tree_stride = scene
-            .materials
-            .iter()
-            .map(|record| u64::from(record.tree_size))
-            .max()
-            .unwrap_or(3)
-            .max(3);
         let queues = Queues::new_with_tree_stride(device, pixel_count, tree_stride)?;
         let film = Film::new(
             device,
