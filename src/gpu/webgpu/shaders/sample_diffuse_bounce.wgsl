@@ -20,6 +20,11 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
+        if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
+        let selected = load_evaluated_attributes(evaluated.selected_child_work_item);
+        if (selected.material_index != material_index) { return; }
+    }
     let reflectance = evaluated.values[0];
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
