@@ -91,6 +91,7 @@ impl DenseSpectrumBuilder {
                     "Spectrum contains a non-finite dense sample.",
                 ));
             }
+            // Canonicalize -0.0 so bitwise spectrum interning treats both zeros equally.
             let value = if value == 0.0 { 0.0 } else { value };
             *sample = value;
             bits.push(value.to_bits());

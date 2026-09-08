@@ -10,6 +10,7 @@ pub mod material;
 pub mod output;
 pub mod pipeline;
 pub mod queue;
+pub mod render_settings;
 pub mod scene;
 pub mod shader;
 pub mod shader_composer;
