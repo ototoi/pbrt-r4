@@ -14,11 +14,12 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (surface.hit == 0u || surface.flags != 0u) {
         return;
     }
-    let material_kind = load_material_kind(surface.material);
+    let material_index = resolve_material_leaf(surface.material);
+    let material_kind = load_material_kind(material_index);
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
         return;
     }
-    let reflectance = load_diffuse_reflectance(surface.material, load_sample_lambda(pixel_index));
+    let reflectance = load_diffuse_reflectance(material_index, load_sample_lambda(pixel_index));
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);

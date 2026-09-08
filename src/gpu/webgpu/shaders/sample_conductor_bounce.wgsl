@@ -6,10 +6,11 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
+    let material_index = resolve_material_leaf(surface.material);
     if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(surface.material) != MATERIAL_KIND_CONDUCTOR) { return; }
+        || load_material_kind(material_index) != MATERIAL_KIND_CONDUCTOR) { return; }
     let lambda = load_sample_lambda(pixel_index);
-    let roughness = load_conductor_roughness(surface.material);
+    let roughness = load_conductor_roughness(material_index);
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
     let tangent = make_tangent(normal);
@@ -33,7 +34,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let direction = normalize(reflect(-wo, half_world));
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
-    var f = conductor_fresnel(cos_i, load_conductor_eta(surface.material, lambda), load_conductor_k(surface.material, lambda)) / cos_i;
+    var f = conductor_fresnel(cos_i, load_conductor_eta(material_index, lambda), load_conductor_k(material_index, lambda)) / cos_i;
     if (roughness > 1e-3) {
         let wi_local = scattering_local(direction, normal);
         let wo_local = scattering_local(wo, normal);
@@ -43,7 +44,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         let d = a2 / (PI * pow(h_local.z * h_local.z * (a2 - 1.0) + 1.0, 2.0));
         let g = 2.0 * abs(wo_local.z) / (abs(wo_local.z) + sqrt(wo_local.z * wo_local.z + a2 * (1.0 - wo_local.z * wo_local.z)))
             * 2.0 * abs(wi_local.z) / (abs(wi_local.z) + sqrt(wi_local.z * wi_local.z + a2 * (1.0 - wi_local.z * wi_local.z)));
-        f = conductor_fresnel(abs(dot(wo_local, h_local)), load_conductor_eta(surface.material, lambda), load_conductor_k(surface.material, lambda)) * d * g
+        f = conductor_fresnel(abs(dot(wo_local, h_local)), load_conductor_eta(material_index, lambda), load_conductor_k(material_index, lambda)) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
     let next_ray = RayWorkItem(
