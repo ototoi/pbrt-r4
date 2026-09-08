@@ -37,7 +37,8 @@ pub struct MaterialTableUniform {
     pub material_offset_words: u32,
     pub material_count: u32,
     pub debug_material_kind: u32,
-    pub reserved: [u32; 15],
+    pub attributes_eval_stride: u32,
+    pub reserved: [u32; 14],
 }
 
 #[repr(C)]
@@ -90,8 +91,7 @@ pub struct MaterialRecord {
     pub kind: u32,
     pub attribute_offset: u32,
     pub attribute_count: u32,
-    pub tree_size: u32,
-    pub tree_base: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
@@ -152,13 +152,13 @@ pub struct SurfaceWorkItem {
     pub geometric_normal: [f32; 4],
     pub material: u32,
     pub flags: u32,
-    pub evaluated_attributes_root: u32,
+    pub attributes_eval_work_item: u32,
     pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct EvaluatedAttributesWorkItem {
+pub struct AttributesEvalWorkItem {
     pub surface_index: u32,
     pub material_index: u32,
     pub parent_work_item: u32,
@@ -373,7 +373,8 @@ pub fn material_table_uniform(material_count: usize) -> Result<MaterialTableUnif
         material_offset_words: 0,
         material_count: to_u32(material_count, "material count")?,
         debug_material_kind: INVALID_INDEX,
-        reserved: [0; 15],
+        attributes_eval_stride: 0,
+        reserved: [0; 14],
     })
 }
 

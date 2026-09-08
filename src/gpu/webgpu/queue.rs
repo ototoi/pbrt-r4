@@ -2,12 +2,10 @@ use bytemuck::{bytes_of, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::abi::{
-    EvaluatedAttributesWorkItem, PixelSampleState, QueueCounters, QueueState, RayWorkItem,
-    RenderError, ShadowRayWorkItem, SurfaceWorkItem,
+    AttributesEvalWorkItem, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
+    ShadowRayWorkItem, SurfaceWorkItem,
 };
 use crate::util::error::PbrtError;
-
-const EVALUATED_ATTRIBUTES_STRIDE: u64 = 3;
 
 const QUEUE_COUNT: u64 = 6;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
@@ -22,19 +20,20 @@ pub struct TypedQueueSizes {
     pub next_rays: u64,
     pub shadow_rays: u64,
     pub material_ray_indices: u64,
-    pub evaluated_attributes: u64,
+    pub attributes_eval_work_items: u64,
     pub hit_area_ray_indices: u64,
     pub escaped_ray_indices: u64,
 }
 
 impl TypedQueueSizes {
-    pub fn new(pixel_count: u64) -> Result<Self, PbrtError> {
-        Self::new_with_tree_stride(pixel_count, EVALUATED_ATTRIBUTES_STRIDE)
-    }
-
-    pub fn new_with_tree_stride(pixel_count: u64, tree_stride: u64) -> Result<Self, PbrtError> {
+    pub fn new(pixel_count: u64, attributes_eval_stride: u64) -> Result<Self, PbrtError> {
         u32::try_from(pixel_count)
             .map_err(|_| PbrtError::error("WebGPU pixel count does not fit queue indices."))?;
+        if attributes_eval_stride == 0 {
+            return Err(PbrtError::error(
+                "WebGPU attributes eval stride must be greater than zero.",
+            ));
+        }
         let bytes = |element_size: usize, label: &str| {
             pixel_count
                 .checked_mul(element_size as u64)
@@ -53,11 +52,11 @@ impl TypedQueueSizes {
                 "shadow ray buffer",
             )?,
             material_ray_indices: bytes(std::mem::size_of::<u32>(), "material queue")?,
-            evaluated_attributes: bytes(
-                std::mem::size_of::<EvaluatedAttributesWorkItem>(),
+            attributes_eval_work_items: bytes(
+                std::mem::size_of::<AttributesEvalWorkItem>(),
                 "evaluated attributes",
             )?
-            .checked_mul(tree_stride.max(1))
+            .checked_mul(attributes_eval_stride)
             .ok_or_else(|| PbrtError::error("WebGPU evaluated attributes size overflowed."))?,
             hit_area_ray_indices: bytes(std::mem::size_of::<u32>(), "hit-area queue")?,
             escaped_ray_indices: bytes(std::mem::size_of::<u32>(), "escaped queue")?,
@@ -74,23 +73,19 @@ pub struct Queues {
     pub next_rays: wgpu::Buffer,
     pub shadow_rays: wgpu::Buffer,
     pub material_ray_indices: wgpu::Buffer,
-    pub evaluated_attributes: wgpu::Buffer,
+    pub attributes_eval_work_items: wgpu::Buffer,
     pub hit_area_ray_indices: wgpu::Buffer,
     pub escaped_ray_indices: wgpu::Buffer,
     state_readback: wgpu::Buffer,
 }
 
 impl Queues {
-    pub fn new(device: &wgpu::Device, pixel_count: u64) -> Result<Self, PbrtError> {
-        Self::new_with_tree_stride(device, pixel_count, EVALUATED_ATTRIBUTES_STRIDE)
-    }
-
-    pub fn new_with_tree_stride(
+    pub fn new(
         device: &wgpu::Device,
         pixel_count: u64,
-        tree_stride: u64,
+        attributes_eval_stride: u64,
     ) -> Result<Self, PbrtError> {
-        let sizes = TypedQueueSizes::new_with_tree_stride(pixel_count, tree_stride)?;
+        let sizes = TypedQueueSizes::new(pixel_count, attributes_eval_stride)?;
         let capacity = u32::try_from(pixel_count)
             .map_err(|_| PbrtError::error("WebGPU queue capacity does not fit in u32."))?;
         let state = QueueState {
@@ -135,9 +130,9 @@ impl Queues {
                 "pbrt-r4 material ray index queue",
                 sizes.material_ray_indices,
             ),
-            evaluated_attributes: storage(
+            attributes_eval_work_items: storage(
                 "pbrt-r4 evaluated material attributes",
-                sizes.evaluated_attributes,
+                sizes.attributes_eval_work_items,
             ),
             hit_area_ray_indices: storage(
                 "pbrt-r4 hit-area ray index queue",

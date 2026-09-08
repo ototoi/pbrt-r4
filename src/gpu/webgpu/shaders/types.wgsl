@@ -11,10 +11,7 @@ const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
 const MATERIAL_KIND_MIX: u32 = 7u;
 const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
-// Number of EAWI records reserved for each material work item. Keep this
-// centralized while the arena is extended to support deeper composite trees.
-const EVALUATED_ATTRIBUTES_STRIDE: u32 = 3u;
-struct EvaluatedAttributesWorkItem {
+struct AttributesEvalWorkItem {
     surface_index: u32,
     material_index: u32,
     parent_work_item: u32,
@@ -56,7 +53,7 @@ struct FilmUniform {
 struct MaterialTableUniform {
     material_offset_words: u32, material_count: u32,
     debug_material_kind: u32,
-    eawi_stride: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
+    attributes_eval_stride: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
     _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
@@ -101,7 +98,7 @@ struct Instance {
     normal_from_object: mat4x4<f32>,
 };
 
-struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, tree_size: u32, tree_base: u32, };
+struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, _padding: u32, };
 struct AttributeRef { kind: u32, index: u32, };
 
 struct DenseSpectrum {
@@ -145,7 +142,7 @@ struct SurfaceWorkItem {
     geometric_normal: vec4<f32>,
     material: u32,
     flags: u32,
-    evaluated_attributes_root: u32,
+    attributes_eval_work_item: u32,
     _padding: u32,
 };
 
