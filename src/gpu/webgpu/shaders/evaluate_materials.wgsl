@@ -18,8 +18,27 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var current_index = surface.material;
     var parent_index = 0xffffffffu;
     var parent_slot = 0xffffffffu;
+    let eawi_base = queue_index * max(material_table.eawi_stride, EVALUATED_ATTRIBUTES_STRIDE);
+    // Clear the complete per-item slice before filling the nodes that are
+    // currently materialized. This keeps future recursive expansion from
+    // observing stale records in a reused queue buffer.
+    for (var clear_slot = 0u; clear_slot < max(material_table.eawi_stride, EVALUATED_ATTRIBUTES_STRIDE); clear_slot++) {
+        var empty: EvaluatedAttributesWorkItem;
+        empty.surface_index = pixel_index;
+        empty.material_index = 0xffffffffu;
+        empty.parent_work_item = 0xffffffffu;
+        empty.parent_slot = 0xffffffffu;
+        empty.child_work_item0 = 0xffffffffu;
+        empty.child_work_item1 = 0xffffffffu;
+        empty.bxdf_kind = 0u;
+        empty.selected_child_work_item = 0xffffffffu;
+        for (var clear_value = 0u; clear_value < 10u; clear_value++) {
+            empty.values[clear_value] = vec4<f32>(0.0);
+        }
+        evaluated_attributes[eawi_base + clear_slot] = empty;
+    }
     for (var tree_depth = 0u; tree_depth < 1u; tree_depth++) {
-        let work_index = queue_index * max(material_table.eawi_stride, EVALUATED_ATTRIBUTES_STRIDE) + tree_depth;
+        let work_index = eawi_base + tree_depth;
         var evaluated: EvaluatedAttributesWorkItem;
         evaluated.surface_index = pixel_index;
         evaluated.material_index = current_index;
