@@ -16,7 +16,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var current_index = surface.material;
     var parent_index = 0xffffffffu;
     var parent_slot = 0xffffffffu;
-    for (var tree_depth = 0u; tree_depth < 32u; tree_depth++) {
+    for (var tree_depth = 0u; tree_depth < 30u; tree_depth++) {
         let work_index = queue_index * 32u + tree_depth;
         var evaluated: EvaluatedAttributesWorkItem;
         evaluated.surface_index = pixel_index;
@@ -35,6 +35,20 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.child_work_item0 = work_index + 1u;
             evaluated.child_work_item1 = work_index + 2u;
             evaluated_attributes[work_index] = evaluated;
+            var child_eval: EvaluatedAttributesWorkItem;
+            child_eval.surface_index = pixel_index;
+            child_eval.material_index = child0.index;
+            child_eval.parent_work_item = work_index;
+            child_eval.parent_slot = 0u;
+            child_eval.child_work_item0 = 0xffffffffu;
+            child_eval.child_work_item1 = 0xffffffffu;
+            child_eval.bxdf_kind = load_material_kind(child0.index);
+            child_eval.selected_child_work_item = 0xffffffffu;
+            evaluated_attributes[work_index + 1u] = child_eval;
+            child_eval.material_index = child1.index;
+            child_eval.parent_slot = 1u;
+            child_eval.bxdf_kind = load_material_kind(child1.index);
+            evaluated_attributes[work_index + 2u] = child_eval;
             parent_index = work_index;
             parent_slot = 0u;
             current_index = child0.index;
