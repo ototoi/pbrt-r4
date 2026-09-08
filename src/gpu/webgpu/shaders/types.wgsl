@@ -142,7 +142,8 @@ struct SurfaceWorkItem {
     geometric_normal: vec4<f32>,
     material: u32,
     flags: u32,
-    _padding: vec2<u32>,
+    evaluated_attributes_root: u32,
+    _padding: u32,
 };
 
 struct LightRecord {
