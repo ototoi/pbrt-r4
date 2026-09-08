@@ -153,9 +153,6 @@ impl MaterialKind {
             "diffuse" => Ok(Self::Diffuse),
             "lambert" => Ok(Self::Lambert),
             "dielectric" => Ok(Self::Dielectric),
-            "coateddiffuse" => Err(PbrtError::error(
-                "coateddiffuse is not supported by the WebGPU backend.",
-            )),
             "thindielectric" => Ok(Self::ThinDielectric),
             "conductor" => Ok(Self::Conductor),
             "mix" => Ok(Self::Mix),
