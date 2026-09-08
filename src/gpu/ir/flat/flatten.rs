@@ -1107,9 +1107,6 @@ fn material_index(
             PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
         });
     }
-    let index = u32::try_from(builder.materials.len()).map_err(|_| {
-        PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
-    })?;
     let requested_kind = material_kind.unwrap_or(&source_material.kind);
     let source_kind = source_material.kind.as_str();
     let supported = matches!(
@@ -1201,6 +1198,9 @@ fn material_index(
         material_attributes.append(&mut attributes);
         attributes = material_attributes;
     }
+    let index = u32::try_from(builder.materials.len()).map_err(|_| {
+        PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
+    })?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
