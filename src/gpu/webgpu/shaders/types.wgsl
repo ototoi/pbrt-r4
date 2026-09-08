@@ -11,6 +11,9 @@ const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
 const MATERIAL_KIND_MIX: u32 = 7u;
 const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
+// Number of EAWI records reserved for each material work item. Keep this
+// centralized while the arena is extended to support deeper composite trees.
+const EVALUATED_ATTRIBUTES_STRIDE: u32 = 3u;
 struct EvaluatedAttributesWorkItem {
     surface_index: u32,
     material_index: u32,

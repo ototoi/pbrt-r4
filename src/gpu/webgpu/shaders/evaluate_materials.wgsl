@@ -19,7 +19,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var parent_index = 0xffffffffu;
     var parent_slot = 0xffffffffu;
     for (var tree_depth = 0u; tree_depth < 1u; tree_depth++) {
-        let work_index = queue_index * 3u + tree_depth;
+        let work_index = queue_index * EVALUATED_ATTRIBUTES_STRIDE + tree_depth;
         var evaluated: EvaluatedAttributesWorkItem;
         evaluated.surface_index = pixel_index;
         evaluated.material_index = current_index;

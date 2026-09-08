@@ -7,7 +7,7 @@ use super::abi::{
 };
 use crate::util::error::PbrtError;
 
-const MAX_MATERIAL_TREE_DEPTH: u64 = 3;
+const EVALUATED_ATTRIBUTES_STRIDE: u64 = 3;
 
 const QUEUE_COUNT: u64 = 6;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
@@ -53,7 +53,7 @@ impl TypedQueueSizes {
                 std::mem::size_of::<EvaluatedAttributesWorkItem>(),
                 "evaluated attributes",
             )?
-            .checked_mul(MAX_MATERIAL_TREE_DEPTH)
+            .checked_mul(EVALUATED_ATTRIBUTES_STRIDE)
             .ok_or_else(|| PbrtError::error("WebGPU evaluated attributes size overflowed."))?,
             hit_area_ray_indices: bytes(std::mem::size_of::<u32>(), "hit-area queue")?,
             escaped_ray_indices: bytes(std::mem::size_of::<u32>(), "escaped queue")?,
