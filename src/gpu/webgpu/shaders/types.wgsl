@@ -56,7 +56,7 @@ struct FilmUniform {
 struct MaterialTableUniform {
     material_offset_words: u32, material_count: u32,
     debug_material_kind: u32,
-    _reserved0: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
+    eawi_stride: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
     _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
