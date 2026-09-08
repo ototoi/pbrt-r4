@@ -7,7 +7,7 @@ use super::abi::{
 };
 use crate::util::error::PbrtError;
 
-const MAX_MATERIAL_TREE_DEPTH: u64 = 32;
+const MAX_MATERIAL_TREE_DEPTH: u64 = 3;
 
 const QUEUE_COUNT: u64 = 6;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
