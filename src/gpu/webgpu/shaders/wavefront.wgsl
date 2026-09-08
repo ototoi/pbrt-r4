@@ -94,13 +94,14 @@ fn load_shadow_direction(index: u32) -> vec3<f32> {
     return shadow_rays[index].direction.xyz;
 }
 
-fn append_material_eval(ray_index: u32) {
+fn append_material_eval(ray_index: u32) -> u32 {
     let index = atomicAdd(&queue_counters.material.count, 1u);
     if (index < queue_counters.material.capacity) {
         material_ray_indices[index] = ray_index;
     } else {
         atomicStore(&queue_counters.material.overflow, 1u);
     }
+    return index;
 }
 
 fn material_eval_count() -> u32 {
