@@ -34,6 +34,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         if (evaluated.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
             evaluated.values[0] = load_diffuse_reflectance(current_index, lambda);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_MIX) {
+            evaluated.values[0].x = load_material_scalar(current_index, 2u);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_CONDUCTOR) {
             evaluated.values[0] = load_conductor_eta(current_index, lambda);
             evaluated.values[1] = load_conductor_k(current_index, lambda);
