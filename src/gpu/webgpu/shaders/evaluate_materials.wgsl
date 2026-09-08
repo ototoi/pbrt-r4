@@ -50,7 +50,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.child_work_item1 = work_index + 2u;
             if (current_kind == MATERIAL_KIND_MIX) {
                 let amount = clamp(load_material_scalar(current_index, 2u), 0.0, 1.0);
-                let choice = select(work_index + 1u, work_index + 2u, samples.indirect.x < amount);
+                let choice = select(work_index + 2u, work_index + 1u, samples.indirect.x < amount);
                 evaluated.selected_child_work_item = choice;
             }
             evaluated_attributes[work_index] = evaluated;
