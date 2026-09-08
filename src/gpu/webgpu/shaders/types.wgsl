@@ -101,7 +101,7 @@ struct Instance {
     normal_from_object: mat4x4<f32>,
 };
 
-struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, tree_size: u32, };
+struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, tree_size: u32, tree_base: u32, };
 struct AttributeRef { kind: u32, index: u32, };
 
 struct DenseSpectrum {
