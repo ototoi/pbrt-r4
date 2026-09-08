@@ -19,7 +19,8 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
         return;
     }
-    let reflectance = load_diffuse_reflectance(material_index, load_sample_lambda(pixel_index));
+    let evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    let reflectance = evaluated.values[0];
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);

@@ -281,6 +281,13 @@ fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32>
     if (material_table.debug_material_kind == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
     return load_material_spectrum(material_index, 0u, lambda);
 }
+fn load_evaluated_attributes(root: u32) -> EvaluatedAttributesWorkItem {
+    if (root >= arrayLength(&evaluated_attributes)) {
+        set_render_error();
+        return evaluated_attributes[0u];
+    }
+    return evaluated_attributes[root];
+}
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
 fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
