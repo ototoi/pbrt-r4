@@ -151,7 +151,8 @@ pub struct SurfaceWorkItem {
     pub geometric_normal: [f32; 4],
     pub material: u32,
     pub flags: u32,
-    pub padding: [u32; 2],
+    pub evaluated_attributes_root: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
