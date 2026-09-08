@@ -11,8 +11,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    let material_index = resolve_material_leaf(surface.material);
-    let material_kind = load_material_kind(material_index);
+    var material_index = resolve_material_leaf(surface.material);
+    var material_kind = load_material_kind(material_index);
     let lambda = load_sample_lambda(pixel_index);
     let samples = load_ray_samples(pixel_index);
     var current_index = surface.material;
@@ -75,6 +75,13 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated_attributes[work_index] = evaluated;
             break;
         }
+    }
+    let root_evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    if (load_material_kind(surface.material) == MATERIAL_KIND_MIX
+        && root_evaluated.selected_child_work_item != 0xffffffffu) {
+        let selected = load_evaluated_attributes(root_evaluated.selected_child_work_item);
+        material_index = selected.material_index;
+        material_kind = selected.bxdf_kind;
     }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
