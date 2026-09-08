@@ -6,7 +6,6 @@ const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
 const MATERIAL_KIND_LAMBERT: u32 = 2u;
 const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
-const MATERIAL_KIND_LAYERED: u32 = 4u;
 const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;
 const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
 const LIGHT_KIND_AREA: u32 = 1u;
@@ -39,13 +38,11 @@ struct FilmUniform {
 
 struct MaterialTableUniform {
     material_offset_words: u32, material_count: u32,
-    scattering_model_offset_words: u32, scattering_model_count: u32,
-    scattering_node_offset_words: u32, scattering_node_count: u32,
-    scattering_child_offset_words: u32, scattering_child_count: u32,
-    bssrdf_node_offset_words: u32, bssrdf_node_count: u32,
-    debug_scattering_model: u32, scattering_reserved: u32,
+    debug_material_kind: u32,
     _reserved0: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
-    _reserved4: u32, _reserved5: u32,
+    _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
+    _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
+    _reserved12: u32, _reserved13: u32, _reserved14: u32,
 };
 
 struct LightTableUniform {
@@ -87,13 +84,7 @@ struct Instance {
     normal_from_object: mat4x4<f32>,
 };
 
-struct ScatteringModelRecord {
-    surface_root: u32,
-    bssrdf_root: u32,
-    _padding: vec2<u32>,
-};
-
-struct MaterialRecord { kind_tag: u32, attribute_offset: u32, attribute_count: u32, scattering_model: u32, };
+struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, _padding: u32, };
 struct AttributeRef { kind: u32, index: u32, };
 
 struct DenseSpectrum {
@@ -101,16 +92,6 @@ struct DenseSpectrum {
     flags: u32,
 };
 
-struct ScatteringNodeRecord {
-    kind_tag: u32,
-    event_flags: u32,
-    attribute_offset: u32,
-    child_offset: u32,
-    child_count: u32,
-    attribute_count: u32,
-    _padding0: u32,
-    _padding1: u32,
-};
 
 struct RaySamples {
     direct: vec4<f32>,
@@ -179,18 +160,6 @@ struct AreaTriangleSelection {
     primitive: u32,
     area: f32,
     pmf: f32,
-};
-
-struct LayeredParams {
-    thickness: f32,
-    g: f32,
-    max_depth: u32,
-    n_samples: u32,
-    albedo: vec4<f32>,
-    two_sided: u32,
-    padding0: u32,
-    padding1: u32,
-    padding2: u32,
 };
 
 struct QueueState {

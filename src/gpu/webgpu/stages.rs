@@ -47,11 +47,8 @@ pub enum ResourceId {
     MaterialRecord,
     AttributeRef,
     ScalarAttribute,
-    SpectrumAttributes,
+    SpectrumAttribute,
     TextureAttribute,
-    ScatteringModel,
-    ScatteringNode,
-    ScatteringChild,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,7 +95,6 @@ pub enum StageId {
     ScatterDiffuse,
     ScatterDielectric,
     ScatterThinDielectric,
-    ScatterLayered,
     TraceShadow,
     DebugSurface,
     AccumulateFilm,
@@ -228,16 +224,13 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (21, ResourceId::MaterialRecord),
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),
-        (24, ResourceId::ScatteringModel),
-        (25, ResourceId::ScatteringNode),
-        (26, ResourceId::ScatteringChild),
         (28, ResourceId::LightRecord),
         (29, ResourceId::LightSamplingModel),
         (30, ResourceId::TriangleDistribution),
         (31, ResourceId::LightBvhHeader),
         (32, ResourceId::LightBvhNode),
         (33, ResourceId::LightLeaf),
-        (34, ResourceId::SpectrumAttributes),
+        (34, ResourceId::SpectrumAttribute),
         (36, ResourceId::LightPosition),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
@@ -712,11 +705,6 @@ pub fn all_stage_specs() -> Vec<StageSpec> {
         StageSpec {
             id: StageId::ScatterThinDielectric,
             entry_point: "scatter_thin_dielectric",
-            bindings: SCATTER_BINDINGS,
-        },
-        StageSpec {
-            id: StageId::ScatterLayered,
-            entry_point: "scatter_layered",
             bindings: SCATTER_BINDINGS,
         },
         StageSpec {

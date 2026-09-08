@@ -14,8 +14,6 @@ const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
 const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
-const SAMPLE_LAYERED_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_layered_bounce.wgsl");
 const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
 const SAMPLE_CONDUCTOR_BOUNCE_SHADER: &str =
@@ -206,30 +204,11 @@ fn diffuse_shaders_load_type_specific_reflectance() {
 }
 
 #[test]
-fn non_layered_stage_does_not_include_layered_module() {
-    let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
-    assert!(!source.contains("pbrt-v4 bxdfs.h: LayeredParams"));
-    let layered = compose_source(SAMPLE_LAYERED_BOUNCE_SHADER);
-    assert!(layered.contains("pbrt-v4 bxdfs.h: LayeredBxDF"));
-}
-
-#[test]
-fn layered_shader_resolves_top_and_bottom_nodes() {
-    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_LAYERED: u32 = 4u;"));
-    assert!(COMMON_SHADER.contains("fn load_layered_bxdf(material_index: u32, lambda: vec4<f32>)"));
-    assert!(COMMON_SHADER.contains("fn load_layered_bottom_reflectance"));
-    assert!(COMMON_SHADER.contains("fn layered_eta_is_constant(material_index: u32)"));
-    assert!(COMMON_SHADER.contains("load_scattering_child(root, 0u)"));
-    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_bottom_reflectance"));
-    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_layered_eta(surface.material"));
-    assert!(!SAMPLE_LAYERED_BOUNCE_SHADER.contains("load_dielectric_eta(eta_node"));
-    assert!(SAMPLE_LAYERED_BOUNCE_SHADER.contains("layered_sample("));
-}
-
-#[test]
 fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
-    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(node_index: u32, lambda: vec4<f32>)"));
+    assert!(
+        COMMON_SHADER.contains("fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>)")
+    );
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));

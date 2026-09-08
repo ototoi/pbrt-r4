@@ -18,9 +18,8 @@ fn sample_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<u32>)
         return;
     }
 
-    let eta_node = load_material_surface_node(surface.material);
-    if (!dielectric_eta_is_constant(eta_node)) { terminate_secondary_wavelengths(pixel_index); }
-    var eta = load_dielectric_eta(eta_node, load_sample_lambda(pixel_index)).x;
+    if (!dielectric_eta_is_constant(surface.material)) { terminate_secondary_wavelengths(pixel_index); }
+    var eta = load_dielectric_eta(surface.material, load_sample_lambda(pixel_index)).x;
     if (eta == 0.0) { eta = 1.0; }
     if (!(eta > 0.0) || eta != eta) {
         set_render_error();

@@ -8,12 +8,11 @@ fn sample_thin_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<
     let surface = surfaces[pixel_index];
     if (surface.hit == 0u || surface.flags != 0u
         || load_material_kind(surface.material) != MATERIAL_KIND_THIN_DIELECTRIC) { return; }
-    let eta_node = load_material_surface_node(surface.material);
-    if (!dielectric_eta_is_constant(eta_node)) { terminate_secondary_wavelengths(pixel_index); }
-    var eta = load_dielectric_eta(eta_node, load_sample_lambda(pixel_index)).x;
+    if (!dielectric_eta_is_constant(surface.material)) { terminate_secondary_wavelengths(pixel_index); }
+    var eta = load_dielectric_eta(surface.material, load_sample_lambda(pixel_index)).x;
     if (eta == 0.0) { eta = 1.0; }
     let wo = normalize(-ray.direction.xyz);
-    let r0 = layered_fresnel(dot(wo, normalize(surface.normal.xyz)), eta);
+    let r0 = dielectric_fresnel(dot(wo, normalize(surface.normal.xyz)), eta);
     let r = select(r0, r0 + (1.0 - r0) * (1.0 - r0) * r0 / max(1.0 - r0 * r0, 1e-7), r0 < 1.0);
     let t = 1.0 - r;
     if (!(eta > 0.0) || eta != eta || !(r >= 0.0) || !(r <= 1.0)) {

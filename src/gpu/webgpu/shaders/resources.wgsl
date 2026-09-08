@@ -48,12 +48,6 @@ var<storage, read> materials: array<MaterialRecord>;
 var<storage, read> attribute_refs: array<AttributeRef>;
 @group(0) @binding(23)
 var<storage, read> scalar_attributes: array<f32>;
-@group(0) @binding(24)
-var<storage, read> scattering_models: array<ScatteringModelRecord>;
-@group(0) @binding(25)
-var<storage, read> scattering_nodes: array<ScatteringNodeRecord>;
-@group(0) @binding(26)
-var<storage, read> scattering_children: array<u32>;
 @group(0) @binding(28)
 var<storage, read> light_records: array<LightRecord>;
 @group(0) @binding(29)
