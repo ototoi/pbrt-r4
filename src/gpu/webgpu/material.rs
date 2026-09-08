@@ -34,6 +34,7 @@ impl MaterialTable {
                     attribute_offset: offset,
                     attribute_count: material.attributes.len() as u32,
                     tree_size: material.tree_size,
+                    tree_base: material.tree_base,
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;

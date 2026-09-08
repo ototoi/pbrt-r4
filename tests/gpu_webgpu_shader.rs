@@ -86,6 +86,7 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
     assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
     assert!(COMMON_SHADER.contains("tree_size: u32"));
+    assert!(COMMON_SHADER.contains("tree_base: u32"));
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(21)"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
     assert!(COMMON_SHADER.contains("struct AttributeRef {"));
