@@ -11,8 +11,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel_index = ray.pixel_index;
     let samples = load_ray_samples(pixel_index);
     let surface = surfaces[pixel_index];
-    if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(surface.material) == MATERIAL_KIND_COATED_DIFFUSE) {
+    if (surface.hit == 0u || surface.flags != 0u) {
         return;
     }
     let material_index = resolve_material_leaf(surface.material);
