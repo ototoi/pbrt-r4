@@ -94,13 +94,14 @@ fn load_shadow_direction(index: u32) -> vec3<f32> {
     return shadow_rays[index].direction.xyz;
 }
 
-fn append_material_eval(ray_index: u32) {
+fn append_material_eval(ray_index: u32) -> u32 {
     let index = atomicAdd(&queue_counters.material.count, 1u);
     if (index < queue_counters.material.capacity) {
         material_ray_indices[index] = ray_index;
     } else {
         atomicStore(&queue_counters.material.overflow, 1u);
     }
+    return index;
 }
 
 fn material_eval_count() -> u32 {
@@ -255,9 +256,37 @@ fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) 
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
 }
+fn resolve_material_leaf(material_index: u32) -> u32 {
+    var current = material_index;
+    for (var depth = 0u; depth < 32u; depth++) {
+        let kind = load_material_kind(current);
+        if (kind == MATERIAL_KIND_MIX) {
+            let amount = clamp(load_material_scalar(current, 2u), 0.0, 1.0);
+            let child = select(0u, 1u, amount >= 0.5);
+            let reference = load_material_attribute(current, child);
+            if (reference.kind != 3u) { set_render_error(); return current; }
+            current = reference.index;
+        } else if (kind == MATERIAL_KIND_COATED_DIFFUSE || kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+            let reference = load_material_attribute(current, 1u);
+            if (reference.kind != 3u) { set_render_error(); return current; }
+            current = reference.index;
+        } else {
+            return current;
+        }
+    }
+    set_render_error();
+    return current;
+}
 fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32> {
     if (material_table.debug_material_kind == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
     return load_material_spectrum(material_index, 0u, lambda);
+}
+fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
+    if (root >= arrayLength(&attributes_eval_work_items)) {
+        set_render_error();
+        return attributes_eval_work_items[0u];
+    }
+    return attributes_eval_work_items[root];
 }
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }

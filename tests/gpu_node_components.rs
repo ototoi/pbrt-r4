@@ -16,6 +16,7 @@ fn node_components_wrap_declarative_resources() {
         name: "shared-diffuse".to_string(),
         kind: "diffuse".to_string(),
         params: Default::default(),
+        material_attributes: Vec::new(),
     });
 
     let camera = Component::Camera(CameraComponent {

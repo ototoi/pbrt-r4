@@ -8,6 +8,20 @@ const MATERIAL_KIND_LAMBERT: u32 = 2u;
 const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
 const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;
 const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
+const MATERIAL_KIND_MIX: u32 = 7u;
+const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
+const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
+struct AttributesEvalWorkItem {
+    surface_index: u32,
+    material_index: u32,
+    parent_work_item: u32,
+    parent_slot: u32,
+    child_work_item0: u32,
+    child_work_item1: u32,
+    bxdf_kind: u32,
+    selected_child_work_item: u32,
+    values: array<vec4<f32>, 10>,
+};
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
@@ -39,7 +53,7 @@ struct FilmUniform {
 struct MaterialTableUniform {
     material_offset_words: u32, material_count: u32,
     debug_material_kind: u32,
-    _reserved0: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
+    attributes_eval_stride: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
     _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
@@ -128,7 +142,8 @@ struct SurfaceWorkItem {
     geometric_normal: vec4<f32>,
     material: u32,
     flags: u32,
-    _padding: vec2<u32>,
+    attributes_eval_work_item: u32,
+    _padding: u32,
 };
 
 struct LightRecord {

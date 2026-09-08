@@ -53,6 +53,28 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             (1, flat::AttributeKind::Spectrum),
             (2, flat::AttributeKind::Scalar),
         ][..],
+        "mix" => &[
+            (0, flat::AttributeKind::Material),
+            (1, flat::AttributeKind::Material),
+            (2, flat::AttributeKind::Scalar),
+        ][..],
+        "coateddiffuse" => &[
+            (0, flat::AttributeKind::Material),
+            (1, flat::AttributeKind::Material),
+            (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Spectrum),
+            (4, flat::AttributeKind::Scalar),
+            (5, flat::AttributeKind::Scalar),
+            (6, flat::AttributeKind::Scalar),
+        ][..],
+        "coatedconductor" => &[
+            (0, flat::AttributeKind::Material),
+            (1, flat::AttributeKind::Material),
+            (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Scalar),
+            (4, flat::AttributeKind::Scalar),
+            (5, flat::AttributeKind::Scalar),
+        ][..],
         other => {
             return Err(PbrtError::error(&format!(
                 "Unsupported WebGPU material kind in attribute validation: {other}."
@@ -104,6 +126,9 @@ pub enum MaterialKind {
     Dielectric,
     ThinDielectric,
     Conductor,
+    Mix,
+    CoatedDiffuse,
+    CoatedConductor,
 }
 
 impl MaterialKind {
@@ -115,6 +140,9 @@ impl MaterialKind {
             Self::Dielectric => 3,
             Self::ThinDielectric => 5,
             Self::Conductor => 6,
+            Self::Mix => 7,
+            Self::CoatedDiffuse => 8,
+            Self::CoatedConductor => 9,
         }
     }
 
@@ -125,11 +153,11 @@ impl MaterialKind {
             "diffuse" => Ok(Self::Diffuse),
             "lambert" => Ok(Self::Lambert),
             "dielectric" => Ok(Self::Dielectric),
-            "coateddiffuse" => Err(PbrtError::error(
-                "coateddiffuse is not supported by the WebGPU backend.",
-            )),
             "thindielectric" => Ok(Self::ThinDielectric),
             "conductor" => Ok(Self::Conductor),
+            "mix" => Ok(Self::Mix),
+            "coateddiffuse" => Ok(Self::CoatedDiffuse),
+            "coatedconductor" => Ok(Self::CoatedConductor),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
