@@ -514,6 +514,29 @@ fn flatten_node_expands_coateddiffuse_children() {
 }
 
 #[test]
+fn flatten_node_rejects_coated_layer_limits() {
+    let shape = triangle_node("coated", "coateddiffuse", [0.0; 3]);
+    {
+        let mut node = shape.write().unwrap();
+        if let Some(Component::Material(material)) = node
+            .components
+            .iter_mut()
+            .find(|component| matches!(component, Component::Material(_)))
+        {
+            Arc::get_mut(&mut material.material)
+                .unwrap()
+                .params
+                .add_int("maxdepth", 33);
+        }
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("maxdepth 33"));
+}
+
+#[test]
 fn material_table_uses_generic_attribute_ranges() {
     use pbrt_r4::gpu::webgpu::material::MaterialTable;
     let mut root = Node::new("root");

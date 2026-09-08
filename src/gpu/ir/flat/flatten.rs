@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_GPU_RENDER_DEPTH: i32 = 32;
+const MAX_LAYER_DEPTH: i32 = 32;
+const MAX_LAYER_SAMPLES: i32 = 32;
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)
@@ -143,8 +145,11 @@ fn build_material_attributes(
         "coateddiffuse" => {
             let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
             let g = source_material.params.get_one_float("g", 0.0) as f32;
-            let max_depth = source_material.params.get_one_int("maxdepth", 10) as f32;
-            let n_samples = source_material.params.get_one_int("nsamples", 1) as f32;
+            let max_depth_i = source_material.params.get_one_int("maxdepth", 10);
+            let n_samples_i = source_material.params.get_one_int("nsamples", 1);
+            validate_layer_limits(&source_material.name, max_depth_i, n_samples_i)?;
+            let max_depth = max_depth_i as f32;
+            let n_samples = n_samples_i as f32;
             if ![thickness, g, max_depth, n_samples]
                 .iter()
                 .all(|v| v.is_finite())
@@ -166,8 +171,11 @@ fn build_material_attributes(
         "coatedconductor" => {
             let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
             let g = source_material.params.get_one_float("g", 0.0) as f32;
-            let max_depth = source_material.params.get_one_int("maxdepth", 10) as f32;
-            let n_samples = source_material.params.get_one_int("nsamples", 1) as f32;
+            let max_depth_i = source_material.params.get_one_int("maxdepth", 10);
+            let n_samples_i = source_material.params.get_one_int("nsamples", 1);
+            validate_layer_limits(&source_material.name, max_depth_i, n_samples_i)?;
+            let max_depth = max_depth_i as f32;
+            let n_samples = n_samples_i as f32;
             if ![thickness, g, max_depth, n_samples]
                 .iter()
                 .all(|v| v.is_finite())
@@ -241,6 +249,22 @@ fn build_material_attributes(
             "unsupported GPU material kind: {kind}"
         ))),
     }
+}
+
+fn validate_layer_limits(name: &str, max_depth: i32, n_samples: i32) -> Result<(), PbrtError> {
+    if !(0..=MAX_LAYER_DEPTH).contains(&max_depth) {
+        return Err(PbrtError::error(&format!(
+            "Material \"{}\" maxdepth {} is outside the GPU layered limit 0..={}.",
+            name, max_depth, MAX_LAYER_DEPTH
+        )));
+    }
+    if !(1..=MAX_LAYER_SAMPLES).contains(&n_samples) {
+        return Err(PbrtError::error(&format!(
+            "Material \"{}\" nsamples {} is outside the GPU layered limit 1..={}.",
+            name, n_samples, MAX_LAYER_SAMPLES
+        )));
+    }
+    Ok(())
 }
 
 fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
