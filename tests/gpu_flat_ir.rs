@@ -511,6 +511,7 @@ fn flatten_node_expands_coateddiffuse_children() {
     assert_eq!(material.kind, "coateddiffuse");
     assert_eq!(material.attributes[0].kind, AttributeKind::Material);
     assert_eq!(material.attributes[1].kind, AttributeKind::Material);
+    assert_eq!(material.tree_size, 3);
 }
 
 #[test]

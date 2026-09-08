@@ -5,6 +5,7 @@ pub struct Material {
     pub kind: String,
     pub source_kind: String,
     pub attributes: Vec<AttributeRef>,
+    pub tree_size: u32,
 }
 
 pub const EVENT_REFLECTION: u32 = 1 << 0;
