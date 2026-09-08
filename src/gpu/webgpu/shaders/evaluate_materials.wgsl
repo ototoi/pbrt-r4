@@ -79,6 +79,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             child_eval.parent_slot = 1u;
             child_eval.bxdf_kind = load_material_kind(child1.index);
             evaluated_attributes[work_index + 2u] = child_eval;
+            if (child_eval.bxdf_kind == MATERIAL_KIND_MIX
+                || child_eval.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE
+                || child_eval.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+                set_render_error();
+            }
             parent_index = work_index;
             parent_slot = 0u;
             current_index = child0.index;
