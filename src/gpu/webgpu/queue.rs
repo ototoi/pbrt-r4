@@ -2,8 +2,8 @@ use bytemuck::{bytes_of, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::abi::{
-    PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem,
-    SurfaceWorkItem,
+    EvaluatedAttributesWorkItem, PixelSampleState, QueueCounters, QueueState, RayWorkItem,
+    RenderError, ShadowRayWorkItem, SurfaceWorkItem,
 };
 use crate::util::error::PbrtError;
 
@@ -20,6 +20,7 @@ pub struct TypedQueueSizes {
     pub next_rays: u64,
     pub shadow_rays: u64,
     pub material_ray_indices: u64,
+    pub evaluated_attributes: u64,
     pub hit_area_ray_indices: u64,
     pub escaped_ray_indices: u64,
 }
@@ -46,6 +47,10 @@ impl TypedQueueSizes {
                 "shadow ray buffer",
             )?,
             material_ray_indices: bytes(std::mem::size_of::<u32>(), "material queue")?,
+            evaluated_attributes: bytes(
+                std::mem::size_of::<EvaluatedAttributesWorkItem>(),
+                "evaluated attributes",
+            )?,
             hit_area_ray_indices: bytes(std::mem::size_of::<u32>(), "hit-area queue")?,
             escaped_ray_indices: bytes(std::mem::size_of::<u32>(), "escaped queue")?,
         })
@@ -61,6 +66,7 @@ pub struct Queues {
     pub next_rays: wgpu::Buffer,
     pub shadow_rays: wgpu::Buffer,
     pub material_ray_indices: wgpu::Buffer,
+    pub evaluated_attributes: wgpu::Buffer,
     pub hit_area_ray_indices: wgpu::Buffer,
     pub escaped_ray_indices: wgpu::Buffer,
     state_readback: wgpu::Buffer,
@@ -112,6 +118,10 @@ impl Queues {
             material_ray_indices: storage(
                 "pbrt-r4 material ray index queue",
                 sizes.material_ray_indices,
+            ),
+            evaluated_attributes: storage(
+                "pbrt-r4 evaluated material attributes",
+                sizes.evaluated_attributes,
             ),
             hit_area_ray_indices: storage(
                 "pbrt-r4 hit-area ray index queue",
