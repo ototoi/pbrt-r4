@@ -32,6 +32,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var value_index = 0u; value_index < 10u; value_index++) {
             evaluated.values[value_index] = vec4<f32>(0.0);
         }
+        // Reserved throughput slots for the layered-BxDF walk.
+        evaluated.values[8] = vec4<f32>(1.0);
+        evaluated.values[9] = vec4<f32>(1.0);
         if (evaluated.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
             evaluated.values[0] = load_diffuse_reflectance(current_index, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_MIX) {
