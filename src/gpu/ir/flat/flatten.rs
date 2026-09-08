@@ -8,7 +8,7 @@ use super::{
 };
 use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
-    complete_triangle_attributes, AreaLight as NodeAreaLight, Component,
+    complete_triangle_attributes, remove_invalid_triangles, AreaLight as NodeAreaLight, Component,
     Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
     Sampler as NodeSampler, Shape, TriangleMeshShape,
 };
@@ -463,6 +463,10 @@ fn flatten_node_ref(
                             )));
                         }
                     };
+                    let shape = remove_invalid_triangles(shape)?;
+                    if shape.indices.is_empty() {
+                        continue;
+                    }
                     let input_normals = shape.normals.clone();
                     let shape = complete_triangle_attributes(shape, &node.name)?;
                     let material = material.clone().ok_or_else(|| {
