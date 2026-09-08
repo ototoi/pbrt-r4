@@ -136,6 +136,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::NextRay => queues.next_rays.as_entire_binding(),
                 ResourceId::ShadowQueue => queues.shadow_rays.as_entire_binding(),
                 ResourceId::MaterialRayQueue => queues.material_ray_indices.as_entire_binding(),
+                ResourceId::EvaluatedAttributes => queues.evaluated_attributes.as_entire_binding(),
                 ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
