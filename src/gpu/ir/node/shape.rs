@@ -248,6 +248,52 @@ pub fn complete_triangle_attributes(
     })
 }
 
+/// Removes triangles whose geometric normal is zero or non-finite.
+pub fn remove_invalid_triangles(
+    mut shape: TriangleMeshShape,
+) -> Result<TriangleMeshShape, PbrtError> {
+    if shape.indices.len() % 3 != 0 {
+        return Err(PbrtError::error(
+            "Triangle mesh index count must be divisible by three.",
+        ));
+    }
+    if shape
+        .indices
+        .iter()
+        .any(|&index| index as usize >= shape.positions.len())
+    {
+        return Err(PbrtError::error(
+            "Triangle mesh contains an out-of-range vertex index.",
+        ));
+    }
+    if shape
+        .positions
+        .iter()
+        .any(|position| !position.0.iter().all(|value| value.is_finite()))
+    {
+        return Err(PbrtError::error(
+            "Triangle mesh contains a non-finite position.",
+        ));
+    }
+
+    shape.indices = shape
+        .indices
+        .chunks_exact(3)
+        .filter(|triangle| {
+            let p = [
+                shape.positions[triangle[0] as usize].0,
+                shape.positions[triangle[1] as usize].0,
+                shape.positions[triangle[2] as usize].0,
+            ];
+            let normal = cross(sub(p[1], p[0]), sub(p[2], p[0]));
+            normal.iter().all(|value| value.is_finite()) && length_squared(normal) > 0.0
+        })
+        .flatten()
+        .copied()
+        .collect();
+    Ok(shape)
+}
+
 /// Flips per-vertex shading normals that disagree with the mesh winding.
 ///
 /// Subdivision limit normals (e.g. loopsubdiv's `Cross(S, T)` tangents) can
