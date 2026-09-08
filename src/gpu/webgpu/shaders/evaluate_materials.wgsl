@@ -14,6 +14,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let material_index = resolve_material_leaf(surface.material);
     let material_kind = load_material_kind(material_index);
     let lambda = load_sample_lambda(pixel_index);
+    let samples = load_ray_samples(pixel_index);
     var current_index = surface.material;
     var parent_index = 0xffffffffu;
     var parent_slot = 0xffffffffu;
@@ -47,6 +48,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             if (child0.kind != 3u || child1.kind != 3u) { set_render_error(); break; }
             evaluated.child_work_item0 = work_index + 1u;
             evaluated.child_work_item1 = work_index + 2u;
+            if (current_kind == MATERIAL_KIND_MIX) {
+                let amount = clamp(load_material_scalar(current_index, 2u), 0.0, 1.0);
+                let choice = select(work_index + 1u, work_index + 2u, samples.indirect.x < amount);
+                evaluated.selected_child_work_item = choice;
+            }
             evaluated_attributes[work_index] = evaluated;
             var child_eval: EvaluatedAttributesWorkItem;
             child_eval.surface_index = pixel_index;
@@ -79,7 +85,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(material_index, lambda);
     }
-    let samples = load_ray_samples(pixel_index);
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
         return;
     }
