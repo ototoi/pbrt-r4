@@ -35,7 +35,6 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/sample_diffuse_bounce.wgsl"),
     include_str!("shaders/sample_dielectric_bounce.wgsl"),
     include_str!("shaders/sample_conductor_bounce.wgsl"),
-    include_str!("shaders/sample_layered_bounce.wgsl"),
     include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
     include_str!("shaders/swap_ray_queues.wgsl"),
     include_str!("shaders/reset_next_ray_queue.wgsl"),
@@ -144,11 +143,8 @@ impl WavefrontPathIntegrator {
                 ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
                 ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
                 ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
-                ResourceId::ScatteringModel => scene.scattering_model_buffer.as_entire_binding(),
-                ResourceId::ScatteringNode => scene.scattering_node_buffer.as_entire_binding(),
-                ResourceId::ScatteringChild => scene.scattering_child_buffer.as_entire_binding(),
-                ResourceId::SpectrumAttributes => {
-                    scene.spectrum_attributes_buffer.as_entire_binding()
+                ResourceId::SpectrumAttribute => {
+                    scene.spectrum_attribute_buffer.as_entire_binding()
                 }
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
                 ResourceId::LightSamplingModel => {
@@ -246,11 +242,6 @@ impl WavefrontPathIntegrator {
                 "sample_conductor_bounce",
                 &pipeline.sample_conductor_bounce,
                 include_str!("shaders/sample_conductor_bounce.wgsl"),
-            ),
-            (
-                "sample_layered_bounce",
-                &pipeline.sample_layered_bounce,
-                include_str!("shaders/sample_layered_bounce.wgsl"),
             ),
             (
                 "sample_thin_dielectric_bounce",
@@ -426,13 +417,6 @@ impl WavefrontPathIntegrator {
                         &mut encoder,
                         &self.pipeline.sample_conductor_bounce.pipeline,
                         self.bind_group("sample_conductor_bounce"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_layered_bounce.pipeline,
-                        self.bind_group("sample_layered_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );

@@ -4,6 +4,8 @@ pub enum AttributeKind {
     Scalar,
     Spectrum,
     Texture,
+    /// Index of another material in the Flat IR material table.
+    Material,
 }
 
 /// A reference into the scene-wide attribute tables.

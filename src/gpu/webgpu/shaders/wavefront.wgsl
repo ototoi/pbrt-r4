@@ -229,78 +229,41 @@ fn pixel_count() -> u32 {
 }
 
 fn load_material_kind(index: u32) -> u32 {
-    if (material_table.debug_scattering_model != 0xffffffffu) {
-        return material_table.debug_scattering_model;
+    if (material_table.debug_material_kind != 0xffffffffu) {
+        return material_table.debug_material_kind;
     }
-    let model_index = load_material_model(index);
-    if (model_index >= material_table.scattering_model_count) {
+    if (index >= arrayLength(&materials) || index >= material_table.material_count) {
         set_render_error();
         return MATERIAL_KIND_NORMAL;
     }
-    if (model_index >= arrayLength(&scattering_models)) {
-        set_render_error();
-        return MATERIAL_KIND_NORMAL;
-    }
-    let node_index = scattering_models[model_index].surface_root;
-    if (node_index >= arrayLength(&scattering_nodes)) {
-        set_render_error();
-        return MATERIAL_KIND_NORMAL;
-    }
-    let node_kind = scattering_nodes[node_index].kind_tag;
-    if (node_kind == 0u) {
-        return MATERIAL_KIND_DIFFUSE;
-    }
-    if (node_kind == 1u) {
-        return MATERIAL_KIND_DIELECTRIC;
-    }
-    if (node_kind == 3u) {
-        return MATERIAL_KIND_THIN_DIELECTRIC;
-    }
-    if (node_kind == 2u) {
-        return MATERIAL_KIND_LAYERED;
-    }
-    if (node_kind == 4u) {
-        return MATERIAL_KIND_CONDUCTOR;
-    }
-    set_render_error();
-    return MATERIAL_KIND_NORMAL;
+    return materials[index].kind;
 }
 
-fn load_material_attribute(node_index: u32, ordinal: u32) -> AttributeRef {
-    if (node_index >= arrayLength(&scattering_nodes)) { set_render_error(); return AttributeRef(0u, 0u); }
-    let node = scattering_nodes[node_index];
-    if (ordinal >= node.attribute_count || node.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
-    return attribute_refs[node.attribute_offset + ordinal];
+fn load_material_attribute(material_index: u32, ordinal: u32) -> AttributeRef {
+    if (material_index >= arrayLength(&materials) || material_index >= material_table.material_count) { set_render_error(); return AttributeRef(0u, 0u); }
+    let material = materials[material_index];
+    if (ordinal >= material.attribute_count || material.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
+    return attribute_refs[material.attribute_offset + ordinal];
 }
-fn load_node_scalar(node_index: u32, ordinal: u32) -> f32 {
-    let attr_ref = load_material_attribute(node_index, ordinal);
+fn load_material_scalar(material_index: u32, ordinal: u32) -> f32 {
+    let attr_ref = load_material_attribute(material_index, ordinal);
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
 }
-fn load_node_spectrum(node_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
-    let attr_ref = load_material_attribute(node_index, ordinal);
+fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
+    let attr_ref = load_material_attribute(material_index, ordinal);
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
 }
-fn load_material_surface_node(index: u32) -> u32 {
-    let model = load_material_model(index);
-    if (model >= arrayLength(&scattering_models)) { set_render_error(); return 0u; }
-    return scattering_models[model].surface_root;
-}
-fn load_material_model(index: u32) -> u32 {
-    if (index >= arrayLength(&materials)) { set_render_error(); return 0u; }
-    return materials[index].scattering_model;
-}
 fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32> {
-    if (material_table.debug_scattering_model == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
-    let model = load_material_model(material_index);
-    return load_node_spectrum(scattering_models[model].surface_root, 0u, lambda);
+    if (material_table.debug_material_kind == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
+    return load_material_spectrum(material_index, 0u, lambda);
 }
-fn load_dielectric_eta(node_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(node_index, 0u, lambda); }
-fn dielectric_eta_is_constant(node_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(node_index, 0u).index); }
-fn load_conductor_eta(node_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(node_index, 0u, lambda); }
-fn load_conductor_k(node_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(node_index, 1u, lambda); }
-fn load_conductor_roughness(node_index: u32) -> f32 { return load_node_scalar(node_index, 2u); }
+fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
+fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
+fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
+fn load_conductor_k(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 1u, lambda); }
+fn load_conductor_roughness(material_index: u32) -> f32 { return load_material_scalar(material_index, 2u); }
 fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f32> {
     let c = clamp(abs(cosine_input), 0.0, 1.0);
     let c2 = c * c;
@@ -318,50 +281,15 @@ fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f3
     let rp = rs * (t3 - t4) / max(t3 + t4, vec4<f32>(1e-7));
     return 0.5 * (rs + rp);
 }
-fn load_scattering_node_word(index: u32, word: u32) -> u32 {
-    if (index >= arrayLength(&scattering_nodes)) { set_render_error(); return 0u; }
-    let node = scattering_nodes[index];
-    if (word == 0u) { return node.kind_tag; } if (word == 1u) { return node.event_flags; }
-    if (word == 2u) { return node.attribute_offset; } if (word == 3u) { return node.child_offset; }
-    if (word == 4u) { return node.child_count; } if (word == 5u) { return node.attribute_count; } return 0u;
-}
-fn load_scattering_child(node_index: u32, child_index: u32) -> u32 {
-    let child_count = load_scattering_node_word(node_index, 4u);
-    if (child_index >= child_count) { set_render_error(); return 0u; }
-    return scattering_children[load_scattering_node_word(node_index, 3u) + child_index];
-}
-fn load_layered_bxdf(material_index: u32, lambda: vec4<f32>) -> LayeredParams {
-    let root = scattering_models[load_material_model(material_index)].surface_root;
-    return LayeredParams(load_node_scalar(root, 0u), load_node_scalar(root, 1u), u32(max(load_node_scalar(root, 2u), 0.0)), u32(max(load_node_scalar(root, 3u), 0.0)), load_node_spectrum(root, 5u, lambda), u32(max(load_node_scalar(root, 4u), 0.0)), 0u, 0u, 0u);
-}
-fn load_layered_bottom_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32> {
-    let root = scattering_models[load_material_model(material_index)].surface_root;
-    let bottom = load_scattering_child(root, 1u);
-    if (load_scattering_node_word(bottom, 0u) != 0u) { set_render_error(); return vec4<f32>(0.0); }
-    return load_node_spectrum(bottom, 7u, lambda);
-}
-fn load_layered_eta_node(material_index: u32) -> u32 {
-    let root = scattering_models[load_material_model(material_index)].surface_root;
-    let top = load_scattering_child(root, 0u);
-    if (load_scattering_node_word(top, 0u) != 1u) { set_render_error(); return 0u; }
-    return top;
-}
-fn load_layered_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_node_spectrum(load_layered_eta_node(material_index), 6u, lambda); }
-fn layered_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(load_layered_eta_node(material_index), 6u).index); }
-
-fn layered_path_seed(pixel: u32, depth: u32) -> u32 {
-    return path_hash(path_hash(path_hash(viewport.seed) ^ pixel)
-        ^ path_hash(viewport.sample_index)) ^ path_hash(depth);
-}
-
-fn path_hash(value: u32) -> u32 {
-    var x = value;
-    x ^= x >> 16u;
-    x *= 0x7feb352du;
-    x ^= x >> 15u;
-    x *= 0x846ca68bu;
-    x ^= x >> 16u;
-    return x;
+fn dielectric_fresnel(cosine: f32, eta: f32) -> f32 {
+    let c = clamp(abs(cosine), 0.0, 1.0);
+    let e = select(eta, 1.0 / eta, cosine < 0.0);
+    let sin2_t = max(0.0, 1.0 - c * c) / (e * e);
+    if (sin2_t >= 1.0) { return 1.0; }
+    let ct = sqrt(1.0 - sin2_t);
+    let rp = (e * c - ct) / (e * c + ct);
+    let rs = (c - e * ct) / (c + e * ct);
+    return (rp * rp + rs * rs) * 0.5;
 }
 
 fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
