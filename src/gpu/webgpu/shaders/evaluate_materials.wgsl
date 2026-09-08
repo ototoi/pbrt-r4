@@ -13,6 +13,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let material_index = resolve_material_leaf(surface.material);
     let material_kind = load_material_kind(material_index);
+    let lambda = load_sample_lambda(pixel_index);
     var current_index = surface.material;
     var parent_index = 0xffffffffu;
     var parent_slot = 0xffffffffu;
@@ -27,6 +28,18 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         evaluated.child_work_item1 = 0xffffffffu;
         evaluated.bxdf_kind = load_material_kind(current_index);
         evaluated.selected_child_work_item = 0xffffffffu;
+        for (var value_index = 0u; value_index < 10u; value_index++) {
+            evaluated.values[value_index] = vec4<f32>(0.0);
+        }
+        if (evaluated.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
+            evaluated.values[0] = load_diffuse_reflectance(current_index, lambda);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_CONDUCTOR) {
+            evaluated.values[0] = load_conductor_eta(current_index, lambda);
+            evaluated.values[1] = load_conductor_k(current_index, lambda);
+            evaluated.values[2].x = load_conductor_roughness(current_index);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC || evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+            evaluated.values[0] = load_dielectric_eta(current_index, lambda);
+        }
         let current_kind = load_material_kind(current_index);
         if (current_kind == MATERIAL_KIND_MIX || current_kind == MATERIAL_KIND_COATED_DIFFUSE || current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
             let child0 = load_material_attribute(current_index, 0u);
@@ -62,7 +75,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {
         return;
     }
-    let lambda = load_sample_lambda(pixel_index);
     var reflectance = vec4<f32>(0.0);
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(material_index, lambda);
