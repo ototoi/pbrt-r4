@@ -251,6 +251,11 @@ impl WavefrontPathIntegrator {
                 include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
             ),
             (
+                "sample_composite_bounce",
+                &pipeline.sample_composite_bounce,
+                include_str!("shaders/sample_composite_bounce.wgsl"),
+            ),
+            (
                 "swap_ray_queues",
                 &pipeline.swap_ray_queues,
                 include_str!("shaders/swap_ray_queues.wgsl"),
