@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use pbrt_r4::gpu::ir::node::triangle_mesh_from_params;
 use pbrt_r4::gpu::ir::node::{
-    node_ref_to_json, tessellate_shapes, Camera, CameraComponent, Component, DiskShape, Material,
-    MaterialComponent, Node, Shape, ShapeComponent, SphereShape,
+    node_ref_to_json, remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params,
+    Camera, CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
+    ShapeComponent, SphereShape, TriangleMeshShape, Vec3f,
 };
 use pbrt_r4::parser::scene_builder::{
     FileLoc, RenderFromObject, SceneBuilder, SceneEntity, ShapeSceneEntity,
@@ -252,6 +252,37 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
         ];
         cross.iter().map(|value| value * value).sum::<f32>() > 0.0
     }));
+}
+
+#[test]
+fn invalid_triangles_are_removed_before_attribute_completion() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2, 0, 1, 1],
+        normals: None,
+        tangents: None,
+        uvs: None,
+    };
+
+    let filtered = remove_invalid_triangles(shape).unwrap();
+    assert_eq!(filtered.indices, vec![0, 1, 2]);
+}
+
+#[test]
+fn an_entirely_invalid_triangle_mesh_is_removed() {
+    let shape = TriangleMeshShape {
+        positions: vec![Vec3f([0.0, 0.0, 0.0]), Vec3f([1.0, 0.0, 0.0])],
+        indices: vec![0, 1, 1],
+        normals: None,
+        tangents: None,
+        uvs: None,
+    };
+
+    assert!(remove_invalid_triangles(shape).unwrap().indices.is_empty());
 }
 
 #[test]
