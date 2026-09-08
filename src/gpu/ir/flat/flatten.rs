@@ -1240,11 +1240,18 @@ fn material_index(
                 .sum::<u32>(),
         )
         .ok_or_else(|| PbrtError::error("GPU material tree size overflowed."))?;
+    let tree_base = attributes
+        .iter()
+        .filter(|attribute| attribute.kind == AttributeKind::Material)
+        .map(|attribute| attribute.index)
+        .min()
+        .unwrap_or(index);
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
         attributes: attributes.clone(),
         tree_size,
+        tree_base,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
