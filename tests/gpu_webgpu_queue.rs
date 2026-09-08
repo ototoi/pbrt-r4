@@ -19,3 +19,10 @@ fn typed_queue_sizes_follow_the_host_abi() {
 fn typed_queue_sizes_must_fit_shader_u32_indices() {
     assert!(TypedQueueSizes::new(u64::from(u32::MAX) + 1).is_err());
 }
+
+#[test]
+fn evaluated_attributes_scale_with_max_material_tree_size() {
+    let sizes = TypedQueueSizes::new_with_tree_stride(8, 7).unwrap();
+    assert_eq!(sizes.evaluated_attributes, 8 * 7 * 192);
+    assert_eq!(sizes.current_rays, 8 * 144);
+}
