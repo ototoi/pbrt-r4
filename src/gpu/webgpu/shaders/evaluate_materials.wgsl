@@ -18,12 +18,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var current_index = surface.material;
     var parent_index = 0xffffffffu;
     var parent_slot = 0xffffffffu;
-    let eawi_base = queue_index * max(material_table.eawi_stride, EVALUATED_ATTRIBUTES_STRIDE);
+    let attributes_eval_base = queue_index * material_table.attributes_eval_stride;
     // Clear the complete per-item slice before filling the nodes that are
     // currently materialized. This keeps future recursive expansion from
     // observing stale records in a reused queue buffer.
-    for (var clear_slot = 0u; clear_slot < max(material_table.eawi_stride, EVALUATED_ATTRIBUTES_STRIDE); clear_slot++) {
-        var empty: EvaluatedAttributesWorkItem;
+    for (var clear_slot = 0u; clear_slot < material_table.attributes_eval_stride; clear_slot++) {
+        var empty: AttributesEvalWorkItem;
         empty.surface_index = pixel_index;
         empty.material_index = 0xffffffffu;
         empty.parent_work_item = 0xffffffffu;
@@ -35,11 +35,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var clear_value = 0u; clear_value < 10u; clear_value++) {
             empty.values[clear_value] = vec4<f32>(0.0);
         }
-        evaluated_attributes[eawi_base + clear_slot] = empty;
+        attributes_eval_work_items[attributes_eval_base + clear_slot] = empty;
     }
     for (var tree_depth = 0u; tree_depth < 1u; tree_depth++) {
-        let work_index = eawi_base + tree_depth;
-        var evaluated: EvaluatedAttributesWorkItem;
+        let work_index = attributes_eval_base + tree_depth;
+        var evaluated: AttributesEvalWorkItem;
         evaluated.surface_index = pixel_index;
         evaluated.material_index = current_index;
         evaluated.parent_work_item = parent_index;
@@ -88,8 +88,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let choice = select(work_index + 2u, work_index + 1u, samples.indirect.x < amount);
                 evaluated.selected_child_work_item = choice;
             }
-            evaluated_attributes[work_index] = evaluated;
-            var child_eval: EvaluatedAttributesWorkItem;
+            attributes_eval_work_items[work_index] = evaluated;
+            var child_eval: AttributesEvalWorkItem;
             child_eval.surface_index = pixel_index;
             child_eval.material_index = child0.index;
             child_eval.parent_work_item = work_index;
@@ -106,7 +106,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
                 child_eval.values[0] = load_diffuse_reflectance(child0.index, lambda);
             }
-            evaluated_attributes[work_index + 1u] = child_eval;
+            attributes_eval_work_items[work_index + 1u] = child_eval;
             child_eval.material_index = child1.index;
             child_eval.parent_slot = 1u;
             child_eval.bxdf_kind = load_material_kind(child1.index);
@@ -120,7 +120,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
                 child_eval.values[0] = load_diffuse_reflectance(child1.index, lambda);
             }
-            evaluated_attributes[work_index + 2u] = child_eval;
+            attributes_eval_work_items[work_index + 2u] = child_eval;
             if (child_eval.bxdf_kind == MATERIAL_KIND_MIX
                 || child_eval.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE
                 || child_eval.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
@@ -130,14 +130,14 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             parent_slot = 0u;
             current_index = child0.index;
         } else {
-            evaluated_attributes[work_index] = evaluated;
+            attributes_eval_work_items[work_index] = evaluated;
             break;
         }
     }
-    let root_evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    let root_evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
     if (load_material_kind(surface.material) == MATERIAL_KIND_MIX
         && root_evaluated.selected_child_work_item != 0xffffffffu) {
-        let selected = load_evaluated_attributes(root_evaluated.selected_child_work_item);
+        let selected = load_attributes_eval_work_item(root_evaluated.selected_child_work_item);
         material_index = selected.material_index;
         material_kind = selected.bxdf_kind;
     }
@@ -256,7 +256,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let surface_kind = load_material_kind(surface.material);
     if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE || surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
-        let coat = load_evaluated_attributes(surface.evaluated_attributes_root + 1u);
+        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
         let eta = max(coat.values[0].x, 1.0001);
         let cos_i = clamp(abs(cos_wi), 0.0, 1.0);
         let coat_f = dielectric_fresnel(cos_i, eta);

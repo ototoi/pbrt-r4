@@ -8,8 +8,8 @@ fn sample_composite_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     if (surface.hit == 0u || surface.flags != 0u) { return; }
     let kind = load_material_kind(surface.material);
     if (kind != MATERIAL_KIND_COATED_DIFFUSE && kind != MATERIAL_KIND_COATED_CONDUCTOR) { return; }
-    var root = load_evaluated_attributes(surface.evaluated_attributes_root);
-    let coat = load_evaluated_attributes(root.child_work_item0);
+    var root = load_attributes_eval_work_item(surface.attributes_eval_work_item);
+    let coat = load_attributes_eval_work_item(root.child_work_item0);
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
     let direction = normalize(reflect(-wo, normal));
@@ -19,7 +19,7 @@ fn sample_composite_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let fresnel = dielectric_fresnel(cosine, eta);
     root.values[8].x = fresnel;
     root.values[9].x = 1.0 - fresnel;
-    evaluated_attributes[surface.evaluated_attributes_root] = root;
+    attributes_eval_work_items[surface.attributes_eval_work_item] = root;
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),

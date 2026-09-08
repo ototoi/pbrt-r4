@@ -19,14 +19,14 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
         return;
     }
-    let evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
     var leaf_evaluated = evaluated;
     if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_DIFFUSE) {
-        leaf_evaluated = load_evaluated_attributes(evaluated.child_work_item1);
+        leaf_evaluated = load_attributes_eval_work_item(evaluated.child_work_item1);
     }
     if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
         if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
-        let selected = load_evaluated_attributes(evaluated.selected_child_work_item);
+        let selected = load_attributes_eval_work_item(evaluated.selected_child_work_item);
         material_index = selected.material_index;
         material_kind = selected.bxdf_kind;
     }
@@ -55,7 +55,7 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var next_throughput = ray.throughput * reflectance;
     let surface_kind = load_material_kind(surface.material);
     if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
-        let coat = load_evaluated_attributes(surface.evaluated_attributes_root + 1u);
+        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
         let eta = max(coat.values[0].x, 1.0001);
         let coat_f = dielectric_fresnel(abs(dot(normal, wo)), eta);
         next_throughput = next_throughput * (1.0 - coat_f);

@@ -85,8 +85,8 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
     assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
-    assert!(COMMON_SHADER.contains("tree_size: u32"));
-    assert!(COMMON_SHADER.contains("tree_base: u32"));
+    assert!(!COMMON_SHADER.contains("tree_size"));
+    assert!(!COMMON_SHADER.contains("tree_base"));
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(21)"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
     assert!(COMMON_SHADER.contains("struct AttributeRef {"));
@@ -233,7 +233,7 @@ fn conductor_shader_uses_complex_fresnel_attributes() {
 fn composite_shader_uses_evaluated_material_tree() {
     let source = compose_source(SAMPLE_COMPOSITE_BOUNCE_SHADER);
     assert!(source.contains("MATERIAL_KIND_COATED_DIFFUSE"));
-    assert!(source.contains("load_evaluated_attributes"));
+    assert!(source.contains("load_attributes_eval_work_item"));
     assert!(source.contains("queue_counters.next"));
 }
 

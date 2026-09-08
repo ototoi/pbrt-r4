@@ -7,11 +7,11 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     var material_index = resolve_material_leaf(surface.material);
-    let evaluated = load_evaluated_attributes(surface.evaluated_attributes_root);
+    let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
     var leaf_evaluated = evaluated;
     if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
         if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
-        let selected = load_evaluated_attributes(evaluated.selected_child_work_item);
+        let selected = load_attributes_eval_work_item(evaluated.selected_child_work_item);
         material_index = selected.material_index;
         leaf_evaluated = selected;
     }
@@ -57,7 +57,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     }
     var next_throughput = ray.throughput * f * cos_i / pdf;
     if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR) {
-        let coat = load_evaluated_attributes(surface.evaluated_attributes_root + 1u);
+        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
         let coat_f = dielectric_fresnel(abs(dot(normal, wo)), max(coat.values[0].x, 1.0001));
         next_throughput = next_throughput * (1.0 - coat_f);
     }

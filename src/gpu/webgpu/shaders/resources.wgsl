@@ -35,7 +35,7 @@ var<storage, read_write> shadow_rays: array<ShadowRayWorkItem>;
 @group(0) @binding(16)
 var<storage, read_write> material_ray_indices: array<u32>;
 @group(0) @binding(37)
-var<storage, read_write> evaluated_attributes: array<EvaluatedAttributesWorkItem>;
+var<storage, read_write> attributes_eval_work_items: array<AttributesEvalWorkItem>;
 @group(0) @binding(17)
 var<storage, read_write> hit_area_ray_indices: array<u32>;
 @group(0) @binding(18)

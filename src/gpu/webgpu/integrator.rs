@@ -66,6 +66,9 @@ impl WavefrontPathIntegrator {
         flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
+        let attributes_eval_stride = u64::from(flat::max_attributes_eval_work_items_per_surface(
+            &flat_scene,
+        )?);
         let canonical_bindings = canonical_wavefront_bindings();
         let required_limits = super::shader::required_limits_for_sources(
             &canonical_bindings,
@@ -80,15 +83,8 @@ impl WavefrontPathIntegrator {
             scene.replace_material_kind(queue, kind);
             scene.film.mode = 1;
         }
-        let tree_stride = scene
-            .materials
-            .iter()
-            .map(|record| u64::from(record.tree_size))
-            .max()
-            .unwrap_or(3)
-            .max(3);
-        scene.material_table.reserved[0] = u32::try_from(tree_stride)
-            .map_err(|_| PbrtError::error("GPU material tree stride exceeds u32 range."))?;
+        scene.material_table.attributes_eval_stride = u32::try_from(attributes_eval_stride)
+            .map_err(|_| PbrtError::error("GPU attributes eval stride exceeds u32 range."))?;
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
@@ -115,7 +111,7 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new_with_tree_stride(device, pixel_count, tree_stride)?;
+        let queues = Queues::new(device, pixel_count, attributes_eval_stride)?;
         let film = Film::new(
             device,
             [scene.viewport.width, scene.viewport.height],
@@ -146,7 +142,9 @@ impl WavefrontPathIntegrator {
                 ResourceId::NextRay => queues.next_rays.as_entire_binding(),
                 ResourceId::ShadowQueue => queues.shadow_rays.as_entire_binding(),
                 ResourceId::MaterialRayQueue => queues.material_ray_indices.as_entire_binding(),
-                ResourceId::EvaluatedAttributes => queues.evaluated_attributes.as_entire_binding(),
+                ResourceId::AttributesEvalWorkItems => {
+                    queues.attributes_eval_work_items.as_entire_binding()
+                }
                 ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
