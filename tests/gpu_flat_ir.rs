@@ -41,6 +41,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
             name: material.to_string(),
             kind: material.to_string(),
             params: Default::default(),
+            material_attributes: Vec::new(),
         }),
     }));
     Arc::new(RwLock::new(node))
@@ -308,6 +309,7 @@ fn flatten_node_requires_tessellated_shapes() {
             name: "diffuse".to_string(),
             kind: "diffuse".to_string(),
             params: Default::default(),
+            material_attributes: Vec::new(),
         }),
     }));
     root.add_child(Arc::new(RwLock::new(shape)));
@@ -496,7 +498,7 @@ fn flatten_node_extracts_thin_dielectric_leaf() {
 }
 
 #[test]
-fn flatten_node_falls_back_for_unsupported_coateddiffuse() {
+fn flatten_node_expands_coateddiffuse_children() {
     let shape = triangle_node("coated", "coateddiffuse", [0.0; 3]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
@@ -504,9 +506,38 @@ fn flatten_node_falls_back_for_unsupported_coateddiffuse() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.materials[0].source_kind, "coateddiffuse");
-    assert_eq!(scene.materials[0].kind, "diffuse");
-    assert_eq!(scene.materials[0].attributes[0].name, "reflectance");
+    let material = scene.materials.last().unwrap();
+    assert_eq!(material.source_kind, "coateddiffuse");
+    assert_eq!(material.kind, "coateddiffuse");
+    assert_eq!(material.attributes[0].kind, AttributeKind::Material);
+    assert_eq!(material.attributes[1].kind, AttributeKind::Material);
+    assert_eq!(
+        pbrt_r4::gpu::ir::flat::max_attributes_eval_work_items_per_surface(&scene).unwrap(),
+        3
+    );
+}
+
+#[test]
+fn flatten_node_rejects_coated_layer_limits() {
+    let shape = triangle_node("coated", "coateddiffuse", [0.0; 3]);
+    {
+        let mut node = shape.write().unwrap();
+        if let Some(Component::Material(material)) = node
+            .components
+            .iter_mut()
+            .find(|component| matches!(component, Component::Material(_)))
+        {
+            Arc::get_mut(&mut material.material)
+                .unwrap()
+                .params
+                .add_int("maxdepth", 33);
+        }
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("maxdepth 33"));
 }
 
 #[test]
@@ -529,6 +560,7 @@ fn material_table_uses_generic_attribute_ranges() {
             .sum::<usize>()
     );
     for record in &table.records {
+        assert_eq!(record.padding, 0);
         assert!(
             (record.attribute_offset as usize) + (record.attribute_count as usize)
                 <= table.attributes.len()

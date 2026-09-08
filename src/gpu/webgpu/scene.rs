@@ -6,10 +6,10 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
-    material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, DenseSpectrum,
-    FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel, LightTableUniform,
-    MaterialRecord, MaterialTableUniform, TriangleDistributionEntry, Vertex, ViewportUniform,
-    INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
+    DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
+    LightTableUniform, MaterialRecord, MaterialTableUniform, TriangleDistributionEntry, Vertex,
+    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -17,9 +17,10 @@ use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
 use super::material::MaterialTable;
 use super::output::Output;
+use super::render_settings::RenderSettings;
 
 pub struct Scene {
-    pub camera: super::abi::CameraUniform,
+    pub camera: CameraUniform,
     pub viewport: ViewportUniform,
     pub film: FilmUniform,
     pub film_output_matrix: [[f32; 3]; 3],
@@ -50,7 +51,7 @@ pub struct Scene {
     pub light_sampling_models: Vec<LightSamplingModel>,
     pub light_records: Vec<LightRecord>,
     pub light_sampler_kind: LightSamplerKind,
-    pub render_settings: flat::RenderSettings,
+    pub render_settings: RenderSettings,
     pub acceleration: Acceleration,
 }
 
@@ -356,7 +357,7 @@ impl Scene {
             light_sampling_models,
             light_records,
             light_sampler_kind,
-            render_settings: flat.render_settings,
+            render_settings: RenderSettings::from_flat(flat.render_settings),
             acceleration,
         })
     }

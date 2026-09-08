@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const MAX_GPU_RENDER_DEPTH: i32 = 32;
+const MAX_LAYER_DEPTH: i32 = 32;
+const MAX_LAYER_SAMPLES: i32 = 32;
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)
@@ -130,6 +132,66 @@ fn build_material_attributes(
     builder: &mut FlatBuilder,
 ) -> Result<Vec<AttributeRef>, PbrtError> {
     match kind {
+        "mix" => {
+            let amount = source_material.params.get_one_float("amount", 0.5) as f32;
+            if !amount.is_finite() {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid mix amount.",
+                    source_material.name
+                )));
+            }
+            Ok(vec![push_scalar_attribute(builder, "amount", amount)?])
+        }
+        "coateddiffuse" => {
+            let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
+            let g = source_material.params.get_one_float("g", 0.0) as f32;
+            let max_depth_i = source_material.params.get_one_int("maxdepth", 10);
+            let n_samples_i = source_material.params.get_one_int("nsamples", 1);
+            validate_layer_limits(&source_material.name, max_depth_i, n_samples_i)?;
+            let max_depth = max_depth_i as f32;
+            let n_samples = n_samples_i as f32;
+            if ![thickness, g, max_depth, n_samples]
+                .iter()
+                .all(|v| v.is_finite())
+            {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid coateddiffuse parameters.",
+                    source_material.name
+                )));
+            }
+            let albedo = diffuse_reflectance(source_material)?;
+            Ok(vec![
+                push_scalar_attribute(builder, "thickness", thickness)?,
+                push_spectrum_attribute(builder, "albedo", &albedo)?,
+                push_scalar_attribute(builder, "g", g)?,
+                push_scalar_attribute(builder, "maxdepth", max_depth)?,
+                push_scalar_attribute(builder, "nsamples", n_samples)?,
+            ])
+        }
+        "coatedconductor" => {
+            let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
+            let g = source_material.params.get_one_float("g", 0.0) as f32;
+            let max_depth_i = source_material.params.get_one_int("maxdepth", 10);
+            let n_samples_i = source_material.params.get_one_int("nsamples", 1);
+            validate_layer_limits(&source_material.name, max_depth_i, n_samples_i)?;
+            let max_depth = max_depth_i as f32;
+            let n_samples = n_samples_i as f32;
+            if ![thickness, g, max_depth, n_samples]
+                .iter()
+                .all(|v| v.is_finite())
+            {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" has invalid coatedconductor parameters.",
+                    source_material.name
+                )));
+            }
+            Ok(vec![
+                push_scalar_attribute(builder, "thickness", thickness)?,
+                push_scalar_attribute(builder, "g", g)?,
+                push_scalar_attribute(builder, "maxdepth", max_depth)?,
+                push_scalar_attribute(builder, "nsamples", n_samples)?,
+            ])
+        }
         "diffuse" => {
             let reflectance = diffuse_reflectance(source_material)?;
             Ok(vec![push_spectrum_attribute(
@@ -187,6 +249,22 @@ fn build_material_attributes(
             "unsupported GPU material kind: {kind}"
         ))),
     }
+}
+
+fn validate_layer_limits(name: &str, max_depth: i32, n_samples: i32) -> Result<(), PbrtError> {
+    if !(0..=MAX_LAYER_DEPTH).contains(&max_depth) {
+        return Err(PbrtError::error(&format!(
+            "Material \"{}\" maxdepth {} is outside the GPU layered limit 0..={}.",
+            name, max_depth, MAX_LAYER_DEPTH
+        )));
+    }
+    if !(1..=MAX_LAYER_SAMPLES).contains(&n_samples) {
+        return Err(PbrtError::error(&format!(
+            "Material \"{}\" nsamples {} is outside the GPU layered limit 1..={}.",
+            name, n_samples, MAX_LAYER_SAMPLES
+        )));
+    }
+    Ok(())
 }
 
 fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
@@ -1053,14 +1131,17 @@ fn material_index(
             PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
         });
     }
-    let index = u32::try_from(builder.materials.len()).map_err(|_| {
-        PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
-    })?;
     let requested_kind = material_kind.unwrap_or(&source_material.kind);
     let source_kind = source_material.kind.as_str();
     let supported = matches!(
         requested_kind,
-        "diffuse" | "dielectric" | "thindielectric" | "conductor"
+        "diffuse"
+            | "dielectric"
+            | "thindielectric"
+            | "conductor"
+            | "mix"
+            | "coateddiffuse"
+            | "coatedconductor"
     );
     let texture_fallback = if supported && has_texture_attribute(source_material) {
         match UnsupportedTexturePolicy::from_environment()? {
@@ -1076,7 +1157,7 @@ fn material_index(
     } else {
         false
     };
-    let (kind, attributes) = if texture_fallback {
+    let (kind, mut attributes) = if texture_fallback {
         let magenta = Spectrum::from_rgb(&[1.0, 0.0, 1.0], SpectrumType::Albedo);
         (
             "diffuse",
@@ -1101,6 +1182,49 @@ fn material_index(
             build_material_attributes(source_material, requested_kind, builder)?,
         )
     };
+    if matches!(kind, "coateddiffuse" | "coatedconductor") {
+        let child_kinds: &[&str] = if kind == "coateddiffuse" {
+            &["dielectric", "diffuse"]
+        } else {
+            &["dielectric", "conductor"]
+        };
+        let mut children = Vec::with_capacity(2);
+        for child_kind in child_kinds {
+            let child = Arc::new(NodeMaterial {
+                name: format!("{}:{}", source_material.name, child_kind),
+                kind: (*child_kind).to_string(),
+                params: source_material.params.clone(),
+                material_attributes: Vec::new(),
+            });
+            children.push(AttributeRef {
+                kind: AttributeKind::Material,
+                index: material_index(&child, builder, Some(child_kind))?,
+                name: (*child_kind).to_string(),
+            });
+        }
+        children.append(&mut attributes);
+        attributes = children;
+    } else if kind == "mix" {
+        let mut material_attributes = Vec::new();
+        for (name, child) in &source_material.material_attributes {
+            let child_index = material_index(child, builder, None)?;
+            material_attributes.push(AttributeRef {
+                kind: AttributeKind::Material,
+                index: child_index,
+                name: name.clone(),
+            });
+        }
+        if material_attributes.len() != 2 {
+            return Err(PbrtError::error(
+                "GPU mix material must contain exactly two material references.",
+            ));
+        }
+        material_attributes.append(&mut attributes);
+        attributes = material_attributes;
+    }
+    let index = u32::try_from(builder.materials.len()).map_err(|_| {
+        PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
+    })?;
     builder.materials.push(Material {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),

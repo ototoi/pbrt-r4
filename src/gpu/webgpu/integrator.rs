@@ -36,6 +36,7 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/sample_dielectric_bounce.wgsl"),
     include_str!("shaders/sample_conductor_bounce.wgsl"),
     include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
+    include_str!("shaders/sample_composite_bounce.wgsl"),
     include_str!("shaders/swap_ray_queues.wgsl"),
     include_str!("shaders/reset_next_ray_queue.wgsl"),
     include_str!("shaders/accumulate_sample.wgsl"),
@@ -65,6 +66,9 @@ impl WavefrontPathIntegrator {
         flat_scene: flat::Scene,
         show_progress: bool,
     ) -> Result<Self, PbrtError> {
+        let attributes_eval_stride = u64::from(flat::max_attributes_eval_work_items_per_surface(
+            &flat_scene,
+        )?);
         let canonical_bindings = canonical_wavefront_bindings();
         let required_limits = super::shader::required_limits_for_sources(
             &canonical_bindings,
@@ -79,6 +83,8 @@ impl WavefrontPathIntegrator {
             scene.replace_material_kind(queue, kind);
             scene.film.mode = 1;
         }
+        scene.material_table.attributes_eval_stride = u32::try_from(attributes_eval_stride)
+            .map_err(|_| PbrtError::error("GPU attributes eval stride exceeds u32 range."))?;
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
@@ -105,7 +111,7 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count)?;
+        let queues = Queues::new(device, pixel_count, attributes_eval_stride)?;
         let film = Film::new(
             device,
             [scene.viewport.width, scene.viewport.height],
@@ -136,6 +142,9 @@ impl WavefrontPathIntegrator {
                 ResourceId::NextRay => queues.next_rays.as_entire_binding(),
                 ResourceId::ShadowQueue => queues.shadow_rays.as_entire_binding(),
                 ResourceId::MaterialRayQueue => queues.material_ray_indices.as_entire_binding(),
+                ResourceId::AttributesEvalWorkItems => {
+                    queues.attributes_eval_work_items.as_entire_binding()
+                }
                 ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
@@ -247,6 +256,11 @@ impl WavefrontPathIntegrator {
                 "sample_thin_dielectric_bounce",
                 &pipeline.sample_thin_dielectric_bounce,
                 include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
+            ),
+            (
+                "sample_composite_bounce",
+                &pipeline.sample_composite_bounce,
+                include_str!("shaders/sample_composite_bounce.wgsl"),
             ),
             (
                 "swap_ray_queues",
@@ -424,6 +438,13 @@ impl WavefrontPathIntegrator {
                         &mut encoder,
                         &self.pipeline.sample_thin_dielectric_bounce.pipeline,
                         self.bind_group("sample_thin_dielectric_bounce"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_composite_bounce.pipeline,
+                        self.bind_group("sample_composite_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );

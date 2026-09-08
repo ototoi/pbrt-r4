@@ -11,18 +11,145 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    let material_kind = load_material_kind(surface.material);
+    var material_index = resolve_material_leaf(surface.material);
+    var material_kind = load_material_kind(material_index);
+    let lambda = load_sample_lambda(pixel_index);
+    let samples = load_ray_samples(pixel_index);
+    var current_index = surface.material;
+    var parent_index = 0xffffffffu;
+    var parent_slot = 0xffffffffu;
+    let attributes_eval_base = queue_index * material_table.attributes_eval_stride;
+    // Clear the complete per-item slice before filling the nodes that are
+    // currently materialized. This keeps future recursive expansion from
+    // observing stale records in a reused queue buffer.
+    for (var clear_slot = 0u; clear_slot < material_table.attributes_eval_stride; clear_slot++) {
+        var empty: AttributesEvalWorkItem;
+        empty.surface_index = pixel_index;
+        empty.material_index = 0xffffffffu;
+        empty.parent_work_item = 0xffffffffu;
+        empty.parent_slot = 0xffffffffu;
+        empty.child_work_item0 = 0xffffffffu;
+        empty.child_work_item1 = 0xffffffffu;
+        empty.bxdf_kind = 0u;
+        empty.selected_child_work_item = 0xffffffffu;
+        for (var clear_value = 0u; clear_value < 10u; clear_value++) {
+            empty.values[clear_value] = vec4<f32>(0.0);
+        }
+        attributes_eval_work_items[attributes_eval_base + clear_slot] = empty;
+    }
+    for (var tree_depth = 0u; tree_depth < 1u; tree_depth++) {
+        let work_index = attributes_eval_base + tree_depth;
+        var evaluated: AttributesEvalWorkItem;
+        evaluated.surface_index = pixel_index;
+        evaluated.material_index = current_index;
+        evaluated.parent_work_item = parent_index;
+        evaluated.parent_slot = parent_slot;
+        evaluated.child_work_item0 = 0xffffffffu;
+        evaluated.child_work_item1 = 0xffffffffu;
+        evaluated.bxdf_kind = load_material_kind(current_index);
+        evaluated.selected_child_work_item = 0xffffffffu;
+        for (var value_index = 0u; value_index < 10u; value_index++) {
+            evaluated.values[value_index] = vec4<f32>(0.0);
+        }
+        // Reserved throughput slots for the layered-BxDF walk.
+        evaluated.values[8] = vec4<f32>(1.0);
+        evaluated.values[9] = vec4<f32>(1.0);
+        if (evaluated.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
+            evaluated.values[0] = load_diffuse_reflectance(current_index, lambda);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_MIX) {
+            evaluated.values[0].x = load_material_scalar(current_index, 2u);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_CONDUCTOR) {
+            evaluated.values[0] = load_conductor_eta(current_index, lambda);
+            evaluated.values[1] = load_conductor_k(current_index, lambda);
+            evaluated.values[2].x = load_conductor_roughness(current_index);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC || evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+            evaluated.values[0] = load_dielectric_eta(current_index, lambda);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+            evaluated.values[0].x = load_material_scalar(current_index, 2u);
+            evaluated.values[1] = load_material_spectrum(current_index, 3u, lambda);
+            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[3].x = load_material_scalar(current_index, 5u);
+            evaluated.values[4].x = load_material_scalar(current_index, 6u);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+            evaluated.values[0].x = load_material_scalar(current_index, 2u);
+            evaluated.values[1].x = load_material_scalar(current_index, 3u);
+            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[3].x = load_material_scalar(current_index, 5u);
+        }
+        let current_kind = load_material_kind(current_index);
+        if (current_kind == MATERIAL_KIND_MIX || current_kind == MATERIAL_KIND_COATED_DIFFUSE || current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+            let child0 = load_material_attribute(current_index, 0u);
+            let child1 = load_material_attribute(current_index, 1u);
+            if (child0.kind != 3u || child1.kind != 3u) { set_render_error(); break; }
+            evaluated.child_work_item0 = work_index + 1u;
+            evaluated.child_work_item1 = work_index + 2u;
+            if (current_kind == MATERIAL_KIND_MIX) {
+                let amount = clamp(load_material_scalar(current_index, 2u), 0.0, 1.0);
+                let choice = select(work_index + 2u, work_index + 1u, samples.indirect.x < amount);
+                evaluated.selected_child_work_item = choice;
+            }
+            attributes_eval_work_items[work_index] = evaluated;
+            var child_eval: AttributesEvalWorkItem;
+            child_eval.surface_index = pixel_index;
+            child_eval.material_index = child0.index;
+            child_eval.parent_work_item = work_index;
+            child_eval.parent_slot = 0u;
+            child_eval.child_work_item0 = 0xffffffffu;
+            child_eval.child_work_item1 = 0xffffffffu;
+            child_eval.bxdf_kind = load_material_kind(child0.index);
+            child_eval.selected_child_work_item = 0xffffffffu;
+            for (var child_value_index = 0u; child_value_index < 10u; child_value_index++) {
+                child_eval.values[child_value_index] = vec4<f32>(0.0);
+            }
+            if (child_eval.bxdf_kind == MATERIAL_KIND_DIELECTRIC || child_eval.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+                child_eval.values[0] = load_dielectric_eta(child0.index, lambda);
+            } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
+                child_eval.values[0] = load_diffuse_reflectance(child0.index, lambda);
+            }
+            attributes_eval_work_items[work_index + 1u] = child_eval;
+            child_eval.material_index = child1.index;
+            child_eval.parent_slot = 1u;
+            child_eval.bxdf_kind = load_material_kind(child1.index);
+            for (var child1_value_index = 0u; child1_value_index < 10u; child1_value_index++) {
+                child_eval.values[child1_value_index] = vec4<f32>(0.0);
+            }
+            if (child_eval.bxdf_kind == MATERIAL_KIND_CONDUCTOR) {
+                child_eval.values[0] = load_conductor_eta(child1.index, lambda);
+                child_eval.values[1] = load_conductor_k(child1.index, lambda);
+                child_eval.values[2].x = load_conductor_roughness(child1.index);
+            } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
+                child_eval.values[0] = load_diffuse_reflectance(child1.index, lambda);
+            }
+            attributes_eval_work_items[work_index + 2u] = child_eval;
+            if (child_eval.bxdf_kind == MATERIAL_KIND_MIX
+                || child_eval.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE
+                || child_eval.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+                set_render_error();
+            }
+            parent_index = work_index;
+            parent_slot = 0u;
+            current_index = child0.index;
+        } else {
+            attributes_eval_work_items[work_index] = evaluated;
+            break;
+        }
+    }
+    let root_evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
+    if (load_material_kind(surface.material) == MATERIAL_KIND_MIX
+        && root_evaluated.selected_child_work_item != 0xffffffffu) {
+        let selected = load_attributes_eval_work_item(root_evaluated.selected_child_work_item);
+        material_index = selected.material_index;
+        material_kind = selected.bxdf_kind;
+    }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {
         return;
     }
-    let lambda = load_sample_lambda(pixel_index);
     var reflectance = vec4<f32>(0.0);
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
-        reflectance = load_diffuse_reflectance(surface.material, lambda);
+        reflectance = load_diffuse_reflectance(material_index, lambda);
     }
-    let samples = load_ray_samples(pixel_index);
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
         return;
     }
@@ -112,11 +239,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
     if (material_kind == MATERIAL_KIND_CONDUCTOR) {
-        let eta = load_conductor_eta(surface.material, lambda);
-        let k = load_conductor_k(surface.material, lambda);
+        let eta = load_conductor_eta(material_index, lambda);
+        let k = load_conductor_k(material_index, lambda);
         let h = scattering_local(normalize(wo + wi), shading_n);
         let fresnel = conductor_fresnel(dot(scattering_local(wo, shading_n), h), eta, k);
-        let alpha = max(load_conductor_roughness(surface.material), 1e-3);
+        let alpha = max(load_conductor_roughness(material_index), 1e-3);
         let cos_h = max(abs(h.z), 1e-5);
         let alpha2 = alpha * alpha;
         let d = alpha2 / (PI * pow(cos_h * cos_h * (alpha2 - 1.0) + 1.0, 2.0));
@@ -126,6 +253,14 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let g_i = 2.0 * cos_i / (cos_i + sqrt(cos_i * cos_i + alpha2 * (1.0 - cos_i * cos_i)));
         f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
         bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
+    }
+    let surface_kind = load_material_kind(surface.material);
+    if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE || surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
+        let eta = max(coat.values[0].x, 1.0001);
+        let cos_i = clamp(abs(cos_wi), 0.0, 1.0);
+        let coat_f = dielectric_fresnel(cos_i, eta);
+        f = f * (1.0 - coat_f);
     }
     var mis_weight = 1.0;
     if (light_kind == LIGHT_KIND_AREA) {

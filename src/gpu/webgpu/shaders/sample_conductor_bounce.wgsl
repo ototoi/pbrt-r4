@@ -6,10 +6,19 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
+    var material_index = resolve_material_leaf(surface.material);
+    let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
+    var leaf_evaluated = evaluated;
+    if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
+        if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
+        let selected = load_attributes_eval_work_item(evaluated.selected_child_work_item);
+        material_index = selected.material_index;
+        leaf_evaluated = selected;
+    }
     if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(surface.material) != MATERIAL_KIND_CONDUCTOR) { return; }
+        || load_material_kind(material_index) != MATERIAL_KIND_CONDUCTOR) { return; }
     let lambda = load_sample_lambda(pixel_index);
-    let roughness = load_conductor_roughness(surface.material);
+    let roughness = leaf_evaluated.values[2].x;
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
     let tangent = make_tangent(normal);
@@ -33,7 +42,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let direction = normalize(reflect(-wo, half_world));
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
-    var f = conductor_fresnel(cos_i, load_conductor_eta(surface.material, lambda), load_conductor_k(surface.material, lambda)) / cos_i;
+    var f = conductor_fresnel(cos_i, evaluated.values[0], evaluated.values[1]) / cos_i;
     if (roughness > 1e-3) {
         let wi_local = scattering_local(direction, normal);
         let wo_local = scattering_local(wo, normal);
@@ -43,14 +52,20 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         let d = a2 / (PI * pow(h_local.z * h_local.z * (a2 - 1.0) + 1.0, 2.0));
         let g = 2.0 * abs(wo_local.z) / (abs(wo_local.z) + sqrt(wo_local.z * wo_local.z + a2 * (1.0 - wo_local.z * wo_local.z)))
             * 2.0 * abs(wi_local.z) / (abs(wi_local.z) + sqrt(wi_local.z * wi_local.z + a2 * (1.0 - wi_local.z * wi_local.z)));
-        f = conductor_fresnel(abs(dot(wo_local, h_local)), load_conductor_eta(surface.material, lambda), load_conductor_k(surface.material, lambda)) * d * g
+        f = conductor_fresnel(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
+    }
+    var next_throughput = ray.throughput * f * cos_i / pdf;
+    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR) {
+        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
+        let coat_f = dielectric_fresnel(abs(dot(normal, wo)), max(coat.values[0].x, 1.0001));
+        next_throughput = next_throughput * (1.0 - coat_f);
     }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
-        ray.throughput * f * cos_i / pdf,
+        next_throughput,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
         ray.inv_w_u, ray.inv_w_u / pdf, pdf, 0u, 0u, 0u,
