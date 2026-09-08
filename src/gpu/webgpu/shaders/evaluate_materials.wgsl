@@ -207,6 +207,14 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
         bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
     }
+    let surface_kind = load_material_kind(surface.material);
+    if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE || surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+        let coat = load_evaluated_attributes(surface.evaluated_attributes_root + 1u);
+        let eta = max(coat.values[0].x, 1.0001);
+        let cos_i = clamp(abs(cos_wi), 0.0, 1.0);
+        let coat_f = dielectric_fresnel(cos_i, eta);
+        f = f * (1.0 - coat_f);
+    }
     var mis_weight = 1.0;
     if (light_kind == LIGHT_KIND_AREA) {
         mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
