@@ -13,16 +13,36 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let material_index = resolve_material_leaf(surface.material);
     let material_kind = load_material_kind(material_index);
-    var evaluated: EvaluatedAttributesWorkItem;
-    evaluated.surface_index = pixel_index;
-    evaluated.material_index = material_index;
-    evaluated.parent_work_item = 0xffffffffu;
-    evaluated.parent_slot = 0xffffffffu;
-    evaluated.child_work_item0 = 0xffffffffu;
-    evaluated.child_work_item1 = 0xffffffffu;
-    evaluated.bxdf_kind = material_kind;
-    evaluated.selected_child_work_item = 0xffffffffu;
-    evaluated_attributes[queue_index] = evaluated;
+    var current_index = surface.material;
+    var parent_index = 0xffffffffu;
+    var parent_slot = 0xffffffffu;
+    for (var tree_depth = 0u; tree_depth < 32u; tree_depth++) {
+        let work_index = queue_index * 32u + tree_depth;
+        var evaluated: EvaluatedAttributesWorkItem;
+        evaluated.surface_index = pixel_index;
+        evaluated.material_index = current_index;
+        evaluated.parent_work_item = parent_index;
+        evaluated.parent_slot = parent_slot;
+        evaluated.child_work_item0 = 0xffffffffu;
+        evaluated.child_work_item1 = 0xffffffffu;
+        evaluated.bxdf_kind = load_material_kind(current_index);
+        evaluated.selected_child_work_item = 0xffffffffu;
+        let current_kind = load_material_kind(current_index);
+        if (current_kind == MATERIAL_KIND_MIX || current_kind == MATERIAL_KIND_COATED_DIFFUSE || current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+            let child0 = load_material_attribute(current_index, 0u);
+            let child1 = load_material_attribute(current_index, 1u);
+            if (child0.kind != 3u || child1.kind != 3u) { set_render_error(); break; }
+            evaluated.child_work_item0 = work_index + 1u;
+            evaluated.child_work_item1 = work_index + 2u;
+            evaluated_attributes[work_index] = evaluated;
+            parent_index = work_index;
+            parent_slot = 0u;
+            current_index = child0.index;
+        } else {
+            evaluated_attributes[work_index] = evaluated;
+            break;
+        }
+    }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {
