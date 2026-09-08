@@ -11,6 +11,17 @@ const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
 const MATERIAL_KIND_MIX: u32 = 7u;
 const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
+struct EvaluatedAttributesWorkItem {
+    surface_index: u32,
+    material_index: u32,
+    parent_work_item: u32,
+    parent_slot: u32,
+    child_work_item0: u32,
+    child_work_item1: u32,
+    bxdf_kind: u32,
+    selected_child_work_item: u32,
+    values: array<vec4<f32>, 10>,
+};
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;

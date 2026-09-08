@@ -13,6 +13,16 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let material_index = resolve_material_leaf(surface.material);
     let material_kind = load_material_kind(material_index);
+    var evaluated: EvaluatedAttributesWorkItem;
+    evaluated.surface_index = pixel_index;
+    evaluated.material_index = material_index;
+    evaluated.parent_work_item = 0xffffffffu;
+    evaluated.parent_slot = 0xffffffffu;
+    evaluated.child_work_item0 = 0xffffffffu;
+    evaluated.child_work_item1 = 0xffffffffu;
+    evaluated.bxdf_kind = material_kind;
+    evaluated.selected_child_work_item = 0xffffffffu;
+    evaluated_attributes[queue_index] = evaluated;
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {

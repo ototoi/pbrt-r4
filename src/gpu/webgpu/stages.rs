@@ -25,6 +25,7 @@ pub enum ResourceId {
     NextRay,
     ShadowQueue,
     MaterialRayQueue,
+    EvaluatedAttributes,
     HitAreaRayQueue,
     EscapedRayQueue,
     HitRecord,
@@ -203,6 +204,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (14, ResourceId::NextRay),
         (15, ResourceId::ShadowQueue),
         (16, ResourceId::MaterialRayQueue),
+        (37, ResourceId::EvaluatedAttributes),
         (17, ResourceId::HitAreaRayQueue),
         (18, ResourceId::EscapedRayQueue),
     ] {
