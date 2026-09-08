@@ -100,7 +100,8 @@ impl SceneBuilder {
             },
         }));
 
-        let materials = self.build_material_resources();
+        let mut materials = self.build_material_resources();
+        self.populate_gpu_material_references(&mut materials)?;
         let named_materials = self.build_named_material_resources(&materials);
 
         for medium in self.media.values() {
@@ -147,6 +148,58 @@ impl SceneBuilder {
         return Ok(Arc::new(RwLock::new(root_node)));
     }
 
+    fn populate_gpu_material_references(
+        &self,
+        materials: &mut [Arc<Material>],
+    ) -> Result<(), PbrtError> {
+        for index in 0..materials.len() {
+            if materials[index].kind != "mix" {
+                continue;
+            }
+            let names = materials[index]
+                .params
+                .get_strings_ref("materials")
+                .filter(|names| names.len() >= 2)
+                .map(|names| (names[0].clone(), names[1].clone()))
+                .unwrap_or_else(|| {
+                    (
+                        materials[index].params.get_one_string("namedmaterial1", ""),
+                        materials[index].params.get_one_string("namedmaterial2", ""),
+                    )
+                });
+            if names.0.is_empty() || names.1.is_empty() {
+                return Err(PbrtError::error(
+                    "Mix material is missing named-material references.",
+                ));
+            }
+            let first_index = *self.named_materials.get(&names.0).ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Mix material references unknown material \"{}\".",
+                    names.0
+                ))
+            })?;
+            let second_index = *self.named_materials.get(&names.1).ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Mix material references unknown material \"{}\".",
+                    names.1
+                ))
+            })?;
+            let first = materials
+                .get(first_index)
+                .cloned()
+                .ok_or_else(|| PbrtError::error("Mix material first reference is out of range."))?;
+            let second = materials.get(second_index).cloned().ok_or_else(|| {
+                PbrtError::error("Mix material second reference is out of range.")
+            })?;
+            Arc::get_mut(&mut materials[index])
+                .ok_or_else(|| {
+                    PbrtError::error("GPU material graph has unexpected shared ownership.")
+                })?
+                .material_attributes = vec![("a".to_string(), first), ("b".to_string(), second)];
+        }
+        Ok(())
+    }
+
     fn build_camera_node(&self) -> NodeRef {
         let mut node = Node::new("camera");
         // `camera_to_world` is historically named but stores pbrt's
@@ -179,6 +232,7 @@ impl SceneBuilder {
                     name: material.base.name.clone(),
                     kind: material.base.name.clone(),
                     params: material.base.params.clone(),
+                    material_attributes: Vec::new(),
                 })
             })
             .collect()
@@ -298,6 +352,7 @@ impl SceneBuilder {
                 name: "default".to_string(),
                 kind: "diffuse".to_string(),
                 params: Default::default(),
+                material_attributes: Vec::new(),
             }));
         }
         if let Some(name) = &shape.material_name {
