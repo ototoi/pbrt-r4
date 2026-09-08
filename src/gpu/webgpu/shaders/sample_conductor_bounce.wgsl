@@ -14,6 +14,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         if (selected.material_index != material_index) { return; }
     }
     if (surface.hit == 0u || surface.flags != 0u
+        || load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR
         || load_material_kind(material_index) != MATERIAL_KIND_CONDUCTOR) { return; }
     let lambda = load_sample_lambda(pixel_index);
     let roughness = evaluated.values[2].x;
