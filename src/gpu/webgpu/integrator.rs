@@ -36,6 +36,7 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/sample_dielectric_bounce.wgsl"),
     include_str!("shaders/sample_conductor_bounce.wgsl"),
     include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
+    include_str!("shaders/sample_composite_bounce.wgsl"),
     include_str!("shaders/swap_ray_queues.wgsl"),
     include_str!("shaders/reset_next_ray_queue.wgsl"),
     include_str!("shaders/accumulate_sample.wgsl"),
@@ -425,6 +426,13 @@ impl WavefrontPathIntegrator {
                         &mut encoder,
                         &self.pipeline.sample_thin_dielectric_bounce.pipeline,
                         self.bind_group("sample_thin_dielectric_bounce"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_composite_bounce.pipeline,
+                        self.bind_group("sample_composite_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
