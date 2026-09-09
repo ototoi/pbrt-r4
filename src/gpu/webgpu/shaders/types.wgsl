@@ -22,6 +22,24 @@ struct AttributesEvalWorkItem {
     selected_child_work_item: u32,
     values: array<vec4<f32>, 10>,
 };
+
+struct LayeredParams {
+    thickness: f32,
+    albedo: vec4<f32>,
+    g: f32,
+    max_depth: f32,
+    n_samples: f32,
+};
+
+struct DielectricInterfaceSample {
+    f: vec4<f32>,
+    wi: vec3<f32>,
+    pdf: f32,
+    etap: f32,
+    valid: u32,
+    transmission: u32,
+    specular: u32,
+};
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
@@ -99,6 +117,22 @@ struct Instance {
 };
 
 struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, _padding: u32, };
+
+struct TextureNodeRecord {
+    kind: u32,
+    first_child: u32,
+    child_count: u32,
+    implementation_hash: u32,
+    swrap_mode: u32,
+    twrap_mode: u32,
+    color_space: u32,
+    _padding: u32,
+    operation: u32,
+    mapping_kind: u32,
+    operation_pad: array<u32, 2>,
+    constant_value: vec4<f32>,
+    mapping: mat4x4<f32>,
+};
 struct AttributeRef { kind: u32, index: u32, };
 
 struct DenseSpectrum {
@@ -140,6 +174,8 @@ struct SurfaceWorkItem {
     position_error: vec4<f32>,
     normal: vec4<f32>,
     geometric_normal: vec4<f32>,
+    uv: vec2<f32>,
+    _uv_padding: vec2<f32>,
     material: u32,
     flags: u32,
     attributes_eval_work_item: u32,

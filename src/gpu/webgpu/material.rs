@@ -22,6 +22,7 @@ impl MaterialTable {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::TextureUnbounded => 4,
                         flat::AttributeKind::Material => 3,
                     };
                     attributes.push(AttributeRef {
@@ -47,7 +48,13 @@ impl MaterialTable {
 fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtError> {
     let expected = match material.kind.as_str() {
         "diffuse" => &[(0, flat::AttributeKind::Spectrum)][..],
-        "dielectric" | "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
+        "dielectric" => &[
+            (0, flat::AttributeKind::Spectrum),
+            (1, flat::AttributeKind::Scalar),
+            (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Scalar),
+        ][..],
+        "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
         "conductor" => &[
             (0, flat::AttributeKind::Spectrum),
             (1, flat::AttributeKind::Spectrum),
@@ -66,14 +73,30 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             (4, flat::AttributeKind::Scalar),
             (5, flat::AttributeKind::Scalar),
             (6, flat::AttributeKind::Scalar),
+            (7, flat::AttributeKind::Spectrum),
+            (8, flat::AttributeKind::Spectrum),
+            (9, flat::AttributeKind::Scalar),
+            (10, flat::AttributeKind::Scalar),
+            (11, flat::AttributeKind::Scalar),
         ][..],
         "coatedconductor" => &[
             (0, flat::AttributeKind::Material),
             (1, flat::AttributeKind::Material),
             (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Spectrum),
             (4, flat::AttributeKind::Scalar),
             (5, flat::AttributeKind::Scalar),
+            (6, flat::AttributeKind::Scalar),
+            (7, flat::AttributeKind::Spectrum),
+            (8, flat::AttributeKind::Scalar),
+            (9, flat::AttributeKind::Scalar),
+            (10, flat::AttributeKind::Spectrum),
+            (11, flat::AttributeKind::Spectrum),
+            (12, flat::AttributeKind::Scalar),
+            (13, flat::AttributeKind::Scalar),
+            (14, flat::AttributeKind::Scalar),
+            (15, flat::AttributeKind::Spectrum),
+            (16, flat::AttributeKind::Scalar),
         ][..],
         other => {
             return Err(PbrtError::error(&format!(
@@ -86,7 +109,15 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             .attributes
             .iter()
             .zip(expected)
-            .any(|(actual, (_, expected_kind))| actual.kind != *expected_kind)
+            .any(|(actual, (_, expected_kind))| {
+                actual.kind != *expected_kind
+                    && !(*expected_kind == flat::AttributeKind::Spectrum
+                        && actual.kind == flat::AttributeKind::Texture)
+                    && !(*expected_kind == flat::AttributeKind::Spectrum
+                        && actual.kind == flat::AttributeKind::TextureUnbounded)
+                    && !(*expected_kind == flat::AttributeKind::Scalar
+                        && actual.kind == flat::AttributeKind::Texture)
+            })
     {
         let actual = material
             .attributes
@@ -113,6 +144,7 @@ fn format_attribute_kind(kind: flat::AttributeKind) -> &'static str {
         flat::AttributeKind::Scalar => "scalar",
         flat::AttributeKind::Spectrum => "spectrum",
         flat::AttributeKind::Texture => "texture",
+        flat::AttributeKind::TextureUnbounded => "texture_unbounded",
         flat::AttributeKind::Material => "material",
     }
 }

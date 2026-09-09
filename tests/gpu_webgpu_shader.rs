@@ -46,6 +46,17 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
+fn material_shader_uses_white_procedural_texture_placeholders() {
+    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(source.contains("if (node.operation >= 4u)"));
+    assert!(source.contains("Other procedural graphs remain placeholders"));
+    assert!(source.contains("scale *= node.constant_value.x"));
+    assert!(!source.contains("fn texture_noise"));
+    assert!(!source.contains("fn texture_fbm"));
+    assert!(!source.contains("fn texture_marble"));
+}
+
+#[test]
 fn required_limits_are_derived_from_each_composed_stage() {
     let bindings = canonical_wavefront_bindings();
     let limits = required_limits_for_sources(&bindings, &[GENERATE_PRIMARY_RAYS_SHADER]).unwrap();
@@ -233,8 +244,23 @@ fn conductor_shader_uses_complex_fresnel_attributes() {
 fn composite_shader_uses_evaluated_material_tree() {
     let source = compose_source(SAMPLE_COMPOSITE_BOUNCE_SHADER);
     assert!(source.contains("MATERIAL_KIND_COATED_DIFFUSE"));
+    assert!(source.contains("MATERIAL_KIND_COATED_CONDUCTOR"));
     assert!(source.contains("load_attributes_eval_work_item"));
+    assert!(source.contains("sample_dielectric_interface"));
+    assert!(source.contains("sample_conductor_interface"));
+    assert!(source.contains("sample_layered_exponential"));
+    assert!(source.contains("sample_hg_direction"));
     assert!(source.contains("queue_counters.next"));
+}
+
+#[test]
+fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
+    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(source.contains("evaluate_layered_f"));
+    assert!(source.contains("evaluate_layered_pdf"));
+    assert!(source.contains("sample_layered_bottom"));
+    assert!(source.contains("load_material_spectrum(current_index, 3u, lambda)"));
+    assert!(!source.contains("Phase 1 of layered evaluation"));
 }
 
 #[test]

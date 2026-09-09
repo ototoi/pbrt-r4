@@ -52,7 +52,7 @@ pub struct WavefrontPathIntegrator {
     queues: Queues,
     film: Film,
     pipeline: Pipeline,
-    bind_groups: HashMap<&'static str, wgpu::BindGroup>,
+    bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]>,
     rendered: bool,
     show_progress: bool,
 }
@@ -70,15 +70,30 @@ impl WavefrontPathIntegrator {
             &flat_scene,
         )?);
         let canonical_bindings = canonical_wavefront_bindings();
-        let required_limits = super::shader::required_limits_for_sources(
+        let mut required_limits = super::shader::required_limits_for_sources(
             &canonical_bindings,
             DEPLOYED_STAGE_SOURCES,
         )?;
-        let context = Context::new(required_limits)?;
+        // Every deployed pipeline has a second group reserved for texture
+        // binding arrays, even when an individual stage does not sample one.
+        required_limits.bind_groups = required_limits.bind_groups.max(2);
+        let texture_image_count = u32::try_from(flat_scene.texture_nodes.len())
+            .map_err(|_| PbrtError::error("Texture node count exceeds u32 range."))?;
+        let texture_sampler_count = texture_image_count;
+        log::info!(
+            "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
+        );
+        let context = Context::new(
+            required_limits,
+            texture_image_count.max(1),
+            texture_sampler_count.max(1),
+        )?;
+        log::info!("GPU create: WebGPU context ready");
         let device = &context.device;
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
+        log::info!("GPU create: WebGPU scene resources ready");
         if let Some(kind) = debug_material {
             scene.replace_material_kind(queue, kind);
             scene.film.mode = 1;
@@ -112,6 +127,7 @@ impl WavefrontPathIntegrator {
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
         let queues = Queues::new(device, pixel_count, attributes_eval_stride)?;
+        log::info!("GPU create: queues and film resources ready");
         let film = Film::new(
             device,
             [scene.viewport.width, scene.viewport.height],
@@ -119,7 +135,15 @@ impl WavefrontPathIntegrator {
             scene.film_scale,
             scene.film.mode != 0,
         )?;
-        let pipeline = Pipeline::new(device)?;
+        let pipeline = Pipeline::new(
+            device,
+            scene.texture_images.len() as u32,
+            scene.texture_samplers.len() as u32,
+        )?;
+        log::info!("GPU create: compute pipelines ready");
+        let texture_image_views: Vec<&wgpu::TextureView> =
+            scene.texture_image_views.iter().collect();
+        let texture_samplers: Vec<&wgpu::Sampler> = scene.texture_samplers.iter().collect();
         let make_entry = |binding: super::stages::BindingSpec| wgpu::BindGroupEntry {
             binding: binding.binding,
             resource: match binding.resource {
@@ -155,6 +179,15 @@ impl WavefrontPathIntegrator {
                 ResourceId::SpectrumAttribute => {
                     scene.spectrum_attribute_buffer.as_entire_binding()
                 }
+                ResourceId::TextureNode => scene.texture_node_buffer.as_entire_binding(),
+                ResourceId::TextureChild => scene.texture_child_buffer.as_entire_binding(),
+                ResourceId::RgbSpectrumTable => scene.rgb_spectrum_table_buffer.as_entire_binding(),
+                ResourceId::TextureImageArray => {
+                    wgpu::BindingResource::TextureViewArray(&texture_image_views)
+                }
+                ResourceId::TextureSamplerArray => {
+                    wgpu::BindingResource::SamplerArray(&texture_samplers)
+                }
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
                 ResourceId::LightSamplingModel => {
                     scene.light_sampling_model_buffer.as_entire_binding()
@@ -172,21 +205,26 @@ impl WavefrontPathIntegrator {
         let make_bind_group = |name: &'static str,
                                stage: &StagePipeline,
                                stage_source: &'static str|
-         -> wgpu::BindGroup {
+         -> [wgpu::BindGroup; 2] {
             let source = super::shader::compose_source(stage_source);
-            let used_bindings = super::shader::resource_binding_numbers(&source);
-            let entries = canonical_wavefront_bindings()
-                .into_iter()
-                .filter(|binding| used_bindings.contains(&binding.binding))
-                .map(make_entry)
-                .collect::<Vec<_>>();
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout: &stage.bind_group_layout,
-                entries: &entries,
+            let used_bindings = super::shader::resource_bindings(&source);
+            std::array::from_fn(|group| {
+                let entries = canonical_wavefront_bindings()
+                    .into_iter()
+                    .filter(|binding| {
+                        binding.group == group as u32
+                            && used_bindings.contains(&(binding.group, binding.binding))
+                    })
+                    .map(make_entry)
+                    .collect::<Vec<_>>();
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(name),
+                    layout: &stage.bind_group_layouts[group],
+                    entries: &entries,
+                })
             })
         };
-        let bind_groups = [
+        let bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]> = [
             (
                 "prepare_sample",
                 &pipeline.prepare_sample,
@@ -281,6 +319,7 @@ impl WavefrontPathIntegrator {
         .into_iter()
         .map(|(name, stage, source)| (name, make_bind_group(name, stage, source)))
         .collect::<HashMap<_, _>>();
+        log::info!("GPU create: bind groups ready");
         Ok(Self {
             context,
             scene,
@@ -297,7 +336,7 @@ impl WavefrontPathIntegrator {
         })
     }
 
-    fn bind_group(&self, name: &'static str) -> &wgpu::BindGroup {
+    fn bind_groups(&self, name: &'static str) -> &[wgpu::BindGroup; 2] {
         self.bind_groups
             .get(name)
             .expect("stage bind group is registered")
@@ -323,7 +362,16 @@ impl WavefrontPathIntegrator {
             ProgressReporter::new(samples_per_pixel as usize, &self.scene.output.filename)
         });
         let mut last_display_update = Instant::now();
+        log::info!(
+            "GPU render: starting samples={samples_per_pixel} depth={}",
+            self.scene.render_settings.max_depth
+        );
         for sample_index in 0..samples_per_pixel {
+            log::info!(
+                "GPU render: sample {}/{}",
+                sample_index + 1,
+                samples_per_pixel
+            );
             self.scene.viewport.sample_index = sample_index;
             self.context.queue.write_buffer(
                 &self.viewport_buffer,
@@ -342,14 +390,14 @@ impl WavefrontPathIntegrator {
             dispatch(
                 &mut encoder,
                 &self.pipeline.prepare_sample.pipeline,
-                self.bind_group("prepare_sample"),
+                self.bind_groups("prepare_sample"),
                 workgroups_x,
                 workgroups_y,
             );
             dispatch(
                 &mut encoder,
                 &self.pipeline.generate_primary_rays.pipeline,
-                self.bind_group("generate_primary_rays"),
+                self.bind_groups("generate_primary_rays"),
                 workgroups_x,
                 workgroups_y,
             );
@@ -358,14 +406,14 @@ impl WavefrontPathIntegrator {
                     dispatch(
                         &mut encoder,
                         &self.pipeline.reset_shadow_queue.pipeline,
-                        self.bind_group("reset_shadow_queue"),
+                        self.bind_groups("reset_shadow_queue"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.reset_classification_queues.pipeline,
-                        self.bind_group("reset_classification_queues"),
+                        self.bind_groups("reset_classification_queues"),
                         workgroups_x,
                         workgroups_y,
                     );
@@ -373,35 +421,35 @@ impl WavefrontPathIntegrator {
                 dispatch(
                     &mut encoder,
                     &self.pipeline.intersect_primary_rays.pipeline,
-                    self.bind_group("intersect_primary_rays"),
+                    self.bind_groups("intersect_primary_rays"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
                     &self.pipeline.handle_escaped.pipeline,
-                    self.bind_group("handle_escaped"),
+                    self.bind_groups("handle_escaped"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
                     &self.pipeline.shade_surface.pipeline,
-                    self.bind_group("shade_surface"),
+                    self.bind_groups("shade_surface"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
                     &self.pipeline.handle_emissive.pipeline,
-                    self.bind_group("handle_emissive"),
+                    self.bind_groups("handle_emissive"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
                     &mut encoder,
                     &self.pipeline.evaluate_materials.pipeline,
-                    self.bind_group("evaluate_materials"),
+                    self.bind_groups("evaluate_materials"),
                     workgroups_x,
                     workgroups_y,
                 );
@@ -409,56 +457,56 @@ impl WavefrontPathIntegrator {
                     dispatch(
                         &mut encoder,
                         &self.pipeline.intersect_shadow.pipeline,
-                        self.bind_group("intersect_shadow"),
+                        self.bind_groups("intersect_shadow"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_diffuse_bounce.pipeline,
-                        self.bind_group("sample_diffuse_bounce"),
+                        self.bind_groups("sample_diffuse_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_dielectric_bounce.pipeline,
-                        self.bind_group("sample_dielectric_bounce"),
+                        self.bind_groups("sample_dielectric_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_conductor_bounce.pipeline,
-                        self.bind_group("sample_conductor_bounce"),
+                        self.bind_groups("sample_conductor_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_thin_dielectric_bounce.pipeline,
-                        self.bind_group("sample_thin_dielectric_bounce"),
+                        self.bind_groups("sample_thin_dielectric_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.sample_composite_bounce.pipeline,
-                        self.bind_group("sample_composite_bounce"),
+                        self.bind_groups("sample_composite_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.swap_ray_queues.pipeline,
-                        self.bind_group("swap_ray_queues"),
+                        self.bind_groups("swap_ray_queues"),
                         workgroups_x,
                         workgroups_y,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.reset_next_ray_queue.pipeline,
-                        self.bind_group("reset_next_ray_queue"),
+                        self.bind_groups("reset_next_ray_queue"),
                         workgroups_x,
                         workgroups_y,
                     );
@@ -467,12 +515,14 @@ impl WavefrontPathIntegrator {
             dispatch(
                 &mut encoder,
                 &self.pipeline.accumulate_sample.pipeline,
-                self.bind_group("accumulate_sample"),
+                self.bind_groups("accumulate_sample"),
                 workgroups_x,
                 workgroups_y,
             );
             self.context.queue.submit(Some(encoder.finish()));
+            log::info!("GPU render: submitted sample {sample_index}; waiting for film completion");
             self.film.complete_sample()?;
+            log::info!("GPU render: sample {sample_index} complete");
             let completed_samples = self.film.completed_samples();
             if !self.film.has_no_display()
                 && (last_display_update.elapsed() >= DEFAULT_DISPLAY_UPDATE_INTERVAL
@@ -546,7 +596,7 @@ impl WavefrontPathIntegrator {
 fn dispatch(
     encoder: &mut wgpu::CommandEncoder,
     pipeline: &wgpu::ComputePipeline,
-    bind_group: &wgpu::BindGroup,
+    bind_groups: &[wgpu::BindGroup; 2],
     workgroups_x: u32,
     workgroups_y: u32,
 ) {
@@ -555,6 +605,7 @@ fn dispatch(
         timestamp_writes: None,
     });
     pass.set_pipeline(pipeline);
-    pass.set_bind_group(0, bind_group, &[]);
+    pass.set_bind_group(0, &bind_groups[0], &[]);
+    pass.set_bind_group(1, &bind_groups[1], &[]);
     pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
 }

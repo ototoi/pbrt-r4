@@ -28,6 +28,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let b0 = 1.0 - b1 - b2;
     let position = p0 * b0 + p1 * b1 + p2 * b2;
     let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
+    let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
     surfaces[pixel_index].position_error = vec4<f32>(position_error, 0.0);
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     let object_normal = vertices[i0].normal.xyz * b0
@@ -49,6 +50,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
     surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);
+    surfaces[pixel_index].uv = uv;
     surfaces[pixel_index].material = instance.material;
     surfaces[pixel_index].flags = 0u;
     let material_queue_index = append_material_eval(ray_index);

@@ -11,6 +11,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
+    material_texture_uv = surface.uv;
+    material_texture_normal = surface.normal.xyz;
+    material_texture_position = surface.position.xyz;
     var material_index = resolve_material_leaf(surface.material);
     var material_kind = load_material_kind(material_index);
     let lambda = load_sample_lambda(pixel_index);
@@ -51,9 +54,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var value_index = 0u; value_index < 10u; value_index++) {
             evaluated.values[value_index] = vec4<f32>(0.0);
         }
-        // Reserved throughput slots for the layered-BxDF walk.
-        evaluated.values[8] = vec4<f32>(1.0);
-        evaluated.values[9] = vec4<f32>(1.0);
         if (evaluated.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
             evaluated.values[0] = load_diffuse_reflectance(current_index, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_MIX) {
@@ -62,19 +62,27 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.values[0] = load_conductor_eta(current_index, lambda);
             evaluated.values[1] = load_conductor_k(current_index, lambda);
             evaluated.values[2].x = load_conductor_roughness(current_index);
-        } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC || evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC) {
+            evaluated.values[0] = load_dielectric_eta(current_index, lambda);
+            evaluated.values[1].x = load_material_scalar(current_index, 1u);
+            evaluated.values[2].x = load_material_scalar(current_index, 2u);
+            evaluated.values[3].x = load_material_scalar(current_index, 3u);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
             evaluated.values[0] = load_dielectric_eta(current_index, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) {
             evaluated.values[0].x = load_material_scalar(current_index, 2u);
-            evaluated.values[1] = load_material_spectrum(current_index, 3u, lambda);
-            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[1] = clamp(load_material_spectrum(current_index, 3u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
+            evaluated.values[2].x = clamp(load_material_scalar(current_index, 4u), -1.0, 1.0);
             evaluated.values[3].x = load_material_scalar(current_index, 5u);
             evaluated.values[4].x = load_material_scalar(current_index, 6u);
+            evaluated.values[5] = clamp(load_material_spectrum(current_index, 7u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
             evaluated.values[0].x = load_material_scalar(current_index, 2u);
-            evaluated.values[1].x = load_material_scalar(current_index, 3u);
-            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[1] = clamp(load_material_spectrum(current_index, 3u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
+            evaluated.values[2].x = clamp(load_material_scalar(current_index, 4u), -1.0, 1.0);
             evaluated.values[3].x = load_material_scalar(current_index, 5u);
+            evaluated.values[4].x = load_material_scalar(current_index, 6u);
+            evaluated.values[5].x = load_material_scalar(current_index, 14u);
         }
         let current_kind = load_material_kind(current_index);
         if (current_kind == MATERIAL_KIND_MIX || current_kind == MATERIAL_KIND_COATED_DIFFUSE || current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
@@ -101,7 +109,24 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             for (var child_value_index = 0u; child_value_index < 10u; child_value_index++) {
                 child_eval.values[child_value_index] = vec4<f32>(0.0);
             }
-            if (child_eval.bxdf_kind == MATERIAL_KIND_DIELECTRIC || child_eval.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+            if (child_eval.bxdf_kind == MATERIAL_KIND_DIELECTRIC) {
+                if (current_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+                    child_eval.values[0] = load_material_spectrum(current_index, 8u, lambda);
+                    child_eval.values[1].x = load_material_scalar(current_index, 9u);
+                    child_eval.values[2].x = load_material_scalar(current_index, 10u);
+                    child_eval.values[3].x = load_material_scalar(current_index, 11u);
+                } else if (current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+                    child_eval.values[0] = load_material_spectrum(current_index, 7u, lambda);
+                    child_eval.values[1].x = load_material_scalar(current_index, 8u);
+                    child_eval.values[2].x = load_material_scalar(current_index, 9u);
+                    child_eval.values[3].x = load_material_scalar(current_index, 14u);
+                } else {
+                    child_eval.values[0] = load_dielectric_eta(child0.index, lambda);
+                    child_eval.values[1].x = load_material_scalar(child0.index, 1u);
+                    child_eval.values[2].x = load_material_scalar(child0.index, 2u);
+                    child_eval.values[3].x = load_material_scalar(child0.index, 3u);
+                }
+            } else if (child_eval.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
                 child_eval.values[0] = load_dielectric_eta(child0.index, lambda);
             } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
                 child_eval.values[0] = load_diffuse_reflectance(child0.index, lambda);
@@ -114,11 +139,38 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 child_eval.values[child1_value_index] = vec4<f32>(0.0);
             }
             if (child_eval.bxdf_kind == MATERIAL_KIND_CONDUCTOR) {
-                child_eval.values[0] = load_conductor_eta(child1.index, lambda);
-                child_eval.values[1] = load_conductor_k(child1.index, lambda);
-                child_eval.values[2].x = load_conductor_roughness(child1.index);
+                if (current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+                    var interface_eta_scalar = load_material_spectrum(current_index, 7u, lambda).x;
+                    if (interface_eta_scalar == 0.0) { interface_eta_scalar = 1.0; }
+                    let interface_eta = vec4<f32>(interface_eta_scalar);
+                    if (load_material_scalar(current_index, 16u) != 0.0) {
+                        let reflectance = clamp(load_material_spectrum(current_index, 15u, lambda), vec4<f32>(0.0), vec4<f32>(0.9999));
+                        child_eval.values[0] = vec4<f32>(1.0) / interface_eta;
+                        child_eval.values[1] = 2.0 * sqrt(reflectance)
+                            / sqrt(max(vec4<f32>(1.0) - reflectance, vec4<f32>(1e-7)))
+                            / interface_eta;
+                    } else {
+                        child_eval.values[0] = max(load_material_spectrum(current_index, 10u, lambda), vec4<f32>(0.0)) / interface_eta;
+                        child_eval.values[1] = max(load_material_spectrum(current_index, 11u, lambda), vec4<f32>(0.0)) / interface_eta;
+                    }
+                    child_eval.values[2].x = load_material_scalar(current_index, 12u);
+                    child_eval.values[3].x = load_material_scalar(current_index, 13u);
+                    child_eval.values[4].x = load_material_scalar(current_index, 14u);
+                } else {
+                    child_eval.values[0] = load_conductor_eta(child1.index, lambda);
+                    child_eval.values[1] = load_conductor_k(child1.index, lambda);
+                    child_eval.values[2].x = load_conductor_roughness(child1.index);
+                }
             } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
-                child_eval.values[0] = load_diffuse_reflectance(child1.index, lambda);
+                if (current_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+                    child_eval.values[0] = clamp(
+                        load_material_spectrum(current_index, 3u, lambda),
+                        vec4<f32>(0.0),
+                        vec4<f32>(1.0),
+                    );
+                } else {
+                    child_eval.values[0] = load_diffuse_reflectance(child1.index, lambda);
+                }
             }
             attributes_eval_work_items[work_index + 2u] = child_eval;
             if (child_eval.bxdf_kind == MATERIAL_KIND_MIX
@@ -140,6 +192,10 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let selected = load_attributes_eval_work_item(root_evaluated.selected_child_work_item);
         material_index = selected.material_index;
         material_kind = selected.bxdf_kind;
+    }
+    let root_surface_kind = load_material_kind(surface.material);
+    if (root_surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+        material_kind = MATERIAL_KIND_DIFFUSE;
     }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
@@ -256,11 +312,24 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let surface_kind = load_material_kind(surface.material);
     if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE || surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
-        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
-        let eta = max(coat.values[0].x, 1.0001);
-        let cos_i = clamp(abs(cos_wi), 0.0, 1.0);
-        let coat_f = dielectric_fresnel(cos_i, eta);
-        f = f * (1.0 - coat_f);
+        let layered_wo = scattering_local(wo, shading_n);
+        let layered_wi = scattering_local(wi, shading_n);
+        f = evaluate_layered_f(
+            root_evaluated,
+            surface_kind,
+            layered_wo,
+            layered_wi,
+            pixel_index,
+            ray.depth,
+        );
+        bsdf_pdf = evaluate_layered_pdf(
+            root_evaluated,
+            surface_kind,
+            layered_wo,
+            layered_wi,
+            pixel_index,
+            ray.depth,
+        );
     }
     var mis_weight = 1.0;
     if (light_kind == LIGHT_KIND_AREA) {

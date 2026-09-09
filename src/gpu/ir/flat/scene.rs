@@ -26,8 +26,31 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub scalar_attributes: Vec<f32>,
     pub texture_attributes: Vec<u32>,
+    pub texture_nodes: Vec<TextureNode>,
+    pub texture_child_indices: Vec<u32>,
     pub spectrum_attributes: Vec<DenseSpectrum>,
     pub primitive_distribution_map: PrimitiveDistributionMap,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextureNode {
+    pub name: String,
+    pub kind: u32,
+    pub implementation: String,
+    pub first_child: u32,
+    pub child_count: u32,
+    pub mipmap: Option<std::sync::Arc<crate::gpu::ir::node::Mipmap>>,
+    pub mapping: [f32; 16],
+    pub swrap_mode: u32,
+    pub twrap_mode: u32,
+    pub filter_mode: u32,
+    /// RGB colour space used when converting a spectrum texture at the
+    /// material boundary (0=sRGB, 1=ACES2065-1, 2=DCI-P3, 3=Rec.2020).
+    pub color_space: u32,
+    pub operation: u32,
+    /// Mapping kind: 0=UV, 1=planar, 2=spherical, 3=cylindrical.
+    pub mapping_kind: u32,
+    pub constant_value: [f32; 4],
 }
 
 impl Scene {
