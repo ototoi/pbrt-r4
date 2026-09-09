@@ -698,6 +698,58 @@ fn coated_top_fresnel(root: AttributesEvalWorkItem, cosine: f32) -> f32 {
 fn coated_top_eta(root: AttributesEvalWorkItem) -> f32 {
     return load_coated_diffuse_params(root).top_eta;
 }
+fn dielectric_interface_alpha(item: AttributesEvalWorkItem) -> vec2<f32> {
+    var roughness = max(vec2<f32>(item.values[1].x, item.values[2].x), vec2<f32>(0.0));
+    if (item.values[3].x != 0.0) {
+        roughness = sqrt(roughness);
+    }
+    return roughness;
+}
+fn invalid_dielectric_interface_sample() -> DielectricInterfaceSample {
+    return DielectricInterfaceSample(vec4<f32>(0.0), vec3<f32>(0.0), 0.0, 1.0, 0u, 0u, 0u);
+}
+fn refract_interface(wo: vec3<f32>, normal_input: vec3<f32>, eta_input: f32) -> DielectricInterfaceSample {
+    var cosine_i = dot(normal_input, wo);
+    var eta = eta_input;
+    var normal = normal_input;
+    if (cosine_i < 0.0) {
+        eta = 1.0 / eta;
+        cosine_i = -cosine_i;
+        normal = -normal;
+    }
+    let sin2_t = max(0.0, 1.0 - cosine_i * cosine_i) / (eta * eta);
+    if (sin2_t >= 1.0) { return invalid_dielectric_interface_sample(); }
+    let cosine_t = sqrt(max(0.0, 1.0 - sin2_t));
+    var result = invalid_dielectric_interface_sample();
+    result.wi = normalize(-wo / eta + (cosine_i / eta - cosine_t) * normal);
+    result.etap = eta;
+    result.valid = 1u;
+    result.transmission = 1u;
+    return result;
+}
+fn sample_smooth_dielectric_interface(
+    wo: vec3<f32>, eta: f32, uc: f32, allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    let fresnel = dielectric_fresnel(wo.z, eta);
+    let pr = select(0.0, fresnel, allow_reflection);
+    let pt = select(0.0, 1.0 - fresnel, allow_transmission);
+    if (pr + pt == 0.0) { return invalid_dielectric_interface_sample(); }
+    if (uc < pr / (pr + pt)) {
+        let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
+        return DielectricInterfaceSample(
+            vec4<f32>(fresnel / abs(wi.z)), wi, pr / (pr + pt), 1.0, 1u, 0u, 1u,
+        );
+    }
+    var result = refract_interface(wo, vec3<f32>(0.0, 0.0, 1.0), eta);
+    if (result.valid == 0u) { return result; }
+    var ft = (1.0 - fresnel) / abs(result.wi.z);
+    // WavefrontPathIntegrator transports radiance.
+    ft = ft / (result.etap * result.etap);
+    result.f = vec4<f32>(ft);
+    result.pdf = pt / (pr + pt);
+    result.specular = 1u;
+    return result;
+}
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
 fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
