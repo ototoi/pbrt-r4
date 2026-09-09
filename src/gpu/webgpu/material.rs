@@ -67,6 +67,7 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             (4, flat::AttributeKind::Scalar),
             (5, flat::AttributeKind::Scalar),
             (6, flat::AttributeKind::Scalar),
+            (7, flat::AttributeKind::Spectrum),
         ][..],
         "coatedconductor" => &[
             (0, flat::AttributeKind::Material),

@@ -441,13 +441,20 @@ fn build_material_attributes(
                     source_material.name
                 )));
             }
-            let albedo_attribute = if let Some(attribute) =
+            let reflectance_attribute = if let Some(attribute) =
                 texture_attribute_ref(source_material, "reflectance", builder)?
             {
                 attribute
             } else {
-                let albedo = diffuse_reflectance(source_material)?;
-                push_spectrum_attribute(builder, "albedo", &albedo)?
+                let reflectance = diffuse_reflectance(source_material)?;
+                push_spectrum_attribute(builder, "reflectance", &reflectance)?
+            };
+            let albedo_attribute = if let Some(attribute) =
+                texture_attribute_ref(source_material, "albedo", builder)?
+            {
+                attribute
+            } else {
+                push_spectrum_attribute(builder, "albedo", &Spectrum::from(0.0))?
             };
             let thickness_attribute = texture_attribute_ref(source_material, "thickness", builder)?
                 .unwrap_or(push_scalar_attribute(builder, "thickness", thickness)?);
@@ -455,10 +462,11 @@ fn build_material_attributes(
                 .unwrap_or(push_scalar_attribute(builder, "g", g)?);
             Ok(vec![
                 thickness_attribute,
-                albedo_attribute,
+                reflectance_attribute,
                 g_attribute,
                 push_scalar_attribute(builder, "maxdepth", max_depth)?,
                 push_scalar_attribute(builder, "nsamples", n_samples)?,
+                albedo_attribute,
             ])
         }
         "coatedconductor" => {
