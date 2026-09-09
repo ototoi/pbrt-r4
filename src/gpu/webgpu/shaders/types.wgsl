@@ -36,6 +36,16 @@ struct CoatedDiffuseParams {
     albedo: vec4<f32>,
     top_eta: f32,
 };
+
+struct DielectricInterfaceSample {
+    f: vec4<f32>,
+    wi: vec3<f32>,
+    pdf: f32,
+    etap: f32,
+    valid: u32,
+    transmission: u32,
+    specular: u32,
+};
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
