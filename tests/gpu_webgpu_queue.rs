@@ -4,7 +4,7 @@ use pbrt_r4::gpu::webgpu::queue::TypedQueueSizes;
 fn typed_queue_sizes_follow_the_host_abi() {
     let sizes = TypedQueueSizes::new(3, 3).unwrap();
 
-    assert_eq!(sizes.surfaces, 3 * 112);
+    assert_eq!(sizes.surfaces, 3 * 128);
     assert_eq!(sizes.pixel_sample_states, 3 * 80);
     assert_eq!(sizes.current_rays, 3 * 144);
     assert_eq!(sizes.next_rays, 3 * 144);

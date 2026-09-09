@@ -248,11 +248,400 @@ fn load_material_attribute(material_index: u32, ordinal: u32) -> AttributeRef {
 }
 fn load_material_scalar(material_index: u32, ordinal: u32) -> f32 {
     let attr_ref = load_material_attribute(material_index, ordinal);
+    if (attr_ref.kind == 2u) {
+        return sample_texture_rgb(attr_ref.index, material_texture_uv).x;
+    }
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
 }
+
+// This is the same permutation used by pbrt-v4's Perlin noise implementation.
+// The table is indexed modulo 256; the C++/Rust implementations store the
+// permutation twice to avoid explicit wrapping at the second lookup.
+const TEXTURE_NOISE_PERM: array<u32, 256> = array<u32, 256>(
+    151u, 160u, 137u, 91u, 90u, 15u, 131u, 13u, 201u, 95u, 96u, 53u, 194u, 233u, 7u, 225u,
+    140u, 36u, 103u, 30u, 69u, 142u, 8u, 99u, 37u, 240u, 21u, 10u, 23u, 190u, 6u, 148u,
+    247u, 120u, 234u, 75u, 0u, 26u, 197u, 62u, 94u, 252u, 219u, 203u, 117u, 35u, 11u, 32u,
+    57u, 177u, 33u, 88u, 237u, 149u, 56u, 87u, 174u, 20u, 125u, 136u, 171u, 168u, 68u, 175u,
+    74u, 165u, 71u, 134u, 139u, 48u, 27u, 166u, 77u, 146u, 158u, 231u, 83u, 111u, 229u, 122u,
+    60u, 211u, 133u, 230u, 220u, 105u, 92u, 41u, 55u, 46u, 245u, 40u, 244u, 102u, 143u, 54u,
+    65u, 25u, 63u, 161u, 1u, 216u, 80u, 73u, 209u, 76u, 132u, 187u, 208u, 89u, 18u, 169u,
+    200u, 196u, 135u, 130u, 116u, 188u, 159u, 86u, 164u, 100u, 109u, 198u, 173u, 186u, 3u, 64u,
+    52u, 217u, 226u, 250u, 124u, 123u, 5u, 202u, 38u, 147u, 118u, 126u, 255u, 82u, 85u, 212u,
+    207u, 206u, 59u, 227u, 47u, 16u, 58u, 17u, 182u, 189u, 28u, 42u, 223u, 183u, 170u, 213u,
+    119u, 248u, 152u, 2u, 44u, 154u, 163u, 70u, 221u, 153u, 101u, 155u, 167u, 43u, 172u, 9u,
+    129u, 22u, 39u, 253u, 19u, 98u, 108u, 110u, 79u, 113u, 224u, 232u, 178u, 185u, 112u, 104u,
+    218u, 246u, 97u, 228u, 251u, 34u, 242u, 193u, 238u, 210u, 144u, 12u, 191u, 179u, 162u, 241u,
+    81u, 51u, 145u, 235u, 249u, 14u, 239u, 107u, 49u, 192u, 214u, 31u, 181u, 199u, 106u, 157u,
+    184u, 84u, 204u, 176u, 115u, 121u, 50u, 45u, 127u, 4u, 150u, 254u, 138u, 236u, 205u, 93u,
+    222u, 114u, 67u, 29u, 24u, 72u, 243u, 141u, 128u, 195u, 78u, 66u, 215u, 61u, 156u, 180u,
+);
+
+fn texture_noise_weight(t: f32) -> f32 {
+    let t3 = t * t * t;
+    let t4 = t3 * t;
+    return 6.0 * t4 * t - 15.0 * t4 + 10.0 * t3;
+}
+
+fn texture_noise_grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 {
+    let a = (TEXTURE_NOISE_PERM[x & 255u] + y) & 255u;
+    let b = (TEXTURE_NOISE_PERM[a] + z) & 255u;
+    let h = TEXTURE_NOISE_PERM[b] & 15u;
+    let u = select(dy, dx, h < 8u || h == 12u || h == 13u);
+    let v = select(dz, dy, h < 4u || h == 12u || h == 13u);
+    return select(u, -u, (h & 1u) != 0u) + select(v, -v, (h & 2u) != 0u);
+}
+
+fn texture_noise(p: vec3<f32>) -> f32 {
+    let ix = i32(floor(p.x));
+    let iy = i32(floor(p.y));
+    let iz = i32(floor(p.z));
+    let dx = p.x - f32(ix);
+    let dy = p.y - f32(iy);
+    let dz = p.z - f32(iz);
+    let x = u32(ix) & 255u;
+    let y = u32(iy) & 255u;
+    let z = u32(iz) & 255u;
+    let w000 = texture_noise_grad(x, y, z, dx, dy, dz);
+    let w100 = texture_noise_grad((x + 1u) & 255u, y, z, dx - 1.0, dy, dz);
+    let w010 = texture_noise_grad(x, (y + 1u) & 255u, z, dx, dy - 1.0, dz);
+    let w110 = texture_noise_grad((x + 1u) & 255u, (y + 1u) & 255u, z, dx - 1.0, dy - 1.0, dz);
+    let w001 = texture_noise_grad(x, y, (z + 1u) & 255u, dx, dy, dz - 1.0);
+    let w101 = texture_noise_grad((x + 1u) & 255u, y, (z + 1u) & 255u, dx - 1.0, dy, dz - 1.0);
+    let w011 = texture_noise_grad(x, (y + 1u) & 255u, (z + 1u) & 255u, dx, dy - 1.0, dz - 1.0);
+    let w111 = texture_noise_grad((x + 1u) & 255u, (y + 1u) & 255u, (z + 1u) & 255u, dx - 1.0, dy - 1.0, dz - 1.0);
+    let wx = texture_noise_weight(dx);
+    let wy = texture_noise_weight(dy);
+    let wz = texture_noise_weight(dz);
+    let x0 = mix(w000, w100, wx);
+    let x1 = mix(w010, w110, wx);
+    let x2 = mix(w001, w101, wx);
+    let x3 = mix(w011, w111, wx);
+    return mix(mix(x0, x1, wy), mix(x2, x3, wy), wz);
+}
+
+fn texture_fbm(p: vec3<f32>, omega: f32, octaves: f32, absolute_value: bool) -> f32 {
+    let count = u32(clamp(floor(octaves), 0.0, 8.0));
+    var sum = 0.0;
+    var frequency = 1.0;
+    var weight = 1.0;
+    for (var octave = 0u; octave < 8u; octave++) {
+        if (octave < count) {
+            let value = texture_noise(frequency * p);
+            sum += weight * select(value, abs(value), absolute_value);
+        }
+        frequency *= 1.99;
+        weight *= omega;
+    }
+    if (absolute_value) {
+        var tail_weight = weight;
+        for (var tail = 0u; tail < 8u; tail++) {
+            if (tail < count) { sum += tail_weight * 0.2; }
+            tail_weight *= omega;
+        }
+    }
+    return sum;
+}
+
+fn texture_marble(p: vec3<f32>, omega: f32, octaves: f32, scale: f32, variation: f32) -> vec3<f32> {
+    let q = scale * p;
+    let marble = q.y + variation * texture_fbm(q, omega, octaves, false);
+    var t = 0.5 + 0.5 * sin(marble);
+    let colors = array<vec3<f32>, 9>(
+        vec3<f32>(0.58, 0.58, 0.60), vec3<f32>(0.58, 0.58, 0.60),
+        vec3<f32>(0.58, 0.58, 0.60), vec3<f32>(0.50, 0.50, 0.50),
+        vec3<f32>(0.60, 0.59, 0.58), vec3<f32>(0.58, 0.58, 0.60),
+        vec3<f32>(0.58, 0.58, 0.60), vec3<f32>(0.20, 0.20, 0.33),
+        vec3<f32>(0.58, 0.58, 0.60),
+    );
+    let segments = 6;
+    let scaled_t = t * f32(segments);
+    let first = min(u32(floor(scaled_t)), 5u);
+    t = scaled_t - f32(first);
+    let c0 = colors[first];
+    let c1 = colors[first + 1u];
+    let c2 = colors[first + 2u];
+    let c3 = colors[first + 3u];
+    let a = mix(c0, c1, t);
+    let b = mix(c1, c2, t);
+    let c = mix(c2, c3, t);
+    let d = mix(a, b, t);
+    let e = mix(b, c, t);
+    return 1.5 * mix(d, e, t);
+}
+
+fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
+    if (node.mapping_kind == 1u) {
+        return (node.mapping * vec4<f32>(material_texture_position, 1.0)).xy;
+    }
+    let p = (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
+    if (node.mapping_kind == 2u) {
+        let q = normalize(p);
+        var s = atan2(q.y, q.x) / (2.0 * 3.14159265359);
+        if (s < 0.0) { s = s + 1.0; }
+        // pbrt-v4 uses (SphericalPhi, SphericalTheta) for (s, t).
+        return vec2<f32>(s, acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359);
+    }
+    if (node.mapping_kind == 3u) {
+        var s = atan2(p.y, p.x) / (2.0 * 3.14159265359);
+        if (s < 0.0) { s = s + 1.0; }
+        return vec2<f32>(s, p.z);
+    }
+    return (node.mapping * vec4<f32>(uv, 0.0, 1.0)).xy;
+}
+
+fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
+    if (texture_index >= arrayLength(&texture_nodes)) { set_render_error(); return vec3<f32>(0.0); }
+    let node = texture_nodes[texture_index];
+    if (node.operation == 1u) { return node.constant_value.rgb; }
+    // Procedural textures are placeholders until texture graphs are compiled
+    // to the planned post-order mini VM. Keeping their implementations out of
+    // this call graph also avoids pathological driver compilation time.
+    if (node.operation >= 4u) {
+        return vec3<f32>(1.0);
+    }
+    let mapped_uv = mapped_texture_uv(node, uv);
+    if ((node.swrap_mode == 2u && (mapped_uv.x < 0.0 || mapped_uv.x > 1.0))
+        || (node.twrap_mode == 2u && (mapped_uv.y < 0.0 || mapped_uv.y > 1.0))) {
+        return vec3<f32>(0.0);
+    }
+    // pbrt-v4 image textures use image-space origin at the upper left.
+    let image_uv = vec2<f32>(mapped_uv.x, 1.0 - mapped_uv.y);
+    var value = textureSampleLevel(
+        texture_images[texture_index],
+        texture_samplers[texture_index],
+        image_uv,
+        0.0,
+    ).rgb * node.constant_value.x;
+    if (node.constant_value.y > 0.5) {
+        value = max(vec3<f32>(0.0), vec3<f32>(1.0) - value);
+    }
+    return value;
+}
+fn texture_blend_amount(node: TextureNodeRecord, uv: vec2<f32>) -> f32 {
+    if (node.operation == 3u && node.child_count >= 3u
+        && node.first_child + 2u < arrayLength(&texture_child_indices)) {
+        let amount_index = texture_child_indices[node.first_child + 2u];
+        if (amount_index >= arrayLength(&texture_nodes)) {
+            set_render_error();
+            return 0.0;
+        }
+        let amount_node = texture_nodes[amount_index];
+        if (amount_node.kind != 0u || amount_node.child_count != 0u
+            || (amount_node.operation != 0u && amount_node.operation != 1u
+                && amount_node.operation != 7u && amount_node.operation != 8u
+                && amount_node.operation != 9u)) {
+            set_render_error();
+            return 0.0;
+        }
+        return clamp(sample_texture_leaf(amount_index, uv).x, 0.0, 1.0);
+    }
+    if (node.operation == 3u) { return clamp(node.constant_value.x, 0.0, 1.0); }
+    return 1.0;
+}
+
+fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
+    var stack_index: array<u32, 32>;
+    var stack_state: array<u32, 32>;
+    var stack_value: array<vec3<f32>, 32>;
+    var stack_aux0: array<vec3<f32>, 32>;
+    var depth = 0u;
+    stack_index[0] = texture_index;
+    stack_state[0] = 0u;
+    for (var step = 0u; step < 128u; step++) {
+        if (depth >= 32u || stack_index[depth] >= arrayLength(&texture_nodes)) {
+            set_render_error(); return vec3<f32>(0.0);
+        }
+        let index = stack_index[depth];
+        let node = texture_nodes[index];
+        if (stack_state[depth] == 0u) {
+            if (node.operation == 1u
+                || node.operation >= 4u
+                || (node.operation == 0u && node.child_count == 0u)) {
+                stack_value[depth] = sample_texture_leaf(index, uv);
+                stack_state[depth] = 3u;
+            } else if (node.operation == 2u && node.child_count >= 1u) {
+                if (node.first_child >= arrayLength(&texture_child_indices) || depth + 1u >= 32u) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                stack_state[depth] = 1u;
+                depth += 1u;
+                stack_index[depth] = texture_child_indices[node.first_child];
+                stack_state[depth] = 0u;
+            } else if (node.operation == 3u && node.child_count >= 2u) {
+                if (node.first_child + 1u >= arrayLength(&texture_child_indices) || depth + 1u >= 32u) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                stack_state[depth] = 1u;
+                depth += 1u;
+                stack_index[depth] = texture_child_indices[node.first_child];
+                stack_state[depth] = 0u;
+            } else {
+                set_render_error(); return vec3<f32>(0.0);
+            }
+        } else {
+            if (depth == 0u) { return stack_value[0]; }
+            let parent_depth = depth - 1u;
+            let parent = texture_nodes[stack_index[parent_depth]];
+            if (parent.operation == 2u && stack_state[parent_depth] == 1u) {
+                stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                stack_state[parent_depth] = 3u;
+                depth = parent_depth;
+            } else if (parent.operation == 3u && stack_state[parent_depth] == 1u) {
+                stack_value[parent_depth] = stack_value[depth];
+                stack_state[parent_depth] = 2u;
+                depth += 1u;
+                stack_index[depth] = texture_child_indices[parent.first_child + 1u];
+                stack_state[depth] = 0u;
+            } else if (parent.operation == 3u && stack_state[parent_depth] == 2u) {
+                if (parent.operation == 3u && parent.child_count >= 3u) {
+                    if (parent.first_child + 2u >= arrayLength(&texture_child_indices)
+                        || depth + 1u >= 32u) {
+                        set_render_error(); return vec3<f32>(0.0);
+                    }
+                    stack_aux0[parent_depth] = stack_value[depth];
+                    stack_state[parent_depth] = 3u;
+                    depth += 1u;
+                    stack_index[depth] = texture_child_indices[parent.first_child + 2u];
+                    stack_state[depth] = 0u;
+                } else {
+                    stack_value[parent_depth] = mix(stack_value[parent_depth], stack_value[depth], texture_blend_amount(parent, uv));
+                    stack_state[parent_depth] = 4u;
+                    depth = parent_depth;
+                }
+            } else if (parent.operation == 3u && stack_state[parent_depth] == 3u) {
+                stack_value[parent_depth] = mix(
+                    stack_value[parent_depth],
+                    stack_aux0[parent_depth],
+                    clamp(stack_value[depth].x, 0.0, 1.0),
+                );
+                stack_state[parent_depth] = 4u;
+                depth = parent_depth;
+            } else {
+                set_render_error(); return vec3<f32>(0.0);
+            }
+        }
+    }
+    set_render_error();
+    return vec3<f32>(0.0);
+}
+fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
+    var current = texture_index;
+    var scale = 1.0;
+    for (var depth = 0u; depth < 32u; depth++) {
+        if (current >= arrayLength(&texture_nodes)) {
+            set_render_error();
+            return vec3<f32>(0.0);
+        }
+        let node = texture_nodes[current];
+        if (node.operation == 0u || node.operation == 1u) {
+            return scale * sample_texture_leaf(current, uv);
+        }
+        if (node.operation == 2u && node.child_count >= 1u
+            && node.first_child < arrayLength(&texture_child_indices)) {
+            scale *= node.constant_value.x;
+            current = texture_child_indices[node.first_child];
+        } else {
+            // Other procedural graphs remain placeholders until the post-order
+            // texture mini VM is implemented.
+            return vec3<f32>(1.0);
+        }
+    }
+    set_render_error();
+    return vec3<f32>(0.0);
+}
+const RGB_TABLE_RESOLUTION: u32 = 64u;
+const RGB_TABLE_SCALE_COUNT: u32 = RGB_TABLE_RESOLUTION;
+const RGB_TABLE_COEFF_COUNT: u32 = 3u * RGB_TABLE_RESOLUTION * RGB_TABLE_RESOLUTION * RGB_TABLE_RESOLUTION * 3u;
+const RGB_TABLE_STRIDE: u32 = RGB_TABLE_SCALE_COUNT + RGB_TABLE_COEFF_COUNT;
+
+fn rgb_table_coeff(table_base: u32, maxc: u32, z: u32, y: u32, x: u32, component: u32) -> f32 {
+    let index = (((((maxc * RGB_TABLE_RESOLUTION) + z) * RGB_TABLE_RESOLUTION + y)
+        * RGB_TABLE_RESOLUTION + x) * 3u) + component;
+    return rgb_spectrum_table[table_base + RGB_TABLE_SCALE_COUNT + index];
+}
+fn rgb_sigmoid(x: f32) -> f32 {
+    return 0.5 + x / (2.0 * sqrt(1.0 + x * x));
+}
+fn rgb_to_spectrum_lane(rgb_input: vec3<f32>, lambda: f32, color_space: u32) -> f32 {
+    let table_base = min(color_space, 3u) * RGB_TABLE_STRIDE;
+    let rgb = clamp(rgb_input, vec3<f32>(0.0), vec3<f32>(1.0));
+    let z = max(max(rgb.x, rgb.y), rgb.z);
+    if (z == 0.0) { return 0.0; }
+    if (rgb.x == rgb.y && rgb.y == rgb.z) {
+        if (rgb.x <= 0.0) { return 0.0; }
+        if (rgb.x >= 1.0) { return 1.0; }
+        let c2 = (rgb.x - 0.5) / sqrt(max(rgb.x * (1.0 - rgb.x), 1e-8));
+        return rgb_sigmoid(c2);
+    }
+    // Match pbrt-v4's strict tie-breaking: red, then green, then blue.
+    var maxc = 2u;
+    if (rgb.x > rgb.y) {
+        if (rgb.x > rgb.z) { maxc = 0u; }
+    } else if (rgb.y > rgb.z) {
+        maxc = 1u;
+    }
+    var c1 = rgb.y;
+    var c2 = rgb.z;
+    if (maxc == 1u) { c1 = rgb.z; c2 = rgb.x; }
+    if (maxc == 2u) { c1 = rgb.x; c2 = rgb.y; }
+    let x = c1 * f32(RGB_TABLE_RESOLUTION - 1u) / z;
+    let y = c2 * f32(RGB_TABLE_RESOLUTION - 1u) / z;
+    let xi = min(u32(floor(x)), 62u);
+    let yi = min(u32(floor(y)), 62u);
+    var zi = 0u;
+    for (var zindex = 0u; zindex < 63u; zindex++) {
+        if (rgb_spectrum_table[table_base + zindex + 1u] < z) { zi = zindex + 1u; }
+    }
+    zi = min(zi, 62u);
+    let dx = x - f32(xi);
+    let dy = y - f32(yi);
+    let z0 = rgb_spectrum_table[table_base + zi];
+    let z1 = rgb_spectrum_table[table_base + zi + 1u];
+    let dz = (z - z0) / max(z1 - z0, 1e-8);
+    var polynomial_coeff = vec3<f32>(0.0);
+    for (var component = 0u; component < 3u; component++) {
+        let c000 = rgb_table_coeff(table_base, maxc, zi, yi, xi, component);
+        let c100 = rgb_table_coeff(table_base, maxc, zi, yi, xi + 1u, component);
+        let c010 = rgb_table_coeff(table_base, maxc, zi, yi + 1u, xi, component);
+        let c110 = rgb_table_coeff(table_base, maxc, zi, yi + 1u, xi + 1u, component);
+        let c001 = rgb_table_coeff(table_base, maxc, zi + 1u, yi, xi, component);
+        let c101 = rgb_table_coeff(table_base, maxc, zi + 1u, yi, xi + 1u, component);
+        let c011 = rgb_table_coeff(table_base, maxc, zi + 1u, yi + 1u, xi, component);
+        let c111 = rgb_table_coeff(table_base, maxc, zi + 1u, yi + 1u, xi + 1u, component);
+        let c0 = mix(mix(c000, c100, dx), mix(c010, c110, dx), dy);
+        let c1 = mix(mix(c001, c101, dx), mix(c011, c111, dx), dy);
+        polynomial_coeff[component] = mix(c0, c1, dz);
+    }
+    let polynomial = (polynomial_coeff.x * lambda + polynomial_coeff.y) * lambda + polynomial_coeff.z;
+    return rgb_sigmoid(polynomial);
+}
+fn rgb_to_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u32) -> vec4<f32> {
+    return vec4<f32>(
+        rgb_to_spectrum_lane(rgb, lambda.x, color_space),
+        rgb_to_spectrum_lane(rgb, lambda.y, color_space),
+        rgb_to_spectrum_lane(rgb, lambda.z, color_space),
+        rgb_to_spectrum_lane(rgb, lambda.w, color_space),
+    );
+}
+fn rgb_to_unbounded_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u32) -> vec4<f32> {
+    let max_value = max(max(rgb.x, rgb.y), rgb.z);
+    if (max_value <= 0.0) { return vec4<f32>(0.0); }
+    let scale = 2.0 * max_value;
+    return scale * rgb_to_spectrum4(rgb / scale, lambda, color_space);
+}
 fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
     let attr_ref = load_material_attribute(material_index, ordinal);
+    if (attr_ref.kind == 2u || attr_ref.kind == 4u) {
+        let rgb = sample_texture_rgb(attr_ref.index, material_texture_uv);
+        if (texture_nodes[attr_ref.index].kind == 0u) {
+            return vec4<f32>(rgb.x);
+        }
+        if (attr_ref.kind == 4u) {
+            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[attr_ref.index].color_space);
+        }
+        return rgb_to_spectrum4(rgb, lambda, texture_nodes[attr_ref.index].color_space);
+    }
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
 }
@@ -287,6 +676,500 @@ fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
         return attributes_eval_work_items[0u];
     }
     return attributes_eval_work_items[root];
+}
+fn load_layered_params(root: AttributesEvalWorkItem, kind: u32) -> LayeredParams {
+    var params: LayeredParams;
+    params.thickness = root.values[0].x;
+    params.g = root.values[2].x;
+    params.max_depth = root.values[3].x;
+    params.n_samples = root.values[4].x;
+    params.albedo = root.values[1];
+    if (kind == MATERIAL_KIND_COATED_DIFFUSE) { params.albedo = root.values[5]; }
+    return params;
+}
+fn dielectric_interface_alpha(item: AttributesEvalWorkItem) -> vec2<f32> {
+    var roughness = max(vec2<f32>(item.values[1].x, item.values[2].x), vec2<f32>(0.0));
+    if (item.values[3].x != 0.0) {
+        roughness = sqrt(roughness);
+    }
+    return roughness;
+}
+fn invalid_dielectric_interface_sample() -> DielectricInterfaceSample {
+    return DielectricInterfaceSample(vec4<f32>(0.0), vec3<f32>(0.0), 0.0, 1.0, 0u, 0u, 0u);
+}
+fn refract_interface(wo: vec3<f32>, normal_input: vec3<f32>, eta_input: f32) -> DielectricInterfaceSample {
+    var cosine_i = dot(normal_input, wo);
+    var eta = eta_input;
+    var normal = normal_input;
+    if (cosine_i < 0.0) {
+        eta = 1.0 / eta;
+        cosine_i = -cosine_i;
+        normal = -normal;
+    }
+    let sin2_t = max(0.0, 1.0 - cosine_i * cosine_i) / (eta * eta);
+    if (sin2_t >= 1.0) { return invalid_dielectric_interface_sample(); }
+    let cosine_t = sqrt(max(0.0, 1.0 - sin2_t));
+    var result = invalid_dielectric_interface_sample();
+    result.wi = normalize(-wo / eta + (cosine_i / eta - cosine_t) * normal);
+    result.etap = eta;
+    result.valid = 1u;
+    result.transmission = 1u;
+    return result;
+}
+fn sample_smooth_dielectric_interface(
+    wo: vec3<f32>, eta: f32, uc: f32, allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    let fresnel = dielectric_fresnel(wo.z, eta);
+    let pr = select(0.0, fresnel, allow_reflection);
+    let pt = select(0.0, 1.0 - fresnel, allow_transmission);
+    if (pr + pt == 0.0) { return invalid_dielectric_interface_sample(); }
+    if (uc < pr / (pr + pt)) {
+        let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
+        return DielectricInterfaceSample(
+            vec4<f32>(fresnel / abs(wi.z)), wi, pr / (pr + pt), 1.0, 1u, 0u, 1u,
+        );
+    }
+    var result = refract_interface(wo, vec3<f32>(0.0, 0.0, 1.0), eta);
+    if (result.valid == 0u) { return result; }
+    var ft = (1.0 - fresnel) / abs(result.wi.z);
+    // WavefrontPathIntegrator transports radiance.
+    ft = ft / (result.etap * result.etap);
+    result.f = vec4<f32>(ft);
+    result.pdf = pt / (pr + pt);
+    result.specular = 1u;
+    return result;
+}
+fn tr_distribution_d(wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    let cos2 = wm.z * wm.z;
+    if (cos2 < 1e-16) { return 0.0; }
+    let e = (wm.x * wm.x / (alpha.x * alpha.x)
+        + wm.y * wm.y / (alpha.y * alpha.y)) / cos2;
+    return 1.0 / (PI * alpha.x * alpha.y * cos2 * cos2 * (1.0 + e) * (1.0 + e));
+}
+fn tr_distribution_lambda(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    let wz2 = w.z * w.z;
+    if (wz2 == 0.0) { return 0.0; }
+    let alpha2_tan2 = (alpha.x * w.x) * (alpha.x * w.x)
+        + (alpha.y * w.y) * (alpha.y * w.y);
+    return 0.5 * (sqrt(1.0 + alpha2_tan2 / wz2) - 1.0);
+}
+fn tr_distribution_g1(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    return 1.0 / (1.0 + tr_distribution_lambda(w, alpha));
+}
+fn tr_distribution_g(wo: vec3<f32>, wi: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    return 1.0 / (1.0 + tr_distribution_lambda(wo, alpha) + tr_distribution_lambda(wi, alpha));
+}
+fn sample_visible_tr_wm(wo_input: vec3<f32>, alpha: vec2<f32>, u: vec2<f32>) -> vec3<f32> {
+    var wh = normalize(vec3<f32>(alpha.x * wo_input.x, alpha.y * wo_input.y, wo_input.z));
+    if (wh.z < 0.0) { wh = -wh; }
+    var t1 = vec3<f32>(1.0, 0.0, 0.0);
+    if (wh.z < 0.99999) { t1 = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), wh)); }
+    let t2 = cross(wh, t1);
+    let radius = sqrt(u.x);
+    let phi = 2.0 * PI * u.y;
+    var p = vec2<f32>(radius * cos(phi), radius * sin(phi));
+    let h = sqrt(max(0.0, 1.0 - p.x * p.x));
+    p.y = mix(h, p.y, (1.0 + wh.z) * 0.5);
+    let pz = sqrt(max(0.0, 1.0 - dot(p, p)));
+    let nh = p.x * t1 + p.y * t2 + pz * wh;
+    return normalize(vec3<f32>(alpha.x * nh.x, alpha.y * nh.y, max(1e-6, nh.z)));
+}
+fn tr_visible_wm_pdf(wo: vec3<f32>, wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    if (abs(wo.z) == 0.0) { return 0.0; }
+    return tr_distribution_d(wm, alpha) * tr_distribution_g1(wo, alpha)
+        * abs(dot(wo, wm)) / abs(wo.z);
+}
+fn sample_rough_dielectric_interface(
+    wo: vec3<f32>, eta: f32, alpha_input: vec2<f32>, uc: f32, u: vec2<f32>,
+    allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    let alpha = max(alpha_input, vec2<f32>(1e-4));
+    let wm = sample_visible_tr_wm(wo, alpha, u);
+    let fresnel = dielectric_fresnel(dot(wo, wm), eta);
+    let pr = select(0.0, fresnel, allow_reflection);
+    let pt = select(0.0, 1.0 - fresnel, allow_transmission);
+    if (pr + pt == 0.0) { return invalid_dielectric_interface_sample(); }
+    let wm_pdf = tr_visible_wm_pdf(wo, wm, alpha);
+    if (uc < pr / (pr + pt)) {
+        let wi = normalize(-wo + 2.0 * dot(wo, wm) * wm);
+        if (wo.z * wi.z <= 0.0) { return invalid_dielectric_interface_sample(); }
+        let pdf = wm_pdf / max(4.0 * abs(dot(wo, wm)), 1e-7) * pr / (pr + pt);
+        let value = tr_distribution_d(wm, alpha) * tr_distribution_g(wo, wi, alpha)
+            * fresnel / max(abs(4.0 * wi.z * wo.z), 1e-7);
+        return DielectricInterfaceSample(vec4<f32>(value), wi, pdf, 1.0, 1u, 0u, 0u);
+    }
+    var result = refract_interface(wo, wm, eta);
+    if (result.valid == 0u || wo.z * result.wi.z >= 0.0 || result.wi.z == 0.0) { return invalid_dielectric_interface_sample(); }
+    let denominator = dot(result.wi, wm) + dot(wo, wm) / result.etap;
+    let denominator2 = denominator * denominator;
+    if (denominator2 == 0.0) { return invalid_dielectric_interface_sample(); }
+    let dwm_dwi = abs(dot(result.wi, wm)) / denominator2;
+    result.pdf = wm_pdf * dwm_dwi * pt / (pr + pt);
+    var ft = (1.0 - fresnel) * tr_distribution_d(wm, alpha)
+        * tr_distribution_g(wo, result.wi, alpha)
+        * abs(dot(result.wi, wm) * dot(wo, wm)
+            / max(abs(result.wi.z * wo.z) * denominator2, 1e-7));
+    ft = ft / (result.etap * result.etap);
+    result.f = vec4<f32>(ft);
+    result.specular = 0u;
+    return result;
+}
+fn sample_dielectric_interface(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, uc: f32, u: vec2<f32>,
+    allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    let eta = select(item.values[0].x, 1.0, item.values[0].x == 0.0);
+    let alpha = dielectric_interface_alpha(item);
+    if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3) {
+        return sample_smooth_dielectric_interface(
+            wo, eta, uc, allow_reflection, allow_transmission,
+        );
+    }
+    return sample_rough_dielectric_interface(
+        wo, eta, alpha, uc, u, allow_reflection, allow_transmission,
+    );
+}
+fn conductor_interface_alpha(item: AttributesEvalWorkItem) -> vec2<f32> {
+    var roughness = max(vec2<f32>(item.values[2].x, item.values[3].x), vec2<f32>(0.0));
+    if (item.values[4].x != 0.0) { roughness = sqrt(roughness); }
+    return roughness;
+}
+fn sample_conductor_interface(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, u: vec2<f32>,
+) -> DielectricInterfaceSample {
+    let alpha = conductor_interface_alpha(item);
+    if (max(alpha.x, alpha.y) < 1e-3) {
+        let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
+        let value = conductor_fresnel(abs(wo.z), item.values[0], item.values[1]) / abs(wi.z);
+        return DielectricInterfaceSample(value, wi, 1.0, 1.0, 1u, 0u, 1u);
+    }
+    let bounded_alpha = max(alpha, vec2<f32>(1e-4));
+    let wm = sample_visible_tr_wm(wo, bounded_alpha, u);
+    let wi = normalize(-wo + 2.0 * dot(wo, wm) * wm);
+    if (wo.z * wi.z <= 0.0) { return invalid_dielectric_interface_sample(); }
+    let pdf = tr_visible_wm_pdf(wo, wm, bounded_alpha)
+        / max(4.0 * abs(dot(wo, wm)), 1e-7);
+    let value = conductor_fresnel(abs(dot(wo, wm)), item.values[0], item.values[1])
+        * tr_distribution_d(wm, bounded_alpha)
+        * tr_distribution_g(wo, wi, bounded_alpha)
+        / max(abs(4.0 * wo.z * wi.z), 1e-7);
+    return DielectricInterfaceSample(value, wi, pdf, 1.0, 1u, 0u, 0u);
+}
+fn dielectric_interface_f(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
+) -> vec4<f32> {
+    let eta = select(item.values[0].x, 1.0, item.values[0].x == 0.0);
+    let alpha = dielectric_interface_alpha(item);
+    if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3 || wo.z == 0.0 || wi.z == 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let reflection = wo.z * wi.z > 0.0;
+    var etap = 1.0;
+    if (!reflection) { etap = select(1.0 / eta, eta, wo.z > 0.0); }
+    var wm = wi * etap + wo;
+    if (dot(wm, wm) == 0.0) { return vec4<f32>(0.0); }
+    wm = normalize(wm);
+    if (wm.z < 0.0) { wm = -wm; }
+    if (dot(wm, wi) * wi.z < 0.0 || dot(wm, wo) * wo.z < 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let bounded_alpha = max(alpha, vec2<f32>(1e-4));
+    let fresnel = dielectric_fresnel(dot(wo, wm), eta);
+    if (reflection) {
+        let value = tr_distribution_d(wm, bounded_alpha)
+            * tr_distribution_g(wo, wi, bounded_alpha) * fresnel
+            / max(abs(4.0 * wi.z * wo.z), 1e-7);
+        return vec4<f32>(value);
+    }
+    let denominator = dot(wi, wm) + dot(wo, wm) / etap;
+    var value = tr_distribution_d(wm, bounded_alpha) * (1.0 - fresnel)
+        * tr_distribution_g(wo, wi, bounded_alpha)
+        * abs(dot(wi, wm) * dot(wo, wm)
+            / max(abs(wi.z * wo.z) * denominator * denominator, 1e-7));
+    value /= etap * etap;
+    return vec4<f32>(value);
+}
+fn dielectric_interface_pdf(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
+    allow_reflection: bool, allow_transmission: bool,
+) -> f32 {
+    let eta = select(item.values[0].x, 1.0, item.values[0].x == 0.0);
+    let alpha = dielectric_interface_alpha(item);
+    if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3 || wo.z == 0.0 || wi.z == 0.0) {
+        return 0.0;
+    }
+    let reflection = wo.z * wi.z > 0.0;
+    var etap = 1.0;
+    if (!reflection) { etap = select(1.0 / eta, eta, wo.z > 0.0); }
+    var wm = wi * etap + wo;
+    if (dot(wm, wm) == 0.0) { return 0.0; }
+    wm = normalize(wm);
+    if (wm.z < 0.0) { wm = -wm; }
+    let fresnel = dielectric_fresnel(dot(wo, wm), eta);
+    let pr = select(0.0, fresnel, allow_reflection);
+    let pt = select(0.0, 1.0 - fresnel, allow_transmission);
+    if (pr + pt == 0.0) { return 0.0; }
+    let wm_pdf = tr_visible_wm_pdf(wo, wm, max(alpha, vec2<f32>(1e-4)));
+    if (reflection) {
+        return wm_pdf / max(4.0 * abs(dot(wo, wm)), 1e-7) * pr / (pr + pt);
+    }
+    let denominator = dot(wi, wm) + dot(wo, wm) / etap;
+    return wm_pdf * abs(dot(wi, wm)) / max(denominator * denominator, 1e-7)
+        * pt / (pr + pt);
+}
+fn conductor_interface_f(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
+) -> vec4<f32> {
+    let alpha = conductor_interface_alpha(item);
+    if (max(alpha.x, alpha.y) < 1e-3 || wo.z * wi.z <= 0.0) { return vec4<f32>(0.0); }
+    var wm = normalize(wo + wi);
+    if (wm.z < 0.0) { wm = -wm; }
+    let bounded_alpha = max(alpha, vec2<f32>(1e-4));
+    return conductor_fresnel(abs(dot(wo, wm)), item.values[0], item.values[1])
+        * tr_distribution_d(wm, bounded_alpha) * tr_distribution_g(wo, wi, bounded_alpha)
+        / max(abs(4.0 * wo.z * wi.z), 1e-7);
+}
+fn conductor_interface_pdf(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
+) -> f32 {
+    let alpha = conductor_interface_alpha(item);
+    if (max(alpha.x, alpha.y) < 1e-3 || wo.z * wi.z <= 0.0) { return 0.0; }
+    var wm = normalize(wo + wi);
+    if (wm.z < 0.0) { wm = -wm; }
+    return tr_visible_wm_pdf(wo, wm, max(alpha, vec2<f32>(1e-4)))
+        / max(4.0 * abs(dot(wo, wm)), 1e-7);
+}
+fn sample_dielectric_interface_importance(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, uc: f32, u: vec2<f32>,
+    allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    var sample = sample_dielectric_interface(
+        item, wo, uc, u, allow_reflection, allow_transmission,
+    );
+    if (sample.valid != 0u && sample.transmission != 0u) {
+        sample.f *= sample.etap * sample.etap;
+    }
+    return sample;
+}
+fn layered_bottom_f(
+    kind: u32, bottom: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
+) -> vec4<f32> {
+    if (kind == MATERIAL_KIND_COATED_DIFFUSE) {
+        return select(vec4<f32>(0.0), bottom.values[0] / PI, wo.z * wi.z > 0.0);
+    }
+    return conductor_interface_f(bottom, wo, wi);
+}
+fn layered_bottom_pdf(
+    kind: u32, bottom: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
+) -> f32 {
+    if (kind == MATERIAL_KIND_COATED_DIFFUSE) {
+        return select(0.0, abs(wi.z) / PI, wo.z * wi.z > 0.0);
+    }
+    return conductor_interface_pdf(bottom, wo, wi);
+}
+fn sample_layered_bottom(
+    kind: u32, bottom: AttributesEvalWorkItem, wo: vec3<f32>, u: vec2<f32>,
+) -> DielectricInterfaceSample {
+    if (kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+        return sample_conductor_interface(bottom, wo, u);
+    }
+    let radius = sqrt(u.x);
+    let phi = 2.0 * PI * u.y;
+    var wi = vec3<f32>(radius * cos(phi), radius * sin(phi), sqrt(max(0.0, 1.0 - u.x)));
+    if (wo.z < 0.0) { wi.z = -wi.z; }
+    let pdf = abs(wi.z) / PI;
+    if (pdf == 0.0) { return invalid_dielectric_interface_sample(); }
+    return DielectricInterfaceSample(bottom.values[0] / PI, wi, pdf, 1.0, 1u, 0u, 0u);
+}
+fn power_heuristic_one(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    return a2 / max(a2 + pdf_b * pdf_b, 1e-30);
+}
+fn layered_tr(distance: f32, w: vec3<f32>) -> f32 {
+    if (abs(distance) <= 1.17549435e-38) { return 1.0; }
+    return exp(-abs(distance / w.z));
+}
+fn evaluate_layered_f(
+    root: AttributesEvalWorkItem, kind: u32, wo_input: vec3<f32>, wi_input: vec3<f32>,
+    pixel_index: u32, path_depth: u32,
+) -> vec4<f32> {
+    if (wo_input.z == 0.0 || wi_input.z == 0.0 || wo_input.z * wi_input.z <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    var wo = wo_input;
+    var wi = wi_input;
+    if (wo.z < 0.0) { wo = -wo; wi = -wi; }
+    let top = load_attributes_eval_work_item(root.child_work_item0);
+    let bottom = load_attributes_eval_work_item(root.child_work_item1);
+    let params = load_layered_params(root, kind);
+    let n_samples = max(1u, u32(params.n_samples));
+    let max_depth = max(1u, u32(params.max_depth));
+    var result = f32(n_samples) * dielectric_interface_f(top, wo, wi);
+    let top_rough = max(dielectric_interface_alpha(top).x, dielectric_interface_alpha(top).y) >= 1e-3;
+    let bottom_rough = kind == MATERIAL_KIND_COATED_DIFFUSE
+        || max(conductor_interface_alpha(bottom).x, conductor_interface_alpha(bottom).y) >= 1e-3;
+    for (var sample_index = 0u; sample_index < n_samples; sample_index++) {
+        let sample_base = 64u + sample_index * 256u;
+        let wos = sample_dielectric_interface(
+            top, wo,
+            random01(pixel_index, sample_base, path_depth),
+            vec2<f32>(random01(pixel_index, sample_base + 1u, path_depth),
+                random01(pixel_index, sample_base + 2u, path_depth)),
+            false, true,
+        );
+        if (wos.valid == 0u || wos.pdf == 0.0 || wos.wi.z == 0.0) { continue; }
+        let wis = sample_dielectric_interface_importance(
+            top, wi,
+            random01(pixel_index, sample_base + 3u, path_depth),
+            vec2<f32>(random01(pixel_index, sample_base + 4u, path_depth),
+                random01(pixel_index, sample_base + 5u, path_depth)),
+            false, true,
+        );
+        if (wis.valid == 0u || wis.pdf == 0.0 || wis.wi.z == 0.0) { continue; }
+        var beta = wos.f * abs(wos.wi.z) / wos.pdf;
+        var z = max(params.thickness, 1.17549435e-38);
+        var w = wos.wi;
+        for (var layer_depth = 0u; layer_depth < max_depth; layer_depth++) {
+            let random_base = sample_base + 8u + layer_depth * 6u;
+            if (layer_depth > 3u && max_spectrum(beta) < 0.25) {
+                let q = max(0.0, 1.0 - max_spectrum(beta));
+                if (random01(pixel_index, random_base, path_depth) < q) { break; }
+                beta /= max(1.0 - q, 1e-7);
+            }
+            if (w.z == 0.0) { break; }
+            if (max_spectrum(params.albedo) > 0.0) {
+                let dz = sample_layered_exponential(
+                    random01(pixel_index, random_base + 1u, path_depth), 1.0 / abs(w.z),
+                );
+                let zp = select(z - dz, z + dz, w.z > 0.0);
+                if (zp == z) { continue; }
+                if (zp > 0.0 && zp < params.thickness) {
+                    let phase_to_wi = hg_phase(dot(normalize(-w), normalize(-wis.wi)), params.g);
+                    var wt = 1.0;
+                    if (top_rough) { wt = power_heuristic_one(wis.pdf, phase_to_wi); }
+                    result += beta * params.albedo * phase_to_wi * wt
+                        * layered_tr(zp - params.thickness, wis.wi) * wis.f / wis.pdf;
+                    let phase_wi = sample_hg_direction(
+                        normalize(-w),
+                        vec2<f32>(random01(pixel_index, random_base + 2u, path_depth),
+                            random01(pixel_index, random_base + 3u, path_depth)), params.g,
+                    );
+                    let phase_pdf = hg_phase(dot(normalize(-w), phase_wi), params.g);
+                    if (phase_pdf == 0.0 || phase_wi.z == 0.0) { continue; }
+                    beta *= params.albedo;
+                    w = phase_wi;
+                    z = zp;
+                    if (w.z > 0.0 && top_rough) {
+                        let f_exit = dielectric_interface_f(top, -w, wi);
+                        let exit_pdf = dielectric_interface_pdf(top, -w, wi, false, true);
+                        result += beta * layered_tr(zp - params.thickness, w) * f_exit
+                            * power_heuristic_one(phase_pdf, exit_pdf);
+                    }
+                    continue;
+                }
+                z = clamp(zp, 0.0, params.thickness);
+            } else {
+                z = select(params.thickness, 0.0, z == params.thickness);
+                beta *= layered_tr(params.thickness, w);
+            }
+            if (z == params.thickness) {
+                let reflected = sample_dielectric_interface(
+                    top, -w, random01(pixel_index, random_base + 1u, path_depth),
+                    vec2<f32>(random01(pixel_index, random_base + 2u, path_depth),
+                        random01(pixel_index, random_base + 3u, path_depth)), true, false,
+                );
+                if (reflected.valid == 0u || reflected.pdf == 0.0 || reflected.wi.z == 0.0) { break; }
+                beta *= reflected.f * abs(reflected.wi.z) / reflected.pdf;
+                w = reflected.wi;
+            } else {
+                if (bottom_rough) {
+                    var wt = 1.0;
+                    if (top_rough) {
+                        wt = power_heuristic_one(wis.pdf,
+                            layered_bottom_pdf(kind, bottom, -w, -wis.wi));
+                    }
+                    result += beta * layered_bottom_f(kind, bottom, -w, -wis.wi)
+                        * abs(wis.wi.z) * wt * layered_tr(params.thickness, wis.wi)
+                        * wis.f / wis.pdf;
+                }
+                let reflected = sample_layered_bottom(
+                    kind, bottom, -w,
+                    vec2<f32>(random01(pixel_index, random_base + 2u, path_depth),
+                        random01(pixel_index, random_base + 3u, path_depth)),
+                );
+                if (reflected.valid == 0u || reflected.pdf == 0.0 || reflected.wi.z == 0.0) { break; }
+                beta *= reflected.f * abs(reflected.wi.z) / reflected.pdf;
+                w = reflected.wi;
+                if (top_rough) {
+                    let f_exit = dielectric_interface_f(top, -w, wi);
+                    let exit_pdf = dielectric_interface_pdf(top, -w, wi, false, true);
+                    result += beta * layered_tr(params.thickness, w) * f_exit
+                        * power_heuristic_one(reflected.pdf, exit_pdf);
+                }
+            }
+        }
+    }
+    return result / f32(n_samples);
+}
+fn evaluate_layered_pdf(
+    root: AttributesEvalWorkItem, kind: u32, wo_input: vec3<f32>, wi_input: vec3<f32>,
+    pixel_index: u32, path_depth: u32,
+) -> f32 {
+    if (wo_input.z == 0.0 || wi_input.z == 0.0 || wo_input.z * wi_input.z <= 0.0) {
+        return 0.0;
+    }
+    var wo = wo_input;
+    var wi = wi_input;
+    if (wo.z < 0.0) { wo = -wo; wi = -wi; }
+    let top = load_attributes_eval_work_item(root.child_work_item0);
+    let bottom = load_attributes_eval_work_item(root.child_work_item1);
+    let n_samples = max(1u, u32(load_layered_params(root, kind).n_samples));
+    let top_rough = max(dielectric_interface_alpha(top).x, dielectric_interface_alpha(top).y) >= 1e-3;
+    let bottom_rough = kind == MATERIAL_KIND_COATED_DIFFUSE
+        || max(conductor_interface_alpha(bottom).x, conductor_interface_alpha(bottom).y) >= 1e-3;
+    var pdf_sum = f32(n_samples) * dielectric_interface_pdf(top, wo, wi, true, false);
+    for (var sample_index = 0u; sample_index < n_samples; sample_index++) {
+        let random_base = 20000u + sample_index * 8u;
+        let wos = sample_dielectric_interface(
+            top, wo,
+            random01(pixel_index, random_base, path_depth),
+            vec2<f32>(random01(pixel_index, random_base + 1u, path_depth),
+                random01(pixel_index, random_base + 2u, path_depth)),
+            false, true,
+        );
+        if (wos.valid == 0u || wos.pdf == 0.0 || wos.wi.z == 0.0) { continue; }
+        let wis = sample_dielectric_interface_importance(
+            top, wi,
+            random01(pixel_index, random_base + 3u, path_depth),
+            vec2<f32>(random01(pixel_index, random_base + 4u, path_depth),
+                random01(pixel_index, random_base + 5u, path_depth)),
+            false, true,
+        );
+        if (wis.valid == 0u || wis.pdf == 0.0 || wis.wi.z == 0.0) { continue; }
+        let reflection_pdf = layered_bottom_pdf(kind, bottom, -wos.wi, -wis.wi);
+        if (!top_rough) {
+            pdf_sum += reflection_pdf;
+            continue;
+        }
+        let reflected = sample_layered_bottom(
+            kind, bottom, -wos.wi,
+            vec2<f32>(random01(pixel_index, random_base + 6u, path_depth),
+                random01(pixel_index, random_base + 7u, path_depth)),
+        );
+        if (reflected.valid == 0u || reflected.pdf == 0.0 || reflected.wi.z == 0.0) {
+            continue;
+        }
+        let transmission_pdf = dielectric_interface_pdf(
+            top, -reflected.wi, wi, false, true,
+        );
+        if (!bottom_rough) {
+            pdf_sum += transmission_pdf;
+        } else {
+            pdf_sum += power_heuristic_one(wis.pdf, reflection_pdf) * reflection_pdf;
+            pdf_sum += power_heuristic_one(reflected.pdf, transmission_pdf) * transmission_pdf;
+        }
+    }
+    return mix(1.0 / (4.0 * PI), pdf_sum / f32(n_samples), 0.9);
 }
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
@@ -383,6 +1266,42 @@ fn random01(pixel_index: u32, dimension: u32, depth: u32) -> f32 {
         ^ (viewport.sample_index * 0x85ebca6bu)
         ^ ((dimension + depth * 8u) * 0xc2b2ae35u);
     return f32(hash_u32(value) & 0x00ffffffu) / 16777216.0;
+}
+
+// pbrt-v4 HGPhaseFunction helpers used by the layered medium random walk.
+fn hg_phase(cosine: f32, g: f32) -> f32 {
+    let bounded_g = clamp(g, -0.99, 0.99);
+    let gg = bounded_g * bounded_g;
+    let denominator = max(1.0 + gg + 2.0 * bounded_g * cosine, 1e-7);
+    return (1.0 - gg) / (4.0 * PI * denominator * sqrt(denominator));
+}
+fn sample_hg_cosine(u: f32, g: f32) -> f32 {
+    let bounded_g = clamp(g, -0.99, 0.99);
+    if (abs(bounded_g) < 1e-3) {
+        return 1.0 - 2.0 * u;
+    }
+    let t = (1.0 - bounded_g * bounded_g)
+        / max(1.0 + bounded_g - 2.0 * bounded_g * u, 1e-7);
+    return clamp(
+        -(1.0 + bounded_g * bounded_g - t * t) / (2.0 * bounded_g),
+        -1.0,
+        1.0,
+    );
+}
+fn sample_hg_direction(reference: vec3<f32>, u: vec2<f32>, g: f32) -> vec3<f32> {
+    let cosine = sample_hg_cosine(u.x, g);
+    let sine = sqrt(max(0.0, 1.0 - cosine * cosine));
+    let phi = 2.0 * PI * u.y;
+    let tangent = make_tangent(reference);
+    let bitangent = cross(reference, tangent);
+    return normalize(
+        tangent * (sine * cos(phi))
+        + bitangent * (sine * sin(phi))
+        + reference * cosine,
+    );
+}
+fn sample_layered_exponential(u: f32, rate: f32) -> f32 {
+    return -log(max(1.0 - min(u, 0.99999994), 1e-7)) / max(rate, 1e-7);
 }
 
 fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
@@ -692,3 +1611,6 @@ fn make_tangent(normal: vec3<f32>) -> vec3<f32> {
     }
     return normalize(cross(vec3<f32>(1.0, 0.0, 0.0), normal));
 }
+var<private> material_texture_uv: vec2<f32>;
+var<private> material_texture_normal: vec3<f32>;
+var<private> material_texture_position: vec3<f32>;

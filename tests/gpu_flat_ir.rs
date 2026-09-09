@@ -42,6 +42,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
             kind: material.to_string(),
             params: Default::default(),
             material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
         }),
     }));
     Arc::new(RwLock::new(node))
@@ -104,9 +105,9 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.film.sensor_response, [0, 1, 2]);
     assert_eq!(scene.film.imaging_ratio, 1.0);
     validate_dense_spectra(&scene.spectrum_attributes).unwrap();
-    assert_eq!(scene.scalar_attributes.len(), 0);
+    assert_eq!(scene.scalar_attributes.len(), 3);
     assert_eq!(scene.materials[0].attributes.len(), 1);
-    assert_eq!(scene.materials[1].attributes.len(), 1);
+    assert_eq!(scene.materials[1].attributes.len(), 4);
     assert_eq!(
         scene.geometries,
         vec![
@@ -310,6 +311,7 @@ fn flatten_node_requires_tessellated_shapes() {
             kind: "diffuse".to_string(),
             params: Default::default(),
             material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
         }),
     }));
     root.add_child(Arc::new(RwLock::new(shape)));
@@ -467,12 +469,15 @@ fn flatten_node_extracts_dielectric_eta() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[0].attributes.len(), 4);
     assert_eq!(
         scene.materials[0].attributes[0].kind,
         AttributeKind::Spectrum
     );
     assert_eq!(scene.materials[0].attributes[0].name, "eta");
+    assert_eq!(scene.materials[0].attributes[1].name, "uroughness");
+    assert_eq!(scene.materials[0].attributes[2].name, "vroughness");
+    assert_eq!(scene.materials[0].attributes[3].name, "remaproughness");
     let attribute = &scene.materials[0].attributes[0];
     assert!(
         (evaluate_dense_spectrum(&scene.spectrum_attributes, attribute.index, 550.0).unwrap()
@@ -511,9 +516,57 @@ fn flatten_node_expands_coateddiffuse_children() {
     assert_eq!(material.kind, "coateddiffuse");
     assert_eq!(material.attributes[0].kind, AttributeKind::Material);
     assert_eq!(material.attributes[1].kind, AttributeKind::Material);
+    assert_eq!(material.attributes.len(), 12);
+    assert_eq!(material.attributes[2].name, "thickness");
+    assert_eq!(material.attributes[3].name, "reflectance");
+    assert_eq!(material.attributes[4].name, "g");
+    assert_eq!(material.attributes[5].name, "maxdepth");
+    assert_eq!(material.attributes[6].name, "nsamples");
+    assert_eq!(material.attributes[7].name, "albedo");
+    assert_eq!(material.attributes[8].name, "eta");
+    assert_eq!(material.attributes[9].name, "uroughness");
+    assert_eq!(material.attributes[10].name, "vroughness");
+    assert_eq!(material.attributes[11].name, "remaproughness");
     assert_eq!(
         pbrt_r4::gpu::ir::flat::max_attributes_eval_work_items_per_surface(&scene).unwrap(),
         3
+    );
+}
+
+#[test]
+fn flatten_node_preserves_coatedconductor_layer_parameters() {
+    let shape = triangle_node("coated", "coatedconductor", [0.0; 3]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .unwrap()
+            .params
+            .add_rgb("rgb reflectance", &[0.25, 0.5, 0.75]);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let material = scene.materials.last().unwrap();
+    assert_eq!(material.kind, "coatedconductor");
+    assert_eq!(material.attributes.len(), 17);
+    assert_eq!(material.attributes[7].name, "interface.eta");
+    assert_eq!(material.attributes[10].name, "conductor.eta");
+    assert_eq!(material.attributes[11].name, "conductor.k");
+    assert_eq!(material.attributes[15].name, "reflectance");
+    assert_eq!(material.attributes[16].name, "use_reflectance");
+    assert_eq!(
+        scene.scalar_attributes[material.attributes[16].index as usize],
+        1.0,
     );
 }
 

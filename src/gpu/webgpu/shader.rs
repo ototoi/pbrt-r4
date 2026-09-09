@@ -57,26 +57,50 @@ pub fn compose_source(stage_source: &str) -> String {
     }
 }
 
-/// Returns the group-0 binding numbers declared by a composed WGSL module.
+/// Returns the `(group, binding)` pairs declared by a composed WGSL module.
 ///
 /// The composed source is the ABI for an individual compute stage, so this
 /// parser intentionally operates on the generated declarations rather than
 /// duplicating a stage-to-resource table in Rust.
-pub fn resource_binding_numbers(source: &str) -> Vec<u32> {
+pub fn resource_bindings(source: &str) -> Vec<(u32, u32)> {
     let mut bindings = std::collections::BTreeSet::new();
-    let marker = "@group(0) @binding(";
+    let marker = "@group(";
     let mut cursor = 0;
     while let Some(relative) = source[cursor..].find(marker) {
-        let start = cursor + relative + marker.len();
-        let Some(end) = source[start..].find(')') else {
+        let group_start = cursor + relative + marker.len();
+        let Some(group_end) = source[group_start..].find(')') else {
             break;
         };
-        if let Ok(binding) = source[start..start + end].trim().parse::<u32>() {
-            bindings.insert(binding);
+        let after_group = group_start + group_end + 1;
+        let binding_marker = " @binding(";
+        let Some(binding_offset) = source[after_group..].find(binding_marker) else {
+            cursor = after_group;
+            continue;
+        };
+        let binding_start = after_group + binding_offset + binding_marker.len();
+        let Some(binding_end) = source[binding_start..].find(')') else {
+            break;
+        };
+        if let (Ok(group), Ok(binding)) = (
+            source[group_start..group_start + group_end]
+                .trim()
+                .parse::<u32>(),
+            source[binding_start..binding_start + binding_end]
+                .trim()
+                .parse::<u32>(),
+        ) {
+            bindings.insert((group, binding));
         }
-        cursor = start + end + 1;
+        cursor = binding_start + binding_end + 1;
     }
     bindings.into_iter().collect()
+}
+
+pub fn resource_binding_numbers(source: &str) -> Vec<u32> {
+    resource_bindings(source)
+        .into_iter()
+        .filter_map(|(group, binding)| (group == 0).then_some(binding))
+        .collect()
 }
 
 pub fn required_limits_for_sources(
@@ -86,17 +110,17 @@ pub fn required_limits_for_sources(
     let mut required = RequiredLimits::default();
     for stage_source in stage_sources {
         let source = compose_source(stage_source);
-        let used_bindings = resource_binding_numbers(&source);
+        let used_bindings = resource_bindings(&source);
         let bindings = used_bindings
             .iter()
-            .map(|binding| {
+            .map(|(group, binding)| {
                 canonical_bindings
                     .iter()
-                    .find(|candidate| candidate.group == 0 && candidate.binding == *binding)
+                    .find(|candidate| candidate.group == *group && candidate.binding == *binding)
                     .copied()
                     .ok_or_else(|| {
                         crate::util::error::PbrtError::error(&format!(
-                            "Shader uses unregistered group 0 binding {binding}."
+                            "Shader uses unregistered group {group} binding {binding}."
                         ))
                     })
             })
@@ -140,17 +164,13 @@ fn prune_common_source(source: &str, roots: &[&str]) -> String {
 }
 
 fn select_resources(source: &str, references: &str) -> String {
-    let prefix = source
-        .find("@group(0) @binding(")
-        .map(|index| &source[..index])
-        .unwrap_or("");
+    let first_declaration = source.find("@group(").unwrap_or(source.len());
+    let prefix = &source[..first_declaration];
     let declarations = source
-        .split("@group(0) @binding(")
-        .skip(1)
-        .filter_map(|block| {
-            let block = format!("@group(0) @binding({block}");
-            let end = block.find(';')? + 1;
-            let declaration = &block[..end];
+        .match_indices("@group(")
+        .filter_map(|(start, _)| {
+            let end = source[start..].find(';')? + start + 1;
+            let declaration = &source[start..end];
             let var = if let Some(start) = declaration.find("var<") {
                 let name_start = declaration[start..]
                     .find('>')

@@ -5,7 +5,7 @@ use super::stages::{all_stage_specs, canonical_wavefront_bindings, BindingClass,
 
 pub struct StagePipeline {
     pub pipeline: wgpu::ComputePipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 }
 
 pub struct Pipeline {
@@ -30,7 +30,11 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new(device: &wgpu::Device) -> Result<Self, PbrtError> {
+    pub fn new(
+        device: &wgpu::Device,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+    ) -> Result<Self, PbrtError> {
         // Validate the complete stage contract before creating the deployed
         // layout. The canonical registry supplies the current ABI entries.
         RequiredLimits::from_stages(&all_stage_specs())?;
@@ -38,27 +42,55 @@ impl Pipeline {
         let canonical_bindings = canonical_wavefront_bindings();
         let compute =
             |label: &'static str, stage_source: &'static str, entry_point: &'static str| {
-                let source = shader::compose_source(stage_source);
-                let used_bindings = shader::resource_binding_numbers(&source);
-                let layout_entries = canonical_bindings
-                    .iter()
-                    .filter(|binding| used_bindings.contains(&binding.binding))
-                    .map(layout_entry)
+                log::info!("GPU pipeline: creating {label}");
+                let source = shader::compose_source(stage_source)
+                    .replace(
+                        "binding_array<texture_2d<f32>>",
+                        &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
+                    )
+                    .replace(
+                        "binding_array<sampler>",
+                        &format!("binding_array<sampler, {texture_sampler_count}u>"),
+                    );
+                log::info!(
+                    "GPU pipeline: {label} source composed ({} bytes)",
+                    source.len()
+                );
+                let used_bindings = shader::resource_bindings(&source);
+                let bind_group_layouts = (0..=1)
+                    .map(|group| {
+                        let layout_entries = canonical_bindings
+                            .iter()
+                            .filter(|binding| {
+                                binding.group == group
+                                    && used_bindings.contains(&(binding.group, binding.binding))
+                            })
+                            .map(|binding| {
+                                layout_entry(binding, texture_image_count, texture_sampler_count)
+                            })
+                            .collect::<Vec<_>>();
+                        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some(label),
+                            entries: &layout_entries,
+                        })
+                    })
                     .collect::<Vec<_>>();
-                let bind_group_layout =
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some(label),
-                        entries: &layout_entries,
-                    });
+                log::info!("GPU pipeline: {label} bind group layouts created");
                 let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some(label),
-                    bind_group_layouts: &[Some(&bind_group_layout)],
+                    bind_group_layouts: bind_group_layouts
+                        .iter()
+                        .map(Some)
+                        .collect::<Vec<_>>()
+                        .as_slice(),
                     immediate_size: 0,
                 });
+                log::info!("GPU pipeline: {label} pipeline layout created");
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(label),
                     source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
                 });
+                log::info!("GPU pipeline: {label} shader module created");
                 let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(label),
                     layout: Some(&layout),
@@ -67,9 +99,10 @@ impl Pipeline {
                     compilation_options: Default::default(),
                     cache: None,
                 });
+                log::info!("GPU pipeline: created {label}");
                 StagePipeline {
                     pipeline,
-                    bind_group_layout,
+                    bind_group_layouts,
                 }
             };
         let pipeline = Self {
@@ -173,7 +206,11 @@ impl Pipeline {
     }
 }
 
-fn layout_entry(binding: &super::stages::BindingSpec) -> wgpu::BindGroupLayoutEntry {
+fn layout_entry(
+    binding: &super::stages::BindingSpec,
+    texture_image_count: u32,
+    texture_sampler_count: u32,
+) -> wgpu::BindGroupLayoutEntry {
     let ty = match binding.class {
         BindingClass::Uniform => wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
@@ -190,11 +227,30 @@ fn layout_entry(binding: &super::stages::BindingSpec) -> wgpu::BindGroupLayoutEn
         BindingClass::AccelerationStructure => wgpu::BindingType::AccelerationStructure {
             vertex_return: false,
         },
+        BindingClass::SampledTexture => wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        BindingClass::Sampler => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
     };
     wgpu::BindGroupLayoutEntry {
         binding: binding.binding,
         visibility: wgpu::ShaderStages::COMPUTE,
         ty,
-        count: None,
+        count: if matches!(
+            binding.resource,
+            super::stages::ResourceId::TextureImageArray
+                | super::stages::ResourceId::TextureSamplerArray
+        ) {
+            let count = match binding.resource {
+                super::stages::ResourceId::TextureImageArray => texture_image_count,
+                super::stages::ResourceId::TextureSamplerArray => texture_sampler_count,
+                _ => unreachable!("only texture arrays have a binding count"),
+            };
+            std::num::NonZeroU32::new(count.max(1))
+        } else {
+            None
+        },
     }
 }
