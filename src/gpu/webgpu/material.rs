@@ -48,7 +48,13 @@ impl MaterialTable {
 fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtError> {
     let expected = match material.kind.as_str() {
         "diffuse" => &[(0, flat::AttributeKind::Spectrum)][..],
-        "dielectric" | "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
+        "dielectric" => &[
+            (0, flat::AttributeKind::Spectrum),
+            (1, flat::AttributeKind::Scalar),
+            (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Scalar),
+        ][..],
+        "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
         "conductor" => &[
             (0, flat::AttributeKind::Spectrum),
             (1, flat::AttributeKind::Spectrum),

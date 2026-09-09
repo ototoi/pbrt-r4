@@ -65,7 +65,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.values[0] = load_conductor_eta(current_index, lambda);
             evaluated.values[1] = load_conductor_k(current_index, lambda);
             evaluated.values[2].x = load_conductor_roughness(current_index);
-        } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC || evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_DIELECTRIC) {
+            evaluated.values[0] = load_dielectric_eta(current_index, lambda);
+            evaluated.values[1].x = load_material_scalar(current_index, 1u);
+            evaluated.values[2].x = load_material_scalar(current_index, 2u);
+            evaluated.values[3].x = load_material_scalar(current_index, 3u);
+        } else if (evaluated.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
             evaluated.values[0] = load_dielectric_eta(current_index, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) {
             evaluated.values[0].x = load_material_scalar(current_index, 2u);
@@ -105,7 +110,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             for (var child_value_index = 0u; child_value_index < 10u; child_value_index++) {
                 child_eval.values[child_value_index] = vec4<f32>(0.0);
             }
-            if (child_eval.bxdf_kind == MATERIAL_KIND_DIELECTRIC || child_eval.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
+            if (child_eval.bxdf_kind == MATERIAL_KIND_DIELECTRIC) {
+                child_eval.values[0] = load_dielectric_eta(child0.index, lambda);
+                child_eval.values[1].x = load_material_scalar(child0.index, 1u);
+                child_eval.values[2].x = load_material_scalar(child0.index, 2u);
+                child_eval.values[3].x = load_material_scalar(child0.index, 3u);
+            } else if (child_eval.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
                 child_eval.values[0] = load_dielectric_eta(child0.index, lambda);
             } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
                 child_eval.values[0] = load_diffuse_reflectance(child0.index, lambda);
