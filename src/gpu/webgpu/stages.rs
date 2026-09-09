@@ -50,6 +50,11 @@ pub enum ResourceId {
     ScalarAttribute,
     SpectrumAttribute,
     TextureAttribute,
+    TextureNode,
+    TextureChild,
+    TextureImageArray,
+    TextureSamplerArray,
+    RgbSpectrumTable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +62,8 @@ pub enum BindingClass {
     Uniform,
     Storage,
     AccelerationStructure,
+    SampledTexture,
+    Sampler,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -233,9 +240,32 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (32, ResourceId::LightBvhNode),
         (33, ResourceId::LightLeaf),
         (34, ResourceId::SpectrumAttribute),
+        (35, ResourceId::TextureNode),
+        (38, ResourceId::TextureChild),
         (36, ResourceId::LightPosition),
+        (41, ResourceId::RgbSpectrumTable),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
+    }
+    push(
+        0,
+        ResourceId::TextureImageArray,
+        BindingClass::SampledTexture,
+        Access::Read,
+    );
+    push(
+        1,
+        ResourceId::TextureSamplerArray,
+        BindingClass::Sampler,
+        Access::Read,
+    );
+    for binding in bindings.iter_mut() {
+        if matches!(
+            binding.resource,
+            ResourceId::TextureImageArray | ResourceId::TextureSamplerArray
+        ) {
+            binding.group = 1;
+        }
     }
     bindings
 }
@@ -257,6 +287,7 @@ impl RequiredLimits {
                 BindingClass::Storage => required.storage_buffers_per_shader_stage += 1,
                 BindingClass::Uniform => required.uniform_buffers_per_shader_stage += 1,
                 BindingClass::AccelerationStructure => {}
+                BindingClass::SampledTexture | BindingClass::Sampler => {}
             }
         }
         Ok(required)
@@ -274,6 +305,7 @@ impl RequiredLimits {
                     BindingClass::Storage => storage += 1,
                     BindingClass::Uniform => uniform += 1,
                     BindingClass::AccelerationStructure => {}
+                    BindingClass::SampledTexture | BindingClass::Sampler => {}
                 }
             }
             required.storage_buffers_per_shader_stage =

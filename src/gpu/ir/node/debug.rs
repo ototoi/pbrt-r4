@@ -1,7 +1,7 @@
 use super::component::Component;
 use super::node::{Node, NodeRef};
 use super::shape::Shape;
-use super::texture::TextureKind;
+use super::texture::{TextureComponent, TextureKind, TextureMapping, TextureNode};
 use crate::paramdict::ParameterDictionary;
 use serde_json::{json, Map, Value};
 
@@ -31,14 +31,12 @@ fn component_to_json(component: &Component) -> Value {
     match component {
         Component::Scene(component) => json!({
             "type": "Scene",
-            "textures": component.scene.textures.iter().map(|texture| {
-                json!({
-                    "name": texture.name,
-                    "kind": texture_kind_name(texture.kind),
-                    "params": params_to_json(&texture.params),
-                    "transform": texture.transform.matrix,
-                })
-            }).collect::<Vec<_>>(),
+            "texture_nodes": component
+                .scene
+                .texture_nodes
+                .iter()
+                .map(|texture| texture_node_to_json(texture))
+                .collect::<Vec<_>>(),
         }),
         Component::Sampler(component) => named_params_to_json(
             "Sampler",
@@ -85,6 +83,12 @@ fn component_to_json(component: &Component) -> Value {
             "name": component.material.name,
             "kind": component.material.kind,
             "params": params_to_json(&component.material.params),
+            "texture_attributes": component
+                .material
+                .texture_attributes
+                .iter()
+                .map(|(name, texture)| json!({ "name": name, "texture": texture.name }))
+                .collect::<Vec<_>>(),
         }),
         Component::Light(component) => json!({
             "type": "Light",
@@ -109,6 +113,49 @@ fn component_to_json(component: &Component) -> Value {
             "target": node_name(&component.instance.target),
             "transform": component.instance.transform.matrix,
         }),
+    }
+}
+
+fn texture_node_to_json(node: &TextureNode) -> Value {
+    json!({
+        "name": node.name,
+        "components": node.components.iter().map(texture_component_to_json).collect::<Vec<_>>(),
+        "children": node.children.iter().map(|child| texture_node_to_json(child)).collect::<Vec<_>>(),
+    })
+}
+
+fn texture_component_to_json(component: &TextureComponent) -> Value {
+    match component {
+        TextureComponent::Texture(texture) => json!({
+            "type": "Texture",
+            "name": texture.name,
+            "kind": texture_kind_name(texture.kind),
+            "params": params_to_json(&texture.params),
+        }),
+        TextureComponent::Mapping(mapping) => match mapping {
+            TextureMapping::Uv(mapping) => json!({
+                "type": "Mapping",
+                "kind": "uv",
+                "uscale": mapping.uscale,
+                "vscale": mapping.vscale,
+                "udelta": mapping.udelta,
+                "vdelta": mapping.vdelta,
+            }),
+            TextureMapping::Planar(transform) => {
+                json!({ "type": "Mapping", "kind": "planar", "transform": transform.matrix })
+            }
+            TextureMapping::Spherical(transform) => {
+                json!({ "type": "Mapping", "kind": "spherical", "transform": transform.matrix })
+            }
+            TextureMapping::Cylindrical(transform) => {
+                json!({ "type": "Mapping", "kind": "cylindrical", "transform": transform.matrix })
+            }
+            TextureMapping::PointTransform(transform) => json!({
+                "type": "Mapping",
+                "kind": "point_transform",
+                "transform": transform.matrix,
+            }),
+        },
     }
 }
 

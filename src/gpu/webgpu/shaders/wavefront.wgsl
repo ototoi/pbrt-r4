@@ -248,11 +248,400 @@ fn load_material_attribute(material_index: u32, ordinal: u32) -> AttributeRef {
 }
 fn load_material_scalar(material_index: u32, ordinal: u32) -> f32 {
     let attr_ref = load_material_attribute(material_index, ordinal);
+    if (attr_ref.kind == 2u) {
+        return sample_texture_rgb(attr_ref.index, material_texture_uv).x;
+    }
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
 }
+
+// This is the same permutation used by pbrt-v4's Perlin noise implementation.
+// The table is indexed modulo 256; the C++/Rust implementations store the
+// permutation twice to avoid explicit wrapping at the second lookup.
+const TEXTURE_NOISE_PERM: array<u32, 256> = array<u32, 256>(
+    151u, 160u, 137u, 91u, 90u, 15u, 131u, 13u, 201u, 95u, 96u, 53u, 194u, 233u, 7u, 225u,
+    140u, 36u, 103u, 30u, 69u, 142u, 8u, 99u, 37u, 240u, 21u, 10u, 23u, 190u, 6u, 148u,
+    247u, 120u, 234u, 75u, 0u, 26u, 197u, 62u, 94u, 252u, 219u, 203u, 117u, 35u, 11u, 32u,
+    57u, 177u, 33u, 88u, 237u, 149u, 56u, 87u, 174u, 20u, 125u, 136u, 171u, 168u, 68u, 175u,
+    74u, 165u, 71u, 134u, 139u, 48u, 27u, 166u, 77u, 146u, 158u, 231u, 83u, 111u, 229u, 122u,
+    60u, 211u, 133u, 230u, 220u, 105u, 92u, 41u, 55u, 46u, 245u, 40u, 244u, 102u, 143u, 54u,
+    65u, 25u, 63u, 161u, 1u, 216u, 80u, 73u, 209u, 76u, 132u, 187u, 208u, 89u, 18u, 169u,
+    200u, 196u, 135u, 130u, 116u, 188u, 159u, 86u, 164u, 100u, 109u, 198u, 173u, 186u, 3u, 64u,
+    52u, 217u, 226u, 250u, 124u, 123u, 5u, 202u, 38u, 147u, 118u, 126u, 255u, 82u, 85u, 212u,
+    207u, 206u, 59u, 227u, 47u, 16u, 58u, 17u, 182u, 189u, 28u, 42u, 223u, 183u, 170u, 213u,
+    119u, 248u, 152u, 2u, 44u, 154u, 163u, 70u, 221u, 153u, 101u, 155u, 167u, 43u, 172u, 9u,
+    129u, 22u, 39u, 253u, 19u, 98u, 108u, 110u, 79u, 113u, 224u, 232u, 178u, 185u, 112u, 104u,
+    218u, 246u, 97u, 228u, 251u, 34u, 242u, 193u, 238u, 210u, 144u, 12u, 191u, 179u, 162u, 241u,
+    81u, 51u, 145u, 235u, 249u, 14u, 239u, 107u, 49u, 192u, 214u, 31u, 181u, 199u, 106u, 157u,
+    184u, 84u, 204u, 176u, 115u, 121u, 50u, 45u, 127u, 4u, 150u, 254u, 138u, 236u, 205u, 93u,
+    222u, 114u, 67u, 29u, 24u, 72u, 243u, 141u, 128u, 195u, 78u, 66u, 215u, 61u, 156u, 180u,
+);
+
+fn texture_noise_weight(t: f32) -> f32 {
+    let t3 = t * t * t;
+    let t4 = t3 * t;
+    return 6.0 * t4 * t - 15.0 * t4 + 10.0 * t3;
+}
+
+fn texture_noise_grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 {
+    let a = (TEXTURE_NOISE_PERM[x & 255u] + y) & 255u;
+    let b = (TEXTURE_NOISE_PERM[a] + z) & 255u;
+    let h = TEXTURE_NOISE_PERM[b] & 15u;
+    let u = select(dy, dx, h < 8u || h == 12u || h == 13u);
+    let v = select(dz, dy, h < 4u || h == 12u || h == 13u);
+    return select(u, -u, (h & 1u) != 0u) + select(v, -v, (h & 2u) != 0u);
+}
+
+fn texture_noise(p: vec3<f32>) -> f32 {
+    let ix = i32(floor(p.x));
+    let iy = i32(floor(p.y));
+    let iz = i32(floor(p.z));
+    let dx = p.x - f32(ix);
+    let dy = p.y - f32(iy);
+    let dz = p.z - f32(iz);
+    let x = u32(ix) & 255u;
+    let y = u32(iy) & 255u;
+    let z = u32(iz) & 255u;
+    let w000 = texture_noise_grad(x, y, z, dx, dy, dz);
+    let w100 = texture_noise_grad((x + 1u) & 255u, y, z, dx - 1.0, dy, dz);
+    let w010 = texture_noise_grad(x, (y + 1u) & 255u, z, dx, dy - 1.0, dz);
+    let w110 = texture_noise_grad((x + 1u) & 255u, (y + 1u) & 255u, z, dx - 1.0, dy - 1.0, dz);
+    let w001 = texture_noise_grad(x, y, (z + 1u) & 255u, dx, dy, dz - 1.0);
+    let w101 = texture_noise_grad((x + 1u) & 255u, y, (z + 1u) & 255u, dx - 1.0, dy, dz - 1.0);
+    let w011 = texture_noise_grad(x, (y + 1u) & 255u, (z + 1u) & 255u, dx, dy - 1.0, dz - 1.0);
+    let w111 = texture_noise_grad((x + 1u) & 255u, (y + 1u) & 255u, (z + 1u) & 255u, dx - 1.0, dy - 1.0, dz - 1.0);
+    let wx = texture_noise_weight(dx);
+    let wy = texture_noise_weight(dy);
+    let wz = texture_noise_weight(dz);
+    let x0 = mix(w000, w100, wx);
+    let x1 = mix(w010, w110, wx);
+    let x2 = mix(w001, w101, wx);
+    let x3 = mix(w011, w111, wx);
+    return mix(mix(x0, x1, wy), mix(x2, x3, wy), wz);
+}
+
+fn texture_fbm(p: vec3<f32>, omega: f32, octaves: f32, absolute_value: bool) -> f32 {
+    let count = u32(clamp(floor(octaves), 0.0, 8.0));
+    var sum = 0.0;
+    var frequency = 1.0;
+    var weight = 1.0;
+    for (var octave = 0u; octave < 8u; octave++) {
+        if (octave < count) {
+            let value = texture_noise(frequency * p);
+            sum += weight * select(value, abs(value), absolute_value);
+        }
+        frequency *= 1.99;
+        weight *= omega;
+    }
+    if (absolute_value) {
+        var tail_weight = weight;
+        for (var tail = 0u; tail < 8u; tail++) {
+            if (tail < count) { sum += tail_weight * 0.2; }
+            tail_weight *= omega;
+        }
+    }
+    return sum;
+}
+
+fn texture_marble(p: vec3<f32>, omega: f32, octaves: f32, scale: f32, variation: f32) -> vec3<f32> {
+    let q = scale * p;
+    let marble = q.y + variation * texture_fbm(q, omega, octaves, false);
+    var t = 0.5 + 0.5 * sin(marble);
+    let colors = array<vec3<f32>, 9>(
+        vec3<f32>(0.58, 0.58, 0.60), vec3<f32>(0.58, 0.58, 0.60),
+        vec3<f32>(0.58, 0.58, 0.60), vec3<f32>(0.50, 0.50, 0.50),
+        vec3<f32>(0.60, 0.59, 0.58), vec3<f32>(0.58, 0.58, 0.60),
+        vec3<f32>(0.58, 0.58, 0.60), vec3<f32>(0.20, 0.20, 0.33),
+        vec3<f32>(0.58, 0.58, 0.60),
+    );
+    let segments = 6;
+    let scaled_t = t * f32(segments);
+    let first = min(u32(floor(scaled_t)), 5u);
+    t = scaled_t - f32(first);
+    let c0 = colors[first];
+    let c1 = colors[first + 1u];
+    let c2 = colors[first + 2u];
+    let c3 = colors[first + 3u];
+    let a = mix(c0, c1, t);
+    let b = mix(c1, c2, t);
+    let c = mix(c2, c3, t);
+    let d = mix(a, b, t);
+    let e = mix(b, c, t);
+    return 1.5 * mix(d, e, t);
+}
+
+fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
+    if (node.mapping_kind == 1u) {
+        return (node.mapping * vec4<f32>(material_texture_position, 1.0)).xy;
+    }
+    let p = (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
+    if (node.mapping_kind == 2u) {
+        let q = normalize(p);
+        var s = atan2(q.y, q.x) / (2.0 * 3.14159265359);
+        if (s < 0.0) { s = s + 1.0; }
+        // pbrt-v4 uses (SphericalPhi, SphericalTheta) for (s, t).
+        return vec2<f32>(s, acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359);
+    }
+    if (node.mapping_kind == 3u) {
+        var s = atan2(p.y, p.x) / (2.0 * 3.14159265359);
+        if (s < 0.0) { s = s + 1.0; }
+        return vec2<f32>(s, p.z);
+    }
+    return (node.mapping * vec4<f32>(uv, 0.0, 1.0)).xy;
+}
+
+fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
+    if (texture_index >= arrayLength(&texture_nodes)) { set_render_error(); return vec3<f32>(0.0); }
+    let node = texture_nodes[texture_index];
+    if (node.operation == 1u) { return node.constant_value.rgb; }
+    // Procedural textures are placeholders until texture graphs are compiled
+    // to the planned post-order mini VM. Keeping their implementations out of
+    // this call graph also avoids pathological driver compilation time.
+    if (node.operation >= 4u) {
+        return vec3<f32>(1.0);
+    }
+    let mapped_uv = mapped_texture_uv(node, uv);
+    if ((node.swrap_mode == 2u && (mapped_uv.x < 0.0 || mapped_uv.x > 1.0))
+        || (node.twrap_mode == 2u && (mapped_uv.y < 0.0 || mapped_uv.y > 1.0))) {
+        return vec3<f32>(0.0);
+    }
+    // pbrt-v4 image textures use image-space origin at the upper left.
+    let image_uv = vec2<f32>(mapped_uv.x, 1.0 - mapped_uv.y);
+    var value = textureSampleLevel(
+        texture_images[texture_index],
+        texture_samplers[texture_index],
+        image_uv,
+        0.0,
+    ).rgb * node.constant_value.x;
+    if (node.constant_value.y > 0.5) {
+        value = max(vec3<f32>(0.0), vec3<f32>(1.0) - value);
+    }
+    return value;
+}
+fn texture_blend_amount(node: TextureNodeRecord, uv: vec2<f32>) -> f32 {
+    if (node.operation == 3u && node.child_count >= 3u
+        && node.first_child + 2u < arrayLength(&texture_child_indices)) {
+        let amount_index = texture_child_indices[node.first_child + 2u];
+        if (amount_index >= arrayLength(&texture_nodes)) {
+            set_render_error();
+            return 0.0;
+        }
+        let amount_node = texture_nodes[amount_index];
+        if (amount_node.kind != 0u || amount_node.child_count != 0u
+            || (amount_node.operation != 0u && amount_node.operation != 1u
+                && amount_node.operation != 7u && amount_node.operation != 8u
+                && amount_node.operation != 9u)) {
+            set_render_error();
+            return 0.0;
+        }
+        return clamp(sample_texture_leaf(amount_index, uv).x, 0.0, 1.0);
+    }
+    if (node.operation == 3u) { return clamp(node.constant_value.x, 0.0, 1.0); }
+    return 1.0;
+}
+
+fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
+    var stack_index: array<u32, 32>;
+    var stack_state: array<u32, 32>;
+    var stack_value: array<vec3<f32>, 32>;
+    var stack_aux0: array<vec3<f32>, 32>;
+    var depth = 0u;
+    stack_index[0] = texture_index;
+    stack_state[0] = 0u;
+    for (var step = 0u; step < 128u; step++) {
+        if (depth >= 32u || stack_index[depth] >= arrayLength(&texture_nodes)) {
+            set_render_error(); return vec3<f32>(0.0);
+        }
+        let index = stack_index[depth];
+        let node = texture_nodes[index];
+        if (stack_state[depth] == 0u) {
+            if (node.operation == 1u
+                || node.operation >= 4u
+                || (node.operation == 0u && node.child_count == 0u)) {
+                stack_value[depth] = sample_texture_leaf(index, uv);
+                stack_state[depth] = 3u;
+            } else if (node.operation == 2u && node.child_count >= 1u) {
+                if (node.first_child >= arrayLength(&texture_child_indices) || depth + 1u >= 32u) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                stack_state[depth] = 1u;
+                depth += 1u;
+                stack_index[depth] = texture_child_indices[node.first_child];
+                stack_state[depth] = 0u;
+            } else if (node.operation == 3u && node.child_count >= 2u) {
+                if (node.first_child + 1u >= arrayLength(&texture_child_indices) || depth + 1u >= 32u) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                stack_state[depth] = 1u;
+                depth += 1u;
+                stack_index[depth] = texture_child_indices[node.first_child];
+                stack_state[depth] = 0u;
+            } else {
+                set_render_error(); return vec3<f32>(0.0);
+            }
+        } else {
+            if (depth == 0u) { return stack_value[0]; }
+            let parent_depth = depth - 1u;
+            let parent = texture_nodes[stack_index[parent_depth]];
+            if (parent.operation == 2u && stack_state[parent_depth] == 1u) {
+                stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                stack_state[parent_depth] = 3u;
+                depth = parent_depth;
+            } else if (parent.operation == 3u && stack_state[parent_depth] == 1u) {
+                stack_value[parent_depth] = stack_value[depth];
+                stack_state[parent_depth] = 2u;
+                depth += 1u;
+                stack_index[depth] = texture_child_indices[parent.first_child + 1u];
+                stack_state[depth] = 0u;
+            } else if (parent.operation == 3u && stack_state[parent_depth] == 2u) {
+                if (parent.operation == 3u && parent.child_count >= 3u) {
+                    if (parent.first_child + 2u >= arrayLength(&texture_child_indices)
+                        || depth + 1u >= 32u) {
+                        set_render_error(); return vec3<f32>(0.0);
+                    }
+                    stack_aux0[parent_depth] = stack_value[depth];
+                    stack_state[parent_depth] = 3u;
+                    depth += 1u;
+                    stack_index[depth] = texture_child_indices[parent.first_child + 2u];
+                    stack_state[depth] = 0u;
+                } else {
+                    stack_value[parent_depth] = mix(stack_value[parent_depth], stack_value[depth], texture_blend_amount(parent, uv));
+                    stack_state[parent_depth] = 4u;
+                    depth = parent_depth;
+                }
+            } else if (parent.operation == 3u && stack_state[parent_depth] == 3u) {
+                stack_value[parent_depth] = mix(
+                    stack_value[parent_depth],
+                    stack_aux0[parent_depth],
+                    clamp(stack_value[depth].x, 0.0, 1.0),
+                );
+                stack_state[parent_depth] = 4u;
+                depth = parent_depth;
+            } else {
+                set_render_error(); return vec3<f32>(0.0);
+            }
+        }
+    }
+    set_render_error();
+    return vec3<f32>(0.0);
+}
+fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
+    var current = texture_index;
+    var scale = 1.0;
+    for (var depth = 0u; depth < 32u; depth++) {
+        if (current >= arrayLength(&texture_nodes)) {
+            set_render_error();
+            return vec3<f32>(0.0);
+        }
+        let node = texture_nodes[current];
+        if (node.operation == 0u || node.operation == 1u) {
+            return scale * sample_texture_leaf(current, uv);
+        }
+        if (node.operation == 2u && node.child_count >= 1u
+            && node.first_child < arrayLength(&texture_child_indices)) {
+            scale *= node.constant_value.x;
+            current = texture_child_indices[node.first_child];
+        } else {
+            // Other procedural graphs remain placeholders until the post-order
+            // texture mini VM is implemented.
+            return vec3<f32>(1.0);
+        }
+    }
+    set_render_error();
+    return vec3<f32>(0.0);
+}
+const RGB_TABLE_RESOLUTION: u32 = 64u;
+const RGB_TABLE_SCALE_COUNT: u32 = RGB_TABLE_RESOLUTION;
+const RGB_TABLE_COEFF_COUNT: u32 = 3u * RGB_TABLE_RESOLUTION * RGB_TABLE_RESOLUTION * RGB_TABLE_RESOLUTION * 3u;
+const RGB_TABLE_STRIDE: u32 = RGB_TABLE_SCALE_COUNT + RGB_TABLE_COEFF_COUNT;
+
+fn rgb_table_coeff(table_base: u32, maxc: u32, z: u32, y: u32, x: u32, component: u32) -> f32 {
+    let index = (((((maxc * RGB_TABLE_RESOLUTION) + z) * RGB_TABLE_RESOLUTION + y)
+        * RGB_TABLE_RESOLUTION + x) * 3u) + component;
+    return rgb_spectrum_table[table_base + RGB_TABLE_SCALE_COUNT + index];
+}
+fn rgb_sigmoid(x: f32) -> f32 {
+    return 0.5 + x / (2.0 * sqrt(1.0 + x * x));
+}
+fn rgb_to_spectrum_lane(rgb_input: vec3<f32>, lambda: f32, color_space: u32) -> f32 {
+    let table_base = min(color_space, 3u) * RGB_TABLE_STRIDE;
+    let rgb = clamp(rgb_input, vec3<f32>(0.0), vec3<f32>(1.0));
+    let z = max(max(rgb.x, rgb.y), rgb.z);
+    if (z == 0.0) { return 0.0; }
+    if (rgb.x == rgb.y && rgb.y == rgb.z) {
+        if (rgb.x <= 0.0) { return 0.0; }
+        if (rgb.x >= 1.0) { return 1.0; }
+        let c2 = (rgb.x - 0.5) / sqrt(max(rgb.x * (1.0 - rgb.x), 1e-8));
+        return rgb_sigmoid(c2);
+    }
+    // Match pbrt-v4's strict tie-breaking: red, then green, then blue.
+    var maxc = 2u;
+    if (rgb.x > rgb.y) {
+        if (rgb.x > rgb.z) { maxc = 0u; }
+    } else if (rgb.y > rgb.z) {
+        maxc = 1u;
+    }
+    var c1 = rgb.y;
+    var c2 = rgb.z;
+    if (maxc == 1u) { c1 = rgb.z; c2 = rgb.x; }
+    if (maxc == 2u) { c1 = rgb.x; c2 = rgb.y; }
+    let x = c1 * f32(RGB_TABLE_RESOLUTION - 1u) / z;
+    let y = c2 * f32(RGB_TABLE_RESOLUTION - 1u) / z;
+    let xi = min(u32(floor(x)), 62u);
+    let yi = min(u32(floor(y)), 62u);
+    var zi = 0u;
+    for (var zindex = 0u; zindex < 63u; zindex++) {
+        if (rgb_spectrum_table[table_base + zindex + 1u] < z) { zi = zindex + 1u; }
+    }
+    zi = min(zi, 62u);
+    let dx = x - f32(xi);
+    let dy = y - f32(yi);
+    let z0 = rgb_spectrum_table[table_base + zi];
+    let z1 = rgb_spectrum_table[table_base + zi + 1u];
+    let dz = (z - z0) / max(z1 - z0, 1e-8);
+    var polynomial_coeff = vec3<f32>(0.0);
+    for (var component = 0u; component < 3u; component++) {
+        let c000 = rgb_table_coeff(table_base, maxc, zi, yi, xi, component);
+        let c100 = rgb_table_coeff(table_base, maxc, zi, yi, xi + 1u, component);
+        let c010 = rgb_table_coeff(table_base, maxc, zi, yi + 1u, xi, component);
+        let c110 = rgb_table_coeff(table_base, maxc, zi, yi + 1u, xi + 1u, component);
+        let c001 = rgb_table_coeff(table_base, maxc, zi + 1u, yi, xi, component);
+        let c101 = rgb_table_coeff(table_base, maxc, zi + 1u, yi, xi + 1u, component);
+        let c011 = rgb_table_coeff(table_base, maxc, zi + 1u, yi + 1u, xi, component);
+        let c111 = rgb_table_coeff(table_base, maxc, zi + 1u, yi + 1u, xi + 1u, component);
+        let c0 = mix(mix(c000, c100, dx), mix(c010, c110, dx), dy);
+        let c1 = mix(mix(c001, c101, dx), mix(c011, c111, dx), dy);
+        polynomial_coeff[component] = mix(c0, c1, dz);
+    }
+    let polynomial = (polynomial_coeff.x * lambda + polynomial_coeff.y) * lambda + polynomial_coeff.z;
+    return rgb_sigmoid(polynomial);
+}
+fn rgb_to_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u32) -> vec4<f32> {
+    return vec4<f32>(
+        rgb_to_spectrum_lane(rgb, lambda.x, color_space),
+        rgb_to_spectrum_lane(rgb, lambda.y, color_space),
+        rgb_to_spectrum_lane(rgb, lambda.z, color_space),
+        rgb_to_spectrum_lane(rgb, lambda.w, color_space),
+    );
+}
+fn rgb_to_unbounded_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u32) -> vec4<f32> {
+    let max_value = max(max(rgb.x, rgb.y), rgb.z);
+    if (max_value <= 0.0) { return vec4<f32>(0.0); }
+    let scale = 2.0 * max_value;
+    return scale * rgb_to_spectrum4(rgb / scale, lambda, color_space);
+}
 fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
     let attr_ref = load_material_attribute(material_index, ordinal);
+    if (attr_ref.kind == 2u || attr_ref.kind == 4u) {
+        let rgb = sample_texture_rgb(attr_ref.index, material_texture_uv);
+        if (texture_nodes[attr_ref.index].kind == 0u) {
+            return vec4<f32>(rgb.x);
+        }
+        if (attr_ref.kind == 4u) {
+            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[attr_ref.index].color_space);
+        }
+        return rgb_to_spectrum4(rgb, lambda, texture_nodes[attr_ref.index].color_space);
+    }
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
 }
@@ -692,3 +1081,6 @@ fn make_tangent(normal: vec3<f32>) -> vec3<f32> {
     }
     return normalize(cross(vec3<f32>(1.0, 0.0, 0.0), normal));
 }
+var<private> material_texture_uv: vec2<f32>;
+var<private> material_texture_normal: vec3<f32>;
+var<private> material_texture_position: vec3<f32>;

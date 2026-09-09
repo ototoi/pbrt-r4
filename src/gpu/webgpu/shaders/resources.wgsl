@@ -1,4 +1,5 @@
 enable wgpu_ray_query;
+enable wgpu_binding_array;
 
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
@@ -64,5 +65,15 @@ var<storage, read> light_bvh_nodes: array<u32>;
 var<storage, read> light_bvh_leaves: array<u32>;
 @group(0) @binding(34)
 var<storage, read> spectrum_attributes: array<DenseSpectrum>;
+@group(0) @binding(35)
+var<storage, read> texture_nodes: array<TextureNodeRecord>;
+@group(0) @binding(38)
+var<storage, read> texture_child_indices: array<u32>;
+@group(1) @binding(0)
+var texture_images: binding_array<texture_2d<f32>>;
+@group(1) @binding(1)
+var texture_samplers: binding_array<sampler>;
+@group(0) @binding(41)
+var<storage, read> rgb_spectrum_table: array<f32>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;

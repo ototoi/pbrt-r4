@@ -76,6 +76,24 @@ pub struct Geometry {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TextureNodeRecord {
+    pub kind: u32,
+    pub first_child: u32,
+    pub child_count: u32,
+    pub implementation_hash: u32,
+    pub swrap_mode: u32,
+    pub twrap_mode: u32,
+    pub color_space: u32,
+    pub _padding: u32,
+    pub operation: u32,
+    pub mapping_kind: u32,
+    pub _operation_padding: [u32; 2],
+    pub constant_value: [f32; 4],
+    pub mapping: [[f32; 4]; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Instance {
     pub geometry: u32,
     pub material: u32,
@@ -150,6 +168,8 @@ pub struct SurfaceWorkItem {
     pub position_error: [f32; 4],
     pub normal: [f32; 4],
     pub geometric_normal: [f32; 4],
+    pub uv: [f32; 2],
+    pub uv_padding: [f32; 2],
     pub material: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,

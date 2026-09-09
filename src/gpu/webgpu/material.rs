@@ -22,6 +22,7 @@ impl MaterialTable {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::TextureUnbounded => 4,
                         flat::AttributeKind::Material => 3,
                     };
                     attributes.push(AttributeRef {
@@ -86,7 +87,15 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             .attributes
             .iter()
             .zip(expected)
-            .any(|(actual, (_, expected_kind))| actual.kind != *expected_kind)
+            .any(|(actual, (_, expected_kind))| {
+                actual.kind != *expected_kind
+                    && !(*expected_kind == flat::AttributeKind::Spectrum
+                        && actual.kind == flat::AttributeKind::Texture)
+                    && !(*expected_kind == flat::AttributeKind::Spectrum
+                        && actual.kind == flat::AttributeKind::TextureUnbounded)
+                    && !(*expected_kind == flat::AttributeKind::Scalar
+                        && actual.kind == flat::AttributeKind::Texture)
+            })
     {
         let actual = material
             .attributes
@@ -113,6 +122,7 @@ fn format_attribute_kind(kind: flat::AttributeKind) -> &'static str {
         flat::AttributeKind::Scalar => "scalar",
         flat::AttributeKind::Spectrum => "spectrum",
         flat::AttributeKind::Texture => "texture",
+        flat::AttributeKind::TextureUnbounded => "texture_unbounded",
         flat::AttributeKind::Material => "material",
     }
 }
