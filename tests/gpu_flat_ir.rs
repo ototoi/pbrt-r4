@@ -42,6 +42,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
             kind: material.to_string(),
             params: Default::default(),
             material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
         }),
     }));
     Arc::new(RwLock::new(node))
@@ -310,6 +311,7 @@ fn flatten_node_requires_tessellated_shapes() {
             kind: "diffuse".to_string(),
             params: Default::default(),
             material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
         }),
     }));
     root.add_child(Arc::new(RwLock::new(shape)));

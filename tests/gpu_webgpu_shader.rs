@@ -46,6 +46,17 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
+fn material_shader_uses_white_procedural_texture_placeholders() {
+    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(source.contains("if (node.operation >= 4u)"));
+    assert!(source.contains("Other procedural graphs remain placeholders"));
+    assert!(source.contains("scale *= node.constant_value.x"));
+    assert!(!source.contains("fn texture_noise"));
+    assert!(!source.contains("fn texture_fbm"));
+    assert!(!source.contains("fn texture_marble"));
+}
+
+#[test]
 fn required_limits_are_derived_from_each_composed_stage() {
     let bindings = canonical_wavefront_bindings();
     let limits = required_limits_for_sources(&bindings, &[GENERATE_PRIMARY_RAYS_SHADER]).unwrap();
