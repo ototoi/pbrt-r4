@@ -113,7 +113,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 child_eval.values[child_value_index] = vec4<f32>(0.0);
             }
             if (child_eval.bxdf_kind == MATERIAL_KIND_DIELECTRIC) {
-                if (current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+                if (current_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+                    child_eval.values[0] = load_material_spectrum(current_index, 8u, lambda);
+                    child_eval.values[1].x = load_material_scalar(current_index, 9u);
+                    child_eval.values[2].x = load_material_scalar(current_index, 10u);
+                    child_eval.values[3].x = load_material_scalar(current_index, 11u);
+                } else if (current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
                     child_eval.values[0] = load_material_spectrum(current_index, 7u, lambda);
                     child_eval.values[1].x = load_material_scalar(current_index, 8u);
                     child_eval.values[2].x = load_material_scalar(current_index, 9u);

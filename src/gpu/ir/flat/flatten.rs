@@ -427,7 +427,7 @@ fn build_material_attributes(
             }
         }
         "coateddiffuse" => {
-            let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
+            let thickness = source_material.params.get_one_float("thickness", 0.01) as f32;
             let g = source_material.params.get_one_float("g", 0.0) as f32;
             let max_depth_i = source_material.params.get_one_int("maxdepth", 10);
             let n_samples_i = source_material.params.get_one_int("nsamples", 1);
@@ -462,6 +462,36 @@ fn build_material_attributes(
                 .unwrap_or(push_scalar_attribute(builder, "thickness", thickness)?);
             let g_attribute = texture_attribute_ref(source_material, "g", builder)?
                 .unwrap_or(push_scalar_attribute(builder, "g", g)?);
+            let eta = spectrum_attribute(
+                source_material,
+                "eta",
+                &Spectrum::from(1.5),
+                SpectrumType::Unbounded,
+            )?;
+            let roughness = source_material.params.get_one_float("roughness", 0.0);
+            let u_roughness = source_material
+                .params
+                .get_one_float("uroughness", roughness) as f32;
+            let v_roughness = source_material
+                .params
+                .get_one_float("vroughness", roughness) as f32;
+            let u_roughness_attribute =
+                texture_attribute_ref(source_material, "uroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "roughness",
+                        builder,
+                    )?)
+                    .unwrap_or(push_scalar_attribute(builder, "uroughness", u_roughness)?);
+            let v_roughness_attribute =
+                texture_attribute_ref(source_material, "vroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "roughness",
+                        builder,
+                    )?)
+                    .unwrap_or(push_scalar_attribute(builder, "vroughness", v_roughness)?);
+            let remap = source_material.params.get_one_bool("remaproughness", true);
             Ok(vec![
                 thickness_attribute,
                 reflectance_attribute,
@@ -469,6 +499,10 @@ fn build_material_attributes(
                 push_scalar_attribute(builder, "maxdepth", max_depth)?,
                 push_scalar_attribute(builder, "nsamples", n_samples)?,
                 albedo_attribute,
+                push_spectrum_attribute(builder, "eta", &eta)?,
+                u_roughness_attribute,
+                v_roughness_attribute,
+                push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
             ])
         }
         "coatedconductor" => {
@@ -691,17 +725,30 @@ fn build_material_attributes(
             if kind == "thindielectric" {
                 return Ok(vec![eta_attribute]);
             }
-            let u_roughness_value = source_material.params.get_one_float("uroughness", 0.0);
+            let roughness_value = source_material.params.get_one_float("roughness", 0.0);
+            let u_roughness_value = source_material
+                .params
+                .get_one_float("uroughness", roughness_value);
             let v_roughness_value = source_material
                 .params
-                .get_one_float("vroughness", u_roughness_value);
+                .get_one_float("vroughness", roughness_value);
             let u_roughness = u_roughness_value as f32;
             let v_roughness = v_roughness_value as f32;
             let u_roughness_attribute =
                 texture_attribute_ref(source_material, "uroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "roughness",
+                        builder,
+                    )?)
                     .unwrap_or(push_scalar_attribute(builder, "uroughness", u_roughness)?);
             let v_roughness_attribute =
                 texture_attribute_ref(source_material, "vroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "roughness",
+                        builder,
+                    )?)
                     .unwrap_or(push_scalar_attribute(builder, "vroughness", v_roughness)?);
             let remap = source_material.params.get_one_bool("remaproughness", true);
             Ok(vec![
