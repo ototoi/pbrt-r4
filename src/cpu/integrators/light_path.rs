@@ -230,6 +230,11 @@ impl Integrator for LightPathIntegrator {
 }
 
 impl ImageTileIntegrator for LightPathIntegrator {
+    fn splat_scale(&self) -> Option<Float> {
+        let spp = self.base.sampler.read().unwrap().samples_per_pixel() as Float;
+        Some(if spp > 0.0 { 1.0 / spp } else { 1.0 })
+    }
+
     fn evaluate_pixel_sample(
         &self,
         _p_pixel: Point2i,
