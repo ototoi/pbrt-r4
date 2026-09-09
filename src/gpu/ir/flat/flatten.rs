@@ -15,7 +15,9 @@ use crate::gpu::ir::node::{
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
-use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use crate::util::spectrum::{
+    lookup_named_spectrum, spectrum_to_photometric, Spectrum, SpectrumType,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -470,7 +472,7 @@ fn build_material_attributes(
             ])
         }
         "coatedconductor" => {
-            let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
+            let thickness = source_material.params.get_one_float("thickness", 0.01) as f32;
             let g = source_material.params.get_one_float("g", 0.0) as f32;
             let max_depth_i = source_material.params.get_one_int("maxdepth", 10);
             let n_samples_i = source_material.params.get_one_int("nsamples", 1);
@@ -490,11 +492,77 @@ fn build_material_attributes(
                 .unwrap_or(push_scalar_attribute(builder, "thickness", thickness)?);
             let g_attribute = texture_attribute_ref(source_material, "g", builder)?
                 .unwrap_or(push_scalar_attribute(builder, "g", g)?);
+            let albedo_attribute =
+                texture_attribute_ref(source_material, "albedo", builder)?.unwrap_or(
+                    push_spectrum_attribute(builder, "albedo", &Spectrum::from(0.0))?,
+                );
+            let interface_eta = spectrum_attribute(
+                source_material,
+                "interface.eta",
+                &Spectrum::from(1.5),
+                SpectrumType::Unbounded,
+            )?;
+            let interface_eta_attribute =
+                push_spectrum_attribute(builder, "interface.eta", &interface_eta)?;
+            let interface_roughness = source_material
+                .params
+                .get_one_float("interface.roughness", 0.0);
+            let interface_u = source_material
+                .params
+                .get_one_float("interface.uroughness", interface_roughness)
+                as f32;
+            let interface_v = source_material
+                .params
+                .get_one_float("interface.vroughness", interface_roughness)
+                as f32;
+            let interface_u_attribute =
+                texture_attribute_ref(source_material, "interface.uroughness", builder)?.unwrap_or(
+                    push_scalar_attribute(builder, "interface.uroughness", interface_u)?,
+                );
+            let interface_v_attribute =
+                texture_attribute_ref(source_material, "interface.vroughness", builder)?.unwrap_or(
+                    push_scalar_attribute(builder, "interface.vroughness", interface_v)?,
+                );
+            let conductor_eta = spectrum_attribute(
+                source_material,
+                "conductor.eta",
+                &lookup_named_spectrum("metal-Cu-eta")
+                    .ok_or_else(|| PbrtError::error("Named spectrum metal-Cu-eta should exist."))?,
+                SpectrumType::Unbounded,
+            )?;
+            let conductor_k = spectrum_attribute(
+                source_material,
+                "conductor.k",
+                &lookup_named_spectrum("metal-Cu-k")
+                    .ok_or_else(|| PbrtError::error("Named spectrum metal-Cu-k should exist."))?,
+                SpectrumType::Unbounded,
+            )?;
+            let conductor_roughness = source_material
+                .params
+                .get_one_float("conductor.roughness", 0.0);
+            let conductor_u = source_material
+                .params
+                .get_one_float("conductor.uroughness", conductor_roughness)
+                as f32;
+            let conductor_v = source_material
+                .params
+                .get_one_float("conductor.vroughness", conductor_roughness)
+                as f32;
+            let remap = source_material.params.get_one_bool("remaproughness", true);
             Ok(vec![
                 thickness_attribute,
+                albedo_attribute,
                 g_attribute,
                 push_scalar_attribute(builder, "maxdepth", max_depth)?,
                 push_scalar_attribute(builder, "nsamples", n_samples)?,
+                interface_eta_attribute,
+                interface_u_attribute,
+                interface_v_attribute,
+                push_spectrum_attribute(builder, "conductor.eta", &conductor_eta)?,
+                push_spectrum_attribute(builder, "conductor.k", &conductor_k)?,
+                push_scalar_attribute(builder, "conductor.uroughness", conductor_u)?,
+                push_scalar_attribute(builder, "conductor.vroughness", conductor_v)?,
+                push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
             ])
         }
         "diffuse" => {
