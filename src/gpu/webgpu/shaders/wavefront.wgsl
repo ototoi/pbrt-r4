@@ -692,6 +692,12 @@ fn load_coated_diffuse_params(root: AttributesEvalWorkItem) -> CoatedDiffusePara
     }
     return params;
 }
+fn coated_top_fresnel(root: AttributesEvalWorkItem, cosine: f32) -> f32 {
+    return dielectric_fresnel(cosine, load_coated_diffuse_params(root).top_eta);
+}
+fn coated_top_eta(root: AttributesEvalWorkItem) -> f32 {
+    return load_coated_diffuse_params(root).top_eta;
+}
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
 fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }

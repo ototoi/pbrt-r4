@@ -16,7 +16,7 @@ fn sample_composite_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     if (cosine <= 1e-5) { return; }
     var eta = 1.0001;
     if (kind == MATERIAL_KIND_COATED_DIFFUSE) {
-        eta = load_coated_diffuse_params(root).top_eta;
+        eta = coated_top_eta(root);
     } else if (root.child_work_item0 != 0xffffffffu) {
         let coat = load_attributes_eval_work_item(root.child_work_item0);
         eta = max(coat.values[0].x, 1.0001);
