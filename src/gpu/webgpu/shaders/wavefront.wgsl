@@ -677,6 +677,21 @@ fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     }
     return attributes_eval_work_items[root];
 }
+fn load_coated_diffuse_params(root: AttributesEvalWorkItem) -> CoatedDiffuseParams {
+    var params: CoatedDiffuseParams;
+    params.thickness = root.values[0].x;
+    params.reflectance = root.values[1];
+    params.g = root.values[2].x;
+    params.max_depth = root.values[3].x;
+    params.n_samples = root.values[4].x;
+    params.albedo = root.values[5];
+    params.top_eta = 1.0;
+    if (root.child_work_item0 != 0xffffffffu) {
+        let top = load_attributes_eval_work_item(root.child_work_item0);
+        params.top_eta = max(top.values[0].x, 1.0001);
+    }
+    return params;
+}
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
 fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
