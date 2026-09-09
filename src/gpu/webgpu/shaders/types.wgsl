@@ -37,6 +37,14 @@ struct CoatedDiffuseParams {
     top_eta: f32,
 };
 
+struct LayeredParams {
+    thickness: f32,
+    albedo: vec4<f32>,
+    g: f32,
+    max_depth: f32,
+    n_samples: f32,
+};
+
 struct DielectricInterfaceSample {
     f: vec4<f32>,
     wi: vec3<f32>,

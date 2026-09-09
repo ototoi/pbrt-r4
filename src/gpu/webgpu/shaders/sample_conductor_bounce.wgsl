@@ -6,6 +6,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
+    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR) { return; }
     var material_index = resolve_material_leaf(surface.material);
     let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
     var leaf_evaluated = evaluated;

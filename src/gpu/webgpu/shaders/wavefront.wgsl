@@ -698,6 +698,16 @@ fn coated_top_fresnel(root: AttributesEvalWorkItem, cosine: f32) -> f32 {
 fn coated_top_eta(root: AttributesEvalWorkItem) -> f32 {
     return load_coated_diffuse_params(root).top_eta;
 }
+fn load_layered_params(root: AttributesEvalWorkItem, kind: u32) -> LayeredParams {
+    var params: LayeredParams;
+    params.thickness = root.values[0].x;
+    params.g = root.values[2].x;
+    params.max_depth = root.values[3].x;
+    params.n_samples = root.values[4].x;
+    params.albedo = root.values[1];
+    if (kind == MATERIAL_KIND_COATED_DIFFUSE) { params.albedo = root.values[5]; }
+    return params;
+}
 fn dielectric_interface_alpha(item: AttributesEvalWorkItem) -> vec2<f32> {
     var roughness = max(vec2<f32>(item.values[1].x, item.values[2].x), vec2<f32>(0.0));
     if (item.values[3].x != 0.0) {
@@ -839,6 +849,32 @@ fn sample_dielectric_interface(
     return sample_rough_dielectric_interface(
         wo, eta, alpha, uc, u, allow_reflection, allow_transmission,
     );
+}
+fn conductor_interface_alpha(item: AttributesEvalWorkItem) -> vec2<f32> {
+    var roughness = max(vec2<f32>(item.values[2].x, item.values[3].x), vec2<f32>(0.0));
+    if (item.values[4].x != 0.0) { roughness = sqrt(roughness); }
+    return roughness;
+}
+fn sample_conductor_interface(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, u: vec2<f32>,
+) -> DielectricInterfaceSample {
+    let alpha = conductor_interface_alpha(item);
+    if (max(alpha.x, alpha.y) < 1e-3) {
+        let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
+        let value = conductor_fresnel(abs(wo.z), item.values[0], item.values[1]) / abs(wi.z);
+        return DielectricInterfaceSample(value, wi, 1.0, 1.0, 1u, 0u, 1u);
+    }
+    let bounded_alpha = max(alpha, vec2<f32>(1e-4));
+    let wm = sample_visible_tr_wm(wo, bounded_alpha, u);
+    let wi = normalize(-wo + 2.0 * dot(wo, wm) * wm);
+    if (wo.z * wi.z <= 0.0) { return invalid_dielectric_interface_sample(); }
+    let pdf = tr_visible_wm_pdf(wo, wm, bounded_alpha)
+        / max(4.0 * abs(dot(wo, wm)), 1e-7);
+    let value = conductor_fresnel(abs(dot(wo, wm)), item.values[0], item.values[1])
+        * tr_distribution_d(wm, bounded_alpha)
+        * tr_distribution_g(wo, wi, bounded_alpha)
+        / max(abs(4.0 * wo.z * wi.z), 1e-7);
+    return DielectricInterfaceSample(value, wi, pdf, 1.0, 1u, 0u, 0u);
 }
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
