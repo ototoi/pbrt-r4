@@ -91,6 +91,8 @@ fn validate_material_attributes(material: &flat::Material) -> Result<(), PbrtErr
             (12, flat::AttributeKind::Scalar),
             (13, flat::AttributeKind::Scalar),
             (14, flat::AttributeKind::Scalar),
+            (15, flat::AttributeKind::Spectrum),
+            (16, flat::AttributeKind::Scalar),
         ][..],
         other => {
             return Err(PbrtError::error(&format!(

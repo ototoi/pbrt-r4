@@ -530,6 +530,43 @@ fn flatten_node_expands_coateddiffuse_children() {
 }
 
 #[test]
+fn flatten_node_preserves_coatedconductor_layer_parameters() {
+    let shape = triangle_node("coated", "coatedconductor", [0.0; 3]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .unwrap()
+            .params
+            .add_rgb("rgb reflectance", &[0.25, 0.5, 0.75]);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let material = scene.materials.last().unwrap();
+    assert_eq!(material.kind, "coatedconductor");
+    assert_eq!(material.attributes.len(), 17);
+    assert_eq!(material.attributes[7].name, "interface.eta");
+    assert_eq!(material.attributes[10].name, "conductor.eta");
+    assert_eq!(material.attributes[11].name, "conductor.k");
+    assert_eq!(material.attributes[15].name, "reflectance");
+    assert_eq!(material.attributes[16].name, "use_reflectance");
+    assert_eq!(
+        scene.scalar_attributes[material.attributes[16].index as usize],
+        1.0,
+    );
+}
+
+#[test]
 fn flatten_node_rejects_coated_layer_limits() {
     let shape = triangle_node("coated", "coateddiffuse", [0.0; 3]);
     {

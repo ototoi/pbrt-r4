@@ -516,27 +516,85 @@ fn build_material_attributes(
                 .get_one_float("interface.vroughness", interface_roughness)
                 as f32;
             let interface_u_attribute =
-                texture_attribute_ref(source_material, "interface.uroughness", builder)?.unwrap_or(
-                    push_scalar_attribute(builder, "interface.uroughness", interface_u)?,
-                );
+                texture_attribute_ref(source_material, "interface.uroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "interface.roughness",
+                        builder,
+                    )?)
+                    .unwrap_or(push_scalar_attribute(
+                        builder,
+                        "interface.uroughness",
+                        interface_u,
+                    )?);
             let interface_v_attribute =
-                texture_attribute_ref(source_material, "interface.vroughness", builder)?.unwrap_or(
-                    push_scalar_attribute(builder, "interface.vroughness", interface_v)?,
-                );
-            let conductor_eta = spectrum_attribute(
-                source_material,
-                "conductor.eta",
-                &lookup_named_spectrum("metal-Cu-eta")
-                    .ok_or_else(|| PbrtError::error("Named spectrum metal-Cu-eta should exist."))?,
-                SpectrumType::Unbounded,
-            )?;
-            let conductor_k = spectrum_attribute(
-                source_material,
-                "conductor.k",
-                &lookup_named_spectrum("metal-Cu-k")
-                    .ok_or_else(|| PbrtError::error("Named spectrum metal-Cu-k should exist."))?,
-                SpectrumType::Unbounded,
-            )?;
+                texture_attribute_ref(source_material, "interface.vroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "interface.roughness",
+                        builder,
+                    )?)
+                    .unwrap_or(push_scalar_attribute(
+                        builder,
+                        "interface.vroughness",
+                        interface_v,
+                    )?);
+            let has_reflectance = source_material
+                .params
+                .get_keys()
+                .iter()
+                .any(|key| source_material.params.get_key_name(key) == "reflectance");
+            let conductor_eta_default = lookup_named_spectrum("metal-Cu-eta")
+                .ok_or_else(|| PbrtError::error("Named spectrum metal-Cu-eta should exist."))?;
+            let conductor_k_default = lookup_named_spectrum("metal-Cu-k")
+                .ok_or_else(|| PbrtError::error("Named spectrum metal-Cu-k should exist."))?;
+            let conductor_eta_attribute = if has_reflectance {
+                push_spectrum_attribute(builder, "conductor.eta", &Spectrum::from(1.0))?
+            } else if let Some(attribute) =
+                texture_attribute_ref_unbounded(source_material, "conductor.eta", builder)?
+            {
+                attribute
+            } else {
+                let value = spectrum_attribute(
+                    source_material,
+                    "conductor.eta",
+                    &conductor_eta_default,
+                    SpectrumType::Unbounded,
+                )?;
+                push_spectrum_attribute(builder, "conductor.eta", &value)?
+            };
+            let conductor_k_attribute = if has_reflectance {
+                push_spectrum_attribute(builder, "conductor.k", &Spectrum::from(0.0))?
+            } else if let Some(attribute) =
+                texture_attribute_ref_unbounded(source_material, "conductor.k", builder)?
+            {
+                attribute
+            } else {
+                let value = spectrum_attribute(
+                    source_material,
+                    "conductor.k",
+                    &conductor_k_default,
+                    SpectrumType::Unbounded,
+                )?;
+                push_spectrum_attribute(builder, "conductor.k", &value)?
+            };
+            let reflectance_attribute = if has_reflectance {
+                if let Some(attribute) =
+                    texture_attribute_ref(source_material, "reflectance", builder)?
+                {
+                    attribute
+                } else {
+                    let value = spectrum_attribute(
+                        source_material,
+                        "reflectance",
+                        &Spectrum::from(0.5),
+                        SpectrumType::Albedo,
+                    )?;
+                    push_spectrum_attribute(builder, "reflectance", &value)?
+                }
+            } else {
+                push_spectrum_attribute(builder, "reflectance", &Spectrum::from(0.0))?
+            };
             let conductor_roughness = source_material
                 .params
                 .get_one_float("conductor.roughness", 0.0);
@@ -548,6 +606,30 @@ fn build_material_attributes(
                 .params
                 .get_one_float("conductor.vroughness", conductor_roughness)
                 as f32;
+            let conductor_u_attribute =
+                texture_attribute_ref(source_material, "conductor.uroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "conductor.roughness",
+                        builder,
+                    )?)
+                    .unwrap_or(push_scalar_attribute(
+                        builder,
+                        "conductor.uroughness",
+                        conductor_u,
+                    )?);
+            let conductor_v_attribute =
+                texture_attribute_ref(source_material, "conductor.vroughness", builder)?
+                    .or(texture_attribute_ref(
+                        source_material,
+                        "conductor.roughness",
+                        builder,
+                    )?)
+                    .unwrap_or(push_scalar_attribute(
+                        builder,
+                        "conductor.vroughness",
+                        conductor_v,
+                    )?);
             let remap = source_material.params.get_one_bool("remaproughness", true);
             Ok(vec![
                 thickness_attribute,
@@ -558,11 +640,17 @@ fn build_material_attributes(
                 interface_eta_attribute,
                 interface_u_attribute,
                 interface_v_attribute,
-                push_spectrum_attribute(builder, "conductor.eta", &conductor_eta)?,
-                push_spectrum_attribute(builder, "conductor.k", &conductor_k)?,
-                push_scalar_attribute(builder, "conductor.uroughness", conductor_u)?,
-                push_scalar_attribute(builder, "conductor.vroughness", conductor_v)?,
+                conductor_eta_attribute,
+                conductor_k_attribute,
+                conductor_u_attribute,
+                conductor_v_attribute,
                 push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
+                reflectance_attribute,
+                push_scalar_attribute(
+                    builder,
+                    "use_reflectance",
+                    if has_reflectance { 1.0 } else { 0.0 },
+                )?,
             ])
         }
         "diffuse" => {
