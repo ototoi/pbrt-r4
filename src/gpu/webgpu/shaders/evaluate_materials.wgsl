@@ -162,7 +162,15 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     child_eval.values[2].x = load_conductor_roughness(child1.index);
                 }
             } else if (child_eval.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
-                child_eval.values[0] = load_diffuse_reflectance(child1.index, lambda);
+                if (current_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+                    child_eval.values[0] = clamp(
+                        load_material_spectrum(current_index, 3u, lambda),
+                        vec4<f32>(0.0),
+                        vec4<f32>(1.0),
+                    );
+                } else {
+                    child_eval.values[0] = load_diffuse_reflectance(child1.index, lambda);
+                }
             }
             attributes_eval_work_items[work_index + 2u] = child_eval;
             if (child_eval.bxdf_kind == MATERIAL_KIND_MIX
