@@ -650,9 +650,13 @@ impl Scene {
 fn buffer_contents<T: bytemuck::Pod>(values: &[T]) -> &[u8] {
     if values.is_empty() {
         // WebGPU validates the minimum binding size against the declared
-        // storage-array stride, so a four-byte sentinel is insufficient for
-        // an empty array of a larger record type.
-        cast_slice(&[0u32; 16])
+        // storage-array stride. Keep one zeroed element for an empty runtime
+        // array; a fixed byte count is insufficient for larger records such
+        // as TextureNodeRecord and DenseSpectrum.
+        static EMPTY_STORAGE_ELEMENT: [u8; 2048] = [0; 2048];
+        let element_size = std::mem::size_of::<T>();
+        assert!(element_size <= EMPTY_STORAGE_ELEMENT.len());
+        &EMPTY_STORAGE_ELEMENT[..element_size]
     } else {
         cast_slice(values)
     }
