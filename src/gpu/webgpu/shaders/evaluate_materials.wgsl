@@ -307,11 +307,21 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let surface_kind = load_material_kind(surface.material);
     if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE || surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
+        let layered_wo = scattering_local(wo, shading_n);
+        let layered_wi = scattering_local(wi, shading_n);
         f = evaluate_layered_f(
             root_evaluated,
             surface_kind,
-            scattering_local(wo, shading_n),
-            scattering_local(wi, shading_n),
+            layered_wo,
+            layered_wi,
+            pixel_index,
+            ray.depth,
+        );
+        bsdf_pdf = evaluate_layered_pdf(
+            root_evaluated,
+            surface_kind,
+            layered_wo,
+            layered_wi,
             pixel_index,
             ray.depth,
         );
