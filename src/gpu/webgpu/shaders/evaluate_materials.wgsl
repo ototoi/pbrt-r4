@@ -73,6 +73,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.values[2].x = load_material_scalar(current_index, 4u);
             evaluated.values[3].x = load_material_scalar(current_index, 5u);
             evaluated.values[4].x = load_material_scalar(current_index, 6u);
+            evaluated.values[5] = load_material_spectrum(current_index, 7u, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
             evaluated.values[0].x = load_material_scalar(current_index, 2u);
             evaluated.values[1].x = load_material_scalar(current_index, 3u);
@@ -144,13 +145,24 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         material_index = selected.material_index;
         material_kind = selected.bxdf_kind;
     }
+    let root_surface_kind = load_material_kind(surface.material);
+    var coated_diffuse_root = false;
+    if (root_surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
+        // Phase 1 of layered evaluation: expose the evaluated bottom
+        // reflectance to the direct-light path. The full v4 LayeredBxDF random
+        // walk is implemented behind the same parameter seam in a later phase.
+        material_kind = MATERIAL_KIND_DIFFUSE;
+        coated_diffuse_root = true;
+    }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
             && material_kind != MATERIAL_KIND_CONDUCTOR)) {
         return;
     }
     var reflectance = vec4<f32>(0.0);
-    if (material_kind == MATERIAL_KIND_DIFFUSE) {
+    if (material_kind == MATERIAL_KIND_DIFFUSE && coated_diffuse_root) {
+        reflectance = root_evaluated.values[1];
+    } else if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(material_index, lambda);
     }
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
