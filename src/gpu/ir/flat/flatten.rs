@@ -510,27 +510,50 @@ fn build_material_attributes(
             )?])
         }
         "dielectric" | "thindielectric" => {
-            if let Some(attribute) =
+            let eta_attribute = if let Some(attribute) =
                 texture_attribute_ref_unbounded(source_material, "eta", builder)?
             {
-                return Ok(vec![attribute]);
+                attribute
+            } else {
+                let eta = spectrum_attribute(
+                    source_material,
+                    "eta",
+                    &Spectrum::from(1.5),
+                    SpectrumType::Unbounded,
+                )?;
+                let dense_eta = eta.to_dense();
+                if (0..crate::util::spectrum::DENSE_SPECTRUM_SAMPLES)
+                    .any(|index| !dense_eta[index].is_finite() || dense_eta[index] <= 0.0)
+                {
+                    return Err(PbrtError::error(&format!(
+                        "Material \"{}\" has invalid dielectric eta.",
+                        source_material.name
+                    )));
+                }
+                push_spectrum_attribute(builder, "eta", &eta)?
+            };
+            if kind == "thindielectric" {
+                return Ok(vec![eta_attribute]);
             }
-            let eta = spectrum_attribute(
-                source_material,
-                "eta",
-                &Spectrum::from(1.5),
-                SpectrumType::Unbounded,
-            )?;
-            let dense_eta = eta.to_dense();
-            if (0..crate::util::spectrum::DENSE_SPECTRUM_SAMPLES)
-                .any(|index| !dense_eta[index].is_finite() || dense_eta[index] <= 0.0)
-            {
-                return Err(PbrtError::error(&format!(
-                    "Material \"{}\" has invalid dielectric eta.",
-                    source_material.name
-                )));
-            }
-            Ok(vec![push_spectrum_attribute(builder, "eta", &eta)?])
+            let u_roughness_value = source_material.params.get_one_float("uroughness", 0.0);
+            let v_roughness_value = source_material
+                .params
+                .get_one_float("vroughness", u_roughness_value);
+            let u_roughness = u_roughness_value as f32;
+            let v_roughness = v_roughness_value as f32;
+            let u_roughness_attribute =
+                texture_attribute_ref(source_material, "uroughness", builder)?
+                    .unwrap_or(push_scalar_attribute(builder, "uroughness", u_roughness)?);
+            let v_roughness_attribute =
+                texture_attribute_ref(source_material, "vroughness", builder)?
+                    .unwrap_or(push_scalar_attribute(builder, "vroughness", v_roughness)?);
+            let remap = source_material.params.get_one_bool("remaproughness", true);
+            Ok(vec![
+                eta_attribute,
+                u_roughness_attribute,
+                v_roughness_attribute,
+                push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
+            ])
         }
         "conductor" => {
             reject_scalar_textures(source_material, &["uroughness", "vroughness"])?;

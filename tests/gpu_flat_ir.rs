@@ -105,9 +105,9 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.film.sensor_response, [0, 1, 2]);
     assert_eq!(scene.film.imaging_ratio, 1.0);
     validate_dense_spectra(&scene.spectrum_attributes).unwrap();
-    assert_eq!(scene.scalar_attributes.len(), 0);
+    assert_eq!(scene.scalar_attributes.len(), 3);
     assert_eq!(scene.materials[0].attributes.len(), 1);
-    assert_eq!(scene.materials[1].attributes.len(), 1);
+    assert_eq!(scene.materials[1].attributes.len(), 4);
     assert_eq!(
         scene.geometries,
         vec![
@@ -469,12 +469,15 @@ fn flatten_node_extracts_dielectric_eta() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.materials[0].attributes.len(), 1);
+    assert_eq!(scene.materials[0].attributes.len(), 4);
     assert_eq!(
         scene.materials[0].attributes[0].kind,
         AttributeKind::Spectrum
     );
     assert_eq!(scene.materials[0].attributes[0].name, "eta");
+    assert_eq!(scene.materials[0].attributes[1].name, "uroughness");
+    assert_eq!(scene.materials[0].attributes[2].name, "vroughness");
+    assert_eq!(scene.materials[0].attributes[3].name, "remaproughness");
     let attribute = &scene.materials[0].attributes[0];
     assert!(
         (evaluate_dense_spectrum(&scene.spectrum_attributes, attribute.index, 550.0).unwrap()
