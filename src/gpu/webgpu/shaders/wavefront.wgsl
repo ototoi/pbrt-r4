@@ -1132,6 +1132,66 @@ fn evaluate_layered_f(
     }
     return result / f32(n_samples);
 }
+fn evaluate_layered_pdf(
+    root: AttributesEvalWorkItem, kind: u32, wo_input: vec3<f32>, wi_input: vec3<f32>,
+    pixel_index: u32, path_depth: u32,
+) -> f32 {
+    if (wo_input.z == 0.0 || wi_input.z == 0.0 || wo_input.z * wi_input.z <= 0.0) {
+        return 0.0;
+    }
+    var wo = wo_input;
+    var wi = wi_input;
+    if (wo.z < 0.0) { wo = -wo; wi = -wi; }
+    let top = load_attributes_eval_work_item(root.child_work_item0);
+    let bottom = load_attributes_eval_work_item(root.child_work_item1);
+    let n_samples = max(1u, u32(load_layered_params(root, kind).n_samples));
+    let top_rough = max(dielectric_interface_alpha(top).x, dielectric_interface_alpha(top).y) >= 1e-3;
+    let bottom_rough = kind == MATERIAL_KIND_COATED_DIFFUSE
+        || max(conductor_interface_alpha(bottom).x, conductor_interface_alpha(bottom).y) >= 1e-3;
+    var pdf_sum = f32(n_samples) * dielectric_interface_pdf(top, wo, wi, true, false);
+    for (var sample_index = 0u; sample_index < n_samples; sample_index++) {
+        let random_base = 20000u + sample_index * 8u;
+        let wos = sample_dielectric_interface(
+            top, wo,
+            random01(pixel_index, random_base, path_depth),
+            vec2<f32>(random01(pixel_index, random_base + 1u, path_depth),
+                random01(pixel_index, random_base + 2u, path_depth)),
+            false, true,
+        );
+        if (wos.valid == 0u || wos.pdf == 0.0 || wos.wi.z == 0.0) { continue; }
+        let wis = sample_dielectric_interface_importance(
+            top, wi,
+            random01(pixel_index, random_base + 3u, path_depth),
+            vec2<f32>(random01(pixel_index, random_base + 4u, path_depth),
+                random01(pixel_index, random_base + 5u, path_depth)),
+            false, true,
+        );
+        if (wis.valid == 0u || wis.pdf == 0.0 || wis.wi.z == 0.0) { continue; }
+        let reflection_pdf = layered_bottom_pdf(kind, bottom, -wos.wi, -wis.wi);
+        if (!top_rough) {
+            pdf_sum += reflection_pdf;
+            continue;
+        }
+        let reflected = sample_layered_bottom(
+            kind, bottom, -wos.wi,
+            vec2<f32>(random01(pixel_index, random_base + 6u, path_depth),
+                random01(pixel_index, random_base + 7u, path_depth)),
+        );
+        if (reflected.valid == 0u || reflected.pdf == 0.0 || reflected.wi.z == 0.0) {
+            continue;
+        }
+        let transmission_pdf = dielectric_interface_pdf(
+            top, -reflected.wi, wi, false, true,
+        );
+        if (!bottom_rough) {
+            pdf_sum += transmission_pdf;
+        } else {
+            pdf_sum += power_heuristic_one(wis.pdf, reflection_pdf) * reflection_pdf;
+            pdf_sum += power_heuristic_one(reflected.pdf, transmission_pdf) * transmission_pdf;
+        }
+    }
+    return mix(1.0 / (4.0 * PI), pdf_sum / f32(n_samples), 0.9);
+}
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
 fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
@@ -1231,16 +1291,23 @@ fn random01(pixel_index: u32, dimension: u32, depth: u32) -> f32 {
 
 // pbrt-v4 HGPhaseFunction helpers used by the layered medium random walk.
 fn hg_phase(cosine: f32, g: f32) -> f32 {
-    let gg = g * g;
-    let denominator = max(1.0 + gg - 2.0 * g * cosine, 1e-7);
+    let bounded_g = clamp(g, -0.99, 0.99);
+    let gg = bounded_g * bounded_g;
+    let denominator = max(1.0 + gg + 2.0 * bounded_g * cosine, 1e-7);
     return (1.0 - gg) / (4.0 * PI * denominator * sqrt(denominator));
 }
 fn sample_hg_cosine(u: f32, g: f32) -> f32 {
-    if (abs(g) < 1e-3) {
+    let bounded_g = clamp(g, -0.99, 0.99);
+    if (abs(bounded_g) < 1e-3) {
         return 1.0 - 2.0 * u;
     }
-    let t = (1.0 - g * g) / max(1.0 - g + 2.0 * g * u, 1e-7);
-    return clamp((1.0 + g * g - t * t) / (2.0 * g), -1.0, 1.0);
+    let t = (1.0 - bounded_g * bounded_g)
+        / max(1.0 + bounded_g - 2.0 * bounded_g * u, 1e-7);
+    return clamp(
+        -(1.0 + bounded_g * bounded_g - t * t) / (2.0 * bounded_g),
+        -1.0,
+        1.0,
+    );
 }
 fn sample_hg_direction(reference: vec3<f32>, u: vec2<f32>, g: f32) -> vec3<f32> {
     let cosine = sample_hg_cosine(u.x, g);
