@@ -161,7 +161,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var reflectance = vec4<f32>(0.0);
     if (material_kind == MATERIAL_KIND_DIFFUSE && coated_diffuse_root) {
-        reflectance = root_evaluated.values[1];
+        reflectance = load_coated_diffuse_params(root_evaluated).reflectance;
     } else if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(material_index, lambda);
     }

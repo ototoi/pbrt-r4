@@ -55,9 +55,8 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var next_throughput = ray.throughput * reflectance;
     let surface_kind = load_material_kind(surface.material);
     if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
-        let coat = load_attributes_eval_work_item(surface.attributes_eval_work_item + 1u);
-        let eta = max(coat.values[0].x, 1.0001);
-        let coat_f = dielectric_fresnel(abs(dot(normal, wo)), eta);
+        let coated = load_coated_diffuse_params(evaluated);
+        let coat_f = dielectric_fresnel(abs(dot(normal, wo)), coated.top_eta);
         next_throughput = next_throughput * (1.0 - coat_f);
     }
     if (ray.depth >= 1u) {
