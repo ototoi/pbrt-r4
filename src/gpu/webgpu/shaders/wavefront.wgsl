@@ -795,6 +795,35 @@ fn random01(pixel_index: u32, dimension: u32, depth: u32) -> f32 {
     return f32(hash_u32(value) & 0x00ffffffu) / 16777216.0;
 }
 
+// pbrt-v4 HGPhaseFunction helpers used by the layered medium random walk.
+fn hg_phase(cosine: f32, g: f32) -> f32 {
+    let gg = g * g;
+    let denominator = max(1.0 + gg - 2.0 * g * cosine, 1e-7);
+    return (1.0 - gg) / (4.0 * PI * denominator * sqrt(denominator));
+}
+fn sample_hg_cosine(u: f32, g: f32) -> f32 {
+    if (abs(g) < 1e-3) {
+        return 1.0 - 2.0 * u;
+    }
+    let t = (1.0 - g * g) / max(1.0 - g + 2.0 * g * u, 1e-7);
+    return clamp((1.0 + g * g - t * t) / (2.0 * g), -1.0, 1.0);
+}
+fn sample_hg_direction(reference: vec3<f32>, u: vec2<f32>, g: f32) -> vec3<f32> {
+    let cosine = sample_hg_cosine(u.x, g);
+    let sine = sqrt(max(0.0, 1.0 - cosine * cosine));
+    let phi = 2.0 * PI * u.y;
+    let tangent = make_tangent(reference);
+    let bitangent = cross(reference, tangent);
+    return normalize(
+        tangent * (sine * cos(phi))
+        + bitangent * (sine * sin(phi))
+        + reference * cosine,
+    );
+}
+fn sample_layered_exponential(u: f32, rate: f32) -> f32 {
+    return -log(max(1.0 - min(u, 0.99999994), 1e-7)) / max(rate, 1e-7);
+}
+
 fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
     return RaySamples(
         vec4<f32>(
