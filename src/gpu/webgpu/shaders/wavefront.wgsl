@@ -750,6 +750,96 @@ fn sample_smooth_dielectric_interface(
     result.specular = 1u;
     return result;
 }
+fn tr_distribution_d(wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    let cos2 = wm.z * wm.z;
+    if (cos2 < 1e-16) { return 0.0; }
+    let e = (wm.x * wm.x / (alpha.x * alpha.x)
+        + wm.y * wm.y / (alpha.y * alpha.y)) / cos2;
+    return 1.0 / (PI * alpha.x * alpha.y * cos2 * cos2 * (1.0 + e) * (1.0 + e));
+}
+fn tr_distribution_lambda(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    let wz2 = w.z * w.z;
+    if (wz2 == 0.0) { return 0.0; }
+    let alpha2_tan2 = (alpha.x * w.x) * (alpha.x * w.x)
+        + (alpha.y * w.y) * (alpha.y * w.y);
+    return 0.5 * (sqrt(1.0 + alpha2_tan2 / wz2) - 1.0);
+}
+fn tr_distribution_g1(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    return 1.0 / (1.0 + tr_distribution_lambda(w, alpha));
+}
+fn tr_distribution_g(wo: vec3<f32>, wi: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    return 1.0 / (1.0 + tr_distribution_lambda(wo, alpha) + tr_distribution_lambda(wi, alpha));
+}
+fn sample_visible_tr_wm(wo_input: vec3<f32>, alpha: vec2<f32>, u: vec2<f32>) -> vec3<f32> {
+    var wh = normalize(vec3<f32>(alpha.x * wo_input.x, alpha.y * wo_input.y, wo_input.z));
+    if (wh.z < 0.0) { wh = -wh; }
+    var t1 = vec3<f32>(1.0, 0.0, 0.0);
+    if (wh.z < 0.99999) { t1 = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), wh)); }
+    let t2 = cross(wh, t1);
+    let radius = sqrt(u.x);
+    let phi = 2.0 * PI * u.y;
+    var p = vec2<f32>(radius * cos(phi), radius * sin(phi));
+    let h = sqrt(max(0.0, 1.0 - p.x * p.x));
+    p.y = mix(h, p.y, (1.0 + wh.z) * 0.5);
+    let pz = sqrt(max(0.0, 1.0 - dot(p, p)));
+    let nh = p.x * t1 + p.y * t2 + pz * wh;
+    return normalize(vec3<f32>(alpha.x * nh.x, alpha.y * nh.y, max(1e-6, nh.z)));
+}
+fn tr_visible_wm_pdf(wo: vec3<f32>, wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    if (abs(wo.z) == 0.0) { return 0.0; }
+    return tr_distribution_d(wm, alpha) * tr_distribution_g1(wo, alpha)
+        * abs(dot(wo, wm)) / abs(wo.z);
+}
+fn sample_rough_dielectric_interface(
+    wo: vec3<f32>, eta: f32, alpha_input: vec2<f32>, uc: f32, u: vec2<f32>,
+    allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    let alpha = max(alpha_input, vec2<f32>(1e-4));
+    let wm = sample_visible_tr_wm(wo, alpha, u);
+    let fresnel = dielectric_fresnel(dot(wo, wm), eta);
+    let pr = select(0.0, fresnel, allow_reflection);
+    let pt = select(0.0, 1.0 - fresnel, allow_transmission);
+    if (pr + pt == 0.0) { return invalid_dielectric_interface_sample(); }
+    let wm_pdf = tr_visible_wm_pdf(wo, wm, alpha);
+    if (uc < pr / (pr + pt)) {
+        let wi = normalize(-wo + 2.0 * dot(wo, wm) * wm);
+        if (wo.z * wi.z <= 0.0) { return invalid_dielectric_interface_sample(); }
+        let pdf = wm_pdf / max(4.0 * abs(dot(wo, wm)), 1e-7) * pr / (pr + pt);
+        let value = tr_distribution_d(wm, alpha) * tr_distribution_g(wo, wi, alpha)
+            * fresnel / max(abs(4.0 * wi.z * wo.z), 1e-7);
+        return DielectricInterfaceSample(vec4<f32>(value), wi, pdf, 1.0, 1u, 0u, 0u);
+    }
+    var result = refract_interface(wo, wm, eta);
+    if (result.valid == 0u || wo.z * result.wi.z >= 0.0 || result.wi.z == 0.0) { return invalid_dielectric_interface_sample(); }
+    let denominator = dot(result.wi, wm) + dot(wo, wm) / result.etap;
+    let denominator2 = denominator * denominator;
+    if (denominator2 == 0.0) { return invalid_dielectric_interface_sample(); }
+    let dwm_dwi = abs(dot(result.wi, wm)) / denominator2;
+    result.pdf = wm_pdf * dwm_dwi * pt / (pr + pt);
+    var ft = (1.0 - fresnel) * tr_distribution_d(wm, alpha)
+        * tr_distribution_g(wo, result.wi, alpha)
+        * abs(dot(result.wi, wm) * dot(wo, wm)
+            / max(abs(result.wi.z * wo.z) * denominator2, 1e-7));
+    ft = ft / (result.etap * result.etap);
+    result.f = vec4<f32>(ft);
+    result.specular = 0u;
+    return result;
+}
+fn sample_dielectric_interface(
+    item: AttributesEvalWorkItem, wo: vec3<f32>, uc: f32, u: vec2<f32>,
+    allow_reflection: bool, allow_transmission: bool,
+) -> DielectricInterfaceSample {
+    let eta = max(item.values[0].x, 1e-7);
+    let alpha = dielectric_interface_alpha(item);
+    if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3) {
+        return sample_smooth_dielectric_interface(
+            wo, eta, uc, allow_reflection, allow_transmission,
+        );
+    }
+    return sample_rough_dielectric_interface(
+        wo, eta, alpha, uc, u, allow_reflection, allow_transmission,
+    );
+}
 fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
 fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
 fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
