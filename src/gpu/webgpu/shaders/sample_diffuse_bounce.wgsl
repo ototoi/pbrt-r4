@@ -14,6 +14,9 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (surface.hit == 0u || surface.flags != 0u) {
         return;
     }
+    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_DIFFUSE) {
+        return;
+    }
     var material_index = resolve_material_leaf(surface.material);
     var material_kind = load_material_kind(material_index);
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
@@ -21,9 +24,6 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
     var leaf_evaluated = evaluated;
-    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_DIFFUSE) {
-        leaf_evaluated = load_attributes_eval_work_item(evaluated.child_work_item1);
-    }
     if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
         if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
         let selected = load_attributes_eval_work_item(evaluated.selected_child_work_item);
@@ -53,11 +53,6 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
     let next_pdf = abs(dot(normal, direction)) / PI;
     var next_throughput = ray.throughput * reflectance;
-    let surface_kind = load_material_kind(surface.material);
-    if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
-        let coat_f = coated_top_fresnel(evaluated, abs(dot(normal, wo)));
-        next_throughput = next_throughput * (1.0 - coat_f);
-    }
     if (ray.depth >= 1u) {
         let rr_beta = max(
             max_spectrum(next_throughput),
