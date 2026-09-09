@@ -234,6 +234,12 @@ pub struct PixelSample {
 }
 
 pub trait ImageTileIntegrator: Integrator + Sync {
+    /// Scale splats for integrators that accumulate light paths directly in
+    /// the film. Ordinary path/volpath samples must not receive this scale.
+    fn splat_scale(&self) -> Option<Float> {
+        None
+    }
+
     fn evaluate_pixel_sample(
         &self,
         p_pixel: Point2i,
@@ -453,14 +459,9 @@ impl SampleIntegratorCore {
             // `write_image` produces the final EXR. Integrators that
             // never call `add_splat` (path / volpath) leave every tile
             // clean and pay no cost.
-            let spp = {
-                let sampler_proto = sampler
-                    .read()
-                    .expect("RayIntegrator: poisoned sampler RwLock");
-                sampler_proto.samples_per_pixel() as Float
-            };
-            let splat_scale = if spp > 0.0 { 1.0 / spp } else { 1.0 };
-            film_r.merge_splats(splat_scale);
+            if let Some(splat_scale) = integrator.splat_scale() {
+                film_r.merge_splats(splat_scale);
+            }
             film_r.write_image();
             if PbrtOptions::get().record_pixel_statistics {
                 if let Err(error) = pixel_stats::write() {
