@@ -7,7 +7,7 @@ use crate::util::error::*;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::Weak;
@@ -30,6 +30,78 @@ impl LoopSubdiv {
 const TRI: [usize; 4] = [0, 1, 2, 0];
 const NEXT: [usize; 4] = [1, 2, 0, 1];
 const PREV: [usize; 4] = [2, 0, 1, 2];
+
+/// Remove degenerate triangles from the final subdivision output.  A
+/// subdivision step can create coincident vertices even when the input faces
+/// were valid, so this check must be performed on the generated mesh.
+/// Vertices touched by removed triangles get a smooth normal recomputed from
+/// the geometric normals of the remaining incident triangles.
+fn remove_degenerate_output_triangles(
+    vertex_indices: &mut Vec<u32>,
+    positions: &[Point3f],
+    normals: &mut [Normal3f],
+) {
+    let mut kept = Vec::with_capacity(vertex_indices.len());
+    let mut affected = HashSet::new();
+    for triangle in vertex_indices.chunks_exact(3) {
+        let i0 = triangle[0] as usize;
+        let i1 = triangle[1] as usize;
+        let i2 = triangle[2] as usize;
+        let p0 = positions[i0];
+        let p1 = positions[i1];
+        let p2 = positions[i2];
+        let e01 = (p1 - p0).length_squared();
+        let e12 = (p2 - p1).length_squared();
+        let e20 = (p0 - p2).length_squared();
+        let area = Vector3f::cross(&(p2 - p0), &(p1 - p0)).length_squared();
+        if e01.is_finite()
+            && e12.is_finite()
+            && e20.is_finite()
+            && area.is_finite()
+            && e01 > 0.0
+            && e12 > 0.0
+            && e20 > 0.0
+            && area > 0.0
+        {
+            kept.extend_from_slice(triangle);
+        } else {
+            affected.insert(i0);
+            affected.insert(i1);
+            affected.insert(i2);
+        }
+    }
+    *vertex_indices = kept;
+
+    // A malformed one-ring can produce an invalid limit normal even when no
+    // remaining output face has a zero-length edge.  Rebuild those normals as
+    // well, using the surviving geometric faces below.
+    for (vertex, normal) in normals.iter().enumerate() {
+        if !normal.x.is_finite()
+            || !normal.y.is_finite()
+            || !normal.z.is_finite()
+            || normal.length_squared() == 0.0
+        {
+            affected.insert(vertex);
+        }
+    }
+
+    for &vertex in &affected {
+        let mut sum = Vector3f::zero();
+        for triangle in vertex_indices.chunks_exact(3) {
+            if triangle.iter().any(|&index| index as usize == vertex) {
+                let p0 = positions[triangle[0] as usize];
+                let p1 = positions[triangle[1] as usize];
+                let p2 = positions[triangle[2] as usize];
+                // LoopSubdiv's limit normal is opposite to
+                // Triangle::geometric_normal; preserve that orientation.
+                sum += Vector3f::cross(&(p1 - p0), &(p2 - p0));
+            }
+        }
+        if sum.length_squared() > 0.0 && sum.length_squared().is_finite() {
+            normals[vertex] = sum.normalize();
+        }
+    }
+}
 
 // LoopSubdiv Local Structures
 #[derive(Clone, Debug)]
@@ -719,6 +791,7 @@ fn loop_subdiv(
             }
         }
     }
+    remove_degenerate_output_triangles(&mut verts, &p_limit, &mut ns);
     let _uv = Vec::new();
     let _s = Vec::new();
     let mesh = create_triangle_mesh(
