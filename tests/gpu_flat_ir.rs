@@ -516,13 +516,17 @@ fn flatten_node_expands_coateddiffuse_children() {
     assert_eq!(material.kind, "coateddiffuse");
     assert_eq!(material.attributes[0].kind, AttributeKind::Material);
     assert_eq!(material.attributes[1].kind, AttributeKind::Material);
-    assert_eq!(material.attributes.len(), 8);
+    assert_eq!(material.attributes.len(), 12);
     assert_eq!(material.attributes[2].name, "thickness");
     assert_eq!(material.attributes[3].name, "reflectance");
     assert_eq!(material.attributes[4].name, "g");
     assert_eq!(material.attributes[5].name, "maxdepth");
     assert_eq!(material.attributes[6].name, "nsamples");
     assert_eq!(material.attributes[7].name, "albedo");
+    assert_eq!(material.attributes[8].name, "eta");
+    assert_eq!(material.attributes[9].name, "uroughness");
+    assert_eq!(material.attributes[10].name, "vroughness");
+    assert_eq!(material.attributes[11].name, "remaproughness");
     assert_eq!(
         pbrt_r4::gpu::ir::flat::max_attributes_eval_work_items_per_surface(&scene).unwrap(),
         3
