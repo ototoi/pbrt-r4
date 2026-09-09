@@ -11,6 +11,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
+    material_texture_uv = surface.uv;
+    material_texture_normal = surface.normal.xyz;
+    material_texture_position = surface.position.xyz;
     var material_index = resolve_material_leaf(surface.material);
     var material_kind = load_material_kind(material_index);
     let lambda = load_sample_lambda(pixel_index);

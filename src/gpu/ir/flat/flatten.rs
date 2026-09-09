@@ -3,20 +3,21 @@ use super::{
     transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, Camera,
     DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput, LightGeometryKind,
     LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
-    Scene, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
-    INVALID_INDEX,
+    Scene, TextureNode as FlatTextureNode, Transform, TriangleDistributionEntry,
+    UnsupportedTexturePolicy, Vertex, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::gpu::ir::node::{
     complete_triangle_attributes, remove_invalid_triangles, AreaLight as NodeAreaLight, Component,
     Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
-    Sampler as NodeSampler, Shape, TriangleMeshShape,
+    Sampler as NodeSampler, Shape, TextureComponent, TextureKind as NodeTextureKind,
+    TriangleMeshShape,
 };
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const MAX_GPU_RENDER_DEPTH: i32 = 32;
@@ -86,6 +87,8 @@ pub fn flatten_node_with_material_override(
         attribute_refs,
         scalar_attributes: builder.scalar_attributes,
         texture_attributes: builder.texture_attributes,
+        texture_nodes: builder.texture_nodes,
+        texture_child_indices: builder.texture_child_indices,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
         primitive_distribution_map: PrimitiveDistributionMap {
             offsets: vec![0],
@@ -126,6 +129,281 @@ fn push_spectrum_attribute(
     })
 }
 
+fn register_texture_node(
+    node: &Arc<crate::gpu::ir::node::TextureNode>,
+    builder: &mut FlatBuilder,
+) -> Result<u32, PbrtError> {
+    validate_texture_graph(node, 0, &mut HashSet::new())?;
+    let key = Arc::as_ptr(node) as usize;
+    if let Some(&index) = builder.texture_nodes_by_ptr.get(&key) {
+        return Ok(index);
+    }
+    let index = u32::try_from(builder.texture_nodes.len())
+        .map_err(|_| PbrtError::error("Flat texture node table exceeds u32."))?;
+    builder.texture_nodes_by_ptr.insert(key, index);
+    builder.texture_nodes.push(FlatTextureNode {
+        name: node.name.clone(),
+        kind: 0,
+        implementation: String::new(),
+        first_child: 0,
+        child_count: 0,
+        mipmap: None,
+        mapping: crate::gpu::ir::node::Transform::default().matrix,
+        swrap_mode: 0,
+        twrap_mode: 0,
+        filter_mode: 0,
+        color_space: 0,
+        operation: 0,
+        mapping_kind: 0,
+        constant_value: [0.0; 4],
+    });
+    let mut kind = 0;
+    let mut implementation = String::new();
+    let mut mipmap = None;
+    let mut mapping = crate::gpu::ir::node::Transform::default().matrix;
+    let mut swrap_mode = 0;
+    let mut twrap_mode = 0;
+    let mut filter_mode = 0;
+    let mut color_space = 0;
+    let mut operation = 0;
+    let mut mapping_kind = 0;
+    let mut constant_value = [0.0; 4];
+    for component in &node.components {
+        if let TextureComponent::Texture(texture) = component {
+            kind = match texture.kind {
+                NodeTextureKind::Float => 0,
+                NodeTextureKind::Spectrum => 1,
+            };
+            implementation = texture.name.clone();
+            mipmap = texture.mipmap.clone();
+            color_space = mipmap
+                .as_ref()
+                .and_then(|mipmap| mipmap.color_space)
+                .map(|space| match space {
+                    crate::gpu::ir::node::ColorSpaceId::Srgb => 0,
+                    crate::gpu::ir::node::ColorSpaceId::Aces2065 => 1,
+                    crate::gpu::ir::node::ColorSpaceId::DciP3 => 2,
+                    crate::gpu::ir::node::ColorSpaceId::Rec2020 => 3,
+                })
+                .unwrap_or(0);
+            let wrap = texture.params.get_one_string("wrap", "repeat");
+            swrap_mode = sampler_wrap_mode(&texture.params.get_one_string("swrap", &wrap));
+            twrap_mode = sampler_wrap_mode(&texture.params.get_one_string("twrap", &wrap));
+            filter_mode =
+                sampler_filter_mode(&texture.params.get_one_string("filter", "bilinear"))?;
+            if texture.name == "constant" {
+                operation = 1;
+                if texture.kind == NodeTextureKind::Float {
+                    constant_value[0] = texture.params.get_one_float("value", 0.0) as f32;
+                    constant_value[1] = constant_value[0];
+                    constant_value[2] = constant_value[0];
+                } else {
+                    let rgb = texture
+                        .params
+                        .get_one_spectrum("value", &Spectrum::from(0.0))
+                        .to_rgb();
+                    constant_value = [rgb[0] as f32, rgb[1] as f32, rgb[2] as f32, 0.0];
+                }
+                constant_value[3] =
+                    (constant_value[0] + constant_value[1] + constant_value[2]) / 3.0;
+            } else if texture.name == "imagemap" {
+                // ImageTexture's scale/invert are applied after sampling.
+                constant_value[0] = texture.params.get_one_float("scale", 1.0) as f32;
+                constant_value[1] = if texture.params.get_one_bool("invert", false) {
+                    1.0
+                } else {
+                    0.0
+                };
+            } else if texture.name == "scale" {
+                operation = 2;
+                let default_scale = texture.params.get_one_float("value", 1.0);
+                constant_value[0] = texture.params.get_one_float("scale", default_scale) as f32;
+            } else if texture.name == "mix" {
+                operation = 3;
+                constant_value[0] = texture.params.get_one_float("amount", 0.5) as f32;
+            } else if texture.name == "directionmix" {
+                operation = 5;
+            } else if texture.name == "fbm" {
+                operation = 7;
+                constant_value[0] = texture.params.get_one_float("roughness", 0.5) as f32;
+                constant_value[1] = texture.params.get_one_int("octaves", 8) as f32;
+            } else if texture.name == "wrinkled" {
+                operation = 8;
+                constant_value[0] = texture.params.get_one_float("roughness", 0.5) as f32;
+                constant_value[1] = texture.params.get_one_int("octaves", 8) as f32;
+            } else if texture.name == "windy" {
+                operation = 9;
+            } else if texture.name == "dots" {
+                operation = 6;
+            } else if texture.name == "bilerp" {
+                operation = 10;
+            } else if texture.name == "marble" {
+                operation = 11;
+                constant_value[0] = texture.params.get_one_float("roughness", 0.5) as f32;
+                constant_value[1] = texture.params.get_one_int("octaves", 8) as f32;
+                constant_value[2] = texture.params.get_one_float("scale", 1.0) as f32;
+                constant_value[3] = texture.params.get_one_float("variation", 0.2) as f32;
+            } else if texture.name.contains("checkerboard") {
+                operation = if texture.name == "checkerboard3d"
+                    || texture.params.get_one_int("dimension", 2) == 3
+                {
+                    12
+                } else {
+                    4
+                };
+            }
+            builder
+                .texture_nodes_by_name
+                .insert((texture.kind, node.name.clone()), index);
+        }
+        if let TextureComponent::Mapping(mapping_component) = component {
+            if let crate::gpu::ir::node::TextureMapping::Uv(uv) = mapping_component {
+                mapping[0] = uv.uscale;
+                mapping[5] = uv.vscale;
+                mapping[3] = uv.udelta;
+                mapping[7] = uv.vdelta;
+            } else if let crate::gpu::ir::node::TextureMapping::PointTransform(transform) =
+                mapping_component
+            {
+                mapping = transform.matrix;
+                if operation == 5 {
+                    constant_value[0] = transform.matrix[0];
+                    constant_value[1] = transform.matrix[1];
+                    constant_value[2] = transform.matrix[2];
+                }
+            } else {
+                match mapping_component {
+                    crate::gpu::ir::node::TextureMapping::Planar(transform) => {
+                        mapping = transform.matrix;
+                        mapping_kind = 1;
+                    }
+                    crate::gpu::ir::node::TextureMapping::Spherical(transform) => {
+                        mapping = transform.matrix;
+                        mapping_kind = 2;
+                    }
+                    crate::gpu::ir::node::TextureMapping::Cylindrical(transform) => {
+                        mapping = transform.matrix;
+                        mapping_kind = 3;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut child_indices = Vec::with_capacity(node.children.len());
+    for child in &node.children {
+        child_indices.push(register_texture_node(child, builder)?);
+    }
+    // Child registration is recursive and may append the descendants' child
+    // ranges first.  Capture the parent's range only after that recursion so
+    // `first_child` points at the indices appended below, not at a descendant
+    // range.
+    let first_child = u32::try_from(builder.texture_child_indices.len())
+        .map_err(|_| PbrtError::error("Flat texture child table exceeds u32."))?;
+    builder
+        .texture_child_indices
+        .extend(child_indices.iter().copied());
+    let child_count = u32::try_from(node.children.len())
+        .map_err(|_| PbrtError::error("Flat texture child table exceeds u32."))?;
+    let valid_child_count = match operation {
+        0 | 1 | 7 | 8 | 9 | 11 => child_count == 0,
+        2 => child_count == 1,
+        3 | 5 => child_count == 2 || (operation == 3 && child_count == 3),
+        4 | 6 | 12 => child_count == 2,
+        10 => child_count == 4,
+        _ => false,
+    };
+    if !valid_child_count {
+        return Err(PbrtError::error(&format!(
+            "Texture node \"{}\" has {} children for operation {}.",
+            node.name, child_count, operation
+        )));
+    }
+    if kind == 1 && mipmap.is_none() {
+        let mut graph_color_space = None;
+        for child_index in &child_indices {
+            let child = &builder.texture_nodes[*child_index as usize];
+            if child.kind != 1 || (child.mipmap.is_none() && child.color_space == 0) {
+                continue;
+            }
+            if let Some(previous) = graph_color_space {
+                if previous != child.color_space {
+                    return Err(PbrtError::error(&format!(
+                        "Spectrum texture node \"{}\" mixes incompatible color spaces.",
+                        node.name
+                    )));
+                }
+            } else {
+                graph_color_space = Some(child.color_space);
+            }
+        }
+        if let Some(graph_color_space) = graph_color_space {
+            color_space = graph_color_space;
+        }
+    }
+    let flat = &mut builder.texture_nodes[index as usize];
+    flat.kind = kind;
+    flat.implementation = implementation;
+    flat.first_child = first_child;
+    flat.child_count = child_count;
+    flat.mipmap = mipmap;
+    flat.mapping = mapping;
+    flat.swrap_mode = swrap_mode;
+    flat.twrap_mode = twrap_mode;
+    flat.filter_mode = filter_mode;
+    flat.color_space = color_space;
+    flat.operation = operation;
+    flat.mapping_kind = mapping_kind;
+    flat.constant_value = constant_value;
+    Ok(index)
+}
+
+const MAX_TEXTURE_GRAPH_DEPTH: usize = 32;
+
+fn validate_texture_graph(
+    node: &Arc<crate::gpu::ir::node::TextureNode>,
+    depth: usize,
+    visiting: &mut HashSet<usize>,
+) -> Result<(), PbrtError> {
+    if depth >= MAX_TEXTURE_GRAPH_DEPTH {
+        return Err(PbrtError::error(&format!(
+            "Texture graph exceeds the WebGPU evaluator depth limit of {}.",
+            MAX_TEXTURE_GRAPH_DEPTH
+        )));
+    }
+    let key = Arc::as_ptr(node) as usize;
+    if !visiting.insert(key) {
+        return Err(PbrtError::error("Texture graph contains a cycle."));
+    }
+    for child in &node.children {
+        validate_texture_graph(child, depth + 1, visiting)?;
+    }
+    visiting.remove(&key);
+    Ok(())
+}
+
+fn sampler_wrap_mode(mode: &str) -> u32 {
+    match mode {
+        "clamp" => 1,
+        "black" => 2,
+        _ => 0,
+    }
+}
+
+fn sampler_filter_mode(mode: &str) -> Result<u32, PbrtError> {
+    match mode {
+        "point" | "nearest" => Ok(0),
+        "bilinear" | "linear" => Ok(1),
+        "trilinear" => Ok(2),
+        "ewa" => Err(PbrtError::error(
+            "GPU texture filter \"ewa\" is not supported yet.",
+        )),
+        other => Err(PbrtError::error(&format!(
+            "Unknown GPU texture filter \"{other}\"."
+        ))),
+    }
+}
+
 fn build_material_attributes(
     source_material: &NodeMaterial,
     kind: &str,
@@ -133,14 +411,18 @@ fn build_material_attributes(
 ) -> Result<Vec<AttributeRef>, PbrtError> {
     match kind {
         "mix" => {
-            let amount = source_material.params.get_one_float("amount", 0.5) as f32;
-            if !amount.is_finite() {
-                return Err(PbrtError::error(&format!(
-                    "Material \"{}\" has invalid mix amount.",
-                    source_material.name
-                )));
+            if let Some(attribute) = texture_attribute_ref(source_material, "amount", builder)? {
+                Ok(vec![attribute])
+            } else {
+                let amount = source_material.params.get_one_float("amount", 0.5) as f32;
+                if !amount.is_finite() {
+                    return Err(PbrtError::error(&format!(
+                        "Material \"{}\" has invalid mix amount.",
+                        source_material.name
+                    )));
+                }
+                Ok(vec![push_scalar_attribute(builder, "amount", amount)?])
             }
-            Ok(vec![push_scalar_attribute(builder, "amount", amount)?])
         }
         "coateddiffuse" => {
             let thickness = source_material.params.get_one_float("thickness", 1.0) as f32;
@@ -159,11 +441,22 @@ fn build_material_attributes(
                     source_material.name
                 )));
             }
-            let albedo = diffuse_reflectance(source_material)?;
+            let albedo_attribute = if let Some(attribute) =
+                texture_attribute_ref(source_material, "reflectance", builder)?
+            {
+                attribute
+            } else {
+                let albedo = diffuse_reflectance(source_material)?;
+                push_spectrum_attribute(builder, "albedo", &albedo)?
+            };
+            let thickness_attribute = texture_attribute_ref(source_material, "thickness", builder)?
+                .unwrap_or(push_scalar_attribute(builder, "thickness", thickness)?);
+            let g_attribute = texture_attribute_ref(source_material, "g", builder)?
+                .unwrap_or(push_scalar_attribute(builder, "g", g)?);
             Ok(vec![
-                push_scalar_attribute(builder, "thickness", thickness)?,
-                push_spectrum_attribute(builder, "albedo", &albedo)?,
-                push_scalar_attribute(builder, "g", g)?,
+                thickness_attribute,
+                albedo_attribute,
+                g_attribute,
                 push_scalar_attribute(builder, "maxdepth", max_depth)?,
                 push_scalar_attribute(builder, "nsamples", n_samples)?,
             ])
@@ -185,14 +478,22 @@ fn build_material_attributes(
                     source_material.name
                 )));
             }
+            let thickness_attribute = texture_attribute_ref(source_material, "thickness", builder)?
+                .unwrap_or(push_scalar_attribute(builder, "thickness", thickness)?);
+            let g_attribute = texture_attribute_ref(source_material, "g", builder)?
+                .unwrap_or(push_scalar_attribute(builder, "g", g)?);
             Ok(vec![
-                push_scalar_attribute(builder, "thickness", thickness)?,
-                push_scalar_attribute(builder, "g", g)?,
+                thickness_attribute,
+                g_attribute,
                 push_scalar_attribute(builder, "maxdepth", max_depth)?,
                 push_scalar_attribute(builder, "nsamples", n_samples)?,
             ])
         }
         "diffuse" => {
+            if let Some(attribute) = texture_attribute_ref(source_material, "reflectance", builder)?
+            {
+                return Ok(vec![attribute]);
+            }
             let reflectance = diffuse_reflectance(source_material)?;
             Ok(vec![push_spectrum_attribute(
                 builder,
@@ -201,6 +502,11 @@ fn build_material_attributes(
             )?])
         }
         "dielectric" | "thindielectric" => {
+            if let Some(attribute) =
+                texture_attribute_ref_unbounded(source_material, "eta", builder)?
+            {
+                return Ok(vec![attribute]);
+            }
             let eta = spectrum_attribute(
                 source_material,
                 "eta",
@@ -219,31 +525,57 @@ fn build_material_attributes(
             Ok(vec![push_spectrum_attribute(builder, "eta", &eta)?])
         }
         "conductor" => {
-            reject_scalar_textures(source_material, &["roughness", "uroughness", "vroughness"])?;
-            let eta = spectrum_attribute(
-                source_material,
-                "eta",
-                &Spectrum::from(0.2),
-                SpectrumType::Unbounded,
-            )?;
-            let k = spectrum_attribute(
-                source_material,
-                "k",
-                &Spectrum::from(3.0),
-                SpectrumType::Unbounded,
-            )?;
-            let roughness = source_material.params.get_one_float("roughness", 0.0) as f32;
-            if !roughness.is_finite() || roughness < 0.0 {
-                return Err(PbrtError::error(&format!(
-                    "Material \"{}\" has invalid conductor roughness.",
-                    source_material.name
-                )));
-            }
-            Ok(vec![
-                push_spectrum_attribute(builder, "eta", &eta)?,
-                push_spectrum_attribute(builder, "k", &k)?,
-                push_scalar_attribute(builder, "roughness", roughness)?,
-            ])
+            reject_scalar_textures(source_material, &["uroughness", "vroughness"])?;
+            let eta_attribute = if let Some(attribute) =
+                texture_attribute_ref_unbounded(source_material, "eta", builder)?
+            {
+                attribute
+            } else {
+                let eta = spectrum_attribute(
+                    source_material,
+                    "eta",
+                    &Spectrum::from(0.2),
+                    SpectrumType::Unbounded,
+                )?;
+                let dense_eta = eta.to_dense();
+                if (0..crate::util::spectrum::DENSE_SPECTRUM_SAMPLES)
+                    .any(|index| !dense_eta[index].is_finite() || dense_eta[index] <= 0.0)
+                {
+                    return Err(PbrtError::error(&format!(
+                        "Material \"{}\" has invalid conductor eta.",
+                        source_material.name
+                    )));
+                }
+                push_spectrum_attribute(builder, "eta", &eta)?
+            };
+            let k_attribute = if let Some(attribute) =
+                texture_attribute_ref_unbounded(source_material, "k", builder)?
+            {
+                attribute
+            } else {
+                let k = spectrum_attribute(
+                    source_material,
+                    "k",
+                    &Spectrum::from(3.0),
+                    SpectrumType::Unbounded,
+                )?;
+                push_spectrum_attribute(builder, "k", &k)?
+            };
+            let roughness_attribute = if let Some(attribute) =
+                texture_attribute_ref(source_material, "roughness", builder)?
+            {
+                attribute
+            } else {
+                let roughness = source_material.params.get_one_float("roughness", 0.0) as f32;
+                if !roughness.is_finite() || roughness < 0.0 {
+                    return Err(PbrtError::error(&format!(
+                        "Material \"{}\" has invalid conductor roughness.",
+                        source_material.name
+                    )));
+                }
+                push_scalar_attribute(builder, "roughness", roughness)?
+            };
+            Ok(vec![eta_attribute, k_attribute, roughness_attribute])
         }
         _ => Err(PbrtError::error(&format!(
             "unsupported GPU material kind: {kind}"
@@ -344,6 +676,10 @@ struct FlatBuilder {
     materials: Vec<Material>,
     scalar_attributes: Vec<f32>,
     texture_attributes: Vec<u32>,
+    texture_nodes: Vec<FlatTextureNode>,
+    texture_child_indices: Vec<u32>,
+    texture_nodes_by_ptr: HashMap<usize, u32>,
+    texture_nodes_by_name: HashMap<(crate::gpu::ir::node::TextureKind, String), u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
     source_materials: Vec<Arc<NodeMaterial>>,
@@ -394,6 +730,13 @@ fn flatten_node_ref(
                 Component::Material(component) => Some(Arc::clone(&component.material)),
                 _ => None,
             });
+        for component in &node.components {
+            if let Component::Scene(component) = component {
+                for texture_node in &component.scene.texture_nodes {
+                    register_texture_node(texture_node, builder)?;
+                }
+            }
+        }
         let mut shapes = Vec::new();
         let mut instances = Vec::new();
         let camera = node
@@ -1186,6 +1529,34 @@ fn material_index(
             build_material_attributes(source_material, requested_kind, builder)?,
         )
     };
+    for (name, texture_node) in &source_material.texture_attributes {
+        // Displacement is consumed during CPU shape realization and is not a
+        // material-evaluation attribute in the WebGPU backend.
+        if name == "displacement" {
+            continue;
+        }
+        let texture = texture_node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                TextureComponent::Texture(texture) => Some(texture),
+                TextureComponent::Mapping(_) => None,
+            });
+        if let Some(texture) = texture {
+            if let Some(&index) = builder
+                .texture_nodes_by_name
+                .get(&(texture.kind, texture_node.name.clone()))
+            {
+                if !attributes.iter().any(|attribute| attribute.name == *name) {
+                    attributes.push(AttributeRef {
+                        kind: AttributeKind::Texture,
+                        index,
+                        name: name.clone(),
+                    });
+                }
+            }
+        }
+    }
     if matches!(kind, "coateddiffuse" | "coatedconductor") {
         let child_kinds: &[&str] = if kind == "coateddiffuse" {
             &["dielectric", "diffuse"]
@@ -1194,11 +1565,23 @@ fn material_index(
         };
         let mut children = Vec::with_capacity(2);
         for child_kind in child_kinds {
+            let mut child_params = source_material.params.clone();
+            // The synthetic substrate material must not inherit texture
+            // references from the coating itself.  The coating stores its
+            // textured albedo/eta/k as attributes on the wrapper; retaining
+            // those parameter references would make the synthetic child try
+            // to evaluate them a second time.
+            for key in child_params.get_keys() {
+                if child_params.get_key_type(&key) == "texture" {
+                    child_params.remove_parameter(&key);
+                }
+            }
             let child = Arc::new(NodeMaterial {
                 name: format!("{}:{}", source_material.name, child_kind),
                 kind: (*child_kind).to_string(),
-                params: source_material.params.clone(),
+                params: child_params,
                 material_attributes: Vec::new(),
+                texture_attributes: Vec::new(),
             });
             children.push(AttributeRef {
                 kind: AttributeKind::Material,
@@ -1248,6 +1631,57 @@ fn diffuse_reflectance(source_material: &NodeMaterial) -> Result<Spectrum, PbrtE
     )
 }
 
+fn texture_attribute_ref(
+    source_material: &NodeMaterial,
+    key: &str,
+    builder: &FlatBuilder,
+) -> Result<Option<AttributeRef>, PbrtError> {
+    let Some((name, node)) = source_material
+        .texture_attributes
+        .iter()
+        .find(|(name, _)| name == key)
+    else {
+        return Ok(None);
+    };
+    let texture = node
+        .components
+        .iter()
+        .find_map(|component| match component {
+            TextureComponent::Texture(texture) => Some(texture),
+            TextureComponent::Mapping(_) => None,
+        });
+    let Some(texture) = texture else {
+        return Err(PbrtError::error(&format!(
+            "Texture attribute \"{key}\" has no texture component."
+        )));
+    };
+    let Some(&index) = builder
+        .texture_nodes_by_name
+        .get(&(texture.kind, node.name.clone()))
+    else {
+        return Err(PbrtError::error(&format!(
+            "Texture attribute \"{key}\" references an unregistered texture node."
+        )));
+    };
+    Ok(Some(AttributeRef {
+        kind: AttributeKind::Texture,
+        index,
+        name: name.clone(),
+    }))
+}
+
+fn texture_attribute_ref_unbounded(
+    source_material: &NodeMaterial,
+    key: &str,
+    builder: &FlatBuilder,
+) -> Result<Option<AttributeRef>, PbrtError> {
+    let Some(mut attribute) = texture_attribute_ref(source_material, key, builder)? else {
+        return Ok(None);
+    };
+    attribute.kind = AttributeKind::TextureUnbounded;
+    Ok(Some(attribute))
+}
+
 fn reject_scalar_textures(source_material: &NodeMaterial, keys: &[&str]) -> Result<(), PbrtError> {
     if let Some(key) = source_material
         .params
@@ -1268,11 +1702,10 @@ fn reject_scalar_textures(source_material: &NodeMaterial, keys: &[&str]) -> Resu
 }
 
 fn has_texture_attribute(source_material: &NodeMaterial) -> bool {
-    source_material
-        .params
-        .get_keys()
-        .iter()
-        .any(|key| source_material.params.get_key_type(key) == "texture")
+    source_material.params.get_keys().iter().any(|key| {
+        source_material.params.get_key_type(key) == "texture"
+            && source_material.params.get_key_name(key) != "displacement"
+    })
 }
 
 fn spectrum_attribute(

@@ -8,8 +8,9 @@ use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
     material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialRecord, MaterialTableUniform, TriangleDistributionEntry, Vertex,
-    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_POINT,
+    LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_POINT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -18,6 +19,163 @@ use super::material::MaterialKind;
 use super::material::MaterialTable;
 use super::output::Output;
 use super::render_settings::RenderSettings;
+
+fn stable_texture_hash(value: &str) -> u32 {
+    value.bytes().fold(2166136261u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16777619)
+    })
+}
+
+fn mip_level_rgba(
+    level: &crate::gpu::ir::node::MipmapLevel,
+) -> Result<(u32, u32, Vec<f32>), PbrtError> {
+    let width = level.resolution[0];
+    let height = level.resolution[1];
+    if width == 0 || height == 0 || !(1..=4).contains(&level.channels) {
+        return Err(PbrtError::error(
+            "Texture mipmap has an invalid resolution.",
+        ));
+    }
+    let values = match &level.data {
+        crate::gpu::ir::node::MipmapLevelData::F32(values) => values.clone(),
+        crate::gpu::ir::node::MipmapLevelData::F16(values) => values
+            .iter()
+            .map(|value| half::f16::from_bits(*value).to_f32())
+            .collect(),
+        crate::gpu::ir::node::MipmapLevelData::U8(values) => values
+            .iter()
+            .map(|value| f32::from(*value) / 255.0)
+            .collect(),
+    };
+    let pixel_count = usize::try_from(width)
+        .ok()
+        .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
+        .ok_or_else(|| PbrtError::error("Texture mipmap resolution overflowed."))?;
+    let channels = usize::try_from(level.channels)
+        .map_err(|_| PbrtError::error("Texture channel count does not fit usize."))?;
+    if values.len() != pixel_count.saturating_mul(channels) {
+        return Err(PbrtError::error(
+            "Texture mipmap data size is inconsistent.",
+        ));
+    }
+    let mut rgba = vec![0.0f32; pixel_count * 4];
+    for pixel in 0..pixel_count {
+        let source = pixel * channels;
+        if channels <= 2 {
+            // PBRT treats a two-channel image as luminance + alpha.  The
+            // alpha channel must not become the green component of the RGB
+            // sample; replicate luminance across RGB and preserve alpha only
+            // in the upload's fourth channel.
+            let luminance = values[source];
+            rgba[pixel * 4] = luminance;
+            rgba[pixel * 4 + 1] = luminance;
+            rgba[pixel * 4 + 2] = luminance;
+            rgba[pixel * 4 + 3] = if channels == 2 {
+                values[source + 1]
+            } else {
+                1.0
+            };
+        } else {
+            for channel in 0..3 {
+                rgba[pixel * 4 + channel] = values[source + channel];
+            }
+            rgba[pixel * 4 + 3] = if channels == 4 {
+                values[source + 3]
+            } else {
+                1.0
+            };
+        }
+    }
+    Ok((width, height, rgba))
+}
+
+fn upload_texture_images(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    nodes: &[flat::TextureNode],
+) -> Result<Vec<wgpu::Texture>, PbrtError> {
+    let mut images = Vec::new();
+    for node in nodes {
+        let Some(mipmap) = &node.mipmap else {
+            images.push(create_empty_texture(device));
+            continue;
+        };
+        let Some(base_level) = mipmap.levels.first() else {
+            images.push(create_empty_texture(device));
+            continue;
+        };
+        let (width, height, _) = mip_level_rgba(base_level)?;
+        let mip_level_count = u32::try_from(mipmap.levels.len())
+            .map_err(|_| PbrtError::error("Texture mipmap has too many levels."))?;
+        for (level_index, level) in mipmap.levels.iter().enumerate() {
+            let expected_width = (width >> level_index).max(1);
+            let expected_height = (height >> level_index).max(1);
+            if level.resolution != [expected_width, expected_height] {
+                return Err(PbrtError::error(&format!(
+                    "Texture mipmap level {level_index} has resolution {:?}, expected [{expected_width}, {expected_height}].",
+                    level.resolution
+                )));
+            }
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pbrt-r4 image texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        for (mip_level, level) in mipmap.levels.iter().enumerate() {
+            let (level_width, level_height, rgba) = mip_level_rgba(level)?;
+            let mip_level = u32::try_from(mip_level)
+                .map_err(|_| PbrtError::error("Texture mipmap level index overflowed."))?;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&rgba),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(level_width * 16),
+                    rows_per_image: Some(level_height),
+                },
+                wgpu::Extent3d {
+                    width: level_width,
+                    height: level_height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        images.push(texture);
+    }
+    Ok(images)
+}
+
+fn create_empty_texture(device: &wgpu::Device) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("pbrt-r4 empty texture"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
 
 pub struct Scene {
     pub camera: CameraUniform,
@@ -37,6 +195,13 @@ pub struct Scene {
     pub scalar_attribute_buffer: wgpu::Buffer,
     pub spectrum_attribute_buffer: wgpu::Buffer,
     pub texture_attribute_buffer: wgpu::Buffer,
+    pub texture_node_buffer: wgpu::Buffer,
+    pub texture_child_buffer: wgpu::Buffer,
+    pub rgb_spectrum_table_buffer: wgpu::Buffer,
+    pub texture_images: Vec<wgpu::Texture>,
+    pub texture_image_view: wgpu::TextureView,
+    pub texture_image_views: Vec<wgpu::TextureView>,
+    pub texture_samplers: Vec<wgpu::Sampler>,
     pub light_record_buffer: wgpu::Buffer,
     pub light_sampling_model_buffer: wgpu::Buffer,
     pub light_position_buffer: wgpu::Buffer,
@@ -116,6 +281,7 @@ impl Scene {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::TextureUnbounded => 4,
                         flat::AttributeKind::Material => 3,
                     },
                     index: attribute.index,
@@ -211,6 +377,105 @@ impl Scene {
                 contents: buffer_contents(&texture_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
+        let texture_nodes = flat
+            .texture_nodes
+            .iter()
+            .map(|node| TextureNodeRecord {
+                kind: node.kind,
+                first_child: node.first_child,
+                child_count: node.child_count,
+                implementation_hash: stable_texture_hash(&node.implementation),
+                swrap_mode: node.swrap_mode,
+                twrap_mode: node.twrap_mode,
+                color_space: node.color_space,
+                _padding: 0,
+                operation: node.operation,
+                mapping_kind: node.mapping_kind,
+                _operation_padding: [0; 2],
+                constant_value: node.constant_value,
+                mapping: row_major_to_columns(node.mapping),
+            })
+            .collect::<Vec<_>>();
+        let texture_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 texture nodes SBO"),
+            contents: buffer_contents(&texture_nodes),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let texture_child_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 texture child indices SBO"),
+            contents: buffer_contents(&flat.texture_child_indices),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let mut rgb_spectrum_table = Vec::new();
+        for table in [
+            include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_srgb.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_aces.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_dci_p3.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_rec2020.bin")),
+        ] {
+            rgb_spectrum_table.extend_from_slice(table);
+        }
+        let rgb_spectrum_table_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 RGB spectrum tables SBO"),
+                contents: &rgb_spectrum_table,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let mut texture_images = upload_texture_images(device, queue, &flat.texture_nodes)?;
+        if texture_images.is_empty() {
+            texture_images.push(device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("pbrt-r4 empty texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            }));
+        }
+        let texture_image_view =
+            texture_images[0].create_view(&wgpu::TextureViewDescriptor::default());
+        let texture_image_views = texture_images
+            .iter()
+            .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()))
+            .collect();
+        let texture_samplers = if flat.texture_nodes.is_empty() {
+            vec![device.create_sampler(&wgpu::SamplerDescriptor::default())]
+        } else {
+            flat.texture_nodes
+                .iter()
+                .map(|node| {
+                    let address_mode = |mode| match mode {
+                        1 => wgpu::AddressMode::ClampToEdge,
+                        2 => wgpu::AddressMode::ClampToEdge,
+                        _ => wgpu::AddressMode::Repeat,
+                    };
+                    let filter = if node.filter_mode == 0 {
+                        wgpu::FilterMode::Nearest
+                    } else {
+                        wgpu::FilterMode::Linear
+                    };
+                    device.create_sampler(&wgpu::SamplerDescriptor {
+                        label: Some("pbrt-r4 texture sampler"),
+                        address_mode_u: address_mode(node.swrap_mode),
+                        address_mode_v: address_mode(node.twrap_mode),
+                        mag_filter: filter,
+                        min_filter: filter,
+                        mipmap_filter: if node.filter_mode >= 2 {
+                            wgpu::MipmapFilterMode::Linear
+                        } else {
+                            wgpu::MipmapFilterMode::Nearest
+                        },
+                        ..Default::default()
+                    })
+                })
+                .collect()
+        };
         flat::validate_dense_spectra(&flat.spectrum_attributes)?;
         let spectrum_attributes = flat
             .spectrum_attributes
@@ -343,6 +608,13 @@ impl Scene {
             scalar_attribute_buffer,
             spectrum_attribute_buffer,
             texture_attribute_buffer,
+            texture_node_buffer,
+            texture_child_buffer,
+            rgb_spectrum_table_buffer,
+            texture_images,
+            texture_image_view,
+            texture_image_views,
+            texture_samplers,
             light_record_buffer,
             light_sampling_model_buffer,
             light_position_buffer,
@@ -583,4 +855,21 @@ fn convert_geometry(
         });
     }
     Ok((vertices, geometries, local_indices))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mip_level_rgba;
+    use crate::gpu::ir::node::{MipmapLevel, MipmapLevelData};
+
+    #[test]
+    fn two_channel_mipmap_upload_replicates_luminance_and_preserves_alpha() {
+        let level = MipmapLevel {
+            resolution: [1, 1],
+            channels: 2,
+            data: MipmapLevelData::F32(vec![0.2, 0.75]),
+        };
+        let (_, _, rgba) = mip_level_rgba(&level).expect("valid mip level");
+        assert_eq!(rgba, vec![0.2, 0.2, 0.2, 0.75]);
+    }
 }

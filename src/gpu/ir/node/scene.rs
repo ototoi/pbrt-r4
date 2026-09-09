@@ -1,7 +1,7 @@
-use super::texture::Texture;
+use super::texture::TextureNode;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Scene {
-    pub textures: Vec<Arc<Texture>>,
+    pub texture_nodes: Vec<Arc<TextureNode>>,
 }
