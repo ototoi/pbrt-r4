@@ -688,7 +688,7 @@ fn load_coated_diffuse_params(root: AttributesEvalWorkItem) -> CoatedDiffusePara
     params.top_eta = 1.0;
     if (root.child_work_item0 != 0xffffffffu) {
         let top = load_attributes_eval_work_item(root.child_work_item0);
-        params.top_eta = max(top.values[0].x, 1.0001);
+        params.top_eta = select(top.values[0].x, 1.0, top.values[0].x == 0.0);
     }
     return params;
 }
@@ -839,7 +839,7 @@ fn sample_dielectric_interface(
     item: AttributesEvalWorkItem, wo: vec3<f32>, uc: f32, u: vec2<f32>,
     allow_reflection: bool, allow_transmission: bool,
 ) -> DielectricInterfaceSample {
-    let eta = max(item.values[0].x, 1e-7);
+    let eta = select(item.values[0].x, 1.0, item.values[0].x == 0.0);
     let alpha = dielectric_interface_alpha(item);
     if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3) {
         return sample_smooth_dielectric_interface(
@@ -879,7 +879,7 @@ fn sample_conductor_interface(
 fn dielectric_interface_f(
     item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
 ) -> vec4<f32> {
-    let eta = max(item.values[0].x, 1e-7);
+    let eta = select(item.values[0].x, 1.0, item.values[0].x == 0.0);
     let alpha = dielectric_interface_alpha(item);
     if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3 || wo.z == 0.0 || wi.z == 0.0) {
         return vec4<f32>(0.0);
@@ -914,7 +914,7 @@ fn dielectric_interface_pdf(
     item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
     allow_reflection: bool, allow_transmission: bool,
 ) -> f32 {
-    let eta = max(item.values[0].x, 1e-7);
+    let eta = select(item.values[0].x, 1.0, item.values[0].x == 0.0);
     let alpha = dielectric_interface_alpha(item);
     if (eta == 1.0 || max(alpha.x, alpha.y) < 1e-3 || wo.z == 0.0 || wi.z == 0.0) {
         return 0.0;
