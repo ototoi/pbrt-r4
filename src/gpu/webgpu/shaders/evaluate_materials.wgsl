@@ -74,15 +74,15 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             evaluated.values[0] = load_dielectric_eta(current_index, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) {
             evaluated.values[0].x = load_material_scalar(current_index, 2u);
-            evaluated.values[1] = load_material_spectrum(current_index, 3u, lambda);
-            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[1] = clamp(load_material_spectrum(current_index, 3u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
+            evaluated.values[2].x = clamp(load_material_scalar(current_index, 4u), -1.0, 1.0);
             evaluated.values[3].x = load_material_scalar(current_index, 5u);
             evaluated.values[4].x = load_material_scalar(current_index, 6u);
-            evaluated.values[5] = load_material_spectrum(current_index, 7u, lambda);
+            evaluated.values[5] = clamp(load_material_spectrum(current_index, 7u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
             evaluated.values[0].x = load_material_scalar(current_index, 2u);
-            evaluated.values[1] = load_material_spectrum(current_index, 3u, lambda);
-            evaluated.values[2].x = load_material_scalar(current_index, 4u);
+            evaluated.values[1] = clamp(load_material_spectrum(current_index, 3u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
+            evaluated.values[2].x = clamp(load_material_scalar(current_index, 4u), -1.0, 1.0);
             evaluated.values[3].x = load_material_scalar(current_index, 5u);
             evaluated.values[4].x = load_material_scalar(current_index, 6u);
             evaluated.values[5].x = load_material_scalar(current_index, 14u);
@@ -143,7 +143,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
             if (child_eval.bxdf_kind == MATERIAL_KIND_CONDUCTOR) {
                 if (current_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
-                    let interface_eta = max(load_material_spectrum(current_index, 7u, lambda), vec4<f32>(1e-7));
+                    var interface_eta_scalar = load_material_spectrum(current_index, 7u, lambda).x;
+                    if (interface_eta_scalar == 0.0) { interface_eta_scalar = 1.0; }
+                    let interface_eta = vec4<f32>(interface_eta_scalar);
                     if (load_material_scalar(current_index, 16u) != 0.0) {
                         let reflectance = clamp(load_material_spectrum(current_index, 15u, lambda), vec4<f32>(0.0), vec4<f32>(0.9999));
                         child_eval.values[0] = vec4<f32>(1.0) / interface_eta;
@@ -151,8 +153,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
                             / sqrt(max(vec4<f32>(1.0) - reflectance, vec4<f32>(1e-7)))
                             / interface_eta;
                     } else {
-                        child_eval.values[0] = load_material_spectrum(current_index, 10u, lambda) / interface_eta;
-                        child_eval.values[1] = load_material_spectrum(current_index, 11u, lambda) / interface_eta;
+                        child_eval.values[0] = max(load_material_spectrum(current_index, 10u, lambda), vec4<f32>(0.0)) / interface_eta;
+                        child_eval.values[1] = max(load_material_spectrum(current_index, 11u, lambda), vec4<f32>(0.0)) / interface_eta;
                     }
                     child_eval.values[2].x = load_material_scalar(current_index, 12u);
                     child_eval.values[3].x = load_material_scalar(current_index, 13u);
