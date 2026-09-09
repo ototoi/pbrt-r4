@@ -54,9 +54,6 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var value_index = 0u; value_index < 10u; value_index++) {
             evaluated.values[value_index] = vec4<f32>(0.0);
         }
-        // Reserved throughput slots for the layered-BxDF walk.
-        evaluated.values[8] = vec4<f32>(1.0);
-        evaluated.values[9] = vec4<f32>(1.0);
         if (evaluated.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
             evaluated.values[0] = load_diffuse_reflectance(current_index, lambda);
         } else if (evaluated.bxdf_kind == MATERIAL_KIND_MIX) {
@@ -189,13 +186,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         material_kind = selected.bxdf_kind;
     }
     let root_surface_kind = load_material_kind(surface.material);
-    var coated_diffuse_root = false;
     if (root_surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
-        // Phase 1 of layered evaluation: expose the evaluated bottom
-        // reflectance to the direct-light path. The full v4 LayeredBxDF random
-        // walk is implemented behind the same parameter seam in a later phase.
         material_kind = MATERIAL_KIND_DIFFUSE;
-        coated_diffuse_root = true;
     }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
@@ -203,9 +195,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     var reflectance = vec4<f32>(0.0);
-    if (material_kind == MATERIAL_KIND_DIFFUSE && coated_diffuse_root) {
-        reflectance = load_coated_diffuse_params(root_evaluated).reflectance;
-    } else if (material_kind == MATERIAL_KIND_DIFFUSE) {
+    if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = load_diffuse_reflectance(material_index, lambda);
     }
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {

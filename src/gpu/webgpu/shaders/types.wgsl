@@ -23,20 +23,6 @@ struct AttributesEvalWorkItem {
     values: array<vec4<f32>, 10>,
 };
 
-// Logical view of the coated-diffuse payload.  These fields deliberately do
-// not change the storage ABI: the evaluator still stores values in the
-// generic AttributesEvalWorkItem array, while shader stages consume this
-// material-specific view through load_coated_diffuse_params().
-struct CoatedDiffuseParams {
-    thickness: f32,
-    reflectance: vec4<f32>,
-    g: f32,
-    max_depth: f32,
-    n_samples: f32,
-    albedo: vec4<f32>,
-    top_eta: f32,
-};
-
 struct LayeredParams {
     thickness: f32,
     albedo: vec4<f32>,
