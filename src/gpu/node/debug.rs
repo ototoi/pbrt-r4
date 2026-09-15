@@ -195,6 +195,9 @@ fn shape_to_json(shape: &Shape) -> Value {
         Shape::HeightField(shape) => {
             json!({ "type": "Shape", "kind": "HeightField", "params": params_to_json(&shape.params) })
         }
+        Shape::BilinearMesh(shape) => {
+            json!({ "type": "Shape", "kind": "BilinearMesh", "params": params_to_json(&shape.params) })
+        }
         Shape::TriangleMesh(mesh) => json!({
             "type": "Shape",
             "kind": "TriangleMesh",

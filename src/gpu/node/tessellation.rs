@@ -1,8 +1,8 @@
 use super::component::Component;
 use super::node::Node;
 use super::shape::{
-    ConeShape, CylinderShape, DiskShape, HeightFieldShape, ParaboloidShape, Shape, SphereShape,
-    TriangleMeshShape,
+    BilinearMeshShape, ConeShape, CylinderShape, DiskShape, HeightFieldShape, ParaboloidShape,
+    Shape, SphereShape, TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
@@ -25,6 +25,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(paraboloid_to_mesh(shape)?));
             } else if let Shape::HeightField(shape) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(heightfield_to_mesh(shape)?));
+            } else if let Shape::BilinearMesh(shape) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(bilinear_to_mesh(shape)?));
             }
         }
     }
@@ -128,6 +130,32 @@ fn heightfield_to_mesh(shape: &HeightFieldShape) -> Result<TriangleMeshShape, Pb
         normals: None,
         tangents: None,
         uvs: Some(uvs),
+    })
+}
+
+fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, PbrtError> {
+    let p = &shape.params;
+    let raw = p.get_points("P");
+    if raw.len() < 12 || raw.len() % 12 != 0 {
+        return Err(PbrtError::error(
+            "BilinearMesh requires groups of four points.",
+        ));
+    }
+    let positions = raw
+        .chunks_exact(3)
+        .map(|v| Vec3f([v[0] as f32, v[1] as f32, v[2] as f32]))
+        .collect::<Vec<_>>();
+    let mut indices = Vec::new();
+    for q in 0..positions.len() / 4 {
+        let a = (q * 4) as u32;
+        indices.extend_from_slice(&[a, a + 1, a + 2, a, a + 2, a + 3]);
+    }
+    Ok(TriangleMeshShape {
+        positions,
+        indices,
+        normals: None,
+        tangents: None,
+        uvs: None,
     })
 }
 
