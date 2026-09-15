@@ -7,10 +7,10 @@ use crate::gpu::node::{
     AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
     CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
     HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
-    OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene, SceneComponent, Shape,
-    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind as NodeTextureKind,
-    TextureMapping, TextureNode, Transform, UvMapping,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef,
+    NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene,
+    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
@@ -362,6 +362,9 @@ impl SceneBuilder {
                 params: shape.base.params.clone(),
             })),
             "bilinearmesh" => Shape::BilinearMesh(Box::new(BilinearMeshShape {
+                params: shape.base.params.clone(),
+            })),
+            "nurbs" => Shape::Nurbs(Box::new(NurbsShape {
                 params: shape.base.params.clone(),
             })),
             "trianglemesh" | "plymesh" => {
