@@ -1,7 +1,7 @@
 use bytemuck::cast_slice;
 use wgpu::util::DeviceExt;
 
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{
@@ -27,7 +27,7 @@ fn stable_texture_hash(value: &str) -> u32 {
 }
 
 fn mip_level_rgba(
-    level: &crate::gpu::ir::node::MipmapLevel,
+    level: &crate::gpu::node::MipmapLevel,
 ) -> Result<(u32, u32, Vec<f32>), PbrtError> {
     let width = level.resolution[0];
     let height = level.resolution[1];
@@ -37,12 +37,12 @@ fn mip_level_rgba(
         ));
     }
     let values = match &level.data {
-        crate::gpu::ir::node::MipmapLevelData::F32(values) => values.clone(),
-        crate::gpu::ir::node::MipmapLevelData::F16(values) => values
+        crate::gpu::node::MipmapLevelData::F32(values) => values.clone(),
+        crate::gpu::node::MipmapLevelData::F16(values) => values
             .iter()
             .map(|value| half::f16::from_bits(*value).to_f32())
             .collect(),
-        crate::gpu::ir::node::MipmapLevelData::U8(values) => values
+        crate::gpu::node::MipmapLevelData::U8(values) => values
             .iter()
             .map(|value| f32::from(*value) / 255.0)
             .collect(),
@@ -864,7 +864,7 @@ fn convert_geometry(
 #[cfg(test)]
 mod tests {
     use super::mip_level_rgba;
-    use crate::gpu::ir::node::{MipmapLevel, MipmapLevelData};
+    use crate::gpu::node::{MipmapLevel, MipmapLevelData};
 
     #[test]
     fn two_channel_mipmap_upload_replicates_luminance_and_preserves_alpha() {

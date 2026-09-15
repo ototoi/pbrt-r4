@@ -1,4 +1,4 @@
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

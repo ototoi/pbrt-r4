@@ -1,6 +1,6 @@
 use pbrt_r4::base::light::{union_light_bounds, Light, LightBounds};
 use pbrt_r4::base::lightsampler::{BVHLightSampler, LightSampleContext};
-use pbrt_r4::gpu::ir::flat::{Bounds3 as FlatBounds3, LightBounds as FlatLightBounds};
+use pbrt_r4::gpu::flat::{Bounds3 as FlatBounds3, LightBounds as FlatLightBounds};
 use pbrt_r4::prelude::*;
 use std::sync::Arc;
 

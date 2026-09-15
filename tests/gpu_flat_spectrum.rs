@@ -1,4 +1,4 @@
-use pbrt_r4::gpu::ir::flat::{
+use pbrt_r4::gpu::flat::{
     validate_dense_spectra, DenseSpectrumBuilder, DENSE_LAMBDA_MAX, DENSE_LAMBDA_MIN,
     DENSE_SAMPLE_COUNT, SPECTRUM_FLAG_CONSTANT,
 };

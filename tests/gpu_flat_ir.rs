@@ -1,16 +1,16 @@
 use std::sync::{Arc, RwLock};
 
-use pbrt_r4::gpu::ir::flat::{
+use pbrt_r4::gpu::flat::{
     evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind,
 };
-use pbrt_r4::gpu::ir::node::{
+use pbrt_r4::gpu::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
     CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
     Integrator as NodeIntegrator, IntegratorComponent, Light as NodeLight, LightComponent,
     Material, MaterialComponent, Node, Output, OutputComponent, Sampler as NodeSampler,
     SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
-use pbrt_r4::gpu::ir::node::{Vec2f, Vec3f};
+use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
 fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
@@ -111,13 +111,13 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(
         scene.geometries,
         vec![
-            pbrt_r4::gpu::ir::flat::Geometry {
+            pbrt_r4::gpu::flat::Geometry {
                 first_vertex: 0,
                 vertex_count: 3,
                 first_index: 0,
                 index_count: 3,
             },
-            pbrt_r4::gpu::ir::flat::Geometry {
+            pbrt_r4::gpu::flat::Geometry {
                 first_vertex: 3,
                 vertex_count: 3,
                 first_index: 3,
@@ -183,10 +183,7 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
     assert_eq!(scene.triangle_distributions[1].cdf, 1.0);
     assert_eq!(scene.lights.len(), 1);
     assert_eq!(scene.lights[0].sampling_model, 0);
-    assert_eq!(
-        scene.lights[0].kind,
-        pbrt_r4::gpu::ir::flat::LightKind::Area
-    );
+    assert_eq!(scene.lights[0].kind, pbrt_r4::gpu::flat::LightKind::Area);
     assert_eq!(scene.primitive_distribution_map.offsets, vec![0, 2]);
     assert_eq!(scene.primitive_distribution_map.entries, vec![0, 1]);
     let scale = &scene.lights[0].attributes[1];
@@ -300,7 +297,7 @@ fn flatten_node_requires_tessellated_shapes() {
     let mut root = Node::new("root");
     let mut shape = Node::new("sphere");
     shape.add_component(Component::Shape(ShapeComponent {
-        shape: Shape::Sphere(Box::new(pbrt_r4::gpu::ir::node::SphereShape {
+        shape: Shape::Sphere(Box::new(pbrt_r4::gpu::node::SphereShape {
             params: Default::default(),
         })),
         reverse_orientation: false,
@@ -438,7 +435,7 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
     );
     assert_eq!(scene.materials[0].attributes[0].name, "reflectance");
     let attribute = &scene.materials[0].attributes[0];
-    let base = attribute.index as usize * pbrt_r4::gpu::ir::flat::DENSE_SAMPLE_COUNT;
+    let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
     assert!(
         scene.spectrum_attributes[attribute.index as usize].samples[..3]
             .iter()
@@ -528,7 +525,7 @@ fn flatten_node_expands_coateddiffuse_children() {
     assert_eq!(material.attributes[10].name, "vroughness");
     assert_eq!(material.attributes[11].name, "remaproughness");
     assert_eq!(
-        pbrt_r4::gpu::ir::flat::max_attributes_eval_work_items_per_surface(&scene).unwrap(),
+        pbrt_r4::gpu::flat::max_attributes_eval_work_items_per_surface(&scene).unwrap(),
         3
     );
 }
@@ -658,7 +655,7 @@ fn flatten_node_extracts_conductor_attributes() {
     assert_eq!(scene.materials[0].kind, "conductor");
     assert_eq!(scene.materials[0].attributes.len(), 3);
     for attribute in &scene.materials[0].attributes[..2] {
-        let base = attribute.index as usize * pbrt_r4::gpu::ir::flat::DENSE_SAMPLE_COUNT;
+        let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
         assert!(
             scene.spectrum_attributes[attribute.index as usize].samples[..3]
                 .iter()
