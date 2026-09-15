@@ -1056,6 +1056,11 @@ fn flatten_node_ref(
                                 "Shape must be tessellated before flattening.",
                             ))
                         }
+                        Shape::HeightField(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ));
+                        }
                     };
                     let shape = remove_invalid_triangles(shape)?;
                     if shape.indices.is_empty() {

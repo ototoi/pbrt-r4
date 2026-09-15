@@ -1,7 +1,8 @@
 use super::component::Component;
 use super::node::Node;
 use super::shape::{
-    ConeShape, CylinderShape, DiskShape, ParaboloidShape, Shape, SphereShape, TriangleMeshShape,
+    ConeShape, CylinderShape, DiskShape, HeightFieldShape, ParaboloidShape, Shape, SphereShape,
+    TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
@@ -22,6 +23,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(cone_to_mesh(cone)?));
             } else if let Shape::Paraboloid(shape) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(paraboloid_to_mesh(shape)?));
+            } else if let Shape::HeightField(shape) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(heightfield_to_mesh(shape)?));
             }
         }
     }
@@ -82,6 +85,48 @@ fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, Pbrt
         indices,
         normals: Some(normals),
         tangents: Some(tangents),
+        uvs: Some(uvs),
+    })
+}
+
+fn heightfield_to_mesh(shape: &HeightFieldShape) -> Result<TriangleMeshShape, PbrtError> {
+    let p = &shape.params;
+    let nx = p.get_one_int("nu", -1);
+    let ny = p.get_one_int("nv", -1);
+    let z = p
+        .get_floats_ref("Pz")
+        .ok_or_else(|| PbrtError::error("HeightField requires Pz."))?;
+    if nx < 2 || ny < 2 || z.len() != nx as usize * ny as usize {
+        return Err(PbrtError::error(
+            "HeightField has invalid resolution or Pz count.",
+        ));
+    }
+    let (nx, ny) = (nx as usize, ny as usize);
+    let mut positions = Vec::with_capacity(nx * ny);
+    let mut uvs = Vec::with_capacity(nx * ny);
+    for y in 0..ny {
+        for x in 0..nx {
+            let u = x as f32 / (nx - 1) as f32;
+            let v = y as f32 / (ny - 1) as f32;
+            positions.push(Vec3f([u, v, z[y * nx + x] as f32]));
+            uvs.push(Vec2f([u, v]));
+        }
+    }
+    let mut indices = Vec::with_capacity((nx - 1) * (ny - 1) * 6);
+    for y in 0..ny - 1 {
+        for x in 0..nx - 1 {
+            let a = (y * nx + x) as u32;
+            let b = a + 1;
+            let d = a + nx as u32;
+            let c = d + 1;
+            indices.extend_from_slice(&[a, b, c, a, c, d]);
+        }
+    }
+    Ok(TriangleMeshShape {
+        positions,
+        indices,
+        normals: None,
+        tangents: None,
         uvs: Some(uvs),
     })
 }
