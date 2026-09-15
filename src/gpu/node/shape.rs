@@ -32,11 +32,17 @@ pub struct CylinderShape {
 }
 
 #[derive(Clone)]
+pub struct ConeShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
 pub enum Shape {
     TriangleMesh(Box<TriangleMeshShape>),
     Sphere(Box<SphereShape>),
     Disk(Box<DiskShape>),
     Cylinder(Box<CylinderShape>),
+    Cone(Box<ConeShape>),
 }
 
 pub fn triangle_mesh_from_params(

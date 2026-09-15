@@ -1,6 +1,6 @@
 use super::component::Component;
 use super::node::Node;
-use super::shape::{CylinderShape, DiskShape, Shape, SphereShape, TriangleMeshShape};
+use super::shape::{ConeShape, CylinderShape, DiskShape, Shape, SphereShape, TriangleMeshShape};
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
 
@@ -16,6 +16,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(disk_to_mesh(disk)?));
             } else if let Shape::Cylinder(cylinder) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(cylinder_to_mesh(cylinder)?));
+            } else if let Shape::Cone(cone) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(cone_to_mesh(cone)?));
             }
         }
     }
@@ -55,6 +57,54 @@ fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtE
         for (v, z) in [(0.0, zmin), (1.0, zmax)] {
             positions.push(Vec3f([radius as f32 * c, radius as f32 * s, z as f32]));
             normals.push(Vec3f([c, s, 0.0]));
+            tangents.push(Vec3f([-s, c, 0.0]));
+            uvs.push(Vec2f([u, v]));
+        }
+    }
+    let mut indices = Vec::with_capacity(segments * 6);
+    for j in 0..segments {
+        let i = (j * 2) as u32;
+        indices.extend_from_slice(&[i, i + 1, i + 3, i, i + 3, i + 2]);
+    }
+    Ok(TriangleMeshShape {
+        positions,
+        indices,
+        normals: Some(normals),
+        tangents: Some(tangents),
+        uvs: Some(uvs),
+    })
+}
+
+fn cone_to_mesh(cone: &ConeShape) -> Result<TriangleMeshShape, PbrtError> {
+    let params = &cone.params;
+    let radius = params.get_one_float("radius", 1.0);
+    let height = params.get_one_float("height", 1.0);
+    let phimax = params.get_one_float("phimax", 360.0).clamp(0.0, 360.0);
+    if ![radius, height, phimax].iter().all(|v| v.is_finite())
+        || radius <= 0.0
+        || height == 0.0
+        || phimax <= 0.0
+    {
+        return Err(PbrtError::error(
+            "Cone has invalid tessellation parameters.",
+        ));
+    }
+    let segments = params.get_one_int("udiv", 64).max(4) as usize;
+    let mut positions = Vec::with_capacity((segments + 1) * 2);
+    let mut normals = Vec::with_capacity((segments + 1) * 2);
+    let mut tangents = Vec::with_capacity((segments + 1) * 2);
+    let mut uvs = Vec::with_capacity((segments + 1) * 2);
+    let slope = radius / height;
+    for j in 0..=segments {
+        let u = j as f32 / segments as f32;
+        let phi = (phimax as f32).to_radians() * u;
+        let (s, c) = phi.sin_cos();
+        for (v, z) in [(0.0, 0.0), (1.0, height)] {
+            let r = radius * (1.0 - v);
+            positions.push(Vec3f([r as f32 * c, r as f32 * s, z as f32]));
+            let inv_len = (1.0 / (1.0 + slope * slope).sqrt()) as f32;
+            let n = Vec3f([c * inv_len, s * inv_len, slope as f32 * inv_len]);
+            normals.push(n);
             tangents.push(Vec3f([-s, c, 0.0]));
             uvs.push(Vec2f([u, v]));
         }
