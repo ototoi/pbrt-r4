@@ -1,6 +1,8 @@
 use super::component::Component;
 use super::node::Node;
-use super::shape::{ConeShape, CylinderShape, DiskShape, Shape, SphereShape, TriangleMeshShape};
+use super::shape::{
+    ConeShape, CylinderShape, DiskShape, ParaboloidShape, Shape, SphereShape, TriangleMeshShape,
+};
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
 
@@ -18,6 +20,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(cylinder_to_mesh(cylinder)?));
             } else if let Shape::Cone(cone) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(cone_to_mesh(cone)?));
+            } else if let Shape::Paraboloid(shape) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(paraboloid_to_mesh(shape)?));
             }
         }
     }
@@ -28,6 +32,58 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
         tessellate_shapes(&mut child)?;
     }
     Ok(())
+}
+
+fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, PbrtError> {
+    let p = &shape.params;
+    let radius = p.get_one_float("radius", 1.0);
+    let zmin = p.get_one_float("zmin", 0.0);
+    let zmax = p.get_one_float("zmax", 1.0);
+    let phimax = p.get_one_float("phimax", 360.0).clamp(0.0, 360.0);
+    if ![radius, zmin, zmax, phimax].iter().all(|v| v.is_finite())
+        || radius <= 0.0
+        || zmax <= zmin
+        || phimax <= 0.0
+    {
+        return Err(PbrtError::error(
+            "Paraboloid has invalid tessellation parameters.",
+        ));
+    }
+    let us = p.get_one_int("udiv", 64).max(4) as usize;
+    let vs = p.get_one_int("vdiv", 16).max(1) as usize;
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut tangents = Vec::new();
+    let mut uvs = Vec::new();
+    for j in 0..=vs {
+        let v = j as f32 / vs as f32;
+        let z = zmin + (zmax - zmin) * v;
+        let r = radius * ((z / zmax).max(0.0)).sqrt();
+        for i in 0..=us {
+            let u = i as f32 / us as f32;
+            let phi = (phimax as f32).to_radians() * u;
+            let (s, c) = phi.sin_cos();
+            positions.push(Vec3f([r as f32 * c, r as f32 * s, z as f32]));
+            normals.push(Vec3f([c, s, 0.0]));
+            tangents.push(Vec3f([-s, c, 0.0]));
+            uvs.push(Vec2f([u, v]));
+        }
+    }
+    let mut indices = Vec::new();
+    for j in 0..vs {
+        for i in 0..us {
+            let a = (j * (us + 1) + i) as u32;
+            let c = a + (us + 1) as u32;
+            indices.extend_from_slice(&[a, a + 1, c + 1, a, c + 1, c]);
+        }
+    }
+    Ok(TriangleMeshShape {
+        positions,
+        indices,
+        normals: Some(normals),
+        tangents: Some(tangents),
+        uvs: Some(uvs),
+    })
 }
 
 fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtError> {
