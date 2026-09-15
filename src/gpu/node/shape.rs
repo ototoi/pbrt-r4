@@ -51,6 +51,10 @@ pub struct BilinearMeshShape {
 pub struct HyperboloidShape {
     pub params: ParameterDictionary,
 }
+#[derive(Clone)]
+pub struct NurbsShape {
+    pub params: ParameterDictionary,
+}
 
 #[derive(Clone)]
 pub enum Shape {
@@ -63,6 +67,7 @@ pub enum Shape {
     HeightField(Box<HeightFieldShape>),
     BilinearMesh(Box<BilinearMeshShape>),
     Hyperboloid(Box<HyperboloidShape>),
+    Nurbs(Box<NurbsShape>),
 }
 
 pub fn triangle_mesh_from_params(

@@ -2,7 +2,7 @@ use super::component::Component;
 use super::node::Node;
 use super::shape::{
     BilinearMeshShape, ConeShape, CylinderShape, DiskShape, HeightFieldShape, HyperboloidShape,
-    ParaboloidShape, Shape, SphereShape, TriangleMeshShape,
+    NurbsShape, ParaboloidShape, Shape, SphereShape, TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
@@ -29,6 +29,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(bilinear_to_mesh(shape)?));
             } else if let Shape::Hyperboloid(shape) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(hyperboloid_to_mesh(shape)?));
+            } else if let Shape::Nurbs(shape) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(nurbs_to_mesh(shape)?));
             }
         }
     }
@@ -210,6 +212,46 @@ fn hyperboloid_to_mesh(shape: &HyperboloidShape) -> Result<TriangleMeshShape, Pb
         normals: None,
         tangents: None,
         uvs: Some(uvs),
+    })
+}
+
+fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
+    let identity = crate::util::transform::Transform::identity();
+    let shapes = crate::shapes::nurbs::create_nurbs(&identity, &identity, false, &shape.params)?;
+    let Some(crate::base::shape::Shape::Triangle(first)) = shapes.first() else {
+        return Err(PbrtError::error("NURBS produced no triangles."));
+    };
+    let mesh = &first.mesh;
+    let positions = mesh
+        .p
+        .iter()
+        .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
+        .collect();
+    let indices = mesh.vertex_indices.clone();
+    let normals = Some(
+        mesh.n
+            .iter()
+            .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
+            .collect(),
+    );
+    let tangents = Some(
+        mesh.s
+            .iter()
+            .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
+            .collect(),
+    );
+    let uvs = Some(
+        mesh.uv
+            .iter()
+            .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+            .collect(),
+    );
+    Ok(TriangleMeshShape {
+        positions,
+        indices,
+        normals,
+        tangents,
+        uvs,
     })
 }
 
