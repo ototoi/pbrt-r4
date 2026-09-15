@@ -1045,6 +1045,12 @@ fn flatten_node_ref(
                                 node.name
                             )));
                         }
+                        Shape::Cone(_) => {
+                            return Err(PbrtError::error(&format!(
+                                "Shape node \"{}\" must be tessellated before flattening.",
+                                node.name
+                            )));
+                        }
                     };
                     let shape = remove_invalid_triangles(shape)?;
                     if shape.indices.is_empty() {
