@@ -4,12 +4,12 @@ use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
     loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
-    AreaLightComponent, Camera, CameraComponent, Component, DiskShape, Film, FilmComponent, Filter,
-    FilterComponent, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
-    OutputComponent, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
-    SphereShape, Texture, TextureComponent, TextureKind as NodeTextureKind, TextureMapping,
-    TextureNode, Transform, UvMapping,
+    AreaLightComponent, Camera, CameraComponent, Component, CylinderShape, DiskShape, Film,
+    FilmComponent, Filter, FilterComponent, Instance, InstanceComponent, Integrator,
+    IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
+    MediumComponent, Node, NodeRef, Output, OutputComponent, Sampler, SamplerComponent, Scene,
+    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
@@ -343,6 +343,9 @@ impl SceneBuilder {
                 params: shape.base.params.clone(),
             })),
             "disk" => Shape::Disk(Box::new(DiskShape {
+                params: shape.base.params.clone(),
+            })),
+            "cylinder" => Shape::Cylinder(Box::new(CylinderShape {
                 params: shape.base.params.clone(),
             })),
             "trianglemesh" | "plymesh" => {

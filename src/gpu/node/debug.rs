@@ -179,6 +179,11 @@ fn shape_to_json(shape: &Shape) -> Value {
             "kind": "Disk",
             "params": params_to_json(&disk.params),
         }),
+        Shape::Cylinder(cylinder) => json!({
+            "type": "Shape",
+            "kind": "Cylinder",
+            "params": params_to_json(&cylinder.params),
+        }),
         Shape::TriangleMesh(mesh) => json!({
             "type": "Shape",
             "kind": "TriangleMesh",
