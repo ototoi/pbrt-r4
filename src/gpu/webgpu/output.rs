@@ -4,7 +4,7 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn from_flat(output: crate::gpu::ir::flat::Output) -> Self {
+    pub fn from_flat(output: crate::gpu::flat::Output) -> Self {
         Self {
             filename: output.filename,
         }

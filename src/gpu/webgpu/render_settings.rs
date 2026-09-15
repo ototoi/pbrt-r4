@@ -1,4 +1,4 @@
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RenderSettings {

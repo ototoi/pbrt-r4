@@ -7,7 +7,7 @@ use super::{
     UnsupportedTexturePolicy, Vertex, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
-use crate::gpu::ir::node::{
+use crate::gpu::node::{
     complete_triangle_attributes, remove_invalid_triangles, AreaLight as NodeAreaLight, Component,
     Integrator as NodeIntegrator, Light as NodeLight, Material as NodeMaterial, NodeRef,
     Sampler as NodeSampler, Shape, TextureComponent, TextureKind as NodeTextureKind,
@@ -132,7 +132,7 @@ fn push_spectrum_attribute(
 }
 
 fn register_texture_node(
-    node: &Arc<crate::gpu::ir::node::TextureNode>,
+    node: &Arc<crate::gpu::node::TextureNode>,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
     validate_texture_graph(node, 0, &mut HashSet::new())?;
@@ -150,7 +150,7 @@ fn register_texture_node(
         first_child: 0,
         child_count: 0,
         mipmap: None,
-        mapping: crate::gpu::ir::node::Transform::default().matrix,
+        mapping: crate::gpu::node::Transform::default().matrix,
         swrap_mode: 0,
         twrap_mode: 0,
         filter_mode: 0,
@@ -162,7 +162,7 @@ fn register_texture_node(
     let mut kind = 0;
     let mut implementation = String::new();
     let mut mipmap = None;
-    let mut mapping = crate::gpu::ir::node::Transform::default().matrix;
+    let mut mapping = crate::gpu::node::Transform::default().matrix;
     let mut swrap_mode = 0;
     let mut twrap_mode = 0;
     let mut filter_mode = 0;
@@ -182,10 +182,10 @@ fn register_texture_node(
                 .as_ref()
                 .and_then(|mipmap| mipmap.color_space)
                 .map(|space| match space {
-                    crate::gpu::ir::node::ColorSpaceId::Srgb => 0,
-                    crate::gpu::ir::node::ColorSpaceId::Aces2065 => 1,
-                    crate::gpu::ir::node::ColorSpaceId::DciP3 => 2,
-                    crate::gpu::ir::node::ColorSpaceId::Rec2020 => 3,
+                    crate::gpu::node::ColorSpaceId::Srgb => 0,
+                    crate::gpu::node::ColorSpaceId::Aces2065 => 1,
+                    crate::gpu::node::ColorSpaceId::DciP3 => 2,
+                    crate::gpu::node::ColorSpaceId::Rec2020 => 3,
                 })
                 .unwrap_or(0);
             let wrap = texture.params.get_one_string("wrap", "repeat");
@@ -259,12 +259,12 @@ fn register_texture_node(
                 .insert((texture.kind, node.name.clone()), index);
         }
         if let TextureComponent::Mapping(mapping_component) = component {
-            if let crate::gpu::ir::node::TextureMapping::Uv(uv) = mapping_component {
+            if let crate::gpu::node::TextureMapping::Uv(uv) = mapping_component {
                 mapping[0] = uv.uscale;
                 mapping[5] = uv.vscale;
                 mapping[3] = uv.udelta;
                 mapping[7] = uv.vdelta;
-            } else if let crate::gpu::ir::node::TextureMapping::PointTransform(transform) =
+            } else if let crate::gpu::node::TextureMapping::PointTransform(transform) =
                 mapping_component
             {
                 mapping = transform.matrix;
@@ -275,15 +275,15 @@ fn register_texture_node(
                 }
             } else {
                 match mapping_component {
-                    crate::gpu::ir::node::TextureMapping::Planar(transform) => {
+                    crate::gpu::node::TextureMapping::Planar(transform) => {
                         mapping = transform.matrix;
                         mapping_kind = 1;
                     }
-                    crate::gpu::ir::node::TextureMapping::Spherical(transform) => {
+                    crate::gpu::node::TextureMapping::Spherical(transform) => {
                         mapping = transform.matrix;
                         mapping_kind = 2;
                     }
-                    crate::gpu::ir::node::TextureMapping::Cylindrical(transform) => {
+                    crate::gpu::node::TextureMapping::Cylindrical(transform) => {
                         mapping = transform.matrix;
                         mapping_kind = 3;
                     }
@@ -363,7 +363,7 @@ fn register_texture_node(
 const MAX_TEXTURE_GRAPH_DEPTH: usize = 32;
 
 fn validate_texture_graph(
-    node: &Arc<crate::gpu::ir::node::TextureNode>,
+    node: &Arc<crate::gpu::node::TextureNode>,
     depth: usize,
     visiting: &mut HashSet<usize>,
 ) -> Result<(), PbrtError> {
@@ -913,7 +913,7 @@ struct FlatBuilder {
     texture_nodes: Vec<FlatTextureNode>,
     texture_child_indices: Vec<u32>,
     texture_nodes_by_ptr: HashMap<usize, u32>,
-    texture_nodes_by_name: HashMap<(crate::gpu::ir::node::TextureKind, String), u32>,
+    texture_nodes_by_name: HashMap<(crate::gpu::node::TextureKind, String), u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
     source_materials: Vec<Arc<NodeMaterial>>,

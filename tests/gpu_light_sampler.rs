@@ -1,4 +1,4 @@
-use pbrt_r4::gpu::ir::flat::{Light, LightKind, RenderSettings};
+use pbrt_r4::gpu::flat::{Light, LightKind, RenderSettings};
 use pbrt_r4::gpu::webgpu::light_sampler::{
     resolve_light_sampler, resolve_scene_light_sampler, LightSamplerKind,
 };

@@ -1,5 +1,5 @@
 use crate::displays::Display;
-use crate::gpu::ir::flat::Scene;
+use crate::gpu::flat::Scene;
 use crate::util::error::PbrtError;
 
 use std::sync::Arc;

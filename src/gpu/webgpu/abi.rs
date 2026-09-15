@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 pub const WORKGROUP_SIZE: u32 = 8;
@@ -240,7 +240,7 @@ pub struct FilmUniform {
     pub padding: u32,
 }
 
-pub fn film_uniform(film: &crate::gpu::ir::flat::Film) -> FilmUniform {
+pub fn film_uniform(film: &crate::gpu::flat::Film) -> FilmUniform {
     FilmUniform {
         sensor_response: [
             film.sensor_response[0],

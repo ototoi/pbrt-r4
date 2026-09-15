@@ -1,4 +1,4 @@
-use pbrt_r4::gpu::ir::flat::{
+use pbrt_r4::gpu::flat::{
     build_light_bounds, build_light_bvh, light_bvh_pmf, sample_light_bvh, Light, LightBVHNode,
     LightBoundInput, LightKind,
 };

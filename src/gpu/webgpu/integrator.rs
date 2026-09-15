@@ -6,7 +6,7 @@ use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
 use crate::displays::Display;
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 use crate::util::error::PbrtError;
 use crate::util::misc::ProgressReporter;
 

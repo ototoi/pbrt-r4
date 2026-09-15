@@ -1,4 +1,4 @@
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 use super::abi::{row_major_to_tlas_transform, validate_affine, Geometry, Instance, Vertex};

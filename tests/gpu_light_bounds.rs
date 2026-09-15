@@ -1,4 +1,4 @@
-use pbrt_r4::gpu::ir::flat::{
+use pbrt_r4::gpu::flat::{
     build_light_bounds, AreaTriangleInput, Bounds3, LightBoundInput, LightBounds,
 };
 

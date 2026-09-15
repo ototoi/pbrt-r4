@@ -1,7 +1,7 @@
 use crate::util::error::PbrtError;
 
 use super::abi::{AttributeRef, MaterialRecord};
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 
 pub struct MaterialTable {
     pub records: Vec<MaterialRecord>,
