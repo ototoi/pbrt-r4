@@ -39,6 +39,10 @@ pub struct ConeShape {
 pub struct ParaboloidShape {
     pub params: ParameterDictionary,
 }
+#[derive(Clone)]
+pub struct HeightFieldShape {
+    pub params: ParameterDictionary,
+}
 
 #[derive(Clone)]
 pub enum Shape {
@@ -48,6 +52,7 @@ pub enum Shape {
     Cylinder(Box<CylinderShape>),
     Cone(Box<ConeShape>),
     Paraboloid(Box<ParaboloidShape>),
+    HeightField(Box<HeightFieldShape>),
 }
 
 pub fn triangle_mesh_from_params(

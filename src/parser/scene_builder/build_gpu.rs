@@ -5,8 +5,8 @@ use crate::gpu::node::{
     loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
     AreaLightComponent, Camera, CameraComponent, Component, ConeShape, CylinderShape, DiskShape,
-    Film, FilmComponent, Filter, FilterComponent, Instance, InstanceComponent, Integrator,
-    IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
+    Film, FilmComponent, Filter, FilterComponent, HeightFieldShape, Instance, InstanceComponent,
+    Integrator, IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
     MediumComponent, Node, NodeRef, Output, OutputComponent, ParaboloidShape, Sampler,
     SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture,
     TextureComponent, TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform,
@@ -353,6 +353,9 @@ impl SceneBuilder {
                 params: shape.base.params.clone(),
             })),
             "paraboloid" => Shape::Paraboloid(Box::new(ParaboloidShape {
+                params: shape.base.params.clone(),
+            })),
+            "heightfield" => Shape::HeightField(Box::new(HeightFieldShape {
                 params: shape.base.params.clone(),
             })),
             "trianglemesh" | "plymesh" => {
