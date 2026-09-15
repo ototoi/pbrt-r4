@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use pbrt_r4::gpu::ir::flat::flatten_node;
-use pbrt_r4::gpu::ir::node::{
+use pbrt_r4::gpu::flat::flatten_node;
+use pbrt_r4::gpu::node::{
     node_ref_to_json, remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params,
     Camera, CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
     ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
