@@ -1,4 +1,4 @@
-use crate::gpu::ir::flat;
+use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 pub const LIGHT_BVH_NODE_WORDS: usize = 8;

@@ -1,7 +1,7 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
-use crate::gpu::ir::flat::flatten_node;
-use crate::gpu::ir::node::{
+use crate::gpu::flat::flatten_node;
+use crate::gpu::node::{
     loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
     AreaLightComponent, Camera, CameraComponent, Component, DiskShape, Film, FilmComponent, Filter,
@@ -515,17 +515,17 @@ fn texture_node(
                 let color_space = metadata
                     .color_space
                     .map(|space| match space.name {
-                        "ACES2065-1" => crate::gpu::ir::node::ColorSpaceId::Aces2065,
-                        "DCI-P3" => crate::gpu::ir::node::ColorSpaceId::DciP3,
-                        "Rec2020" => crate::gpu::ir::node::ColorSpaceId::Rec2020,
-                        _ => crate::gpu::ir::node::ColorSpaceId::Srgb,
+                        "ACES2065-1" => crate::gpu::node::ColorSpaceId::Aces2065,
+                        "DCI-P3" => crate::gpu::node::ColorSpaceId::DciP3,
+                        "Rec2020" => crate::gpu::node::ColorSpaceId::Rec2020,
+                        _ => crate::gpu::node::ColorSpaceId::Srgb,
                     })
-                    .unwrap_or(crate::gpu::ir::node::ColorSpaceId::Srgb);
+                    .unwrap_or(crate::gpu::node::ColorSpaceId::Srgb);
                 (raw, color_space)
             } else {
                 (
                     read_raw_image_with_encoding(&filename, encoding)?,
-                    crate::gpu::ir::node::ColorSpaceId::Srgb,
+                    crate::gpu::node::ColorSpaceId::Srgb,
                 )
             };
             let channels = raw.channels;
@@ -533,10 +533,10 @@ fn texture_node(
             let mut data = raw.data_f32();
             let mut levels = Vec::new();
             loop {
-                levels.push(crate::gpu::ir::node::MipmapLevel {
+                levels.push(crate::gpu::node::MipmapLevel {
                     resolution,
                     channels: channels as u32,
-                    data: crate::gpu::ir::node::MipmapLevelData::F32(data.clone()),
+                    data: crate::gpu::node::MipmapLevelData::F32(data.clone()),
                 });
                 if resolution == [1, 1] {
                     break;
@@ -568,7 +568,7 @@ fn texture_node(
                 resolution = next_resolution;
                 data = next;
             }
-            Some(Arc::new(crate::gpu::ir::node::Mipmap {
+            Some(Arc::new(crate::gpu::node::Mipmap {
                 levels,
                 // The samples themselves are already linear; retain the image
                 // primaries until the material spectrum boundary.

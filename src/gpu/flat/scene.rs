@@ -39,7 +39,7 @@ pub struct TextureNode {
     pub implementation: String,
     pub first_child: u32,
     pub child_count: u32,
-    pub mipmap: Option<std::sync::Arc<crate::gpu::ir::node::Mipmap>>,
+    pub mipmap: Option<std::sync::Arc<crate::gpu::node::Mipmap>>,
     pub mapping: [f32; 16],
     pub swrap_mode: u32,
     pub twrap_mode: u32,

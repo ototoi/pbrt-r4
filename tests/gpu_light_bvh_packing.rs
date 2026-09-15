@@ -1,6 +1,4 @@
-use pbrt_r4::gpu::ir::flat::{
-    build_light_bounds, build_light_bvh, Light, LightBoundInput, LightKind,
-};
+use pbrt_r4::gpu::flat::{build_light_bounds, build_light_bvh, Light, LightBoundInput, LightKind};
 use pbrt_r4::gpu::webgpu::light_bvh::pack_light_bvh;
 
 fn records(count: usize) -> Vec<Light> {
