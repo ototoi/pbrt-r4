@@ -328,6 +328,9 @@ impl SceneBuilder {
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
     ) -> Result<Option<NodeRef>, PbrtError> {
+        if shape.base.params.get_one_float("alpha", 1.0) <= 0.0 {
+            return Ok(None);
+        }
         let resolved_params;
         let params = if shape.base.name == "plymesh" {
             resolved_params = make_absolute_path(&shape.base.params, &self.seen_work_dirs);
