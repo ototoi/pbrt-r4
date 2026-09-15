@@ -6,11 +6,11 @@ use crate::gpu::node::{
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
     AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
     CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
-    Instance, InstanceComponent, Integrator, IntegratorComponent, Light, LightComponent, Material,
-    MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output, OutputComponent,
-    ParaboloidShape, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
-    SphereShape, Texture, TextureComponent, TextureKind as NodeTextureKind, TextureMapping,
-    TextureNode, Transform, UvMapping,
+    HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
+    OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene, SceneComponent, Shape,
+    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind as NodeTextureKind,
+    TextureMapping, TextureNode, Transform, UvMapping,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
@@ -356,6 +356,9 @@ impl SceneBuilder {
                 params: shape.base.params.clone(),
             })),
             "heightfield" => Shape::HeightField(Box::new(HeightFieldShape {
+                params: shape.base.params.clone(),
+            })),
+            "hyperboloid" => Shape::Hyperboloid(Box::new(HyperboloidShape {
                 params: shape.base.params.clone(),
             })),
             "bilinearmesh" => Shape::BilinearMesh(Box::new(BilinearMeshShape {

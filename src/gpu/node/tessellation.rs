@@ -1,8 +1,8 @@
 use super::component::Component;
 use super::node::Node;
 use super::shape::{
-    BilinearMeshShape, ConeShape, CylinderShape, DiskShape, HeightFieldShape, ParaboloidShape,
-    Shape, SphereShape, TriangleMeshShape,
+    BilinearMeshShape, ConeShape, CylinderShape, DiskShape, HeightFieldShape, HyperboloidShape,
+    ParaboloidShape, Shape, SphereShape, TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
@@ -27,6 +27,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(heightfield_to_mesh(shape)?));
             } else if let Shape::BilinearMesh(shape) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(bilinear_to_mesh(shape)?));
+            } else if let Shape::Hyperboloid(shape) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(hyperboloid_to_mesh(shape)?));
             }
         }
     }
@@ -156,6 +158,58 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
         normals: None,
         tangents: None,
         uvs: None,
+    })
+}
+
+fn hyperboloid_to_mesh(shape: &HyperboloidShape) -> Result<TriangleMeshShape, PbrtError> {
+    let p = &shape.params;
+    let a = p.get_points("p1");
+    let b = p.get_points("p2");
+    if a.len() != 3 || b.len() != 3 {
+        return Err(PbrtError::error("Hyperboloid requires p1 and p2."));
+    }
+    let zmin = a[2].min(b[2]);
+    let zmax = a[2].max(b[2]);
+    let radius = ((a[0] * a[0] + a[1] * a[1]).max(b[0] * b[0] + b[1] * b[1])).sqrt();
+    let phi = p.get_one_float("phimax", 360.0).clamp(0.0, 360.0);
+    if ![zmin, zmax, radius, phi].iter().all(|v| v.is_finite())
+        || zmax <= zmin
+        || radius <= 0.0
+        || phi <= 0.0
+    {
+        return Err(PbrtError::error(
+            "Hyperboloid has invalid tessellation parameters.",
+        ));
+    }
+    let us = p.get_one_int("udiv", 64).max(4) as usize;
+    let vs = p.get_one_int("vdiv", 16).max(1) as usize;
+    let mut positions = Vec::new();
+    let mut uvs = Vec::new();
+    for j in 0..=vs {
+        let v = j as f32 / vs as f32;
+        let z = zmin + (zmax - zmin) * v;
+        for i in 0..=us {
+            let u = i as f32 / us as f32;
+            let q = (phi as f32).to_radians() * u;
+            let (s, c) = q.sin_cos();
+            positions.push(Vec3f([radius as f32 * c, radius as f32 * s, z as f32]));
+            uvs.push(Vec2f([u, v]));
+        }
+    }
+    let mut indices = Vec::new();
+    for j in 0..vs {
+        for i in 0..us {
+            let x = (j * (us + 1) + i) as u32;
+            let y = x + (us + 1) as u32;
+            indices.extend_from_slice(&[x, x + 1, y + 1, x, y + 1, y]);
+        }
+    }
+    Ok(TriangleMeshShape {
+        positions,
+        indices,
+        normals: None,
+        tangents: None,
+        uvs: Some(uvs),
     })
 }
 
