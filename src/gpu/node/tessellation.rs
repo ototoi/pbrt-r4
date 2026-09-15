@@ -34,6 +34,16 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
             }
         }
     }
+    for component in &node.components {
+        if let Component::Instance(instance) = component {
+            let mut target = instance
+                .instance
+                .target
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            tessellate_shapes(&mut target)?;
+        }
+    }
     for child in &node.children {
         let mut child = child
             .write()
@@ -46,8 +56,11 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
 fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, PbrtError> {
     let p = &shape.params;
     let radius = p.get_one_float("radius", 1.0);
-    let zmin = p.get_one_float("zmin", 0.0);
-    let zmax = p.get_one_float("zmax", 1.0);
+    let mut zmin = p.get_one_float("zmin", 0.0);
+    let mut zmax = p.get_one_float("zmax", 1.0);
+    if zmin > zmax {
+        std::mem::swap(&mut zmin, &mut zmax);
+    }
     let phimax = p.get_one_float("phimax", 360.0).clamp(0.0, 360.0);
     if ![radius, zmin, zmax, phimax].iter().all(|v| v.is_finite())
         || radius <= 0.0
@@ -73,7 +86,11 @@ fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, Pbrt
             let phi = (phimax as f32).to_radians() * u;
             let (s, c) = phi.sin_cos();
             positions.push(Vec3f([r as f32 * c, r as f32 * s, z as f32]));
-            normals.push(Vec3f([c, s, 0.0]));
+            let nx = r as f32 * c;
+            let ny = r as f32 * s;
+            let nz = -(radius * radius / zmax) as f32;
+            let inv = 1.0 / (nx * nx + ny * ny + nz * nz).sqrt().max(f32::MIN_POSITIVE);
+            normals.push(Vec3f([nx * inv, ny * inv, nz * inv]));
             tangents.push(Vec3f([-s, c, 0.0]));
             uvs.push(Vec2f([u, v]));
         }
@@ -150,9 +167,20 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
         .map(|v| Vec3f([v[0] as f32, v[1] as f32, v[2] as f32]))
         .collect::<Vec<_>>();
     let mut indices = Vec::new();
-    for q in 0..positions.len() / 4 {
-        let a = (q * 4) as u32;
-        indices.extend_from_slice(&[a, a + 1, a + 2, a, a + 2, a + 3]);
+    let raw_indices = p.get_ints("indices");
+    let quads: Vec<u32> = if raw_indices.is_empty() {
+        (0..positions.len() as u32).collect()
+    } else {
+        if raw_indices.len() % 4 != 0 {
+            return Err(PbrtError::error(
+                "BilinearMesh indices must contain groups of four.",
+            ));
+        }
+        raw_indices.into_iter().map(|i| i as u32).collect()
+    };
+    for quad in quads.chunks_exact(4) {
+        let [a, b, c, d] = [quad[0], quad[1], quad[2], quad[3]];
+        indices.extend_from_slice(&[a, b, d, a, d, c]);
     }
     Ok(TriangleMeshShape {
         positions,
@@ -190,11 +218,14 @@ fn hyperboloid_to_mesh(shape: &HyperboloidShape) -> Result<TriangleMeshShape, Pb
     for j in 0..=vs {
         let v = j as f32 / vs as f32;
         let z = zmin + (zmax - zmin) * v;
+        let base_x = a[0] + (b[0] - a[0]) * v;
+        let base_y = a[1] + (b[1] - a[1]) * v;
+        let row_radius = (base_x * base_x + base_y * base_y).sqrt() as f32;
         for i in 0..=us {
             let u = i as f32 / us as f32;
             let q = (phi as f32).to_radians() * u;
             let (s, c) = q.sin_cos();
-            positions.push(Vec3f([radius as f32 * c, radius as f32 * s, z as f32]));
+            positions.push(Vec3f([row_radius * c, row_radius * s, z as f32]));
             uvs.push(Vec2f([u, v]));
         }
     }
@@ -234,12 +265,12 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
             .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
             .collect(),
     );
-    let tangents = Some(
+    let tangents = (mesh.s.len() == mesh.p.len()).then(|| {
         mesh.s
             .iter()
             .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
-            .collect(),
-    );
+            .collect()
+    });
     let uvs = Some(
         mesh.uv
             .iter()
@@ -258,8 +289,11 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
 fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtError> {
     let params = &cylinder.params;
     let radius = params.get_one_float("radius", 1.0);
-    let zmin = params.get_one_float("zmin", -1.0);
-    let zmax = params.get_one_float("zmax", 1.0);
+    let mut zmin = params.get_one_float("zmin", -1.0);
+    let mut zmax = params.get_one_float("zmax", 1.0);
+    if zmin > zmax {
+        std::mem::swap(&mut zmin, &mut zmax);
+    }
     let phimax = params.get_one_float("phimax", 360.0).clamp(0.0, 360.0);
     if ![radius, zmin, zmax, phimax].iter().all(|v| v.is_finite())
         || radius <= 0.0
@@ -289,7 +323,7 @@ fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtE
     let mut indices = Vec::with_capacity(segments * 6);
     for j in 0..segments {
         let i = (j * 2) as u32;
-        indices.extend_from_slice(&[i, i + 1, i + 3, i, i + 3, i + 2]);
+        indices.extend_from_slice(&[i, i + 3, i + 1, i, i + 2, i + 3]);
     }
     Ok(TriangleMeshShape {
         positions,
@@ -337,7 +371,7 @@ fn cone_to_mesh(cone: &ConeShape) -> Result<TriangleMeshShape, PbrtError> {
     let mut indices = Vec::with_capacity(segments * 6);
     for j in 0..segments {
         let i = (j * 2) as u32;
-        indices.extend_from_slice(&[i, i + 1, i + 3, i, i + 3, i + 2]);
+        indices.extend_from_slice(&[i, i + 3, i + 1, i, i + 2, i + 3]);
     }
     Ok(TriangleMeshShape {
         positions,
