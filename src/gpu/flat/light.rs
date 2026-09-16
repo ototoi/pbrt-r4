@@ -21,6 +21,7 @@ pub struct Light {
 pub enum LightGeometryKind {
     Position,
     Instance,
+    Direction,
 }
 
 #[derive(Clone, Debug, PartialEq)]

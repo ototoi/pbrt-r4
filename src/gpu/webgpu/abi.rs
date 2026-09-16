@@ -54,7 +54,9 @@ pub struct LightTableUniform {
     pub light_bvh_node_count: u32,
     pub light_leaf_offset: u32,
     pub light_leaf_count: u32,
-    pub reserved: [u32; 4],
+    pub finite_light_count: u32,
+    pub infinite_light_count: u32,
+    pub reserved: [u32; 2],
 }
 
 #[repr(C)]
@@ -212,7 +214,6 @@ pub struct LightSamplingModel {
     pub distribution_count: u32,
     pub total_area: f32,
     pub flags: u32,
-    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -402,7 +403,8 @@ pub fn material_table_uniform(material_count: usize) -> Result<MaterialTableUnif
 }
 
 pub fn light_table_uniform(
-    light_count: usize,
+    finite_light_count: usize,
+    infinite_light_count: usize,
     light_record_offset_words: usize,
 ) -> Result<LightTableUniform, PbrtError> {
     let to_u32 = |value: usize, label: &str| {
@@ -411,14 +413,21 @@ pub fn light_table_uniform(
     };
     Ok(LightTableUniform {
         light_record_offset_words: to_u32(light_record_offset_words, "light-record offset")?,
-        light_count: to_u32(light_count, "light count")?,
+        light_count: to_u32(
+            finite_light_count
+                .checked_add(infinite_light_count)
+                .ok_or_else(|| PbrtError::error("WebGPU light count overflow."))?,
+            "light count",
+        )?,
         light_sampler_kind: LIGHT_SAMPLER_KIND_UNIFORM,
         light_sampler_data_offset: INVALID_INDEX,
         light_bvh_node_offset: INVALID_INDEX,
         light_bvh_node_count: 0,
         light_leaf_offset: INVALID_INDEX,
         light_leaf_count: 0,
-        reserved: [0; 4],
+        finite_light_count: to_u32(finite_light_count, "finite light count")?,
+        infinite_light_count: to_u32(infinite_light_count, "infinite light count")?,
+        reserved: [0; 2],
     })
 }
 

@@ -306,6 +306,7 @@ impl Scene {
                 geometry_kind: match model.geometry_kind {
                     flat::LightGeometryKind::Position => 0,
                     flat::LightGeometryKind::Instance => 1,
+                    flat::LightGeometryKind::Direction => 2,
                 },
                 geometry_index: model.geometry_index,
                 direction_index: model.direction_index,
@@ -313,7 +314,6 @@ impl Scene {
                 distribution_count: model.distribution_count,
                 total_area: model.total_area,
                 flags: model.flags,
-                reserved: 0,
             })
             .collect::<Vec<_>>();
         let light_records = flat
@@ -543,17 +543,11 @@ impl Scene {
             usage: wgpu::BufferUsages::STORAGE,
         });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
-        let light_sampler_kind = resolve_scene_light_sampler_count(
-            &flat.render_settings,
-            flat.light_bvh.bounded_handles.len(),
-        )?;
-        let light_sampler_kind = if flat.infinite_lights.is_empty() {
-            light_sampler_kind
-        } else {
-            LightSamplerKind::Uniform
-        };
+        let light_sampler_kind =
+            resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
         let mut material_table = material_table_uniform(materials.len())?;
-        let mut light_table = light_table_uniform(light_records.len(), 0)?;
+        let mut light_table =
+            light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
