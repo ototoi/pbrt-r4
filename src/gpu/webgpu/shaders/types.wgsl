@@ -200,6 +200,9 @@ struct LightSamplingModel {
     distribution_count: u32,
     total_area: f32,
     flags: u32,
+    world_to_light0: vec4<f32>,
+    world_to_light1: vec4<f32>,
+    world_to_light2: vec4<f32>,
 };
 
 struct TriangleDistributionEntry {

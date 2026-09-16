@@ -118,6 +118,15 @@ fn light_sampling_uses_record_models_and_separate_infinite_probability() {
 }
 
 #[test]
+fn hard_edged_spot_light_uses_a_defined_step() {
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(evaluate.contains("fn spot_falloff("));
+    assert!(evaluate.contains("if (falloff_start == falloff_end)"));
+    assert!(evaluate.contains("dot(model.world_to_light0.xyz, world_direction)"));
+    assert!(evaluate.contains("spot_falloff(light_index, spot_w)"));
+}
+
+#[test]
 fn composed_stage_contains_only_referenced_resources() {
     let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
     assert!(source.contains("var<uniform> camera: CameraUniform;"));

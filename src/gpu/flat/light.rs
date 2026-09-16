@@ -34,6 +34,7 @@ pub struct LightSamplingModel {
     pub distribution_count: u32,
     pub total_area: f32,
     pub flags: u32,
+    pub world_to_light: [[f32; 4]; 3],
 }
 
 #[derive(Clone, Debug, PartialEq)]
