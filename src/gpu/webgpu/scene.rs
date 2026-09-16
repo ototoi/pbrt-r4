@@ -263,8 +263,12 @@ impl Scene {
         let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
         let mut attribute_refs = material_table.attributes;
-        let light_attribute_offsets = flat
+        let all_lights = flat
             .lights
+            .iter()
+            .chain(flat.infinite_lights.iter())
+            .collect::<Vec<_>>();
+        let light_attribute_offsets = all_lights
             .iter()
             .scan(attribute_refs.len() as u32, |offset, light| {
                 let current = *offset;
@@ -273,7 +277,7 @@ impl Scene {
             })
             .collect::<Vec<_>>();
         attribute_refs.extend(
-            flat.lights
+            all_lights
                 .iter()
                 .flat_map(|light| light.attributes.iter())
                 .map(|attribute| AttributeRef {
@@ -316,6 +320,12 @@ impl Scene {
             .lights
             .iter()
             .enumerate()
+            .chain(
+                flat.infinite_lights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (flat.lights.len() + i, r)),
+            )
             .map(|(light_index, record)| LightRecord {
                 kind: match record.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
@@ -537,6 +547,11 @@ impl Scene {
             &flat.render_settings,
             flat.light_bvh.bounded_handles.len(),
         )?;
+        let light_sampler_kind = if flat.infinite_lights.is_empty() {
+            light_sampler_kind
+        } else {
+            LightSamplerKind::Uniform
+        };
         let mut material_table = material_table_uniform(materials.len())?;
         let mut light_table = light_table_uniform(light_records.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
