@@ -231,6 +231,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (light_kind == LIGHT_KIND_POINT) {
         light_position = load_point_position(light_index);
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+    } else if (light_kind == LIGHT_KIND_SPOT) {
+        light_position = load_point_position(light_index);
+        let spot_direction = normalize(load_light_direction(light_index));
+        let spot_w = normalize(light_sample_origin - light_position);
+        let falloff = smoothstep(load_light_scalar(light_index, 3u), load_light_scalar(light_index, 2u), dot(spot_direction, spot_w));
+        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index) * falloff;
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
         let distribution_count = load_area_distribution_count(light_payload);
@@ -289,7 +295,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (cosine == 0.0) {
         return;
     }
-    if (light_kind == LIGHT_KIND_POINT) {
+    if (light_kind == LIGHT_KIND_POINT || light_kind == LIGHT_KIND_SPOT) {
         light_radiance = light_radiance / distance_squared;
     }
     var bsdf_pdf = cosine / PI;

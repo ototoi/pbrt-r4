@@ -304,6 +304,7 @@ impl Scene {
                     flat::LightGeometryKind::Instance => 1,
                 },
                 geometry_index: model.geometry_index,
+                direction_index: model.direction_index,
                 distribution_offset_words: model.distribution_offset,
                 distribution_count: model.distribution_count,
                 total_area: model.total_area,

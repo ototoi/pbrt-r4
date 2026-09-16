@@ -195,6 +195,7 @@ struct LightSamplingModel {
     kind: u32,
     geometry_kind: u32,
     geometry_index: u32,
+    direction_index: u32,
     distribution_offset_words: u32,
     distribution_count: u32,
     total_area: f32,
