@@ -88,8 +88,8 @@ struct LightTableUniform {
     light_bvh_node_count: u32,
     light_leaf_offset: u32,
     light_leaf_count: u32,
-    _reserved0: u32,
-    _reserved1: u32,
+    finite_light_count: u32,
+    infinite_light_count: u32,
     _reserved2: u32,
     _reserved3: u32,
 };
@@ -200,7 +200,6 @@ struct LightSamplingModel {
     distribution_count: u32,
     total_area: f32,
     flags: u32,
-    reserved: u32,
 };
 
 struct TriangleDistributionEntry {

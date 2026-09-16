@@ -1221,7 +1221,7 @@ fn flatten_node_ref(
                 })?;
             builder.light_sampling_models.push(LightSamplingModel {
                 kind: LightKind::Distant,
-                geometry_kind: LightGeometryKind::Position,
+                geometry_kind: LightGeometryKind::Direction,
                 geometry_index: direction_index,
                 direction_index,
                 distribution_offset: 0,
@@ -1229,7 +1229,7 @@ fn flatten_node_ref(
                 total_area: 0.0,
                 flags: 0,
             });
-            let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
+            let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
             let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
             builder.infinite_lights.push(Light {
                 kind: LightKind::Distant,
@@ -1277,8 +1277,13 @@ fn flatten_node_ref(
                 u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
                     PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
                 })?;
+            let kind = if light.name == "spot" {
+                LightKind::Spot
+            } else {
+                LightKind::Point
+            };
             builder.light_sampling_models.push(LightSamplingModel {
-                kind: LightKind::Point,
+                kind,
                 geometry_kind: LightGeometryKind::Position,
                 geometry_index: position_index,
                 direction_index,
@@ -1296,15 +1301,18 @@ fn flatten_node_ref(
             });
             let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
             let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
-            let start_attr = push_scalar_attribute(builder, "cos_falloff_start", cos_start)?;
-            let end_attr = push_scalar_attribute(builder, "cos_falloff_end", cos_end)?;
+            let mut attributes = vec![i_attr, scale_attr];
+            if kind == LightKind::Spot {
+                attributes.push(push_scalar_attribute(
+                    builder,
+                    "cos_falloff_start",
+                    cos_start,
+                )?);
+                attributes.push(push_scalar_attribute(builder, "cos_falloff_end", cos_end)?);
+            }
             builder.lights.push(Light {
-                kind: if light.name == "spot" {
-                    LightKind::Spot
-                } else {
-                    LightKind::Point
-                },
-                attributes: vec![i_attr, scale_attr, start_attr, end_attr],
+                kind,
+                attributes,
                 sampling_model,
             });
         }
@@ -1617,16 +1625,16 @@ fn spot_light(
     if photometric > 0.0 {
         scale /= photometric;
     }
-    let cone = light
-        .params
-        .get_one_float("coneangle", 30.0)
-        .clamp(0.0, 180.0);
-    let delta = light
-        .params
-        .get_one_float("conedeltaangle", 5.0)
-        .clamp(0.0, cone);
+    let cone = light.params.get_one_float("coneangle", 30.0);
+    let delta = light.params.get_one_float("conedelta", 5.0);
+    let delta = light.params.get_one_float("conedeltaangle", delta);
     let cos_end = (cone as f32).to_radians().cos();
     let cos_start = ((cone - delta) as f32).to_radians().cos();
+    let power = light.params.get_one_float("power", -1.0);
+    if power > 0.0 {
+        let k_e = 2.0 * std::f32::consts::PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
+        scale *= power / k_e;
+    }
     if !position
         .iter()
         .chain(direction.iter())
@@ -1657,6 +1665,12 @@ fn distant_light(
 ) -> Result<([f32; 3], Spectrum, f32), PbrtError> {
     let from = light.params.get_one_point("from", &[0.0, 0.0, 0.0]);
     let to = light.params.get_one_point("to", &[0.0, 0.0, 1.0]);
+    if from.len() != 3 || to.len() != 3 || !from.iter().chain(to.iter()).all(|v| v.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "Distant light on node \"{}\" has invalid from/to parameters.",
+            node_name
+        )));
+    }
     let transform = multiply_transform(parent_transform, &light.transform.matrix);
     let raw = transform_vector(
         &transform,

@@ -73,6 +73,23 @@ fn add_camera_and_film(root: &mut Node, camera_params: pbrt_r4::paramdict::Param
     root.add_child(Arc::new(RwLock::new(camera)));
 }
 
+fn light_node(
+    name: &str,
+    light_kind: &str,
+    params: pbrt_r4::paramdict::ParameterDictionary,
+) -> Arc<RwLock<Node>> {
+    let mut node = Node::new(name);
+    node.add_component(Component::Light(LightComponent {
+        light: NodeLight {
+            name: light_kind.to_string(),
+            params,
+            transform: Transform::default(),
+            medium: String::new(),
+        },
+    }));
+    Arc::new(RwLock::new(node))
+}
+
 fn instance_node(name: &str, target: &Arc<RwLock<Node>>, offset: [f32; 3]) -> Arc<RwLock<Node>> {
     let mut node = Node::new(name);
     let mut transform = Transform::default();
@@ -381,10 +398,68 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     assert_eq!(scene.render_settings.seed, 13);
     assert_eq!(scene.render_settings.light_sampler, "uniform");
     assert_eq!(scene.light_positions, vec![[1.0, 2.0, 3.0]]);
+    assert_eq!(scene.lights[0].attributes.len(), 2);
     let scale = &scene.lights[0].attributes[1];
     let intensity = Spectrum::from_rgb(&[2.0, 2.0, 2.0], SpectrumType::Illuminant);
     let expected = 1.0 / spectrum_to_photometric(&intensity);
     assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
+}
+
+#[test]
+fn flatten_node_separates_spot_and_distant_light_sampling_models() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut distant_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    distant_params.add_point("point from", &[0.0, 0.0, 2.0]);
+    distant_params.add_point("point to", &[0.0, 0.0, 0.0]);
+    root.add_child(light_node("distant", "distant", distant_params));
+
+    let mut spot_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    spot_params.add_point("point from", &[1.0, 2.0, 3.0]);
+    spot_params.add_point("point to", &[1.0, 2.0, 4.0]);
+    spot_params.add_float("float coneangle", 40.0);
+    spot_params.add_float("float conedelta", 10.0);
+    spot_params.add_float("float power", 10.0);
+    root.add_child(light_node("spot", "spot", spot_params));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.lights.len(), 1);
+    assert_eq!(scene.infinite_lights.len(), 1);
+    assert_eq!(scene.lights[0].kind, pbrt_r4::gpu::flat::LightKind::Spot);
+    assert_eq!(scene.lights[0].attributes.len(), 4);
+    assert_eq!(
+        scene.infinite_lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::Distant
+    );
+    assert_eq!(scene.light_bvh.bounded_handles, vec![0]);
+
+    let spot_model = &scene.light_sampling_models[scene.lights[0].sampling_model as usize];
+    assert_eq!(spot_model.kind, pbrt_r4::gpu::flat::LightKind::Spot);
+    assert_eq!(
+        spot_model.geometry_kind,
+        pbrt_r4::gpu::flat::LightGeometryKind::Position
+    );
+    let distant_model =
+        &scene.light_sampling_models[scene.infinite_lights[0].sampling_model as usize];
+    assert_eq!(distant_model.kind, pbrt_r4::gpu::flat::LightKind::Distant);
+    assert_eq!(
+        distant_model.geometry_kind,
+        pbrt_r4::gpu::flat::LightGeometryKind::Direction
+    );
+    assert_ne!(scene.lights[0].sampling_model, 0);
+    assert_eq!(scene.infinite_lights[0].sampling_model, 0);
+
+    let cos_start = scene.scalar_attributes[scene.lights[0].attributes[2].index as usize];
+    let cos_end = scene.scalar_attributes[scene.lights[0].attributes[3].index as usize];
+    assert!((cos_start - 30.0_f32.to_radians().cos()).abs() < 1e-6);
+    assert!((cos_end - 40.0_f32.to_radians().cos()).abs() < 1e-6);
+    let scale = scene.scalar_attributes[scene.lights[0].attributes[1].index as usize];
+    let intensity = Spectrum::from(1.0);
+    let k_e = 2.0 * std::f32::consts::PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
+    let expected_scale = 10.0 / (spectrum_to_photometric(&intensity) * k_e);
+    assert!((scale - expected_scale).abs() < 1e-6);
 }
 
 #[test]
