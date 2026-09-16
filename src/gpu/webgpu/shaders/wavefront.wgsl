@@ -569,7 +569,7 @@ fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
                 if (factor.operation == 1u) {
                     scale *= factor.constant_value.x;
                 } else {
-                    return 1.0;
+                    return vec3<f32>(1.0);
                 }
             } else {
                 scale *= node.constant_value.x;
