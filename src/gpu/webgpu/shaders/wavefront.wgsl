@@ -551,7 +551,7 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
 }
 fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     var current = texture_index;
-    var scale = 1.0;
+    var scale = vec3<f32>(1.0);
     for (var depth = 0u; depth < 32u; depth++) {
         if (current >= arrayLength(&texture_nodes)) {
             set_render_error();
@@ -567,12 +567,12 @@ fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
                 && node.first_child + 1u < arrayLength(&texture_child_indices)) {
                 let factor = texture_nodes[texture_child_indices[node.first_child + 1u]];
                 if (factor.operation == 1u) {
-                    scale *= factor.constant_value.x;
+                    scale *= factor.constant_value.xyz;
                 } else {
                     return vec3<f32>(1.0);
                 }
             } else {
-                scale *= node.constant_value.x;
+                scale *= vec3<f32>(node.constant_value.x);
             }
             current = texture_child_indices[node.first_child];
         } else {
