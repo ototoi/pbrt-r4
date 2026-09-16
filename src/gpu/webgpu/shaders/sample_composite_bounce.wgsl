@@ -152,7 +152,7 @@ fn sample_composite_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
             surface.position, surface.position_error, surface.geometric_normal,
             vec4<f32>(normal, 0.0), ray.pixel_index, ray.depth + 1u,
             ray.inv_w_u, ray.inv_w_u / max(result_pdf, 1e-7), result_pdf,
-            0u, 0u, 0u,
+            result.specular, 0u, 0u,
         );
         let next_index = atomicAdd(&queue_counters.next.count, 1u);
         if (next_index >= queue_counters.next.capacity) {
