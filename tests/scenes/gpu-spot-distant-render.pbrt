@@ -1,0 +1,10 @@
+Integrator "path" "integer maxdepth" [ 4 ]
+Sampler "independent" "integer pixelsamples" [ 16 ]
+Film "rgb" "string filename" [ "gpu-spot-distant-render.exr" ] "integer xresolution" [ 256 ] "integer yresolution" [ 256 ]
+LookAt 0 0 5  0 0 0  0 1 0
+Camera "perspective" "float fov" [ 40 ]
+WorldBegin
+LightSource "spot" "rgb I" [ 20 20 20 ] "point3 from" [ 2 2 3 ] "point3 to" [ 0 0 0 ] "float coneangle" [ 45 ] "float conedeltaangle" [ 5 ]
+LightSource "distant" "rgb L" [ 1 1 1 ] "point3 from" [ -1 2 2 ] "point3 to" [ 0 0 0 ]
+Material "diffuse" "rgb reflectance" [ 0.7 0.7 0.7 ]
+Shape "sphere" "float radius" [ 1 ]
