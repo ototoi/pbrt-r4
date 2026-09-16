@@ -164,9 +164,9 @@ struct RayWorkItem {
     inv_w_u: f32,
     inv_w_l: f32,
     prev_pdf: f32,
+    prev_specular: u32,
     _padding0: u32,
     _padding1: u32,
-    _padding2: u32,
 };
 
 struct SurfaceWorkItem {
