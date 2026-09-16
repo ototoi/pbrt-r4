@@ -1513,7 +1513,22 @@ impl RayIntegrator for BDPTIntegrator {
     }
 }
 
-crate::impl_image_tile_integrator_via_ray!(BDPTIntegrator);
+impl ImageTileIntegrator for BDPTIntegrator {
+    fn splat_scale(&self) -> Option<Float> {
+        let samples_per_pixel = self.base.sampler.read().unwrap().samples_per_pixel();
+        Some(compute_bdpt_splat_scale(samples_per_pixel))
+    }
+
+    fn evaluate_pixel_sample(
+        &self,
+        p_pixel: Point2i,
+        sample_index: i32,
+        sampler: &mut Sampler,
+        scratch_buffer: &mut MemoryArena,
+    ) -> Option<PixelSample> {
+        evaluate_pixel_sample_ray_default(self, p_pixel, sample_index, sampler, scratch_buffer)
+    }
+}
 
 unsafe impl Sync for BDPTIntegrator {}
 
@@ -1564,6 +1579,14 @@ pub fn compute_light_tracing_splat_scale(film: &Film) -> Float {
     let pixel_area = pixel_bounds.area() as Float;
     if pixel_area > 0.0 {
         full_area / pixel_area
+    } else {
+        1.0
+    }
+}
+
+pub fn compute_bdpt_splat_scale(samples_per_pixel: u32) -> Float {
+    if samples_per_pixel > 0 {
+        1.0 / samples_per_pixel as Float
     } else {
         1.0
     }
