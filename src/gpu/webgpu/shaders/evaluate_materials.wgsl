@@ -239,7 +239,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index) * falloff;
     } else if (light_kind == LIGHT_KIND_DISTANT) {
         let distant_wi = normalize(load_light_direction(light_index));
-        light_position = light_sample_origin + distant_wi * 1e20;
+        // Use a large finite segment for the visibility ray. An f32 value of
+        // 1e20 overflows when squared and produces an invalid shadow target.
+        light_position = light_sample_origin + distant_wi * 1e4;
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
