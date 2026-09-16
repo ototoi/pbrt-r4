@@ -118,6 +118,20 @@ fn light_sampling_uses_record_models_and_separate_infinite_probability() {
 }
 
 #[test]
+fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(evaluate.contains("fn sample_uniform_infinite_direction("));
+    assert!(evaluate.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
+    assert!(evaluate.contains("is_infinite_light_kind(light_kind)"));
+
+    let escaped = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
+    ));
+    assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
+    assert!(escaped.contains("ray.throughput * radiance"));
+}
+
+#[test]
 fn hard_edged_spot_light_uses_a_defined_step() {
     let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
     assert!(evaluate.contains("fn spot_falloff("));

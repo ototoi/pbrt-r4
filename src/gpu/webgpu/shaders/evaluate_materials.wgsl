@@ -28,6 +28,19 @@ fn spot_falloff(light_index: u32, world_direction: vec3<f32>) -> f32 {
     return smoothstep(falloff_end, falloff_start, cosine);
 }
 
+fn is_infinite_light_kind(light_kind: u32) -> bool {
+    return light_kind == LIGHT_KIND_UNIFORM_INFINITE
+        || light_kind == LIGHT_KIND_IMAGE_INFINITE
+        || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE;
+}
+
+fn sample_uniform_infinite_direction(u: vec2<f32>) -> vec3<f32> {
+    let z = 1.0 - 2.0 * min(u.x, 0.99999994);
+    let phi = 2.0 * PI * u.y;
+    let radial = sqrt(max(0.0, 1.0 - z * z));
+    return vec3<f32>(radial * cos(phi), radial * sin(phi), z);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
@@ -271,6 +284,10 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else if (light_kind == LIGHT_KIND_DISTANT) {
         wi = normalize(load_light_direction(light_index));
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+    } else if (is_infinite_light_kind(light_kind)) {
+        wi = sample_uniform_infinite_direction(samples.direct.yz);
+        sampled_light_pdf = sampled_light_pdf / (4.0 * PI);
+        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
         let distribution_count = load_area_distribution_count(light_payload);
@@ -307,7 +324,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else {
         return;
     }
-    if (light_kind != LIGHT_KIND_DISTANT) {
+    if (light_kind != LIGHT_KIND_DISTANT && !is_infinite_light_kind(light_kind)) {
         let to_light = light_position - light_sample_origin;
         distance_squared = dot(to_light, to_light);
         if (distance_squared <= 0.0) {
@@ -387,7 +404,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let shadow_vector = shadow_target - shadow_origin;
         shadow_distance = length(shadow_vector);
         shadow_direction = shadow_vector / shadow_distance;
-    } else if (light_kind != LIGHT_KIND_DISTANT) {
+    } else if (light_kind != LIGHT_KIND_DISTANT && !is_infinite_light_kind(light_kind)) {
         let shadow_vector = light_position - shadow_origin;
         shadow_distance = length(shadow_vector);
         shadow_direction = shadow_vector / shadow_distance;

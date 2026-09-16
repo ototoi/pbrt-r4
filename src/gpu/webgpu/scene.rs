@@ -10,7 +10,8 @@ use super::abi::{
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
     LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord,
     TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_DISTANT, LIGHT_KIND_POINT, LIGHT_KIND_SPOT,
+    LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
+    LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -302,6 +303,9 @@ impl Scene {
                     flat::LightKind::Spot => LIGHT_KIND_SPOT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
                     flat::LightKind::Distant => LIGHT_KIND_DISTANT,
+                    flat::LightKind::UniformInfinite => LIGHT_KIND_UNIFORM_INFINITE,
+                    flat::LightKind::ImageInfinite => LIGHT_KIND_IMAGE_INFINITE,
+                    flat::LightKind::PortalImageInfinite => LIGHT_KIND_PORTAL_IMAGE_INFINITE,
                 },
                 geometry_kind: match model.geometry_kind {
                     flat::LightGeometryKind::Position => 0,
@@ -333,6 +337,9 @@ impl Scene {
                     flat::LightKind::Spot => LIGHT_KIND_SPOT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
                     flat::LightKind::Distant => LIGHT_KIND_DISTANT,
+                    flat::LightKind::UniformInfinite => LIGHT_KIND_UNIFORM_INFINITE,
+                    flat::LightKind::ImageInfinite => LIGHT_KIND_IMAGE_INFINITE,
+                    flat::LightKind::PortalImageInfinite => LIGHT_KIND_PORTAL_IMAGE_INFINITE,
                 },
                 attribute_offset: light_attribute_offsets[light_index],
                 attribute_count: u32::try_from(record.attributes.len()).unwrap_or(0),
