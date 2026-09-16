@@ -1,6 +1,8 @@
 use pbrt_r4::base::film::Film;
 use pbrt_r4::base::filter::Filter;
-use pbrt_r4::cpu::integrators::bdpt::compute_light_tracing_splat_scale;
+use pbrt_r4::cpu::integrators::bdpt::{
+    compute_bdpt_splat_scale, compute_light_tracing_splat_scale,
+};
 use pbrt_r4::paramdict::ParameterDictionary;
 
 fn create_film(params: &ParameterDictionary) -> std::sync::Arc<std::sync::RwLock<Film>> {
@@ -30,4 +32,11 @@ fn light_tracing_splat_scale_uses_full_to_cropped_area_ratio() {
     let film = film.read().unwrap();
 
     assert_eq!(compute_light_tracing_splat_scale(&film), 4.0);
+}
+
+#[test]
+fn bdpt_splat_scale_matches_v4_wave_start_normalization() {
+    assert_eq!(compute_bdpt_splat_scale(1), 1.0);
+    assert_eq!(compute_bdpt_splat_scale(4), 0.25);
+    assert_eq!(compute_bdpt_splat_scale(0), 1.0);
 }
