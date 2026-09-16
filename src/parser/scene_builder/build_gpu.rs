@@ -141,10 +141,11 @@ impl SceneBuilder {
 
         for light in &self.lights {
             let mut node = Node::new(&light.base.base.name);
+            let params = make_absolute_path(&light.base.base.params, &self.seen_work_dirs);
             node.add_component(Component::Light(LightComponent {
                 light: Light {
                     name: light.base.base.name.clone(),
-                    params: light.base.base.params.clone(),
+                    params,
                     transform: node_transform(&light.base.render_from_object.primary()),
                     medium: light.medium.clone(),
                 },
