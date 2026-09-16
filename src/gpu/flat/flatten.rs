@@ -1039,6 +1039,43 @@ fn flatten_node_ref(
                                 node.name
                             )));
                         }
+                        Shape::Cylinder(_) => {
+                            return Err(PbrtError::error(&format!(
+                                "Shape node \"{}\" must be tessellated before flattening.",
+                                node.name
+                            )));
+                        }
+                        Shape::Cone(_) => {
+                            return Err(PbrtError::error(&format!(
+                                "Shape node \"{}\" must be tessellated before flattening.",
+                                node.name
+                            )));
+                        }
+                        Shape::Paraboloid(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ))
+                        }
+                        Shape::HeightField(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ));
+                        }
+                        Shape::BilinearMesh(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ))
+                        }
+                        Shape::Hyperboloid(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ))
+                        }
+                        Shape::Nurbs(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ))
+                        }
                     };
                     let shape = remove_invalid_triangles(shape)?;
                     if shape.indices.is_empty() {

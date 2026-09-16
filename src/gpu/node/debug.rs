@@ -179,6 +179,31 @@ fn shape_to_json(shape: &Shape) -> Value {
             "kind": "Disk",
             "params": params_to_json(&disk.params),
         }),
+        Shape::Cylinder(cylinder) => json!({
+            "type": "Shape",
+            "kind": "Cylinder",
+            "params": params_to_json(&cylinder.params),
+        }),
+        Shape::Cone(cone) => json!({
+            "type": "Shape",
+            "kind": "Cone",
+            "params": params_to_json(&cone.params),
+        }),
+        Shape::Paraboloid(shape) => {
+            json!({ "type": "Shape", "kind": "Paraboloid", "params": params_to_json(&shape.params) })
+        }
+        Shape::HeightField(shape) => {
+            json!({ "type": "Shape", "kind": "HeightField", "params": params_to_json(&shape.params) })
+        }
+        Shape::BilinearMesh(shape) => {
+            json!({ "type": "Shape", "kind": "BilinearMesh", "params": params_to_json(&shape.params) })
+        }
+        Shape::Hyperboloid(shape) => {
+            json!({ "type": "Shape", "kind": "Hyperboloid", "params": params_to_json(&shape.params) })
+        }
+        Shape::Nurbs(shape) => {
+            json!({ "type": "Shape", "kind": "NURBS", "params": params_to_json(&shape.params) })
+        }
         Shape::TriangleMesh(mesh) => json!({
             "type": "Shape",
             "kind": "TriangleMesh",
