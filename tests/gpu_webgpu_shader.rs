@@ -92,6 +92,8 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(!viewport.contains("light_count"));
     assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
     assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
+    assert!(COMMON_SHADER.contains("finite_light_count: u32"));
+    assert!(COMMON_SHADER.contains("infinite_light_count: u32"));
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(19)"));
     assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
@@ -106,6 +108,22 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(!COMMON_SHADER.contains("scene_data"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
     assert!(!COMMON_SHADER.contains("material_light_data"));
+}
+
+#[test]
+fn light_sampling_uses_record_models_and_separate_infinite_probability() {
+    assert!(COMMON_SHADER.contains("light_records[index].sampling_model"));
+    assert!(COMMON_SHADER.contains("light_table.infinite_light_count + finite_group_count"));
+    assert!(COMMON_SHADER.contains("light_table.finite_light_count + offset"));
+}
+
+#[test]
+fn hard_edged_spot_light_uses_a_defined_step() {
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(evaluate.contains("fn spot_falloff("));
+    assert!(evaluate.contains("if (falloff_start == falloff_end)"));
+    assert!(evaluate.contains("dot(model.world_to_light0.xyz, world_direction)"));
+    assert!(evaluate.contains("spot_falloff(light_index, spot_w)"));
 }
 
 #[test]
@@ -168,7 +186,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(evaluate.contains(
         "sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz)"
     ));
-    assert!(evaluate.contains("sample_light_bvh(selector, p, n)"));
+    assert!(evaluate.contains("let finite_selection = sample_light_bvh("));
     assert!(evaluate.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
     assert!(emissive.contains("light_pmf_for_handle("));

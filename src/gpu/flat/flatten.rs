@@ -1,9 +1,9 @@
 use super::{
-    build_light_bounds, build_light_bvh, identity_transform, multiply_transform,
-    transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef, Camera,
-    DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput, LightGeometryKind,
-    LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
-    Scene, TextureNode as FlatTextureNode, Transform, TriangleDistributionEntry,
+    build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
+    multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
+    Camera, DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput,
+    LightGeometryKind, LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap,
+    RenderSettings, Scene, TextureNode as FlatTextureNode, Transform, TriangleDistributionEntry,
     UnsupportedTexturePolicy, Vertex, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
@@ -25,6 +25,12 @@ use std::sync::Arc;
 const MAX_GPU_RENDER_DEPTH: i32 = 32;
 const MAX_LAYER_DEPTH: i32 = 32;
 const MAX_LAYER_SAMPLES: i32 = 32;
+
+const IDENTITY_LINEAR_TRANSFORM: [[f32; 4]; 3] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+];
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)
@@ -68,6 +74,12 @@ pub fn flatten_node_with_material_override(
                 .iter()
                 .flat_map(|light| light.attributes.iter().cloned()),
         )
+        .chain(
+            builder
+                .infinite_lights
+                .iter()
+                .flat_map(|light| light.attributes.iter().cloned()),
+        )
         .collect();
     let scene = Scene {
         camera,
@@ -79,6 +91,7 @@ pub fn flatten_node_with_material_override(
         light_positions: builder.light_positions,
         triangle_distributions: builder.triangle_distributions,
         lights: builder.lights,
+        infinite_lights: builder.infinite_lights,
         light_bounds,
         light_bvh,
         vertices: builder.vertices,
@@ -923,6 +936,7 @@ struct FlatBuilder {
     light_positions: Vec<[f32; 3]>,
     triangle_distributions: Vec<TriangleDistributionEntry>,
     lights: Vec<Light>,
+    infinite_lights: Vec<Light>,
     light_bound_inputs: Vec<LightBoundInput>,
 }
 
@@ -1201,37 +1215,124 @@ fn flatten_node_ref(
         });
     }
     if let Some(light) = light {
-        let (position, intensity, intensity_max, scale) =
-            point_light(&light, &world_transform, &name)?;
-        let position_index = u32::try_from(builder.light_positions.len())
-            .map_err(|_| PbrtError::error("The flattened GPU light position table exceeds u32."))?;
-        builder.light_positions.push(position);
-        let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
-            PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
-        })?;
-        builder.light_sampling_models.push(LightSamplingModel {
-            kind: LightKind::Point,
-            geometry_kind: LightGeometryKind::Position,
-            geometry_index: position_index,
-            distribution_offset: 0,
-            distribution_count: 0,
-            total_area: 0.0,
-            flags: 0,
-        });
-        builder.light_bound_inputs.push(LightBoundInput::Point {
-            handle: u32::try_from(builder.lights.len())
-                .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
-            world_position: position,
-            intensity_max,
-            scale,
-        });
-        let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
-        let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
-        builder.lights.push(Light {
-            kind: LightKind::Point,
-            attributes: vec![i_attr, scale_attr],
-            sampling_model,
-        });
+        if light.name == "distant" {
+            let (direction, intensity, scale) = distant_light(&light, &world_transform, &name)?;
+            let direction_index = u32::try_from(builder.light_positions.len()).map_err(|_| {
+                PbrtError::error("The flattened GPU light direction table exceeds u32.")
+            })?;
+            builder.light_positions.push(direction);
+            let sampling_model =
+                u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
+                })?;
+            builder.light_sampling_models.push(LightSamplingModel {
+                kind: LightKind::Distant,
+                geometry_kind: LightGeometryKind::Direction,
+                geometry_index: direction_index,
+                direction_index,
+                distribution_offset: 0,
+                distribution_count: 0,
+                total_area: 0.0,
+                flags: 0,
+                world_to_light: IDENTITY_LINEAR_TRANSFORM,
+            });
+            let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
+            let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
+            builder.infinite_lights.push(Light {
+                kind: LightKind::Distant,
+                attributes: vec![i_attr, scale_attr],
+                sampling_model,
+            });
+        } else {
+            let (
+                position,
+                direction,
+                intensity,
+                intensity_max,
+                scale,
+                cos_start,
+                cos_end,
+                world_to_light,
+            ) = match light.name.as_str() {
+                "point" => {
+                    let (position, intensity, intensity_max, scale) =
+                        point_light(&light, &world_transform, &name)?;
+                    (
+                        position,
+                        [0.0, 0.0, 0.0],
+                        intensity,
+                        intensity_max,
+                        scale,
+                        1.0,
+                        -1.0,
+                        IDENTITY_LINEAR_TRANSFORM,
+                    )
+                }
+                "spot" => spot_light(&light, &world_transform, &name)?,
+                _ => {
+                    return Err(PbrtError::error(&format!(
+                        "Unsupported GPU light \"{}\" on node \"{}\".",
+                        light.name, name
+                    )))
+                }
+            };
+            let position_index = u32::try_from(builder.light_positions.len()).map_err(|_| {
+                PbrtError::error("The flattened GPU light position table exceeds u32.")
+            })?;
+            builder.light_positions.push(position);
+            let direction_index = if light.name == "spot" {
+                let index = u32::try_from(builder.light_positions.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU light direction table exceeds u32.")
+                })?;
+                builder.light_positions.push(direction);
+                index
+            } else {
+                INVALID_INDEX
+            };
+            let sampling_model =
+                u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
+                })?;
+            let kind = if light.name == "spot" {
+                LightKind::Spot
+            } else {
+                LightKind::Point
+            };
+            builder.light_sampling_models.push(LightSamplingModel {
+                kind,
+                geometry_kind: LightGeometryKind::Position,
+                geometry_index: position_index,
+                direction_index,
+                distribution_offset: 0,
+                distribution_count: 0,
+                total_area: 0.0,
+                flags: 0,
+                world_to_light,
+            });
+            builder.light_bound_inputs.push(LightBoundInput::Point {
+                handle: u32::try_from(builder.lights.len())
+                    .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
+                world_position: position,
+                intensity_max,
+                scale,
+            });
+            let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
+            let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
+            let mut attributes = vec![i_attr, scale_attr];
+            if kind == LightKind::Spot {
+                attributes.push(push_scalar_attribute(
+                    builder,
+                    "cos_falloff_start",
+                    cos_start,
+                )?);
+                attributes.push(push_scalar_attribute(builder, "cos_falloff_end", cos_end)?);
+            }
+            builder.lights.push(Light {
+                kind,
+                attributes,
+                sampling_model,
+            });
+        }
     }
     for (component_index, shape, material, area_light, reverse_orientation, _input_normals) in
         shapes
@@ -1324,12 +1425,14 @@ fn flatten_node_ref(
                 kind: LightKind::Area,
                 geometry_kind: LightGeometryKind::Instance,
                 geometry_index: instance_index,
+                direction_index: INVALID_INDEX,
                 distribution_offset,
                 distribution_count: u32::try_from(bound_triangles.len()).map_err(|_| {
                     PbrtError::error("The flattened GPU area-light distribution exceeds u32.")
                 })?,
                 total_area,
                 flags: u32::from(two_sided),
+                world_to_light: IDENTITY_LINEAR_TRANSFORM,
             });
             let emission_attr = push_spectrum_attribute(builder, "L", &emission)?;
             let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
@@ -1493,6 +1596,146 @@ fn point_light(
     Ok((position, intensity, intensity_max, scale as f32))
 }
 
+fn spot_light(
+    light: &NodeLight,
+    parent_transform: &Transform,
+    node_name: &str,
+) -> Result<
+    (
+        [f32; 3],
+        [f32; 3],
+        Spectrum,
+        f32,
+        f32,
+        f32,
+        f32,
+        [[f32; 4]; 3],
+    ),
+    PbrtError,
+> {
+    let from = light.params.get_one_point("from", &[0.0, 0.0, 0.0]);
+    let to = light.params.get_one_point("to", &[0.0, 0.0, 1.0]);
+    if from.len() != 3 || to.len() != 3 || !from.iter().chain(to.iter()).all(|v| v.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "Spot light on node \"{}\" has invalid from/to parameters.",
+            node_name
+        )));
+    }
+    let transform = multiply_transform(parent_transform, &light.transform.matrix);
+    let position = transform_point(&transform, [from[0] as f32, from[1] as f32, from[2] as f32]);
+    let direction = [
+        to[0] as f32 - from[0] as f32,
+        to[1] as f32 - from[1] as f32,
+        to[2] as f32 - from[2] as f32,
+    ];
+    let length =
+        (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
+            .sqrt();
+    let direction = if length > 0.0 {
+        [
+            direction[0] / length,
+            direction[1] / length,
+            direction[2] / length,
+        ]
+    } else {
+        return Err(PbrtError::error(&format!(
+            "Spot light on node \"{}\" has coincident from/to points.",
+            node_name
+        )));
+    };
+    let world_to_light = inverse_linear_transform(&transform).map_err(|message| {
+        PbrtError::error(&format!(
+            "Spot light on node \"{}\" has an invalid transform: {}.",
+            node_name, message
+        ))
+    })?;
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
+    let intensity = light
+        .params
+        .get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
+    let mut scale = light.params.get_one_float("scale", 1.0);
+    let photometric = spectrum_to_photometric(&intensity);
+    if photometric > 0.0 {
+        scale /= photometric;
+    }
+    let cone = light.params.get_one_float("coneangle", 30.0);
+    let delta = light.params.get_one_float("conedelta", 5.0);
+    let delta = light.params.get_one_float("conedeltaangle", delta);
+    let cos_end = (cone as f32).to_radians().cos();
+    let cos_start = ((cone - delta) as f32).to_radians().cos();
+    let power = light.params.get_one_float("power", -1.0);
+    if power > 0.0 {
+        let k_e = 2.0 * std::f32::consts::PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
+        scale *= power / k_e;
+    }
+    if !position
+        .iter()
+        .chain(direction.iter())
+        .all(|v| v.is_finite())
+        || !scale.is_finite()
+    {
+        return Err(PbrtError::error(&format!(
+            "Spot light on node \"{}\" contains a non-finite value.",
+            node_name
+        )));
+    }
+    let intensity_max = intensity.max_value() as f32;
+    Ok((
+        position,
+        direction,
+        intensity,
+        intensity_max,
+        scale as f32,
+        cos_start,
+        cos_end,
+        world_to_light,
+    ))
+}
+
+fn distant_light(
+    light: &NodeLight,
+    parent_transform: &Transform,
+    node_name: &str,
+) -> Result<([f32; 3], Spectrum, f32), PbrtError> {
+    let from = light.params.get_one_point("from", &[0.0, 0.0, 0.0]);
+    let to = light.params.get_one_point("to", &[0.0, 0.0, 1.0]);
+    if from.len() != 3 || to.len() != 3 || !from.iter().chain(to.iter()).all(|v| v.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "Distant light on node \"{}\" has invalid from/to parameters.",
+            node_name
+        )));
+    }
+    let transform = multiply_transform(parent_transform, &light.transform.matrix);
+    let raw = transform_vector(
+        &transform,
+        [
+            from[0] as f32 - to[0] as f32,
+            from[1] as f32 - to[1] as f32,
+            from[2] as f32 - to[2] as f32,
+        ],
+    );
+    let length = dot3(raw, raw).sqrt();
+    if length == 0.0 || !length.is_finite() {
+        return Err(PbrtError::error(&format!(
+            "Distant light on node \"{}\" has invalid direction.",
+            node_name
+        )));
+    }
+    let direction = [raw[0] / length, raw[1] / length, raw[2] / length];
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
+    let intensity = light
+        .params
+        .get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
+    let photometric = spectrum_to_photometric(&intensity);
+    let mut scale = light.params.get_one_float("scale", 1.0)
+        / if photometric > 0.0 { photometric } else { 1.0 };
+    let illuminance = light.params.get_one_float("illuminance", -1.0);
+    if illuminance > 0.0 {
+        scale *= illuminance;
+    }
+    Ok((direction, intensity, scale as f32))
+}
+
 fn area_light_record(
     light: &NodeAreaLight,
     node_name: &str,
@@ -1591,6 +1834,14 @@ fn transform_point(matrix: &Transform, point: [f32; 3]) -> [f32; 3] {
         matrix[0] * point[0] + matrix[1] * point[1] + matrix[2] * point[2] + matrix[3],
         matrix[4] * point[0] + matrix[5] * point[1] + matrix[6] * point[2] + matrix[7],
         matrix[8] * point[0] + matrix[9] * point[1] + matrix[10] * point[2] + matrix[11],
+    ]
+}
+
+fn transform_vector(matrix: &Transform, vector: [f32; 3]) -> [f32; 3] {
+    [
+        matrix[0] * vector[0] + matrix[1] * vector[1] + matrix[2] * vector[2],
+        matrix[4] * vector[0] + matrix[5] * vector[1] + matrix[6] * vector[2],
+        matrix[8] * vector[0] + matrix[9] * vector[1] + matrix[10] * vector[2],
     ]
 }
 

@@ -42,6 +42,8 @@ struct DielectricInterfaceSample {
 };
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
+const LIGHT_KIND_SPOT: u32 = 2u;
+const LIGHT_KIND_DISTANT: u32 = 3u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
 
 struct CameraUniform {
@@ -86,8 +88,8 @@ struct LightTableUniform {
     light_bvh_node_count: u32,
     light_leaf_offset: u32,
     light_leaf_count: u32,
-    _reserved0: u32,
-    _reserved1: u32,
+    finite_light_count: u32,
+    infinite_light_count: u32,
     _reserved2: u32,
     _reserved3: u32,
 };
@@ -193,11 +195,14 @@ struct LightSamplingModel {
     kind: u32,
     geometry_kind: u32,
     geometry_index: u32,
+    direction_index: u32,
     distribution_offset_words: u32,
     distribution_count: u32,
     total_area: f32,
     flags: u32,
-    reserved: u32,
+    world_to_light0: vec4<f32>,
+    world_to_light1: vec4<f32>,
+    world_to_light2: vec4<f32>,
 };
 
 struct TriangleDistributionEntry {

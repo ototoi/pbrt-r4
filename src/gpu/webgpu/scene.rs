@@ -10,7 +10,7 @@ use super::abi::{
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
     LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord,
     TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_POINT,
+    LIGHT_KIND_DISTANT, LIGHT_KIND_POINT, LIGHT_KIND_SPOT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -263,8 +263,12 @@ impl Scene {
         let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
         let mut attribute_refs = material_table.attributes;
-        let light_attribute_offsets = flat
+        let all_lights = flat
             .lights
+            .iter()
+            .chain(flat.infinite_lights.iter())
+            .collect::<Vec<_>>();
+        let light_attribute_offsets = all_lights
             .iter()
             .scan(attribute_refs.len() as u32, |offset, light| {
                 let current = *offset;
@@ -273,7 +277,7 @@ impl Scene {
             })
             .collect::<Vec<_>>();
         attribute_refs.extend(
-            flat.lights
+            all_lights
                 .iter()
                 .flat_map(|light| light.attributes.iter())
                 .map(|attribute| AttributeRef {
@@ -295,28 +299,40 @@ impl Scene {
             .map(|model| LightSamplingModel {
                 kind: match model.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
+                    flat::LightKind::Spot => LIGHT_KIND_SPOT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
+                    flat::LightKind::Distant => LIGHT_KIND_DISTANT,
                 },
                 geometry_kind: match model.geometry_kind {
                     flat::LightGeometryKind::Position => 0,
                     flat::LightGeometryKind::Instance => 1,
+                    flat::LightGeometryKind::Direction => 2,
                 },
                 geometry_index: model.geometry_index,
+                direction_index: model.direction_index,
                 distribution_offset_words: model.distribution_offset,
                 distribution_count: model.distribution_count,
                 total_area: model.total_area,
                 flags: model.flags,
-                reserved: 0,
+                world_to_light: model.world_to_light,
             })
             .collect::<Vec<_>>();
         let light_records = flat
             .lights
             .iter()
             .enumerate()
+            .chain(
+                flat.infinite_lights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (flat.lights.len() + i, r)),
+            )
             .map(|(light_index, record)| LightRecord {
                 kind: match record.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
+                    flat::LightKind::Spot => LIGHT_KIND_SPOT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
+                    flat::LightKind::Distant => LIGHT_KIND_DISTANT,
                 },
                 attribute_offset: light_attribute_offsets[light_index],
                 attribute_count: u32::try_from(record.attributes.len()).unwrap_or(0),
@@ -528,12 +544,11 @@ impl Scene {
             usage: wgpu::BufferUsages::STORAGE,
         });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
-        let light_sampler_kind = resolve_scene_light_sampler_count(
-            &flat.render_settings,
-            flat.light_bvh.bounded_handles.len(),
-        )?;
+        let light_sampler_kind =
+            resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
         let mut material_table = material_table_uniform(materials.len())?;
-        let mut light_table = light_table_uniform(light_records.len(), 0)?;
+        let mut light_table =
+            light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {

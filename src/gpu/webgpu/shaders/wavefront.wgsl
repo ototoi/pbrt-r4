@@ -220,9 +220,21 @@ fn load_area_two_sided(index: u32) -> bool {
 }
 
 fn load_point_position(index: u32) -> vec3<f32> {
-    let model = light_sampling_models[index];
+    if (index >= arrayLength(&light_records)) { set_render_error(); return vec3<f32>(0.0); }
+    let model_index = light_records[index].sampling_model;
+    if (model_index >= arrayLength(&light_sampling_models)) { set_render_error(); return vec3<f32>(0.0); }
+    let model = light_sampling_models[model_index];
     if (model.geometry_index >= arrayLength(&light_positions)) { set_render_error(); return vec3<f32>(0.0); }
     return light_positions[model.geometry_index].xyz;
+}
+
+fn load_light_direction(index: u32) -> vec3<f32> {
+    if (index >= arrayLength(&light_records)) { set_render_error(); return vec3<f32>(0.0); }
+    let model_index = light_records[index].sampling_model;
+    if (model_index >= arrayLength(&light_sampling_models)) { set_render_error(); return vec3<f32>(0.0); }
+    let model = light_sampling_models[model_index];
+    if (model.direction_index >= arrayLength(&light_positions)) { set_render_error(); return vec3<f32>(0.0); }
+    return light_positions[model.direction_index].xyz;
 }
 
 fn pixel_count() -> u32 {
@@ -1233,24 +1245,17 @@ fn load_light_scale(index: u32) -> f32 {
     if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr.index];
 }
+fn load_light_scalar(index: u32, ordinal: u32) -> f32 {
+    let attr = load_light_attribute(index, ordinal);
+    if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
+    return scalar_attributes[attr.index];
+}
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
-    if (light_handle >= light_table.light_count || light_table.light_leaf_offset == 0xffffffffu) {
+    if (light_handle >= light_table.light_count) {
         return 0.0;
     }
-    if (light_bvh_leaves[light_handle] == 0xffffffffu) {
-        return 0.0;
-    }
-    var count = 0u;
-    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (light_bvh_leaves[handle] != 0xffffffffu) {
-            count = count + 1u;
-        }
-    }
-    if (count == 0u) {
-        return 0.0;
-    }
-    return 1.0 / f32(count);
+    return 1.0 / f32(light_table.light_count);
 }
 
 fn hash_u32(value: u32) -> u32 {
@@ -1322,29 +1327,11 @@ fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
 }
 
 fn sample_uniform_light(selector: f32) -> LightSelection {
-    if (light_table.light_leaf_offset == 0xffffffffu || light_table.light_leaf_count == 0u) {
+    if (light_table.light_count == 0u) {
         return LightSelection(0xffffffffu, 0.0);
     }
-    var count = 0u;
-    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (light_bvh_leaves[handle] != 0xffffffffu) {
-            count = count + 1u;
-        }
-    }
-    if (count == 0u) {
-        return LightSelection(0xffffffffu, 0.0);
-    }
-    let selected = min(u32(min(selector, 0.99999994) * f32(count)), count - 1u);
-    var ordinal = 0u;
-    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-            if (light_bvh_leaves[handle] != 0xffffffffu) {
-            if (ordinal == selected) {
-                return LightSelection(handle, 1.0 / f32(count));
-            }
-            ordinal = ordinal + 1u;
-        }
-    }
-    return LightSelection(0xffffffffu, 0.0);
+    let selected = min(u32(min(selector, 0.99999994) * f32(light_table.light_count)), light_table.light_count - 1u);
+    return LightSelection(selected, 1.0 / f32(light_table.light_count));
 }
 
 fn light_bvh_word(node_index: u32, word: u32) -> u32 {
@@ -1545,14 +1532,55 @@ fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f3
 
 fn light_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
     if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
-        return light_bvh_pmf_for_handle(light_handle, p, n);
+        let finite_group_count = select(0u, 1u, light_table.light_bvh_node_count > 0u);
+        let group_count = light_table.infinite_light_count + finite_group_count;
+        if (group_count == 0u) {
+            return 0.0;
+        }
+        if (light_handle >= light_table.finite_light_count) {
+            if (light_handle >= light_table.light_count) {
+                return 0.0;
+            }
+            return 1.0 / f32(group_count);
+        }
+        return light_bvh_pmf_for_handle(light_handle, p, n)
+            * f32(finite_group_count) / f32(group_count);
     }
     return uniform_light_pmf_for_handle(light_handle);
 }
 
 fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
     if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
-        return sample_light_bvh(selector, p, n);
+        let finite_group_count = select(0u, 1u, light_table.light_bvh_node_count > 0u);
+        let group_count = light_table.infinite_light_count + finite_group_count;
+        if (group_count == 0u) {
+            return LightSelection(0xffffffffu, 0.0);
+        }
+        let infinite_probability = f32(light_table.infinite_light_count) / f32(group_count);
+        let u = min(selector, 0.99999994);
+        if (u < infinite_probability) {
+            let infinite_selector = u / infinite_probability;
+            let offset = min(
+                u32(infinite_selector * f32(light_table.infinite_light_count)),
+                light_table.infinite_light_count - 1u,
+            );
+            return LightSelection(
+                light_table.finite_light_count + offset,
+                1.0 / f32(group_count),
+            );
+        }
+        if (finite_group_count == 0u) {
+            return LightSelection(0xffffffffu, 0.0);
+        }
+        let finite_selection = sample_light_bvh(
+            (u - infinite_probability) / (1.0 - infinite_probability),
+            p,
+            n,
+        );
+        return LightSelection(
+            finite_selection.index,
+            finite_selection.pmf / f32(group_count),
+        );
     }
     return sample_uniform_light(selector);
 }
