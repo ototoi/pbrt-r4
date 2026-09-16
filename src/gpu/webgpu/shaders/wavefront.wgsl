@@ -496,7 +496,19 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
             let parent_depth = depth - 1u;
             let parent = texture_nodes[stack_index[parent_depth]];
             if (parent.operation == 2u && stack_state[parent_depth] == 1u) {
-                stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                if (parent.child_count >= 2u) {
+                    stack_value[parent_depth] = stack_value[depth];
+                    stack_state[parent_depth] = 2u;
+                    depth += 1u;
+                    stack_index[depth] = texture_child_indices[parent.first_child + 1u];
+                    stack_state[depth] = 0u;
+                } else {
+                    stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                    stack_state[parent_depth] = 3u;
+                    depth = parent_depth;
+                }
+            } else if (parent.operation == 2u && stack_state[parent_depth] == 2u) {
+                stack_value[parent_depth] = stack_value[parent_depth] * stack_value[depth];
                 stack_state[parent_depth] = 3u;
                 depth = parent_depth;
             } else if (parent.operation == 3u && stack_state[parent_depth] == 1u) {
@@ -551,7 +563,17 @@ fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
         }
         if (node.operation == 2u && node.child_count >= 1u
             && node.first_child < arrayLength(&texture_child_indices)) {
-            scale *= node.constant_value.x;
+            if (node.child_count >= 2u
+                && node.first_child + 1u < arrayLength(&texture_child_indices)) {
+                let factor = texture_nodes[texture_child_indices[node.first_child + 1u]];
+                if (factor.operation == 1u) {
+                    scale *= factor.constant_value.x;
+                } else {
+                    return 1.0;
+                }
+            } else {
+                scale *= node.constant_value.x;
+            }
             current = texture_child_indices[node.first_child];
         } else {
             // Other procedural graphs remain placeholders until the post-order

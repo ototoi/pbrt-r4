@@ -322,7 +322,7 @@ fn register_texture_node(
         .map_err(|_| PbrtError::error("Flat texture child table exceeds u32."))?;
     let valid_child_count = match operation {
         0 | 1 | 7 | 8 | 9 | 11 => child_count == 0,
-        2 => child_count == 1,
+        2 => child_count == 1 || child_count == 2,
         3 | 5 => child_count == 2 || (operation == 3 && child_count == 3),
         4 | 6 | 12 => child_count == 2,
         10 => child_count == 4,
