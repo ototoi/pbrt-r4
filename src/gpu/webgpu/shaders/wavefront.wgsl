@@ -225,6 +225,12 @@ fn load_point_position(index: u32) -> vec3<f32> {
     return light_positions[model.geometry_index].xyz;
 }
 
+fn load_light_direction(index: u32) -> vec3<f32> {
+    let model = light_sampling_models[index];
+    if (model.direction_index >= arrayLength(&light_positions)) { set_render_error(); return vec3<f32>(0.0); }
+    return light_positions[model.direction_index].xyz;
+}
+
 fn pixel_count() -> u32 {
     return viewport.width * viewport.height;
 }
@@ -1230,6 +1236,11 @@ fn load_light_spectrum(index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32>
 }
 fn load_light_scale(index: u32) -> f32 {
     let attr = load_light_attribute(index, 1u);
+    if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
+    return scalar_attributes[attr.index];
+}
+fn load_light_scalar(index: u32, ordinal: u32) -> f32 {
+    let attr = load_light_attribute(index, ordinal);
     if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr.index];
 }
