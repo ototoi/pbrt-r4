@@ -10,7 +10,7 @@ use super::abi::{
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
     LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord,
     TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_POINT,
+    LIGHT_KIND_DISTANT, LIGHT_KIND_POINT, LIGHT_KIND_SPOT,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -295,7 +295,9 @@ impl Scene {
             .map(|model| LightSamplingModel {
                 kind: match model.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
+                    flat::LightKind::Spot => LIGHT_KIND_SPOT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
+                    flat::LightKind::Distant => LIGHT_KIND_DISTANT,
                 },
                 geometry_kind: match model.geometry_kind {
                     flat::LightGeometryKind::Position => 0,
@@ -316,7 +318,9 @@ impl Scene {
             .map(|(light_index, record)| LightRecord {
                 kind: match record.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
+                    flat::LightKind::Spot => LIGHT_KIND_SPOT,
                     flat::LightKind::Area => LIGHT_KIND_AREA,
+                    flat::LightKind::Distant => LIGHT_KIND_DISTANT,
                 },
                 attribute_offset: light_attribute_offsets[light_index],
                 attribute_count: u32::try_from(record.attributes.len()).unwrap_or(0),

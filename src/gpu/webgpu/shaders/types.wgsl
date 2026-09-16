@@ -42,6 +42,8 @@ struct DielectricInterfaceSample {
 };
 const LIGHT_KIND_AREA: u32 = 1u;
 const LIGHT_KIND_POINT: u32 = 0u;
+const LIGHT_KIND_SPOT: u32 = 2u;
+const LIGHT_KIND_DISTANT: u32 = 3u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
 
 struct CameraUniform {
