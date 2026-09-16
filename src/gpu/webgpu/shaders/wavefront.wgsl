@@ -1246,22 +1246,10 @@ fn load_light_scalar(index: u32, ordinal: u32) -> f32 {
 }
 
 fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
-    if (light_handle >= light_table.light_count || light_table.light_leaf_offset == 0xffffffffu) {
+    if (light_handle >= light_table.light_count) {
         return 0.0;
     }
-    if (light_bvh_leaves[light_handle] == 0xffffffffu) {
-        return 0.0;
-    }
-    var count = 0u;
-    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (light_bvh_leaves[handle] != 0xffffffffu) {
-            count = count + 1u;
-        }
-    }
-    if (count == 0u) {
-        return 0.0;
-    }
-    return 1.0 / f32(count);
+    return 1.0 / f32(light_table.light_count);
 }
 
 fn hash_u32(value: u32) -> u32 {
@@ -1333,29 +1321,11 @@ fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
 }
 
 fn sample_uniform_light(selector: f32) -> LightSelection {
-    if (light_table.light_leaf_offset == 0xffffffffu || light_table.light_leaf_count == 0u) {
+    if (light_table.light_count == 0u) {
         return LightSelection(0xffffffffu, 0.0);
     }
-    var count = 0u;
-    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-        if (light_bvh_leaves[handle] != 0xffffffffu) {
-            count = count + 1u;
-        }
-    }
-    if (count == 0u) {
-        return LightSelection(0xffffffffu, 0.0);
-    }
-    let selected = min(u32(min(selector, 0.99999994) * f32(count)), count - 1u);
-    var ordinal = 0u;
-    for (var handle = 0u; handle < light_table.light_leaf_count; handle++) {
-            if (light_bvh_leaves[handle] != 0xffffffffu) {
-            if (ordinal == selected) {
-                return LightSelection(handle, 1.0 / f32(count));
-            }
-            ordinal = ordinal + 1u;
-        }
-    }
-    return LightSelection(0xffffffffu, 0.0);
+    let selected = min(u32(min(selector, 0.99999994) * f32(light_table.light_count)), light_table.light_count - 1u);
+    return LightSelection(selected, 1.0 / f32(light_table.light_count));
 }
 
 fn light_bvh_word(node_index: u32, word: u32) -> u32 {
