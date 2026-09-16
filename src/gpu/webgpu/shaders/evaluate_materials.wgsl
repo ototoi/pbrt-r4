@@ -391,7 +391,9 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var mis_weight = 1.0;
     if (light_kind == LIGHT_KIND_AREA || is_infinite_light_kind(light_kind)) {
-        mis_weight = sampled_light_pdf / max(sampled_light_pdf + bsdf_pdf, 1e-7);
+        let light_pdf2 = sampled_light_pdf * sampled_light_pdf;
+        let bsdf_pdf2 = bsdf_pdf * bsdf_pdf;
+        mis_weight = light_pdf2 / max(light_pdf2 + bsdf_pdf2, 1e-7);
     }
     let direct = light_radiance * f * cosine
         / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)

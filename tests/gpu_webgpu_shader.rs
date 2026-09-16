@@ -49,8 +49,7 @@ fn dense_spectrum_module_declares_one_structured_table() {
 fn material_shader_uses_white_procedural_texture_placeholders() {
     let source = compose_source(EVALUATE_MATERIALS_SHADER);
     assert!(source.contains("if (node.operation >= 4u)"));
-    assert!(source.contains("Other procedural graphs remain placeholders"));
-    assert!(source.contains("scale *= vec3<f32>(node.constant_value.x)"));
+    assert!(source.contains("return deferred_sample_texture_graph(texture_index, uv);"));
     assert!(!source.contains("fn texture_noise"));
     assert!(!source.contains("fn texture_fbm"));
     assert!(!source.contains("fn texture_marble"));
