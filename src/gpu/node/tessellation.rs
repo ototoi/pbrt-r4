@@ -166,6 +166,34 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
         .chunks_exact(3)
         .map(|v| Vec3f([v[0] as f32, v[1] as f32, v[2] as f32]))
         .collect::<Vec<_>>();
+    let normals = p.get_points("N").into_iter().collect::<Vec<_>>();
+    let normals = if normals.is_empty() {
+        None
+    } else if normals.len() == positions.len() * 3 {
+        Some(
+            normals
+                .chunks_exact(3)
+                .map(|v| Vec3f([v[0] as f32, v[1] as f32, v[2] as f32]))
+                .collect(),
+        )
+    } else {
+        return Err(PbrtError::error(
+            "BilinearMesh normal count does not match P.",
+        ));
+    };
+    let uv_values = p.get_floats("uv");
+    let uvs = if uv_values.is_empty() {
+        None
+    } else if uv_values.len() == positions.len() * 2 {
+        Some(
+            uv_values
+                .chunks_exact(2)
+                .map(|v| Vec2f([v[0] as f32, v[1] as f32]))
+                .collect(),
+        )
+    } else {
+        return Err(PbrtError::error("BilinearMesh UV count does not match P."));
+    };
     let mut indices = Vec::new();
     let raw_indices = p.get_ints("indices");
     let quads: Vec<u32> = if raw_indices.is_empty() {
@@ -180,14 +208,17 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
     };
     for quad in quads.chunks_exact(4) {
         let [a, b, c, d] = [quad[0], quad[1], quad[2], quad[3]];
+        if [a, b, c, d].iter().any(|&i| i as usize >= positions.len()) {
+            return Err(PbrtError::error("BilinearMesh index is out of range."));
+        }
         indices.extend_from_slice(&[a, b, d, a, d, c]);
     }
     Ok(TriangleMeshShape {
         positions,
         indices,
-        normals: None,
+        normals,
         tangents: None,
-        uvs: None,
+        uvs,
     })
 }
 
