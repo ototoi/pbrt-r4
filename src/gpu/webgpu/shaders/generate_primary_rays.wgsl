@@ -36,7 +36,7 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1.0,
         0.0,
         1u,
-        0u, 0u, 0u,
+        0u, 0u,
     );
     let current_queue_index = atomicAdd(&queue_counters.current.count, 1u);
     if (current_queue_index >= pixel_count()) {
