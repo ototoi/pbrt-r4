@@ -56,6 +56,31 @@ fn disk_area_light_renders_through_gpu_light_bvh() {
     render_and_validate(&scene);
 }
 
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn spot_and_distant_lights_render_with_separate_sampling_paths() {
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scenes/gpu-spot-distant-smoke.pbrt");
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("spot-distant.exr");
+    let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
+        .args([
+            "--use-gpu",
+            "--outfile",
+            output.to_str().unwrap(),
+            scene.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "GPU Spot/Distant render failed");
+
+    let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+    assert_eq!(resolution.x, 32);
+    assert_eq!(resolution.y, 32);
+    assert!(pixels.iter().all(RGBSpectrum::is_valid));
+    assert!(pixels.iter().any(|pixel| !pixel.is_black()));
+}
+
 fn render_and_validate(scene: &std::path::Path) {
     render_and_validate_with_sampler(scene, None);
 }

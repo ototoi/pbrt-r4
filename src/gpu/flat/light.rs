@@ -5,7 +5,9 @@ pub const INVALID_INDEX: u32 = u32::MAX;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightKind {
     Point,
+    Spot,
     Area,
+    Distant,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +21,7 @@ pub struct Light {
 pub enum LightGeometryKind {
     Position,
     Instance,
+    Direction,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -26,10 +29,12 @@ pub struct LightSamplingModel {
     pub kind: LightKind,
     pub geometry_kind: LightGeometryKind,
     pub geometry_index: u32,
+    pub direction_index: u32,
     pub distribution_offset: u32,
     pub distribution_count: u32,
     pub total_area: f32,
     pub flags: u32,
+    pub world_to_light: [[f32; 4]; 3],
 }
 
 #[derive(Clone, Debug, PartialEq)]
