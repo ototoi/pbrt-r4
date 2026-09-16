@@ -491,10 +491,11 @@ fn texture_node(
     name: &str,
     implementation_name: &str,
     kind: NodeTextureKind,
-    params: &crate::paramdict::ParameterDictionary,
+    source_params: &crate::paramdict::ParameterDictionary,
     render_from_texture: &crate::util::transform::Transform,
     work_dirs: &[String],
 ) -> Result<TextureNode, PbrtError> {
+    let params = make_absolute_path(source_params, work_dirs);
     if !matches!(
         implementation_name,
         "constant"
@@ -519,7 +520,6 @@ fn texture_node(
     }
     let mut node = TextureNode::new(name);
     let mipmap = if implementation_name == "imagemap" {
-        let params = make_absolute_path(params, work_dirs);
         let filename = params.get_one_string("filename", "");
         if filename.is_empty() {
             None
