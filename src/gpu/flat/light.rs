@@ -8,6 +8,9 @@ pub enum LightKind {
     Spot,
     Area,
     Distant,
+    UniformInfinite,
+    ImageInfinite,
+    PortalImageInfinite,
 }
 
 #[derive(Clone, Debug, PartialEq)]

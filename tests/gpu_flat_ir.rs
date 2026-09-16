@@ -476,6 +476,59 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
 }
 
 #[test]
+fn flatten_node_classifies_infinite_light_variants() {
+    let cases = [
+        (
+            Default::default(),
+            pbrt_r4::gpu::flat::LightKind::UniformInfinite,
+        ),
+        (
+            {
+                let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+                params.add_string("string filename", "environment.exr");
+                params
+            },
+            pbrt_r4::gpu::flat::LightKind::ImageInfinite,
+        ),
+        (
+            {
+                let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+                params.add_point("point portal", &[0.0, 0.0, 0.0]);
+                params
+            },
+            pbrt_r4::gpu::flat::LightKind::PortalImageInfinite,
+        ),
+    ];
+    for (params, expected_kind) in cases {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(light_node("infinite", "infinite", params));
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        assert_eq!(scene.infinite_lights[0].kind, expected_kind);
+        assert_eq!(scene.light_sampling_models.len(), 1);
+        assert_eq!(
+            scene.light_sampling_models[0].geometry_kind,
+            pbrt_r4::gpu::flat::LightGeometryKind::Direction
+        );
+    }
+}
+
+#[test]
+fn flatten_node_allows_multiple_distant_but_only_one_other_infinite_light() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("distant-a", "distant", Default::default()));
+    root.add_child(light_node("distant-b", "distant", Default::default()));
+    root.add_child(light_node("uniform", "infinite", Default::default()));
+    root.add_child(light_node("duplicate", "infinite", Default::default()));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("at most one non-distant infinite light"));
+}
+
+#[test]
 fn flatten_node_uses_color_space_illuminant_for_default_light_spectra() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());

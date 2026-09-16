@@ -4,6 +4,32 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (index >= escaped_ray_count()) {
         return;
     }
-    // No infinite light is lowered in the initial GPU scope. The queue is
-    // nevertheless consumed explicitly so a miss is not silently discarded.
+    let ray_index = escaped_ray_indices[index];
+    let ray = load_current_ray(ray_index);
+    let pixel_index = ray.pixel_index;
+    let lambda = load_sample_lambda(pixel_index);
+    var radiance = vec4<f32>(0.0);
+    var light_pdf = 0.0;
+    for (var light_index = 0u; light_index < light_table.light_count; light_index++) {
+        let light_kind = load_light_kind(light_index);
+        if (light_kind == LIGHT_KIND_UNIFORM_INFINITE
+            || light_kind == LIGHT_KIND_IMAGE_INFINITE
+            || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
+            radiance += load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+            light_pdf += light_pmf_for_handle(
+                light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
+            ) / (4.0 * PI);
+        }
+    }
+    var mis_weight = 1.0;
+    if (ray.depth > 0u && ray.prev_specular == 0u && light_pdf > 0.0) {
+        let bsdf_pdf = ray.prev_pdf;
+        let bsdf_pdf2 = bsdf_pdf * bsdf_pdf;
+        let light_pdf2 = light_pdf * light_pdf;
+        mis_weight = bsdf_pdf2 / max(bsdf_pdf2 + light_pdf2, 1e-7);
+    }
+    store_sample_radiance(
+        pixel_index,
+        load_sample_radiance(pixel_index) + ray.throughput * radiance * mis_weight,
+    );
 }
