@@ -141,10 +141,11 @@ impl SceneBuilder {
 
         for light in &self.lights {
             let mut node = Node::new(&light.base.base.name);
+            let params = make_absolute_path(&light.base.base.params, &self.seen_work_dirs);
             node.add_component(Component::Light(LightComponent {
                 light: Light {
                     name: light.base.base.name.clone(),
-                    params: light.base.base.params.clone(),
+                    params,
                     transform: node_transform(&light.base.render_from_object.primary()),
                     medium: light.medium.clone(),
                 },
@@ -271,7 +272,7 @@ impl SceneBuilder {
                 NodeTextureKind::Float,
                 &texture.base.params,
                 &texture.render_from_texture,
-                &self.work_dirs,
+                &self.seen_work_dirs,
             )?);
         }
         for (index, texture) in self.spectrum_textures.iter().enumerate() {
@@ -285,7 +286,7 @@ impl SceneBuilder {
                 NodeTextureKind::Spectrum,
                 &texture.base.params,
                 &texture.render_from_texture,
-                &self.work_dirs,
+                &self.seen_work_dirs,
             )?);
         }
         let mut lookup = HashMap::new();
@@ -490,10 +491,11 @@ fn texture_node(
     name: &str,
     implementation_name: &str,
     kind: NodeTextureKind,
-    params: &crate::paramdict::ParameterDictionary,
+    source_params: &crate::paramdict::ParameterDictionary,
     render_from_texture: &crate::util::transform::Transform,
     work_dirs: &[String],
 ) -> Result<TextureNode, PbrtError> {
+    let params = make_absolute_path(source_params, work_dirs);
     if !matches!(
         implementation_name,
         "constant"
@@ -518,7 +520,6 @@ fn texture_node(
     }
     let mut node = TextureNode::new(name);
     let mipmap = if implementation_name == "imagemap" {
-        let params = make_absolute_path(params, work_dirs);
         let filename = params.get_one_string("filename", "");
         if filename.is_empty() {
             None

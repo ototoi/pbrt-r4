@@ -10,6 +10,9 @@ pub const LIGHT_KIND_POINT: u32 = 0;
 pub const LIGHT_KIND_AREA: u32 = 1;
 pub const LIGHT_KIND_SPOT: u32 = 2;
 pub const LIGHT_KIND_DISTANT: u32 = 3;
+pub const LIGHT_KIND_UNIFORM_INFINITE: u32 = 4;
+pub const LIGHT_KIND_IMAGE_INFINITE: u32 = 5;
+pub const LIGHT_KIND_PORTAL_IMAGE_INFINITE: u32 = 6;
 pub const LIGHT_SAMPLER_KIND_UNIFORM: u32 = 0;
 pub const LIGHT_SAMPLER_KIND_BVH: u32 = 1;
 pub const INVALID_INDEX: u32 = u32::MAX;
@@ -145,7 +148,8 @@ pub struct RayWorkItem {
     pub inv_w_u: f32,
     pub inv_w_l: f32,
     pub prev_pdf: f32,
-    pub padding: [u32; 3],
+    pub prev_specular: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]

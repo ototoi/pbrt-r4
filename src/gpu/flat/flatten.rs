@@ -322,7 +322,7 @@ fn register_texture_node(
         .map_err(|_| PbrtError::error("Flat texture child table exceeds u32."))?;
     let valid_child_count = match operation {
         0 | 1 | 7 | 8 | 9 | 11 => child_count == 0,
-        2 => child_count == 1,
+        2 => child_count == 1 || child_count == 2,
         3 | 5 => child_count == 2 || (operation == 3 && child_count == 3),
         4 | 6 | 12 => child_count == 2,
         10 => child_count == 4,
@@ -1243,6 +1243,47 @@ fn flatten_node_ref(
                 attributes: vec![i_attr, scale_attr],
                 sampling_model,
             });
+        } else if light.name == "infinite" {
+            let (kind, intensity, scale) = infinite_light(&light, &name)?;
+            if matches!(
+                kind,
+                LightKind::UniformInfinite
+                    | LightKind::ImageInfinite
+                    | LightKind::PortalImageInfinite
+            ) && builder.infinite_lights.iter().any(|existing| {
+                matches!(
+                    existing.kind,
+                    LightKind::UniformInfinite
+                        | LightKind::ImageInfinite
+                        | LightKind::PortalImageInfinite
+                )
+            }) {
+                return Err(PbrtError::error(
+                    "The GPU scene supports at most one non-distant infinite light.",
+                ));
+            }
+            let sampling_model =
+                u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+                    PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
+                })?;
+            builder.light_sampling_models.push(LightSamplingModel {
+                kind,
+                geometry_kind: LightGeometryKind::Direction,
+                geometry_index: INVALID_INDEX,
+                direction_index: INVALID_INDEX,
+                distribution_offset: 0,
+                distribution_count: 0,
+                total_area: 0.0,
+                flags: 0,
+                world_to_light: IDENTITY_LINEAR_TRANSFORM,
+            });
+            let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
+            let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
+            builder.infinite_lights.push(Light {
+                kind,
+                attributes: vec![i_attr, scale_attr],
+                sampling_model,
+            });
         } else {
             let (
                 position,
@@ -1734,6 +1775,39 @@ fn distant_light(
         scale *= illuminance;
     }
     Ok((direction, intensity, scale as f32))
+}
+
+fn infinite_light(
+    light: &NodeLight,
+    node_name: &str,
+) -> Result<(LightKind, Spectrum, f32), PbrtError> {
+    let filename = light.params.get_one_string("filename", "");
+    let portal = light.params.get_points("portal");
+    let kind = if !portal.is_empty() {
+        LightKind::PortalImageInfinite
+    } else if !filename.is_empty() {
+        LightKind::ImageInfinite
+    } else {
+        LightKind::UniformInfinite
+    };
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
+    let intensity = light
+        .params
+        .get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
+    let photometric = spectrum_to_photometric(&intensity);
+    let mut scale = light.params.get_one_float("scale", 1.0)
+        / if photometric > 0.0 { photometric } else { 1.0 };
+    let illuminance = light.params.get_one_float("illuminance", -1.0);
+    if illuminance > 0.0 {
+        scale *= illuminance / std::f32::consts::PI;
+    }
+    if !scale.is_finite() {
+        return Err(PbrtError::error(&format!(
+            "Infinite light on node \"{}\" contains a non-finite scale.",
+            node_name
+        )));
+    }
+    Ok((kind, intensity, scale as f32))
 }
 
 fn area_light_record(

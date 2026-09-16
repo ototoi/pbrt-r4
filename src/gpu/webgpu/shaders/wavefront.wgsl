@@ -496,7 +496,19 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
             let parent_depth = depth - 1u;
             let parent = texture_nodes[stack_index[parent_depth]];
             if (parent.operation == 2u && stack_state[parent_depth] == 1u) {
-                stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                if (parent.child_count >= 2u) {
+                    stack_value[parent_depth] = stack_value[depth];
+                    stack_state[parent_depth] = 2u;
+                    depth += 1u;
+                    stack_index[depth] = texture_child_indices[parent.first_child + 1u];
+                    stack_state[depth] = 0u;
+                } else {
+                    stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                    stack_state[parent_depth] = 3u;
+                    depth = parent_depth;
+                }
+            } else if (parent.operation == 2u && stack_state[parent_depth] == 2u) {
+                stack_value[parent_depth] = stack_value[parent_depth] * stack_value[depth];
                 stack_state[parent_depth] = 3u;
                 depth = parent_depth;
             } else if (parent.operation == 3u && stack_state[parent_depth] == 1u) {
@@ -538,29 +550,7 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
     return vec3<f32>(0.0);
 }
 fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
-    var current = texture_index;
-    var scale = 1.0;
-    for (var depth = 0u; depth < 32u; depth++) {
-        if (current >= arrayLength(&texture_nodes)) {
-            set_render_error();
-            return vec3<f32>(0.0);
-        }
-        let node = texture_nodes[current];
-        if (node.operation == 0u || node.operation == 1u) {
-            return scale * sample_texture_leaf(current, uv);
-        }
-        if (node.operation == 2u && node.child_count >= 1u
-            && node.first_child < arrayLength(&texture_child_indices)) {
-            scale *= node.constant_value.x;
-            current = texture_child_indices[node.first_child];
-        } else {
-            // Other procedural graphs remain placeholders until the post-order
-            // texture mini VM is implemented.
-            return vec3<f32>(1.0);
-        }
-    }
-    set_render_error();
-    return vec3<f32>(0.0);
+    return deferred_sample_texture_graph(texture_index, uv);
 }
 const RGB_TABLE_RESOLUTION: u32 = 64u;
 const RGB_TABLE_SCALE_COUNT: u32 = RGB_TABLE_RESOLUTION;
