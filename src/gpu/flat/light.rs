@@ -5,7 +5,9 @@ pub const INVALID_INDEX: u32 = u32::MAX;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightKind {
     Point,
+    Spot,
     Area,
+    Distant,
 }
 
 #[derive(Clone, Debug, PartialEq)]

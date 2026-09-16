@@ -68,6 +68,12 @@ pub fn flatten_node_with_material_override(
                 .iter()
                 .flat_map(|light| light.attributes.iter().cloned()),
         )
+        .chain(
+            builder
+                .infinite_lights
+                .iter()
+                .flat_map(|light| light.attributes.iter().cloned()),
+        )
         .collect();
     let scene = Scene {
         camera,
@@ -79,6 +85,7 @@ pub fn flatten_node_with_material_override(
         light_positions: builder.light_positions,
         triangle_distributions: builder.triangle_distributions,
         lights: builder.lights,
+        infinite_lights: builder.infinite_lights,
         light_bounds,
         light_bvh,
         vertices: builder.vertices,
@@ -923,6 +930,7 @@ struct FlatBuilder {
     light_positions: Vec<[f32; 3]>,
     triangle_distributions: Vec<TriangleDistributionEntry>,
     lights: Vec<Light>,
+    infinite_lights: Vec<Light>,
     light_bound_inputs: Vec<LightBoundInput>,
 }
 

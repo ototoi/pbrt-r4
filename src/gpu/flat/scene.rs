@@ -15,6 +15,7 @@ pub struct Scene {
     pub light_positions: Vec<[f32; 3]>,
     pub triangle_distributions: Vec<TriangleDistributionEntry>,
     pub lights: Vec<Light>,
+    pub infinite_lights: Vec<Light>,
     /// One upload arena shared by material and light attribute references.
     pub attribute_refs: Vec<AttributeRef>,
     pub light_bounds: Vec<LightBounds>,
