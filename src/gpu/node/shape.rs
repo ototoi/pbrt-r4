@@ -27,10 +27,47 @@ pub struct DiskShape {
 }
 
 #[derive(Clone)]
+pub struct CylinderShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
+pub struct ConeShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct ParaboloidShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct HeightFieldShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct BilinearMeshShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct HyperboloidShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct NurbsShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
 pub enum Shape {
     TriangleMesh(Box<TriangleMeshShape>),
     Sphere(Box<SphereShape>),
     Disk(Box<DiskShape>),
+    Cylinder(Box<CylinderShape>),
+    Cone(Box<ConeShape>),
+    Paraboloid(Box<ParaboloidShape>),
+    HeightField(Box<HeightFieldShape>),
+    BilinearMesh(Box<BilinearMeshShape>),
+    Hyperboloid(Box<HyperboloidShape>),
+    Nurbs(Box<NurbsShape>),
 }
 
 pub fn triangle_mesh_from_params(

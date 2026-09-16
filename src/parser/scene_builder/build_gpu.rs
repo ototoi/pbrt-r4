@@ -4,12 +4,13 @@ use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
     loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
-    AreaLightComponent, Camera, CameraComponent, Component, DiskShape, Film, FilmComponent, Filter,
-    FilterComponent, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef, Output,
-    OutputComponent, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
-    SphereShape, Texture, TextureComponent, TextureKind as NodeTextureKind, TextureMapping,
-    TextureNode, Transform, UvMapping,
+    AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
+    CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
+    HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef,
+    NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene,
+    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
@@ -343,6 +344,27 @@ impl SceneBuilder {
                 params: shape.base.params.clone(),
             })),
             "disk" => Shape::Disk(Box::new(DiskShape {
+                params: shape.base.params.clone(),
+            })),
+            "cylinder" => Shape::Cylinder(Box::new(CylinderShape {
+                params: shape.base.params.clone(),
+            })),
+            "cone" => Shape::Cone(Box::new(ConeShape {
+                params: shape.base.params.clone(),
+            })),
+            "paraboloid" => Shape::Paraboloid(Box::new(ParaboloidShape {
+                params: shape.base.params.clone(),
+            })),
+            "heightfield" => Shape::HeightField(Box::new(HeightFieldShape {
+                params: shape.base.params.clone(),
+            })),
+            "hyperboloid" => Shape::Hyperboloid(Box::new(HyperboloidShape {
+                params: shape.base.params.clone(),
+            })),
+            "bilinearmesh" => Shape::BilinearMesh(Box::new(BilinearMeshShape {
+                params: shape.base.params.clone(),
+            })),
+            "nurbs" => Shape::Nurbs(Box::new(NurbsShape {
                 params: shape.base.params.clone(),
             })),
             "trianglemesh" | "plymesh" => {
