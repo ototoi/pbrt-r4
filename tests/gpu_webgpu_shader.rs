@@ -123,6 +123,9 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     assert!(evaluate.contains("fn sample_uniform_infinite_direction("));
     assert!(evaluate.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
     assert!(evaluate.contains("is_infinite_light_kind(light_kind)"));
+    assert!(
+        evaluate.contains("light_kind == LIGHT_KIND_AREA || is_infinite_light_kind(light_kind)")
+    );
 
     let escaped = compose_source(include_str!(
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
