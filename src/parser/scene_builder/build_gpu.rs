@@ -272,7 +272,7 @@ impl SceneBuilder {
                 NodeTextureKind::Float,
                 &texture.base.params,
                 &texture.render_from_texture,
-                &self.work_dirs,
+                &self.seen_work_dirs,
             )?);
         }
         for (index, texture) in self.spectrum_textures.iter().enumerate() {
@@ -286,7 +286,7 @@ impl SceneBuilder {
                 NodeTextureKind::Spectrum,
                 &texture.base.params,
                 &texture.render_from_texture,
-                &self.work_dirs,
+                &self.seen_work_dirs,
             )?);
         }
         let mut lookup = HashMap::new();
