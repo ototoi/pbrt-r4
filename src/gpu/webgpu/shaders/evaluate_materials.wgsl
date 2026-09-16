@@ -228,6 +228,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var light_normal = vec3<f32>(0.0);
     var light_radiance = vec4<f32>(0.0);
     var sampled_light_pdf = light_selection.pmf;
+    var wi = vec3<f32>(0.0);
+    var distance_squared = 1.0;
     if (light_kind == LIGHT_KIND_POINT) {
         light_position = load_point_position(light_index);
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
@@ -238,10 +240,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let falloff = smoothstep(load_light_scalar(light_index, 3u), load_light_scalar(light_index, 2u), dot(spot_direction, spot_w));
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index) * falloff;
     } else if (light_kind == LIGHT_KIND_DISTANT) {
-        let distant_wi = normalize(load_light_direction(light_index));
-        // Use a large finite segment for the visibility ray. An f32 value of
-        // 1e20 overflows when squared and produces an invalid shadow target.
-        light_position = light_sample_origin + distant_wi * 1e4;
+        wi = normalize(load_light_direction(light_index));
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
@@ -279,13 +278,14 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else {
         return;
     }
-    let to_light = light_position - light_sample_origin;
-    let distance_squared = dot(to_light, to_light);
-    if (distance_squared <= 0.0) {
-        return;
+    if (light_kind != LIGHT_KIND_DISTANT) {
+        let to_light = light_position - light_sample_origin;
+        distance_squared = dot(to_light, to_light);
+        if (distance_squared <= 0.0) {
+            return;
+        }
+        wi = to_light / sqrt(distance_squared);
     }
-    let distance = sqrt(distance_squared);
-    let wi = to_light / distance;
     // pbrt-v4 semantics: DiffuseBxDF::f returns R/pi only when wo and wi lie
     // in the same hemisphere of the shading frame (SameHemisphere), and
     // SampleLd weights it with AbsDot(wi, shading.n). This keeps diffuse
@@ -351,19 +351,22 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
         * mis_weight;
     let shadow_origin = light_sample_origin;
-    var shadow_target = light_position;
+    var shadow_direction = wi;
+    var shadow_distance = RAY_T_MAX;
     if (light_kind == LIGHT_KIND_AREA) {
-        shadow_target = offset_ray_origin(light_position, light_error, light_normal, -wi);
-    }
-    let shadow_vector = shadow_target - shadow_origin;
-    let shadow_distance = length(shadow_vector);
-    if (shadow_distance <= 0.0) {
-        return;
+        let shadow_target = offset_ray_origin(light_position, light_error, light_normal, -wi);
+        let shadow_vector = shadow_target - shadow_origin;
+        shadow_distance = length(shadow_vector);
+        shadow_direction = shadow_vector / shadow_distance;
+    } else if (light_kind != LIGHT_KIND_DISTANT) {
+        let shadow_vector = light_position - shadow_origin;
+        shadow_distance = length(shadow_vector);
+        shadow_direction = shadow_vector / shadow_distance;
     }
     append_shadow_ray(
         pixel_index,
         shadow_origin,
-        shadow_vector / shadow_distance,
+        shadow_direction,
         shadow_distance,
         (ray.throughput * direct),
     );
