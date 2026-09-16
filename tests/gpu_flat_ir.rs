@@ -11,6 +11,7 @@ use pbrt_r4::gpu::node::{
     SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
+use pbrt_r4::util::spectrum::rgb_to_spectrum::ACES2065_1;
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
 fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
@@ -421,7 +422,11 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
     spot_params.add_float("float coneangle", 40.0);
     spot_params.add_float("float conedelta", 10.0);
     spot_params.add_float("float power", 10.0);
-    root.add_child(light_node("spot", "spot", spot_params));
+    let spot = light_node("spot", "spot", spot_params);
+    spot.write().unwrap().transform.matrix = [
+        2.0, 0.5, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    root.add_child(spot);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
@@ -450,6 +455,14 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
     );
     assert_ne!(scene.lights[0].sampling_model, 0);
     assert_eq!(scene.infinite_lights[0].sampling_model, 0);
+    assert_eq!(
+        spot_model.world_to_light,
+        [
+            [0.5, -1.0 / 12.0, 0.0, 0.0],
+            [0.0, 1.0 / 3.0, 0.0, 0.0],
+            [0.0, 0.0, 0.25, 0.0],
+        ]
+    );
 
     let cos_start = scene.scalar_attributes[scene.lights[0].attributes[2].index as usize];
     let cos_end = scene.scalar_attributes[scene.lights[0].attributes[3].index as usize];
@@ -460,6 +473,29 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
     let k_e = 2.0 * std::f32::consts::PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
     let expected_scale = 10.0 / (spectrum_to_photometric(&intensity) * k_e);
     assert!((scale - expected_scale).abs() < 1e-6);
+}
+
+#[test]
+fn flatten_node_uses_color_space_illuminant_for_default_light_spectra() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut spot_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    spot_params.set_color_space(&ACES2065_1);
+    root.add_child(light_node("spot", "spot", spot_params));
+
+    let mut distant_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    distant_params.set_color_space(&ACES2065_1);
+    root.add_child(light_node("distant", "distant", distant_params));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let expected = ACES2065_1.illuminant.sample_at(450.0);
+    for light in [&scene.lights[0], &scene.infinite_lights[0]] {
+        let actual =
+            evaluate_dense_spectrum(&scene.spectrum_attributes, light.attributes[0].index, 450.0)
+                .unwrap();
+        assert!((actual - expected).abs() < 1e-6);
+    }
 }
 
 #[test]

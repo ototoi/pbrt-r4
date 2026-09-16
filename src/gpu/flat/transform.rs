@@ -25,6 +25,37 @@ pub fn transform_swaps_handedness(transform: Transform) -> bool {
     determinant < 0.0
 }
 
+/// Returns the inverse of the affine transform's linear part as three padded
+/// rows suitable for direct upload to WGSL.
+pub fn inverse_linear_transform(transform: &Transform) -> Result<[[f32; 4]; 3], &'static str> {
+    let [a, b, c, _, d, e, f, _, g, h, i, _, _, _, _, _] = *transform;
+    let determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if !determinant.is_finite() || determinant == 0.0 {
+        return Err("transform has a singular linear part");
+    }
+    let inverse_determinant = 1.0 / determinant;
+    Ok([
+        [
+            (e * i - f * h) * inverse_determinant,
+            (c * h - b * i) * inverse_determinant,
+            (b * f - c * e) * inverse_determinant,
+            0.0,
+        ],
+        [
+            (f * g - d * i) * inverse_determinant,
+            (a * i - c * g) * inverse_determinant,
+            (c * d - a * f) * inverse_determinant,
+            0.0,
+        ],
+        [
+            (d * h - e * g) * inverse_determinant,
+            (b * g - a * h) * inverse_determinant,
+            (a * e - b * d) * inverse_determinant,
+            0.0,
+        ],
+    ])
+}
+
 /// Applies the inverse-transpose of the linear part to a normal.
 pub fn transform_normal(transform: Transform, normal: [f32; 3]) -> Result<[f32; 3], &'static str> {
     let [a, b, c, _, d, e, f, _, g, h, i, _, _, _, _, _] = transform;

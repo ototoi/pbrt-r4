@@ -32,7 +32,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(
         std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LightSamplingModel>(),
-        32
+        80
     );
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
     assert_eq!(std::mem::size_of::<QueueCounters>(), 96);
@@ -55,6 +55,7 @@ fn webgpu_storage_array_strides_are_16_byte_aligned() {
         std::mem::size_of::<SurfaceWorkItem>(),
         std::mem::size_of::<PixelSampleState>(),
         std::mem::size_of::<DenseSpectrum>(),
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LightSamplingModel>(),
     ] {
         assert_eq!(size % 16, 0, "storage stride {size} is not 16-byte aligned");
     }

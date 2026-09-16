@@ -314,6 +314,7 @@ impl Scene {
                 distribution_count: model.distribution_count,
                 total_area: model.total_area,
                 flags: model.flags,
+                world_to_light: model.world_to_light,
             })
             .collect::<Vec<_>>();
         let light_records = flat
