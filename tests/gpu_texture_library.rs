@@ -109,3 +109,39 @@ fn texture_program_is_typed_post_order() {
         } if factor == 2.0
     ));
 }
+
+#[test]
+fn image_instruction_keeps_sampling_interpretation() {
+    let mut params = ParameterDictionary::default();
+    params.add_string("string wrap", "black");
+    params.add_string("string filter", "nearest");
+    params.add_float("float scale", 3.0);
+    params.add_bool("bool invert", true);
+    let mut node = TextureNode::new("imagemap");
+    node.components.push(TextureComponent::Texture(Texture {
+        name: "imagemap".to_string(),
+        kind: TextureKind::Float,
+        params,
+        mipmap: Some(Arc::new(Mipmap {
+            levels: vec![MipmapLevel {
+                resolution: [1, 1],
+                channels: 1,
+                data: MipmapLevelData::F32(vec![0.25]),
+            }],
+            color_space: ColorSpace::Unknown,
+            encoding: MipmapEncoding::Linear,
+        })),
+    }));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(node),
+    }])
+    .unwrap();
+    let TextureInstruction::SampleImage { view, .. } = &library.programs[0].instructions[0] else {
+        panic!("expected image sample instruction");
+    };
+    assert_eq!(view.swrap, pbrt_r4::gpu::texture::ImageWrapMode::Black);
+    assert_eq!(view.filter, pbrt_r4::gpu::texture::ImageFilterMode::Nearest);
+    assert_eq!(view.scale, 3.0);
+    assert!(view.invert);
+}
