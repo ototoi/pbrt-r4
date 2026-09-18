@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::gpu::node::{ColorSpace, TextureComponent, TextureKind, TextureNode};
-use crate::gpu::texture::Mipmap;
+use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode};
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
@@ -28,7 +28,7 @@ pub enum Instruction {
     },
     SampleImage {
         dst: u32,
-        mipmap: Arc<Mipmap>,
+        view: Arc<ImageView>,
         value_type: ValueType,
     },
     Scale {
@@ -173,9 +173,13 @@ fn instruction(
         },
         "imagemap" => Ok(Instruction::SampleImage {
             dst,
-            mipmap: texture.mipmap.clone().ok_or_else(|| {
-                PbrtError::error(&format!("Image texture \"{}\" has no mipmap.", node.name))
-            })?,
+            view: Arc::new(image_view(
+                texture,
+                value_type,
+                texture.mipmap.clone().ok_or_else(|| {
+                    PbrtError::error(&format!("Image texture \"{}\" has no mipmap.", node.name))
+                })?,
+            )),
             value_type,
         }),
         "scale" => {
@@ -221,6 +225,36 @@ fn instruction(
             ],
             value_type,
         }),
+    }
+}
+
+fn image_view(
+    texture: &crate::gpu::node::Texture,
+    value_type: ValueType,
+    mipmap: Arc<crate::gpu::texture::Mipmap>,
+) -> ImageView {
+    let wrap = |name: &str| match name {
+        "clamp" => ImageWrapMode::Clamp,
+        "black" => ImageWrapMode::Black,
+        _ => ImageWrapMode::Repeat,
+    };
+    let wrap_mode = texture.params.get_one_string("wrap", "repeat");
+    let filter = match texture.params.get_one_string("filter", "bilinear") {
+        value if value == "point" || value == "nearest" => ImageFilterMode::Nearest,
+        value if value == "trilinear" => ImageFilterMode::Trilinear,
+        _ => ImageFilterMode::Bilinear,
+    };
+    ImageView {
+        mipmap,
+        value_type: match value_type {
+            ValueType::Float => ImageValueType::Float,
+            ValueType::LinearRgb(_) => ImageValueType::LinearRgb,
+        },
+        swrap: wrap(&texture.params.get_one_string("swrap", &wrap_mode)),
+        twrap: wrap(&texture.params.get_one_string("twrap", &wrap_mode)),
+        filter,
+        scale: texture.params.get_one_float("scale", 1.0) as f32,
+        invert: texture.params.get_one_bool("invert", false),
     }
 }
 
