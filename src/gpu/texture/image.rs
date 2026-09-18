@@ -1,5 +1,6 @@
 //! Shared immutable image data used by texture graph and backend adapters.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::util::base::inverse_gamma_correct;
@@ -75,6 +76,112 @@ pub struct ImageView {
     pub filter: ImageFilterMode,
     pub scale: f32,
     pub invert: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageOptimizationPolicy {
+    pub allow_f16: bool,
+    pub max_absolute_error: f32,
+    pub max_relative_error: f32,
+}
+
+impl Default for ImageOptimizationPolicy {
+    fn default() -> Self {
+        Self {
+            allow_f16: false,
+            max_absolute_error: 0.0,
+            max_relative_error: 0.0,
+        }
+    }
+}
+
+/// Compiles one decoded GPU mipmap into the representation shared by Node and
+/// Flat IR. The decoded image and its interpretation are interned separately
+/// from image views, so sampling settings do not duplicate texel storage.
+pub struct ImageCompiler {
+    policy: ImageOptimizationPolicy,
+    compiled: HashMap<(usize, ImageValueType), Arc<Mipmap>>,
+}
+
+impl ImageCompiler {
+    pub fn new(policy: ImageOptimizationPolicy) -> Self {
+        Self {
+            policy,
+            compiled: HashMap::new(),
+        }
+    }
+
+    pub fn compile(
+        &mut self,
+        source: &Arc<Mipmap>,
+        value_type: ImageValueType,
+    ) -> Result<Arc<Mipmap>, PbrtError> {
+        let key = (Arc::as_ptr(source) as usize, value_type);
+        if let Some(mipmap) = self.compiled.get(&key) {
+            return Ok(mipmap.clone());
+        }
+        let projected = match value_type {
+            ImageValueType::Float => project_float_mipmap(source)?,
+            ImageValueType::LinearRgb => source.clone(),
+        };
+        let optimized = self.optimize_storage(&projected)?;
+        self.compiled.insert(key, optimized.clone());
+        Ok(optimized)
+    }
+
+    fn optimize_storage(&self, source: &Arc<Mipmap>) -> Result<Arc<Mipmap>, PbrtError> {
+        if !self.policy.allow_f16 {
+            return Ok(source.clone());
+        }
+        let mut levels = Vec::with_capacity(source.levels.len());
+        for level in &source.levels {
+            let MipmapLevelData::F32(values) = &level.data else {
+                levels.push(level.clone());
+                continue;
+            };
+            let mut converted = Vec::with_capacity(values.len());
+            let mut acceptable = true;
+            for &value in values {
+                if !value.is_finite() {
+                    acceptable = false;
+                    break;
+                }
+                let half = half::f16::from_f32(value);
+                let round_trip = half.to_f32();
+                if !round_trip.is_finite() {
+                    acceptable = false;
+                    break;
+                }
+                let absolute_error = (round_trip - value).abs();
+                let relative_error = if value == 0.0 {
+                    0.0
+                } else {
+                    absolute_error / value.abs()
+                };
+                if absolute_error > self.policy.max_absolute_error
+                    && relative_error > self.policy.max_relative_error
+                {
+                    acceptable = false;
+                    break;
+                }
+                converted.push(half.to_bits());
+            }
+            if acceptable {
+                levels.push(MipmapLevel {
+                    resolution: level.resolution,
+                    channels: level.channels,
+                    data: MipmapLevelData::F16(converted),
+                });
+            } else {
+                levels.push(level.clone());
+            }
+        }
+        Ok(Arc::new(Mipmap {
+            levels,
+            color_space: source.color_space,
+            encoding: source.encoding,
+        }))
+    }
 }
 
 pub fn project_float_mipmap(mipmap: &Arc<Mipmap>) -> Result<Arc<Mipmap>, PbrtError> {
