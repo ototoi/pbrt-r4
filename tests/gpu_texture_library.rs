@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use pbrt_r4::gpu::node::TextureNode;
-use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind};
+use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
 use pbrt_r4::gpu::texture::{
     compile_texture_library, ColorSpace, ImageCompiler, ImageOptimizationPolicy, ImageValueType,
     Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction, TextureRoot,
@@ -132,6 +132,13 @@ fn image_instruction_keeps_sampling_interpretation() {
             encoding: MipmapEncoding::Linear,
         })),
     }));
+    node.components
+        .push(TextureComponent::Mapping(TextureMapping::Uv(UvMapping {
+            uscale: 2.0,
+            vscale: 3.0,
+            udelta: 0.1,
+            vdelta: 0.2,
+        })));
 
     let library = compile_texture_library(&[TextureRootSpec::Float {
         node: Arc::new(node),
@@ -144,4 +151,11 @@ fn image_instruction_keeps_sampling_interpretation() {
     assert_eq!(view.filter, pbrt_r4::gpu::texture::ImageFilterMode::Nearest);
     assert_eq!(view.scale, 3.0);
     assert!(view.invert);
+    assert!(matches!(
+        &library.programs[0].instructions[0],
+        TextureInstruction::SampleImage {
+            mapping: Some(TextureMapping::Uv(UvMapping { uscale: 2.0, .. })),
+            ..
+        }
+    ));
 }
