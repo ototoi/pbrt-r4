@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::gpu::node::{ColorSpace, TextureComponent, TextureKind, TextureNode};
+use crate::gpu::node::{ColorSpace, TextureComponent, TextureKind, TextureMapping, TextureNode};
 use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode};
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
@@ -29,6 +29,7 @@ pub enum Instruction {
     SampleImage {
         dst: u32,
         view: Arc<ImageView>,
+        mapping: Option<TextureMapping>,
         value_type: ValueType,
     },
     Scale {
@@ -180,6 +181,7 @@ fn instruction(
                     PbrtError::error(&format!("Image texture \"{}\" has no mipmap.", node.name))
                 })?,
             )),
+            mapping: texture_mapping(node),
             value_type,
         }),
         "scale" => {
@@ -226,6 +228,15 @@ fn instruction(
             value_type,
         }),
     }
+}
+
+fn texture_mapping(node: &TextureNode) -> Option<TextureMapping> {
+    node.components
+        .iter()
+        .find_map(|component| match component {
+            TextureComponent::Mapping(mapping) => Some(mapping.clone()),
+            TextureComponent::Texture(_) => None,
+        })
 }
 
 fn image_view(
