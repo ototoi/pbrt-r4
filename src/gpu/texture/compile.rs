@@ -1,5 +1,6 @@
 //! Compilation of Node IR texture roots into backend-independent resources.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::gpu::node::TextureNode;
@@ -45,6 +46,7 @@ pub struct TextureLibrary {
 pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibrary, PbrtError> {
     let mut programs = Vec::with_capacity(roots.len());
     let mut compiled_roots = Vec::with_capacity(roots.len());
+    let mut programs_by_root = HashMap::new();
 
     for root in roots {
         let (node, spectrum_type) = match root {
@@ -54,9 +56,16 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
                 spectrum_type,
             } => (node, Some(*spectrum_type)),
         };
-        let program = u32::try_from(programs.len())
-            .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
-        programs.push(TypedTextureProgram::compile(node)?);
+        let key = Arc::as_ptr(node) as usize;
+        let program = if let Some(&program) = programs_by_root.get(&key) {
+            program
+        } else {
+            let program = u32::try_from(programs.len())
+                .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
+            programs.push(TypedTextureProgram::compile(node)?);
+            programs_by_root.insert(key, program);
+            program
+        };
         compiled_roots.push(match spectrum_type {
             Some(spectrum_type) => TextureRoot::Spectrum {
                 program,
