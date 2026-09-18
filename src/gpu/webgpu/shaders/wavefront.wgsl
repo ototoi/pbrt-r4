@@ -261,7 +261,8 @@ fn load_material_attribute(material_index: u32, ordinal: u32) -> AttributeRef {
 fn load_material_scalar(material_index: u32, ordinal: u32) -> f32 {
     let attr_ref = load_material_attribute(material_index, ordinal);
     if (attr_ref.kind == 2u) {
-        return sample_texture_rgb(attr_ref.index, material_texture_uv).x;
+        if (attr_ref.index >= arrayLength(&texture_roots)) { set_render_error(); return 0.0; }
+        return sample_texture_rgb(texture_roots[attr_ref.index].texture_node, material_texture_uv).x;
     }
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
@@ -420,8 +421,8 @@ fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     // pbrt-v4 image textures use image-space origin at the upper left.
     let image_uv = vec2<f32>(mapped_uv.x, 1.0 - mapped_uv.y);
     var value = textureSampleLevel(
-        texture_images[texture_index],
-        texture_samplers[texture_index],
+        texture_images[node.texture_index],
+        texture_samplers[node.sampler],
         image_uv,
         0.0,
     ).rgb * node.constant_value.x;
@@ -634,15 +635,17 @@ fn rgb_to_unbounded_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u3
 }
 fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
     let attr_ref = load_material_attribute(material_index, ordinal);
-    if (attr_ref.kind == 2u || attr_ref.kind == 4u) {
-        let rgb = sample_texture_rgb(attr_ref.index, material_texture_uv);
-        if (texture_nodes[attr_ref.index].kind == 0u) {
+    if (attr_ref.kind == 2u) {
+        if (attr_ref.index >= arrayLength(&texture_roots)) { set_render_error(); return vec4<f32>(0.0); }
+        let root = texture_roots[attr_ref.index];
+        let rgb = sample_texture_rgb(root.texture_node, material_texture_uv);
+        if (texture_nodes[root.texture_node].kind == 0u) {
             return vec4<f32>(rgb.x);
         }
-        if (attr_ref.kind == 4u) {
-            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[attr_ref.index].color_space);
+        if (root.spectrum_type == 1u) {
+            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[root.texture_node].color_space);
         }
-        return rgb_to_spectrum4(rgb, lambda, texture_nodes[attr_ref.index].color_space);
+        return rgb_to_spectrum4(rgb, lambda, texture_nodes[root.texture_node].color_space);
     }
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);

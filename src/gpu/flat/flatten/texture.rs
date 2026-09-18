@@ -1,29 +1,16 @@
-use super::FlatBuilder;
+use super::{FlatBuilder, ImageViewKey};
 use crate::gpu::flat::TextureNode as FlatTextureNode;
 use crate::gpu::node::{
-    ColorSpaceId, TextureComponent, TextureKind as NodeTextureKind, TextureMapping, TextureNode,
+    ColorSpace, TextureComponent, TextureKind as NodeTextureKind, TextureMapping, TextureNode,
     Transform,
 };
 use crate::gpu::texture::{
-    ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel,
-    MipmapLevelData,
+    project_float_mipmap, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
 };
-use crate::util::base::inverse_gamma_correct;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 use std::collections::HashSet;
 use std::sync::Arc;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ImageViewKey {
-    pub mipmap: usize,
-    pub value_type: ImageValueType,
-    pub swrap: ImageWrapMode,
-    pub twrap: ImageWrapMode,
-    pub filter: ImageFilterMode,
-    pub scale: u32,
-    pub invert: bool,
-}
 
 pub fn register_texture_node(
     node: &Arc<TextureNode>,
@@ -77,12 +64,12 @@ pub fn register_texture_node(
             }
             color_space = mipmap
                 .as_ref()
-                .and_then(|mipmap| mipmap.color_space)
-                .map(|space| match space {
-                    ColorSpaceId::Srgb => 0,
-                    ColorSpaceId::Aces2065 => 1,
-                    ColorSpaceId::DciP3 => 2,
-                    ColorSpaceId::Rec2020 => 3,
+                .map(|mipmap| match mipmap.color_space {
+                    ColorSpace::Unknown => 0,
+                    ColorSpace::Srgb => 0,
+                    ColorSpace::Aces2065 => 1,
+                    ColorSpace::DciP3 => 2,
+                    ColorSpace::Rec2020 => 3,
                 })
                 .unwrap_or(0);
             let wrap = texture.params.get_one_string("wrap", "repeat");
@@ -315,71 +302,6 @@ pub fn intern_image_view(builder: &mut FlatBuilder, view: ImageView) -> Result<u
     Ok(index)
 }
 
-pub fn project_float_mipmap(mipmap: &Arc<Mipmap>) -> Result<Arc<Mipmap>, PbrtError> {
-    let mut levels = Vec::with_capacity(mipmap.levels.len());
-    for level in &mipmap.levels {
-        if !(1..=4).contains(&level.channels) {
-            return Err(PbrtError::error("Float texture has invalid channel count."));
-        }
-        let channels = usize::try_from(level.channels)
-            .map_err(|_| PbrtError::error("Texture channel count does not fit usize."))?;
-        let pixels = usize::try_from(level.resolution[0])
-            .ok()
-            .and_then(|width| {
-                usize::try_from(level.resolution[1])
-                    .ok()
-                    .and_then(|height| width.checked_mul(height))
-            })
-            .ok_or_else(|| PbrtError::error("Texture resolution overflowed."))?;
-        let mut values = match &level.data {
-            MipmapLevelData::F32(values) => values.clone(),
-            MipmapLevelData::F16(values) => values
-                .iter()
-                .map(|value| half::f16::from_bits(*value).to_f32())
-                .collect(),
-            MipmapLevelData::U8(values) => values
-                .iter()
-                .map(|value| f32::from(*value) / 255.0)
-                .collect(),
-        };
-        if values.len() != pixels.saturating_mul(channels) {
-            return Err(PbrtError::error(
-                "Texture mipmap data size is inconsistent.",
-            ));
-        }
-        if matches!(mipmap.encoding, MipmapEncoding::SrgbEncoded) {
-            for pixel in values.chunks_exact_mut(channels) {
-                let color_channels = if channels == 4 { 3 } else { channels };
-                for value in pixel.iter_mut().take(color_channels) {
-                    *value = inverse_gamma_correct(*value);
-                }
-            }
-        }
-        let projected = values
-            .chunks_exact(channels)
-            .map(|pixel| {
-                if channels == 4 {
-                    pixel[3]
-                } else if channels == 3 {
-                    (pixel[0] + pixel[1] + pixel[2]) / 3.0
-                } else {
-                    pixel[0]
-                }
-            })
-            .collect();
-        levels.push(MipmapLevel {
-            resolution: level.resolution,
-            channels: 1,
-            data: MipmapLevelData::F32(projected),
-        });
-    }
-    Ok(Arc::new(Mipmap {
-        levels,
-        color_space: mipmap.color_space,
-        encoding: MipmapEncoding::Linear,
-    }))
-}
-
 const MAX_TEXTURE_GRAPH_DEPTH: usize = 32;
 
 fn validate_texture_graph(
@@ -430,10 +352,11 @@ fn sampler_filter_mode(mode: &str) -> Result<u32, PbrtError> {
 mod texture_projection_tests {
     use super::super::material::intern_texture_root;
     use super::FlatBuilder;
-    use super::{intern_image_view, intern_projected_float_mipmap, project_float_mipmap};
+    use super::{intern_image_view, intern_projected_float_mipmap};
+    use crate::gpu::texture::project_float_mipmap;
     use crate::gpu::texture::{
-        ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap, MipmapEncoding,
-        MipmapLevel, MipmapLevelData,
+        ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
+        MipmapEncoding, MipmapLevel, MipmapLevelData,
     };
     use std::sync::Arc;
 
@@ -445,7 +368,7 @@ mod texture_projection_tests {
                 channels: 3,
                 data: MipmapLevelData::F32(vec![0.0, 0.3, 0.6, 0.5, 0.5, 0.5]),
             }],
-            color_space: None,
+            color_space: ColorSpace::Unknown,
             encoding: MipmapEncoding::Linear,
         });
         let projected = project_float_mipmap(&source).unwrap();
@@ -465,7 +388,7 @@ mod texture_projection_tests {
                 channels: 4,
                 data: MipmapLevelData::U8(vec![128, 64, 32, 200]),
             }],
-            color_space: None,
+            color_space: ColorSpace::Unknown,
             encoding: MipmapEncoding::SrgbEncoded,
         });
         let projected = project_float_mipmap(&source).unwrap();
@@ -497,7 +420,7 @@ mod texture_projection_tests {
                 channels: 3,
                 data: MipmapLevelData::F32(vec![0.25, 0.5, 0.75]),
             }],
-            color_space: None,
+            color_space: ColorSpace::Unknown,
             encoding: MipmapEncoding::Linear,
         });
         let mut builder = FlatBuilder::default();
@@ -516,7 +439,7 @@ mod texture_projection_tests {
                 channels: 3,
                 data: MipmapLevelData::F32(vec![0.25, 0.5, 0.75]),
             }],
-            color_space: None,
+            color_space: ColorSpace::Unknown,
             encoding: MipmapEncoding::Linear,
         });
         let view = ImageView {

@@ -10,7 +10,7 @@ use crate::gpu::node::{
     complete_triangle_attributes, remove_invalid_triangles, Component,
     Integrator as NodeIntegrator, Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape,
 };
-use crate::gpu::texture::{ImageView, Mipmap};
+use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 
@@ -22,7 +22,7 @@ use super::geometry::{
 };
 
 mod texture;
-use texture::{register_texture_node, ImageViewKey};
+use texture::register_texture_node;
 
 mod material;
 use material::material_index;
@@ -34,7 +34,7 @@ mod shape;
 use shape::geometry_index;
 
 mod lights;
-use lights::{area_light_record, flatten_light};
+use lights::{append_area_light, area_light_record, flatten_light};
 
 mod scene_settings;
 use scene_settings::{
@@ -50,6 +50,17 @@ const IDENTITY_LINEAR_TRANSFORM: [[f32; 4]; 3] = [
     [0.0, 1.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ImageViewKey {
+    mipmap: usize,
+    value_type: ImageValueType,
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilterMode,
+    scale: u32,
+    invert: bool,
+}
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)

@@ -77,9 +77,8 @@ impl WavefrontPathIntegrator {
         // Every deployed pipeline has a second group reserved for texture
         // binding arrays, even when an individual stage does not sample one.
         required_limits.bind_groups = required_limits.bind_groups.max(2);
-        let texture_image_count = u32::try_from(flat_scene.texture_nodes.len())
-            .map_err(|_| PbrtError::error("Texture node count exceeds u32 range."))?;
-        let texture_sampler_count = texture_image_count;
+        let (texture_image_count, texture_sampler_count) =
+            super::scene::texture_binding_counts(&flat_scene.image_views)?;
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );
@@ -180,6 +179,7 @@ impl WavefrontPathIntegrator {
                     scene.spectrum_attribute_buffer.as_entire_binding()
                 }
                 ResourceId::TextureNode => scene.texture_node_buffer.as_entire_binding(),
+                ResourceId::TextureRoot => scene.texture_root_buffer.as_entire_binding(),
                 ResourceId::TextureChild => scene.texture_child_buffer.as_entire_binding(),
                 ResourceId::RgbSpectrumTable => scene.rgb_spectrum_table_buffer.as_entire_binding(),
                 ResourceId::TextureImageArray => {

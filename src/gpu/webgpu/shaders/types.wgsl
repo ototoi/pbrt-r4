@@ -131,14 +131,16 @@ struct TextureNodeRecord {
     swrap_mode: u32,
     twrap_mode: u32,
     color_space: u32,
-    _padding: u32,
+    texture_index: u32,
     operation: u32,
     mapping_kind: u32,
-    operation_pad: array<u32, 2>,
+    sampler: u32,
+    operation_pad: u32,
     constant_value: vec4<f32>,
     mapping: mat4x4<f32>,
 };
 struct AttributeRef { kind: u32, index: u32, };
+struct TextureRootRecord { texture_node: u32, spectrum_type: u32, };
 
 struct DenseSpectrum {
     samples: array<f32, 471>,

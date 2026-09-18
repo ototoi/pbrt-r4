@@ -9,8 +9,6 @@ pub const DENSE_SAMPLE_COUNT: usize = 471;
 pub const INVALID_SPECTRUM_ID: u32 = u32::MAX;
 pub const SPECTRUM_FLAG_CONSTANT: u32 = 1 << 0;
 
-pub type SpectrumId = u32;
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SpectrumKey {
     flags: u32,
@@ -38,7 +36,7 @@ pub fn validate_dense_spectra(spectrum_attributes: &[DenseSpectrum]) -> Result<(
 
 pub fn evaluate_dense_spectrum(
     spectrum_attributes: &[DenseSpectrum],
-    id: SpectrumId,
+    id: u32,
     lambda: f32,
 ) -> Result<f32, PbrtError> {
     let spectrum =
@@ -64,11 +62,11 @@ impl DenseSpectrum {
 #[derive(Default)]
 pub struct DenseSpectrumBuilder {
     table: Vec<DenseSpectrum>,
-    ids: HashMap<SpectrumKey, SpectrumId>,
+    ids: HashMap<SpectrumKey, u32>,
 }
 
 impl DenseSpectrumBuilder {
-    pub fn intern(&mut self, spectrum: &Spectrum) -> Result<SpectrumId, PbrtError> {
+    pub fn intern(&mut self, spectrum: &Spectrum) -> Result<u32, PbrtError> {
         let flags = if spectrum.is_constant_spectrum() {
             SPECTRUM_FLAG_CONSTANT
         } else {
@@ -81,7 +79,7 @@ impl DenseSpectrumBuilder {
         &mut self,
         spectrum: &DenselySampledSpectrum,
         flags: u32,
-    ) -> Result<SpectrumId, PbrtError> {
+    ) -> Result<u32, PbrtError> {
         let mut samples = [0.0; DENSE_SAMPLE_COUNT];
         let mut bits = Vec::with_capacity(DENSE_SAMPLE_COUNT);
         for (index, sample) in samples.iter_mut().enumerate() {
