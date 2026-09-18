@@ -3,6 +3,7 @@ use super::{
     LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
     TriangleDistributionEntry, Vertex, Viewport,
 };
+use crate::gpu::texture::TextureLibrary;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
@@ -27,6 +28,8 @@ pub struct Scene {
     pub materials: Vec<Material>,
     pub scalar_attributes: Vec<f32>,
     pub texture_roots: Vec<TextureRootRecord>,
+    /// Typed, backend-independent texture programs and shared image resources.
+    pub texture_library: TextureLibrary,
     pub image_views: Vec<crate::gpu::texture::ImageView>,
     pub texture_nodes: Vec<TextureNode>,
     pub texture_child_indices: Vec<u32>,

@@ -35,6 +35,7 @@ pub fn register_texture_node(
         mapping_kind: 0,
         constant_value: [0.0; 4],
     });
+    builder.texture_source_nodes.push(node.clone());
     let mut kind = 0;
     let mut implementation = String::new();
     let mut mipmap = None;

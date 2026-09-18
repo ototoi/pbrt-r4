@@ -25,7 +25,7 @@ pub enum TextureRootSpec {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TextureRoot {
     Float {
         program: u32,
@@ -36,6 +36,7 @@ pub enum TextureRoot {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextureLibrary {
     pub programs: Vec<TypedTextureProgram>,
     pub roots: Vec<TextureRoot>,
