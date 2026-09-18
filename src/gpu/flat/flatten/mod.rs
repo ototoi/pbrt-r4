@@ -10,7 +10,9 @@ use crate::gpu::node::{
     complete_triangle_attributes, remove_invalid_triangles, Component,
     Integrator as NodeIntegrator, Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape,
 };
-use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap};
+use crate::gpu::texture::{
+    ImageCompiler, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode,
+};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 
@@ -270,7 +272,7 @@ struct FlatBuilder {
     texture_roots: Vec<super::TextureRootRecord>,
     image_views: Vec<ImageView>,
     image_views_by_key: HashMap<ImageViewKey, u32>,
-    projected_float_mipmaps: HashMap<usize, Arc<Mipmap>>,
+    image_compiler: ImageCompiler,
     texture_roots_by_key: HashMap<(u32, u32), u32>,
     texture_nodes: Vec<FlatTextureNode>,
     texture_child_indices: Vec<u32>,

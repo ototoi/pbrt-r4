@@ -103,6 +103,12 @@ pub struct ImageCompiler {
     compiled: HashMap<(usize, ImageValueType), Arc<Mipmap>>,
 }
 
+impl Default for ImageCompiler {
+    fn default() -> Self {
+        Self::new(ImageOptimizationPolicy::default())
+    }
+}
+
 impl ImageCompiler {
     pub fn new(policy: ImageOptimizationPolicy) -> Self {
         Self {

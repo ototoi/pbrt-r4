@@ -4,9 +4,7 @@ use crate::gpu::node::{
     ColorSpace, TextureComponent, TextureKind as NodeTextureKind, TextureMapping, TextureNode,
     Transform,
 };
-use crate::gpu::texture::{
-    project_float_mipmap, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
-};
+use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 use std::collections::HashSet;
@@ -273,13 +271,9 @@ pub fn intern_projected_float_mipmap(
     builder: &mut FlatBuilder,
     source: &Arc<Mipmap>,
 ) -> Result<Arc<Mipmap>, PbrtError> {
-    let key = Arc::as_ptr(source) as usize;
-    if let Some(mipmap) = builder.projected_float_mipmaps.get(&key) {
-        return Ok(mipmap.clone());
-    }
-    let mipmap = project_float_mipmap(source)?;
-    builder.projected_float_mipmaps.insert(key, mipmap.clone());
-    Ok(mipmap)
+    builder
+        .image_compiler
+        .compile(source, ImageValueType::Float)
 }
 
 pub fn intern_image_view(builder: &mut FlatBuilder, view: ImageView) -> Result<u32, PbrtError> {
@@ -428,7 +422,6 @@ mod texture_projection_tests {
         let second = intern_projected_float_mipmap(&mut builder, &source).unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(builder.projected_float_mipmaps.len(), 1);
     }
 
     #[test]
