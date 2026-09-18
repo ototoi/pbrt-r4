@@ -6,7 +6,7 @@ use crate::gpu::node::TextureNode;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
-use super::program::TextureProgram;
+use super::typed_program::TypedTextureProgram;
 
 /// A texture entry point exported by a material attribute.
 ///
@@ -36,7 +36,7 @@ pub enum TextureRoot {
 }
 
 pub struct TextureLibrary {
-    pub programs: Vec<TextureProgram>,
+    pub programs: Vec<TypedTextureProgram>,
     pub roots: Vec<TextureRoot>,
 }
 
@@ -56,7 +56,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         };
         let program = u32::try_from(programs.len())
             .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
-        programs.push(TextureProgram::compile(node)?);
+        programs.push(TypedTextureProgram::compile(node)?);
         compiled_roots.push(match spectrum_type {
             Some(spectrum_type) => TextureRoot::Spectrum {
                 program,
