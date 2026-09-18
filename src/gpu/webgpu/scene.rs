@@ -1,14 +1,18 @@
 use bytemuck::cast_slice;
+use std::collections::HashMap;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
+use crate::gpu::node::{MipmapEncoding, MipmapLevel, MipmapLevelData};
+use crate::gpu::texture::{ImageFilterMode, ImageView, ImageWrapMode};
 use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
     material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord,
+    LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord, TextureRootRecord,
     TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
     LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
     LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
@@ -21,6 +25,69 @@ use super::material::MaterialTable;
 use super::output::Output;
 use super::render_settings::RenderSettings;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SamplerKey {
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilterMode,
+}
+
+struct TextureBindingPlan {
+    image_views: Vec<usize>,
+    samplers: Vec<SamplerKey>,
+    view_bindings: Vec<(u32, u32)>,
+}
+
+fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtError> {
+    let mut image_views = Vec::new();
+    let mut images_by_ptr = HashMap::new();
+    let mut samplers = Vec::new();
+    let mut samplers_by_key = HashMap::new();
+    let mut view_bindings = Vec::with_capacity(views.len());
+    for view in views {
+        let image_key = Arc::as_ptr(&view.mipmap) as usize;
+        let image = if let Some(&index) = images_by_ptr.get(&image_key) {
+            index
+        } else {
+            let index = u32::try_from(image_views.len())
+                .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?;
+            image_views.push(view_bindings.len());
+            images_by_ptr.insert(image_key, index);
+            index
+        };
+        let sampler_key = SamplerKey {
+            swrap: view.swrap,
+            twrap: view.twrap,
+            filter: view.filter,
+        };
+        let sampler = if let Some(&index) = samplers_by_key.get(&sampler_key) {
+            index
+        } else {
+            let index = u32::try_from(samplers.len())
+                .map_err(|_| PbrtError::error("Texture sampler table exceeds u32."))?;
+            samplers.push(sampler_key);
+            samplers_by_key.insert(sampler_key, index);
+            index
+        };
+        view_bindings.push((image, sampler));
+    }
+    Ok(TextureBindingPlan {
+        image_views,
+        samplers,
+        view_bindings,
+    })
+}
+
+pub fn texture_binding_counts(views: &[ImageView]) -> Result<(u32, u32), PbrtError> {
+    let plan = texture_binding_plan(views)?;
+    Ok((
+        u32::try_from(plan.image_views.len())
+            .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?,
+        u32::try_from(plan.samplers.len())
+            .map_err(|_| PbrtError::error("Texture sampler table exceeds u32."))?,
+    ))
+}
+
 fn stable_texture_hash(value: &str) -> u32 {
     value.bytes().fold(2166136261u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(16777619)
@@ -28,7 +95,8 @@ fn stable_texture_hash(value: &str) -> u32 {
 }
 
 fn mip_level_rgba(
-    level: &crate::gpu::node::MipmapLevel,
+    level: &MipmapLevel,
+    encoding: MipmapEncoding,
 ) -> Result<(u32, u32, Vec<f32>), PbrtError> {
     let width = level.resolution[0];
     let height = level.resolution[1];
@@ -37,17 +105,29 @@ fn mip_level_rgba(
             "Texture mipmap has an invalid resolution.",
         ));
     }
-    let values = match &level.data {
-        crate::gpu::node::MipmapLevelData::F32(values) => values.clone(),
-        crate::gpu::node::MipmapLevelData::F16(values) => values
+    let mut values = match &level.data {
+        MipmapLevelData::F32(values) => values.clone(),
+        MipmapLevelData::F16(values) => values
             .iter()
             .map(|value| half::f16::from_bits(*value).to_f32())
             .collect(),
-        crate::gpu::node::MipmapLevelData::U8(values) => values
+        MipmapLevelData::U8(values) => values
             .iter()
             .map(|value| f32::from(*value) / 255.0)
             .collect(),
     };
+    if matches!(encoding, MipmapEncoding::SrgbEncoded) {
+        for pixel in values.chunks_exact_mut(level.channels as usize) {
+            let color_channels = if level.channels == 4 {
+                3
+            } else {
+                level.channels as usize
+            };
+            for value in pixel.iter_mut().take(color_channels) {
+                *value = crate::util::base::inverse_gamma_correct(*value);
+            }
+        }
+    }
     let pixel_count = usize::try_from(width)
         .ok()
         .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
@@ -93,19 +173,18 @@ fn mip_level_rgba(
 fn upload_texture_images(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    nodes: &[flat::TextureNode],
+    views: &[ImageView],
+    image_views: &[usize],
 ) -> Result<Vec<wgpu::Texture>, PbrtError> {
     let mut images = Vec::new();
-    for node in nodes {
-        let Some(mipmap) = &node.mipmap else {
-            images.push(create_empty_texture(device));
-            continue;
-        };
+    for &view_index in image_views {
+        let view = &views[view_index];
+        let mipmap = &view.mipmap;
         let Some(base_level) = mipmap.levels.first() else {
             images.push(create_empty_texture(device));
             continue;
         };
-        let (width, height, _) = mip_level_rgba(base_level)?;
+        let (width, height, _) = mip_level_rgba(base_level, mipmap.encoding)?;
         let mip_level_count = u32::try_from(mipmap.levels.len())
             .map_err(|_| PbrtError::error("Texture mipmap has too many levels."))?;
         for (level_index, level) in mipmap.levels.iter().enumerate() {
@@ -133,7 +212,7 @@ fn upload_texture_images(
             view_formats: &[],
         });
         for (mip_level, level) in mipmap.levels.iter().enumerate() {
-            let (level_width, level_height, rgba) = mip_level_rgba(level)?;
+            let (level_width, level_height, rgba) = mip_level_rgba(level, mipmap.encoding)?;
             let mip_level = u32::try_from(mip_level)
                 .map_err(|_| PbrtError::error("Texture mipmap level index overflowed."))?;
             queue.write_texture(
@@ -195,7 +274,7 @@ pub struct Scene {
     pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
     pub spectrum_attribute_buffer: wgpu::Buffer,
-    pub texture_attribute_buffer: wgpu::Buffer,
+    pub texture_root_buffer: wgpu::Buffer,
     pub texture_node_buffer: wgpu::Buffer,
     pub texture_child_buffer: wgpu::Buffer,
     pub rgb_spectrum_table_buffer: wgpu::Buffer,
@@ -286,14 +365,20 @@ impl Scene {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
-                        flat::AttributeKind::TextureUnbounded => 4,
                         flat::AttributeKind::Material => 3,
                     },
                     index: attribute.index,
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
-        let texture_attributes = flat.texture_attributes.clone();
+        let texture_roots = flat
+            .texture_roots
+            .iter()
+            .map(|root| TextureRootRecord {
+                texture_node: root.texture_node,
+                spectrum_type: root.spectrum_type,
+            })
+            .collect::<Vec<_>>();
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
@@ -394,31 +479,55 @@ impl Scene {
                 contents: buffer_contents(&scalar_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let texture_attribute_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 texture attributes SBO"),
-                contents: buffer_contents(&texture_attributes),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let texture_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 texture roots SBO"),
+            contents: buffer_contents(&texture_roots),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let texture_binding_plan = texture_binding_plan(&flat.image_views)?;
         let texture_nodes = flat
             .texture_nodes
             .iter()
-            .map(|node| TextureNodeRecord {
-                kind: node.kind,
-                first_child: node.first_child,
-                child_count: node.child_count,
-                implementation_hash: stable_texture_hash(&node.implementation),
-                swrap_mode: node.swrap_mode,
-                twrap_mode: node.twrap_mode,
-                color_space: node.color_space,
-                _padding: 0,
-                operation: node.operation,
-                mapping_kind: node.mapping_kind,
-                _operation_padding: [0; 2],
-                constant_value: node.constant_value,
-                mapping: row_major_to_columns(node.mapping),
+            .map(|node| {
+                let mut constant_value = node.constant_value;
+                let (image_view, sampler, swrap_mode, twrap_mode) =
+                    if let Some(view_index) = node.image_view {
+                        let (image, sampler) = *texture_binding_plan
+                            .view_bindings
+                            .get(view_index as usize)
+                            .ok_or_else(|| {
+                                PbrtError::error("Texture node has an invalid image view.")
+                            })?;
+                        let view = &flat.image_views[view_index as usize];
+                        constant_value[0] = view.scale;
+                        constant_value[1] = if view.invert { 1.0 } else { 0.0 };
+                        let wrap_mode = |mode| match mode {
+                            ImageWrapMode::Repeat => 0,
+                            ImageWrapMode::Clamp => 1,
+                            ImageWrapMode::Black => 2,
+                        };
+                        (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap))
+                    } else {
+                        (INVALID_INDEX, INVALID_INDEX, 0, 0)
+                    };
+                Ok(TextureNodeRecord {
+                    kind: node.kind,
+                    first_child: node.first_child,
+                    child_count: node.child_count,
+                    implementation_hash: stable_texture_hash(&node.implementation),
+                    swrap_mode,
+                    twrap_mode,
+                    color_space: node.color_space,
+                    texture_index: image_view,
+                    operation: node.operation,
+                    mapping_kind: node.mapping_kind,
+                    sampler,
+                    _operation_padding: 0,
+                    constant_value,
+                    mapping: row_major_to_columns(node.mapping),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, PbrtError>>()?;
         let texture_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture nodes SBO"),
             contents: buffer_contents(&texture_nodes),
@@ -444,7 +553,12 @@ impl Scene {
                 contents: &rgb_spectrum_table,
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let mut texture_images = upload_texture_images(device, queue, &flat.texture_nodes)?;
+        let mut texture_images = upload_texture_images(
+            device,
+            queue,
+            &flat.image_views,
+            &texture_binding_plan.image_views,
+        )?;
         if texture_images.is_empty() {
             texture_images.push(device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("pbrt-r4 empty texture"),
@@ -467,29 +581,31 @@ impl Scene {
             .iter()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()))
             .collect();
-        let texture_samplers = if flat.texture_nodes.is_empty() {
+        let texture_samplers = if texture_binding_plan.samplers.is_empty() {
             vec![device.create_sampler(&wgpu::SamplerDescriptor::default())]
         } else {
-            flat.texture_nodes
+            texture_binding_plan
+                .samplers
                 .iter()
-                .map(|node| {
+                .map(|sampler| {
                     let address_mode = |mode| match mode {
-                        1 => wgpu::AddressMode::ClampToEdge,
-                        2 => wgpu::AddressMode::ClampToEdge,
-                        _ => wgpu::AddressMode::Repeat,
+                        ImageWrapMode::Clamp | ImageWrapMode::Black => {
+                            wgpu::AddressMode::ClampToEdge
+                        }
+                        ImageWrapMode::Repeat => wgpu::AddressMode::Repeat,
                     };
-                    let filter = if node.filter_mode == 0 {
+                    let filter = if sampler.filter == ImageFilterMode::Nearest {
                         wgpu::FilterMode::Nearest
                     } else {
                         wgpu::FilterMode::Linear
                     };
                     device.create_sampler(&wgpu::SamplerDescriptor {
                         label: Some("pbrt-r4 texture sampler"),
-                        address_mode_u: address_mode(node.swrap_mode),
-                        address_mode_v: address_mode(node.twrap_mode),
+                        address_mode_u: address_mode(sampler.swrap),
+                        address_mode_v: address_mode(sampler.twrap),
                         mag_filter: filter,
                         min_filter: filter,
-                        mipmap_filter: if node.filter_mode >= 2 {
+                        mipmap_filter: if sampler.filter == ImageFilterMode::Trilinear {
                             wgpu::MipmapFilterMode::Linear
                         } else {
                             wgpu::MipmapFilterMode::Nearest
@@ -629,7 +745,7 @@ impl Scene {
             attribute_ref_buffer,
             scalar_attribute_buffer,
             spectrum_attribute_buffer,
-            texture_attribute_buffer,
+            texture_root_buffer,
             texture_node_buffer,
             texture_child_buffer,
             rgb_spectrum_table_buffer,
@@ -885,8 +1001,10 @@ fn convert_geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::mip_level_rgba;
-    use crate::gpu::node::{MipmapLevel, MipmapLevelData};
+    use super::{mip_level_rgba, texture_binding_plan};
+    use crate::gpu::node::{MipmapEncoding, MipmapLevel, MipmapLevelData};
+    use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap};
+    use std::sync::Arc;
 
     #[test]
     fn two_channel_mipmap_upload_replicates_luminance_and_preserves_alpha() {
@@ -895,7 +1013,62 @@ mod tests {
             channels: 2,
             data: MipmapLevelData::F32(vec![0.2, 0.75]),
         };
-        let (_, _, rgba) = mip_level_rgba(&level).expect("valid mip level");
+        let (_, _, rgba) = mip_level_rgba(&level, MipmapEncoding::Linear).expect("valid mip level");
         assert_eq!(rgba, vec![0.2, 0.2, 0.2, 0.75]);
+    }
+
+    #[test]
+    fn spectrum_upload_preserves_rgb_and_alpha() {
+        let rgb = MipmapLevel {
+            resolution: [1, 1],
+            channels: 3,
+            data: MipmapLevelData::F32(vec![0.0, 0.3, 0.6]),
+        };
+        let (_, _, rgba) = mip_level_rgba(&rgb, MipmapEncoding::Linear).unwrap();
+        assert_eq!(rgba, vec![0.0, 0.3, 0.6, 1.0]);
+        let rgba_level = MipmapLevel {
+            resolution: [1, 1],
+            channels: 4,
+            data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3, 0.8]),
+        };
+        let (_, _, projected) = mip_level_rgba(&rgba_level, MipmapEncoding::Linear).unwrap();
+        assert_eq!(projected, vec![0.1, 0.2, 0.3, 0.8]);
+    }
+
+    #[test]
+    fn texture_binding_plan_shares_images_and_samplers_independently() {
+        let make_mipmap = || {
+            Arc::new(Mipmap {
+                levels: vec![MipmapLevel {
+                    resolution: [1, 1],
+                    channels: 3,
+                    data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3]),
+                }],
+                color_space: crate::gpu::texture::ColorSpace::Unknown,
+                encoding: MipmapEncoding::Linear,
+            })
+        };
+        let first_mipmap = make_mipmap();
+        let second_mipmap = make_mipmap();
+        let make_view = |mipmap, filter| ImageView {
+            mipmap,
+            value_type: ImageValueType::LinearRgb,
+            swrap: ImageWrapMode::Repeat,
+            twrap: ImageWrapMode::Clamp,
+            filter,
+            scale: 1.0,
+            invert: false,
+        };
+        let views = vec![
+            make_view(first_mipmap.clone(), ImageFilterMode::Bilinear),
+            make_view(first_mipmap, ImageFilterMode::Trilinear),
+            make_view(second_mipmap, ImageFilterMode::Bilinear),
+        ];
+
+        let plan = texture_binding_plan(&views).unwrap();
+
+        assert_eq!(plan.image_views.len(), 2);
+        assert_eq!(plan.samplers.len(), 2);
+        assert_eq!(plan.view_bindings, vec![(0, 0), (0, 1), (1, 0)]);
     }
 }

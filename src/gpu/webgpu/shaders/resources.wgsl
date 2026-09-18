@@ -75,5 +75,7 @@ var texture_images: binding_array<texture_2d<f32>>;
 var texture_samplers: binding_array<sampler>;
 @group(0) @binding(41)
 var<storage, read> rgb_spectrum_table: array<f32>;
+@group(0) @binding(42)
+var<storage, read> texture_roots: array<TextureRootRecord>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;

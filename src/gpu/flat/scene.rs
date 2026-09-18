@@ -26,11 +26,23 @@ pub struct Scene {
     pub instances: Vec<Instance>,
     pub materials: Vec<Material>,
     pub scalar_attributes: Vec<f32>,
-    pub texture_attributes: Vec<u32>,
+    pub texture_roots: Vec<TextureRootRecord>,
+    pub image_views: Vec<crate::gpu::texture::ImageView>,
     pub texture_nodes: Vec<TextureNode>,
     pub texture_child_indices: Vec<u32>,
     pub spectrum_attributes: Vec<DenseSpectrum>,
     pub primitive_distribution_map: PrimitiveDistributionMap,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Lowered material entry point into a texture graph.
+///
+/// Unlike the Node IR specification, this record contains only table indices
+/// and is therefore directly consumable by backend adapters.
+pub struct TextureRootRecord {
+    pub texture_node: u32,
+    /// 0=Albedo, 1=Unbounded, 2=Illuminant. Ignored for Float roots.
+    pub spectrum_type: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,11 +52,8 @@ pub struct TextureNode {
     pub implementation: String,
     pub first_child: u32,
     pub child_count: u32,
-    pub mipmap: Option<std::sync::Arc<crate::gpu::node::Mipmap>>,
+    pub image_view: Option<u32>,
     pub mapping: [f32; 16],
-    pub swrap_mode: u32,
-    pub twrap_mode: u32,
-    pub filter_mode: u32,
     /// RGB colour space used when converting a spectrum texture at the
     /// material boundary (0=sRGB, 1=ACES2065-1, 2=DCI-P3, 3=Rec.2020).
     pub color_space: u32,

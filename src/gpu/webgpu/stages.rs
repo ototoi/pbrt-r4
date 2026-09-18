@@ -49,7 +49,7 @@ pub enum ResourceId {
     AttributeRef,
     ScalarAttribute,
     SpectrumAttribute,
-    TextureAttribute,
+    TextureRoot,
     TextureNode,
     TextureChild,
     TextureImageArray,
@@ -244,6 +244,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (38, ResourceId::TextureChild),
         (36, ResourceId::LightPosition),
         (41, ResourceId::RgbSpectrumTable),
+        (42, ResourceId::TextureRoot),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }

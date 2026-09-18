@@ -91,10 +91,11 @@ pub struct TextureNodeRecord {
     pub swrap_mode: u32,
     pub twrap_mode: u32,
     pub color_space: u32,
-    pub _padding: u32,
+    pub texture_index: u32,
     pub operation: u32,
     pub mapping_kind: u32,
-    pub _operation_padding: [u32; 2],
+    pub sampler: u32,
+    pub _operation_padding: u32,
     pub constant_value: [f32; 4],
     pub mapping: [[f32; 4]; 4],
 }
@@ -124,6 +125,13 @@ pub struct MaterialRecord {
 pub struct AttributeRef {
     pub kind: u32,
     pub index: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TextureRootRecord {
+    pub texture_node: u32,
+    pub spectrum_type: u32,
 }
 
 #[repr(C)]

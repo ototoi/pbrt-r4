@@ -7,9 +7,9 @@ use crate::gpu::node::{
     AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
     CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
     HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef,
-    NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene,
-    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, MipmapEncoding, Node,
+    NodeRef, NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent,
+    Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
     TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
 };
 use crate::gpu::wavefront::WavefrontPathIntegrator;
@@ -538,17 +538,17 @@ fn texture_node(
                 let color_space = metadata
                     .color_space
                     .map(|space| match space.name {
-                        "ACES2065-1" => crate::gpu::node::ColorSpaceId::Aces2065,
-                        "DCI-P3" => crate::gpu::node::ColorSpaceId::DciP3,
-                        "Rec2020" => crate::gpu::node::ColorSpaceId::Rec2020,
-                        _ => crate::gpu::node::ColorSpaceId::Srgb,
+                        "ACES2065-1" => crate::gpu::node::ColorSpace::Aces2065,
+                        "DCI-P3" => crate::gpu::node::ColorSpace::DciP3,
+                        "Rec2020" => crate::gpu::node::ColorSpace::Rec2020,
+                        _ => crate::gpu::node::ColorSpace::Srgb,
                     })
-                    .unwrap_or(crate::gpu::node::ColorSpaceId::Srgb);
+                    .unwrap_or(crate::gpu::node::ColorSpace::Srgb);
                 (raw, color_space)
             } else {
                 (
                     read_raw_image_with_encoding(&filename, encoding)?,
-                    crate::gpu::node::ColorSpaceId::Srgb,
+                    crate::gpu::node::ColorSpace::Srgb,
                 )
             };
             let channels = raw.channels;
@@ -595,7 +595,8 @@ fn texture_node(
                 levels,
                 // The samples themselves are already linear; retain the image
                 // primaries until the material spectrum boundary.
-                color_space: Some(color_space),
+                color_space,
+                encoding: MipmapEncoding::Linear,
             }))
         }
     } else {

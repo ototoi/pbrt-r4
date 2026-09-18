@@ -15,3 +15,6 @@ pub mod scene;
 pub mod shader;
 pub mod shader_composer;
 pub mod stages;
+
+#[cfg(test)]
+mod noise_table_benchmark;
