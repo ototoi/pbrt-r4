@@ -29,7 +29,7 @@ fn texture_library_keeps_root_interpretation_outside_programs() {
     ];
 
     let library = compile_texture_library(&roots).unwrap();
-    assert_eq!(library.programs.len(), 2);
+    assert_eq!(library.programs.len(), 1);
     assert_eq!(library.roots.len(), 2);
 
     assert!(matches!(
@@ -39,7 +39,7 @@ fn texture_library_keeps_root_interpretation_outside_programs() {
     assert!(matches!(
         library.roots[1],
         TextureRoot::Spectrum {
-            program: 1,
+            program: 0,
             spectrum_type: SpectrumType::Unbounded,
         }
     ));
