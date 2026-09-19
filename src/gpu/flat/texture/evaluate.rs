@@ -1,14 +1,14 @@
 //! Reference evaluator for the backend-independent typed texture program.
 
-use crate::gpu::node::{TextureMapping, UvMapping};
-use crate::gpu::texture::{
+use super::{
     ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
     MipmapLevelData,
 };
+use crate::gpu::node::{TextureMapping, UvMapping};
 use crate::util::base::inverse_gamma_correct;
 use crate::util::error::PbrtError;
 
-use super::typed_program::{Instruction, TypedTextureProgram};
+use super::program::{Instruction, TypedTextureProgram};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextureValue {

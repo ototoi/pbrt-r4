@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
+use image::{ImageBuffer, Luma};
+use pbrt_r4::gpu::flat::texture::{
+    compile_texture_library, evaluate_texture_program, evaluate_texture_program_at, ColorSpace,
+    ImageCompiler, ImageFilterMode, ImageOptimizationPolicy, ImageValueType, ImageWrapMode, Mipmap,
+    MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction, TextureRoot, TextureRootSpec,
+    TextureValue, TextureValueType,
+};
 use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
-use pbrt_r4::gpu::texture::{
-    compile_texture_library, evaluate_texture_program, evaluate_texture_program_at, ColorSpace,
-    ImageCompiler, ImageOptimizationPolicy, ImageValueType, Mipmap, MipmapEncoding, MipmapLevel,
-    MipmapLevelData, TextureInstruction, TextureRoot, TextureRootSpec, TextureValue,
-    TextureValueType,
-};
 use pbrt_r4::paramdict::ParameterDictionary;
+use pbrt_r4::util::base::inverse_gamma_correct;
 use pbrt_r4::util::spectrum::SpectrumType;
+use tempfile::tempdir;
 
 #[test]
 fn texture_library_keeps_root_interpretation_outside_programs() {
@@ -18,7 +21,6 @@ fn texture_library_keeps_root_interpretation_outside_programs() {
         name: "constant".to_string(),
         kind: TextureKind::Float,
         params: ParameterDictionary::default(),
-        mipmap: None,
     }));
     let node = Arc::new(node);
     let roots = [
@@ -94,7 +96,6 @@ fn texture_program_is_typed_post_order() {
         name: "constant".to_string(),
         kind: TextureKind::Float,
         params: ParameterDictionary::default(),
-        mipmap: None,
     }));
 
     let mut root = TextureNode::new("scale");
@@ -104,7 +105,6 @@ fn texture_program_is_typed_post_order() {
         name: "scale".to_string(),
         kind: TextureKind::Float,
         params,
-        mipmap: None,
     }));
     root.children.push(Arc::new(child));
 
@@ -129,25 +129,23 @@ fn texture_program_is_typed_post_order() {
 
 #[test]
 fn image_instruction_keeps_sampling_interpretation() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("value.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![64])
+        .unwrap()
+        .save(&path)
+        .unwrap();
     let mut params = ParameterDictionary::default();
     params.add_string("string wrap", "black");
     params.add_string("string filter", "nearest");
     params.add_float("float scale", 3.0);
     params.add_bool("bool invert", true);
+    params.add_string("string filename", &path.to_string_lossy());
     let mut node = TextureNode::new("imagemap");
     node.components.push(TextureComponent::Texture(Texture {
         name: "imagemap".to_string(),
         kind: TextureKind::Float,
         params,
-        mipmap: Some(Arc::new(Mipmap {
-            levels: vec![MipmapLevel {
-                resolution: [1, 1],
-                channels: 1,
-                data: MipmapLevelData::F32(vec![0.25]),
-            }],
-            color_space: ColorSpace::Unknown,
-            encoding: MipmapEncoding::Linear,
-        })),
     }));
     node.components
         .push(TextureComponent::Mapping(TextureMapping::Uv(UvMapping {
@@ -167,8 +165,8 @@ fn image_instruction_keeps_sampling_interpretation() {
         panic!("expected image sample instruction");
     };
     let view = &library.programs[0].image_views[*image_view as usize];
-    assert_eq!(view.swrap, pbrt_r4::gpu::texture::ImageWrapMode::Black);
-    assert_eq!(view.filter, pbrt_r4::gpu::texture::ImageFilterMode::Nearest);
+    assert_eq!(view.swrap, ImageWrapMode::Black);
+    assert_eq!(view.filter, ImageFilterMode::Nearest);
     assert_eq!(view.scale, 3.0);
     assert!(view.invert);
     assert!(matches!(
@@ -178,30 +176,31 @@ fn image_instruction_keeps_sampling_interpretation() {
             ..
         }
     ));
-    assert_eq!(
-        evaluate_texture_program_at(&library.programs[0], [0.2, 0.2]).unwrap(),
-        TextureValue::Float(2.25)
-    );
+    let TextureValue::Float(value) =
+        evaluate_texture_program_at(&library.programs[0], [0.2, 0.2]).unwrap()
+    else {
+        panic!("expected float texture value");
+    };
+    let expected = 3.0 * (1.0 - inverse_gamma_correct(64.0 / 255.0) as f32);
+    assert!((value - expected).abs() < 1e-6);
 }
 
 #[test]
 fn image_views_are_shared_across_distinct_programs() {
-    let mipmap = Arc::new(Mipmap {
-        levels: vec![MipmapLevel {
-            resolution: [1, 1],
-            channels: 1,
-            data: MipmapLevelData::F32(vec![0.5]),
-        }],
-        color_space: ColorSpace::Unknown,
-        encoding: MipmapEncoding::Linear,
-    });
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("shared.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![128])
+        .unwrap()
+        .save(&path)
+        .unwrap();
     let make_node = |name: &str| {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", &path.to_string_lossy());
         let mut node = TextureNode::new(name);
         node.components.push(TextureComponent::Texture(Texture {
             name: "imagemap".to_string(),
             kind: TextureKind::Float,
-            params: ParameterDictionary::default(),
-            mipmap: Some(mipmap.clone()),
+            params,
         }));
         Arc::new(node)
     };

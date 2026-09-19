@@ -1,13 +1,16 @@
-//! Typed post-order texture programs.
+//! Typed post-order texture programs owned by Flat IR.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::gpu::node::{ColorSpace, TextureComponent, TextureKind, TextureMapping, TextureNode};
-use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode};
+use crate::gpu::node::{TextureComponent, TextureKind, TextureMapping, TextureNode};
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
+
+use super::image::{
+    ColorSpace, ImageDecoder, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ValueType {
@@ -66,18 +69,26 @@ pub struct TypedTextureProgram {
 
 impl TypedTextureProgram {
     pub fn compile(root: &Arc<TextureNode>) -> Result<Self, PbrtError> {
-        Compiler::default().compile(root)
+        let mut image_decoder = ImageDecoder::default();
+        Self::compile_with_images(root, &mut image_decoder)
+    }
+
+    pub fn compile_with_images(
+        root: &Arc<TextureNode>,
+        image_decoder: &mut ImageDecoder,
+    ) -> Result<Self, PbrtError> {
+        Compiler::new(image_decoder).compile(root)
     }
 }
 
-#[derive(Default)]
-struct Compiler {
+struct Compiler<'a> {
     instructions: Vec<Instruction>,
     slot_types: Vec<ValueType>,
     slots_by_node: HashMap<usize, u32>,
     visiting: Vec<usize>,
     image_views: Vec<Arc<ImageView>>,
     image_views_by_key: HashMap<ImageViewKey, u32>,
+    image_decoder: &'a mut ImageDecoder,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -91,7 +102,19 @@ struct ImageViewKey {
     invert: bool,
 }
 
-impl Compiler {
+impl<'a> Compiler<'a> {
+    fn new(image_decoder: &'a mut ImageDecoder) -> Self {
+        Self {
+            instructions: Vec::new(),
+            slot_types: Vec::new(),
+            slots_by_node: HashMap::new(),
+            visiting: Vec::new(),
+            image_views: Vec::new(),
+            image_views_by_key: HashMap::new(),
+            image_decoder,
+        }
+    }
+
     fn compile(mut self, root: &Arc<TextureNode>) -> Result<TypedTextureProgram, PbrtError> {
         let result = self.emit(root)?;
         let mut slot_last_use = vec![0; self.slot_types.len()];
@@ -135,9 +158,19 @@ impl Compiler {
         let dst = u32::try_from(self.slot_types.len())
             .map_err(|_| PbrtError::error("Texture program slot table exceeds u32."))?;
         let image_view = if texture.name == "imagemap" {
-            let mipmap = texture.mipmap.clone().ok_or_else(|| {
-                PbrtError::error(&format!("Image texture \"{}\" has no mipmap.", node.name))
+            let path = texture.image_path().ok_or_else(|| {
+                PbrtError::error(&format!("Image texture \"{}\" has no filename.", node.name))
             })?;
+            let default_encoding = if path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+            {
+                "sRGB"
+            } else {
+                "linear"
+            };
+            let encoding = texture.params.get_one_string("encoding", default_encoding);
+            let mipmap = self.image_decoder.decode(&path, &encoding)?;
             Some(self.intern_image_view(image_view(texture, value_type, mipmap))?)
         } else {
             None
@@ -401,7 +434,7 @@ fn texture_mapping(node: &TextureNode) -> Option<TextureMapping> {
 fn image_view(
     texture: &crate::gpu::node::Texture,
     value_type: ValueType,
-    mipmap: Arc<crate::gpu::texture::Mipmap>,
+    mipmap: Arc<super::image::Mipmap>,
 ) -> ImageView {
     let wrap = |name: &str| match name {
         "clamp" => ImageWrapMode::Clamp,

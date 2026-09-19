@@ -1,3 +1,4 @@
+use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
@@ -10,7 +11,6 @@ use crate::gpu::node::{
     complete_triangle_attributes, remove_invalid_triangles, Component,
     Integrator as NodeIntegrator, Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape,
 };
-use crate::gpu::texture::{compile_texture_library, TextureRootSpec};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 

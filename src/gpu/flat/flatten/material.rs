@@ -1,10 +1,10 @@
+use super::super::texture::TextureRootSpec;
 use super::material_attributes::build_material_attributes;
 use super::{
     push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, Material,
     UnsupportedTexturePolicy,
 };
 use crate::gpu::node::{Material as NodeMaterial, TextureComponent, TextureKind, TextureNode};
-use crate::gpu::texture::TextureRootSpec;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 use std::sync::Arc;
