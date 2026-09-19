@@ -29,6 +29,7 @@ pub fn evaluate_texture_root_at(
     root: u32,
     uv: [f32; 2],
 ) -> Result<TextureValue, PbrtError> {
+    library.validate()?;
     let root = library
         .roots
         .get(root as usize)
