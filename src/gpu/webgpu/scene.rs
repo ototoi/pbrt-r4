@@ -620,30 +620,10 @@ impl Scene {
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
-        let use_typed_texture_library = !flat.texture_library.programs.is_empty();
-        let texture_views = if use_typed_texture_library {
-            &flat.texture_library.image_views
-        } else {
-            &flat.image_views
-        };
+        let texture_views = &flat.texture_library.image_views;
         let texture_binding_plan = texture_binding_plan(texture_views)?;
-        let (typed_texture_nodes, typed_texture_children, typed_texture_roots) =
-            if use_typed_texture_library {
-                let (nodes, children, roots) =
-                    lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
-                (Some(nodes), Some(children), Some(roots))
-            } else {
-                (None, None, None)
-            };
-        let texture_roots = typed_texture_roots.unwrap_or_else(|| {
-            flat.texture_roots
-                .iter()
-                .map(|root| TextureRootRecord {
-                    texture_node: root.texture_node,
-                    spectrum_type: root.spectrum_type,
-                })
-                .collect()
-        });
+        let (texture_nodes, texture_children, texture_roots) =
+            lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
@@ -749,52 +729,6 @@ impl Scene {
             contents: buffer_contents(&texture_roots),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let texture_nodes = if let Some(nodes) = typed_texture_nodes {
-            nodes
-        } else {
-            flat.texture_nodes
-                .iter()
-                .map(|node| {
-                    let mut constant_value = node.constant_value;
-                    let (image_view, sampler, swrap_mode, twrap_mode) =
-                        if let Some(view_index) = node.image_view {
-                            let (image, sampler) = *texture_binding_plan
-                                .view_bindings
-                                .get(view_index as usize)
-                                .ok_or_else(|| {
-                                    PbrtError::error("Texture node has an invalid image view.")
-                                })?;
-                            let view = &flat.image_views[view_index as usize];
-                            constant_value[0] = view.scale;
-                            constant_value[1] = if view.invert { 1.0 } else { 0.0 };
-                            let wrap_mode = |mode| match mode {
-                                ImageWrapMode::Repeat => 0,
-                                ImageWrapMode::Clamp => 1,
-                                ImageWrapMode::Black => 2,
-                            };
-                            (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap))
-                        } else {
-                            (INVALID_INDEX, INVALID_INDEX, 0, 0)
-                        };
-                    Ok(TextureNodeRecord {
-                        kind: node.kind,
-                        first_child: node.first_child,
-                        child_count: node.child_count,
-                        implementation_hash: stable_texture_hash(&node.implementation),
-                        swrap_mode,
-                        twrap_mode,
-                        color_space: node.color_space,
-                        texture_index: image_view,
-                        operation: node.operation,
-                        mapping_kind: node.mapping_kind,
-                        sampler,
-                        _operation_padding: 0,
-                        constant_value,
-                        mapping: row_major_to_columns(node.mapping),
-                    })
-                })
-                .collect::<Result<Vec<_>, PbrtError>>()?
-        };
         let texture_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture nodes SBO"),
             contents: buffer_contents(&texture_nodes),
@@ -802,11 +736,7 @@ impl Scene {
         });
         let texture_child_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture child indices SBO"),
-            contents: buffer_contents(
-                typed_texture_children
-                    .as_deref()
-                    .unwrap_or(&flat.texture_child_indices),
-            ),
+            contents: buffer_contents(&texture_children),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let mut rgb_spectrum_table = Vec::new();

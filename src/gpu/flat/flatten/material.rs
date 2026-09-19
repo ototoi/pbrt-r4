@@ -3,8 +3,8 @@ use super::{
     push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, Material,
     UnsupportedTexturePolicy,
 };
-use crate::gpu::flat::TextureRootRecord;
-use crate::gpu::node::{Material as NodeMaterial, TextureComponent};
+use crate::gpu::node::{Material as NodeMaterial, TextureComponent, TextureKind, TextureNode};
+use crate::gpu::texture::TextureRootSpec;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 use std::sync::Arc;
@@ -87,20 +87,13 @@ pub fn material_index(
                 TextureComponent::Texture(texture) => Some(texture),
                 TextureComponent::Mapping(_) => None,
             });
-        if let Some(texture) = texture {
-            if let Some(&texture_node) = builder
-                .texture_nodes_by_name
-                .get(&(texture.kind, texture_node.name.clone()))
-            {
-                if !attributes.iter().any(|attribute| attribute.name == *name) {
-                    let index = intern_texture_root(builder, texture_node, 0)?;
-                    attributes.push(AttributeRef {
-                        kind: AttributeKind::Texture,
-                        index,
-                        name: name.clone(),
-                    });
-                }
-            }
+        if texture.is_some() && !attributes.iter().any(|attribute| attribute.name == *name) {
+            let index = intern_texture_root(builder, texture_node.clone(), 0)?;
+            attributes.push(AttributeRef {
+                kind: AttributeKind::Texture,
+                index,
+                name: name.clone(),
+            });
         }
     }
     if matches!(kind, "coateddiffuse" | "coatedconductor") {
@@ -205,20 +198,12 @@ pub fn texture_attribute_ref_with_spectrum_type(
             TextureComponent::Texture(texture) => Some(texture),
             TextureComponent::Mapping(_) => None,
         });
-    let Some(texture) = texture else {
+    if texture.is_none() {
         return Err(PbrtError::error(&format!(
             "Texture attribute \"{key}\" has no texture component."
         )));
-    };
-    let Some(&texture_node) = builder
-        .texture_nodes_by_name
-        .get(&(texture.kind, node.name.clone()))
-    else {
-        return Err(PbrtError::error(&format!(
-            "Texture attribute \"{key}\" references an unregistered texture node."
-        )));
-    };
-    let index = intern_texture_root(builder, texture_node, spectrum_type)?;
+    }
+    let index = intern_texture_root(builder, node.clone(), spectrum_type)?;
     Ok(Some(AttributeRef {
         kind: AttributeKind::Texture,
         index,
@@ -236,18 +221,44 @@ pub fn texture_attribute_ref_unbounded(
 
 pub fn intern_texture_root(
     builder: &mut FlatBuilder,
-    texture_node: u32,
+    texture_node: Arc<TextureNode>,
     spectrum_type: u32,
 ) -> Result<u32, PbrtError> {
-    let key = (texture_node, spectrum_type);
+    let texture = texture_node
+        .components
+        .iter()
+        .find_map(|component| match component {
+            TextureComponent::Texture(texture) => Some(texture),
+            TextureComponent::Mapping(_) => None,
+        })
+        .ok_or_else(|| PbrtError::error("Texture root has no texture component."))?;
+    let spectrum_type = match spectrum_type {
+        1 => SpectrumType::Unbounded,
+        2 => SpectrumType::Illuminant,
+        _ => SpectrumType::Albedo,
+    };
+    let key = (
+        Arc::as_ptr(&texture_node) as usize,
+        match texture.kind {
+            TextureKind::Float => 0,
+            TextureKind::Spectrum => match spectrum_type {
+                SpectrumType::Albedo => 1,
+                SpectrumType::Unbounded => 2,
+                SpectrumType::Illuminant => 3,
+            },
+        },
+    );
     if let Some(&index) = builder.texture_roots_by_key.get(&key) {
         return Ok(index);
     }
-    let index = u32::try_from(builder.texture_roots.len())
+    let index = u32::try_from(builder.texture_root_specs.len())
         .map_err(|_| PbrtError::error("Flat texture root table exceeds u32."))?;
-    builder.texture_roots.push(TextureRootRecord {
-        texture_node,
-        spectrum_type,
+    builder.texture_root_specs.push(match texture.kind {
+        TextureKind::Float => TextureRootSpec::Float { node: texture_node },
+        TextureKind::Spectrum => TextureRootSpec::Spectrum {
+            node: texture_node,
+            spectrum_type,
+        },
     });
     builder.texture_roots_by_key.insert(key, index);
     Ok(index)

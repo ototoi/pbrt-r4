@@ -3,20 +3,16 @@ use super::{
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
     Camera, DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput,
     LightGeometryKind, LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap,
-    Scene, TextureNode as FlatTextureNode, Transform, TriangleDistributionEntry,
-    UnsupportedTexturePolicy, Vertex, Viewport, INVALID_INDEX,
+    Scene, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
+    INVALID_INDEX,
 };
 use crate::gpu::node::{
     complete_triangle_attributes, remove_invalid_triangles, Component,
     Integrator as NodeIntegrator, Material as NodeMaterial, NodeRef, Sampler as NodeSampler, Shape,
-    TextureComponent, TextureKind,
 };
-use crate::gpu::texture::{
-    compile_texture_library, ImageCompiler, ImageFilterMode, ImageValueType, ImageView,
-    ImageWrapMode, TextureRootSpec,
-};
+use crate::gpu::texture::{compile_texture_library, TextureRootSpec};
 use crate::util::error::PbrtError;
-use crate::util::spectrum::{Spectrum, SpectrumType};
+use crate::util::spectrum::Spectrum;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,9 +20,6 @@ use std::sync::Arc;
 use super::geometry::{
     dot3, scale3, transform_point, transform_vector, triangle_area, triangle_geometric_normal,
 };
-
-mod texture;
-use texture::register_texture_node;
 
 mod material;
 use material::material_index;
@@ -54,17 +47,6 @@ const IDENTITY_LINEAR_TRANSFORM: [[f32; 4]; 3] = [
     [0.0, 1.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
 ];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct ImageViewKey {
-    mipmap: usize,
-    value_type: ImageValueType,
-    swrap: ImageWrapMode,
-    twrap: ImageWrapMode,
-    filter: ImageFilterMode,
-    scale: u32,
-    invert: bool,
-}
 
 pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
     flatten_node_with_material_override(root, None)
@@ -115,41 +97,7 @@ pub fn flatten_node_with_material_override(
                 .flat_map(|light| light.attributes.iter().cloned()),
         )
         .collect();
-    let texture_roots = builder.texture_roots;
-    let texture_specs = texture_roots
-        .iter()
-        .map(|root| {
-            let node = builder
-                .texture_source_nodes
-                .get(root.texture_node as usize)
-                .cloned()
-                .ok_or_else(|| PbrtError::error("Flat texture root references an invalid node."))?;
-            let kind = node
-                .components
-                .iter()
-                .find_map(|component| match component {
-                    TextureComponent::Texture(texture) => Some(texture.kind),
-                    TextureComponent::Mapping(_) => None,
-                });
-            Ok(match kind {
-                Some(TextureKind::Float) => TextureRootSpec::Float { node },
-                Some(TextureKind::Spectrum) => TextureRootSpec::Spectrum {
-                    node,
-                    spectrum_type: match root.spectrum_type {
-                        1 => SpectrumType::Unbounded,
-                        2 => SpectrumType::Illuminant,
-                        _ => SpectrumType::Albedo,
-                    },
-                },
-                None => {
-                    return Err(PbrtError::error(
-                        "Flat texture root node has no texture component.",
-                    ));
-                }
-            })
-        })
-        .collect::<Result<Vec<_>, PbrtError>>()?;
-    let texture_library = compile_texture_library(&texture_specs)?;
+    let texture_library = compile_texture_library(&builder.texture_root_specs)?;
     let scene = Scene {
         camera,
         viewport,
@@ -170,11 +118,7 @@ pub fn flatten_node_with_material_override(
         materials: builder.materials,
         attribute_refs,
         scalar_attributes: builder.scalar_attributes,
-        texture_roots,
         texture_library,
-        image_views: builder.image_views,
-        texture_nodes: builder.texture_nodes,
-        texture_child_indices: builder.texture_child_indices,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
         primitive_distribution_map: PrimitiveDistributionMap {
             offsets: vec![0],
@@ -307,16 +251,8 @@ struct FlatBuilder {
     instances: Vec<Instance>,
     materials: Vec<Material>,
     scalar_attributes: Vec<f32>,
-    texture_roots: Vec<super::TextureRootRecord>,
-    image_views: Vec<ImageView>,
-    image_views_by_key: HashMap<ImageViewKey, u32>,
-    image_compiler: ImageCompiler,
-    texture_roots_by_key: HashMap<(u32, u32), u32>,
-    texture_nodes: Vec<FlatTextureNode>,
-    texture_source_nodes: Vec<Arc<crate::gpu::node::TextureNode>>,
-    texture_child_indices: Vec<u32>,
-    texture_nodes_by_ptr: HashMap<usize, u32>,
-    texture_nodes_by_name: HashMap<(crate::gpu::node::TextureKind, String), u32>,
+    texture_root_specs: Vec<TextureRootSpec>,
+    texture_roots_by_key: HashMap<(usize, u32), u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
     source_materials: Vec<Arc<NodeMaterial>>,

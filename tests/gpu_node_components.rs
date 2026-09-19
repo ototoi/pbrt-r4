@@ -92,18 +92,28 @@ Texture "checker" "float" "checkerboard3d"
     let root = builder
         .build_gpu_ir_node()
         .expect("GPU node IR should build");
-    let flat = flatten_node(root).expect("GPU flat IR should build");
-    let checker = flat
-        .texture_nodes
+    let root = root.read().unwrap();
+    let checker = root
+        .components
         .iter()
-        .find(|node| node.name == "checker")
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "checker"),
+            _ => None,
+        })
         .expect("checkerboard node should be present");
-    assert_eq!(checker.operation, 12);
-    assert_eq!(checker.child_count, 2);
+    assert_eq!(checker.children.len(), 2);
+    assert!(matches!(
+        checker.components.get(1),
+        Some(TextureComponent::Mapping(TextureMapping::PointTransform(_)))
+    ));
 }
 
 #[test]
-fn gpu_texture_planar_mapping_is_preserved_in_flat_ir() {
+fn gpu_texture_planar_mapping_is_preserved_in_node_ir() {
     let mut builder = SceneBuilder::new();
     parse_string(
         r#"
@@ -120,17 +130,28 @@ Texture "planar" "spectrum" "imagemap"
     let root = builder
         .build_gpu_ir_node()
         .expect("GPU node IR should build");
-    let flat = flatten_node(root).expect("GPU flat IR should build");
-    let planar = flat
-        .texture_nodes
+    let root = root.read().unwrap();
+    let planar = root
+        .components
         .iter()
-        .find(|node| node.name == "planar")
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "planar"),
+            _ => None,
+        })
         .expect("planar node should be present");
-    assert_eq!(planar.mapping_kind, 1);
-    assert_eq!(planar.mapping[0], 0.5);
-    assert_eq!(planar.mapping[5], -0.5);
-    assert_eq!(planar.mapping[3], 0.5);
-    assert_eq!(planar.mapping[7], -0.5);
+    let Some(TextureComponent::Mapping(TextureMapping::Planar(transform))) =
+        planar.components.get(1)
+    else {
+        panic!("planar mapping should be present");
+    };
+    assert_eq!(transform.matrix[0], 0.5);
+    assert_eq!(transform.matrix[5], -0.5);
+    assert_eq!(transform.matrix[3], 0.5);
+    assert_eq!(transform.matrix[7], -0.5);
 }
 
 #[test]
@@ -175,21 +196,28 @@ Texture "mixed" "spectrum" "mix"
         &mut builder,
     )
     .expect("composite amount texture should parse");
-    let flat = flatten_node(
-        builder
-            .build_gpu_ir_node()
-            .expect("GPU node IR should build"),
-    )
-    .expect("GPU flat IR should build");
-    let mixed = flat
-        .texture_nodes
+    let root = builder
+        .build_gpu_ir_node()
+        .expect("GPU node IR should build");
+    let root = root.read().unwrap();
+    let mixed = root
+        .components
         .iter()
-        .find(|node| node.name == "mixed")
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "mixed"),
+            _ => None,
+        })
         .expect("mixed node should be present");
-    assert_eq!(mixed.child_count, 3);
-    let amount_index = flat.texture_child_indices[mixed.first_child as usize + 2];
-    assert_eq!(flat.texture_nodes[amount_index as usize].name, "amount");
-    assert_eq!(flat.texture_nodes[amount_index as usize].operation, 2);
+    assert_eq!(mixed.children.len(), 3);
+    assert_eq!(mixed.children[2].name, "amount");
+    assert!(matches!(
+        mixed.children[2].components.first(),
+        Some(TextureComponent::Texture(Texture { name, .. })) if name == "scale"
+    ));
 }
 
 #[test]
@@ -211,15 +239,22 @@ Texture "scaled" "spectrum" "scale"
     let root = builder
         .build_gpu_ir_node()
         .expect("GPU node IR should build");
-    let flat = flatten_node(Arc::clone(&root)).expect("GPU flat IR should build");
-    let scaled = flat
-        .texture_nodes
+    let root_guard = root.read().unwrap();
+    let scaled = root_guard
+        .components
         .iter()
-        .find(|node| node.name == "scaled")
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "scaled"),
+            _ => None,
+        })
         .expect("nested texture node should be present");
-    assert_eq!(scaled.child_count, 1);
-    let mixed_index = flat.texture_child_indices[scaled.first_child as usize];
-    assert_eq!(flat.texture_nodes[mixed_index as usize].name, "mixed");
+    assert_eq!(scaled.children.len(), 1);
+    assert_eq!(scaled.children[0].name, "mixed");
+    drop(root_guard);
 
     let root = root.read().unwrap();
     let scene = root
@@ -258,7 +293,6 @@ Texture "marble" "spectrum" "marble"
     let root = builder
         .build_gpu_ir_node()
         .expect("GPU node IR should build");
-    let root_for_flatten = Arc::clone(&root);
     let root = root.read().unwrap();
     let scene = root
         .components
@@ -274,31 +308,22 @@ Texture "marble" "spectrum" "marble"
         texture.components.get(1),
         Some(TextureComponent::Mapping(TextureMapping::PointTransform(_)))
     ));
-    let flat = flatten_node(root_for_flatten).expect("GPU flat IR should build");
-    assert_eq!(
-        flat.texture_nodes
+    let scene = scene.expect("scene component should be present");
+    for (node_name, implementation) in [
+        ("wrinkles", "wrinkled"),
+        ("wind", "windy"),
+        ("marble", "marble"),
+    ] {
+        let node = scene
+            .texture_nodes
             .iter()
-            .find(|node| node.name == "wrinkles")
-            .expect("wrinkled node should be flattened")
-            .operation,
-        8
-    );
-    assert_eq!(
-        flat.texture_nodes
-            .iter()
-            .find(|node| node.name == "wind")
-            .expect("windy node should be flattened")
-            .operation,
-        9
-    );
-    assert_eq!(
-        flat.texture_nodes
-            .iter()
-            .find(|node| node.name == "marble")
-            .expect("marble node should be flattened")
-            .operation,
-        11
-    );
+            .find(|node| node.name == node_name)
+            .expect("procedural texture node should be present");
+        assert!(matches!(
+            node.components.first(),
+            Some(TextureComponent::Texture(Texture { name, .. })) if name == implementation
+        ));
+    }
 }
 
 #[test]

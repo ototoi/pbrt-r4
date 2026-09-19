@@ -7,7 +7,7 @@ use crate::gpu::node::TextureNode;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
-use super::image::{ImageFilterMode, ImageView, ImageWrapMode};
+use super::image::{ImageCompiler, ImageFilterMode, ImageView, ImageWrapMode};
 use super::typed_program::{Instruction, TypedTextureProgram};
 
 /// A texture entry point exported by a material attribute.
@@ -63,6 +63,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
     let mut programs_by_root = HashMap::new();
     let mut image_views = Vec::new();
     let mut image_views_by_key = HashMap::new();
+    let mut image_compiler = ImageCompiler::default();
 
     for root in roots {
         let (node, spectrum_type) = match root {
@@ -81,21 +82,25 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
             let mut compiled = TypedTextureProgram::compile(node)?;
             let mut remap = Vec::with_capacity(compiled.image_views.len());
             for view in &compiled.image_views {
+                let optimized = ImageView {
+                    mipmap: image_compiler.compile(&view.mipmap, view.value_type)?,
+                    ..(**view).clone()
+                };
                 let key = ImageViewKey {
-                    mipmap: Arc::as_ptr(&view.mipmap) as usize,
-                    value_type: view.value_type,
-                    swrap: view.swrap,
-                    twrap: view.twrap,
-                    filter: view.filter,
-                    scale: view.scale.to_bits(),
-                    invert: view.invert,
+                    mipmap: Arc::as_ptr(&optimized.mipmap) as usize,
+                    value_type: optimized.value_type,
+                    swrap: optimized.swrap,
+                    twrap: optimized.twrap,
+                    filter: optimized.filter,
+                    scale: optimized.scale.to_bits(),
+                    invert: optimized.invert,
                 };
                 let global = if let Some(&global) = image_views_by_key.get(&key) {
                     global
                 } else {
                     let global = u32::try_from(image_views.len())
                         .map_err(|_| PbrtError::error("Texture image view table exceeds u32."))?;
-                    image_views.push((**view).clone());
+                    image_views.push(optimized);
                     image_views_by_key.insert(key, global);
                     global
                 };
