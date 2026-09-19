@@ -1,10 +1,7 @@
 use super::transform::Transform;
 use crate::paramdict::ParameterDictionary;
+use std::path::PathBuf;
 use std::sync::Arc;
-
-pub use crate::gpu::texture::image::{
-    ColorSpace, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData,
-};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureKind {
@@ -17,7 +14,16 @@ pub struct Texture {
     pub name: String,
     pub kind: TextureKind,
     pub params: ParameterDictionary,
-    pub mipmap: Option<Arc<Mipmap>>,
+}
+
+impl Texture {
+    pub fn image_path(&self) -> Option<PathBuf> {
+        if self.name != "imagemap" {
+            return None;
+        }
+        let filename = self.params.get_one_string("filename", "");
+        (!filename.is_empty()).then(|| filename.into())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

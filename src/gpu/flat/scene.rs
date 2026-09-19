@@ -1,9 +1,9 @@
+use super::texture::TextureLibrary;
 use super::{
     AttributeRef, Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds,
     LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
     TriangleDistributionEntry, Vertex, Viewport,
 };
-use crate::gpu::texture::TextureLibrary;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {

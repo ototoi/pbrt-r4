@@ -4,11 +4,12 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
-use crate::gpu::node::{MipmapEncoding, MipmapLevel, MipmapLevelData, TextureMapping};
-use crate::gpu::texture::{
-    ColorSpace, ImageFilterMode, ImageView, ImageWrapMode, TextureInstruction, TextureLibrary,
-    TextureRoot, TextureValueType, TypedTextureProgram,
+use crate::gpu::flat::texture::{
+    ColorSpace, ImageFilterMode, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
+    MipmapLevelData, TextureInstruction, TextureLibrary, TextureRoot, TextureValueType,
+    TypedTextureProgram,
 };
+use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 
 use super::abi::{
@@ -1203,8 +1204,10 @@ fn convert_geometry(
 #[cfg(test)]
 mod tests {
     use super::{mip_level_rgba, texture_binding_plan};
-    use crate::gpu::node::{MipmapEncoding, MipmapLevel, MipmapLevelData};
-    use crate::gpu::texture::{ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap};
+    use crate::gpu::flat::texture::{
+        ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap, MipmapEncoding,
+        MipmapLevel, MipmapLevelData,
+    };
     use std::sync::Arc;
 
     #[test]
@@ -1245,7 +1248,7 @@ mod tests {
                     channels: 3,
                     data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3]),
                 }],
-                color_space: crate::gpu::texture::ColorSpace::Unknown,
+                color_space: crate::gpu::flat::texture::ColorSpace::Unknown,
                 encoding: MipmapEncoding::Linear,
             })
         };

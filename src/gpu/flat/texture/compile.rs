@@ -1,4 +1,4 @@
-//! Compilation of Node IR texture roots into backend-independent resources.
+//! Compilation of Node IR texture roots into Flat IR resources.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,8 +7,8 @@ use crate::gpu::node::TextureNode;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
-use super::image::{ImageCompiler, ImageFilterMode, ImageView, ImageWrapMode};
-use super::typed_program::{Instruction, TypedTextureProgram};
+use super::image::{ImageCompiler, ImageDecoder, ImageFilterMode, ImageView, ImageWrapMode};
+use super::program::{Instruction, TypedTextureProgram};
 
 /// A texture entry point exported by a material attribute.
 ///
@@ -64,6 +64,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
     let mut image_views = Vec::new();
     let mut image_views_by_key = HashMap::new();
     let mut image_compiler = ImageCompiler::default();
+    let mut image_decoder = ImageDecoder::default();
 
     for root in roots {
         let (node, spectrum_type) = match root {
@@ -79,7 +80,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         } else {
             let program = u32::try_from(programs.len())
                 .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
-            let mut compiled = TypedTextureProgram::compile(node)?;
+            let mut compiled = TypedTextureProgram::compile_with_images(node, &mut image_decoder)?;
             let mut remap = Vec::with_capacity(compiled.image_views.len());
             for view in &compiled.image_views {
                 let optimized = ImageView {

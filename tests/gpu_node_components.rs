@@ -12,6 +12,7 @@ use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
     FileLoc, RenderFromObject, SceneBuilder, SceneEntity, ShapeSceneEntity,
 };
+use tempfile::tempdir;
 
 #[test]
 fn node_components_wrap_declarative_resources() {
@@ -59,7 +60,6 @@ fn texture_node_keeps_mapping_separate_from_texture_data() {
         name: "imagemap".to_string(),
         kind: TextureKind::Spectrum,
         params: Default::default(),
-        mipmap: None,
     }));
     node.components
         .push(TextureComponent::Mapping(TextureMapping::PointTransform(
@@ -75,6 +75,41 @@ fn texture_node_keeps_mapping_separate_from_texture_data() {
         Some(TextureComponent::Mapping(TextureMapping::PointTransform(_)))
     ));
     assert!(node.children.is_empty());
+}
+
+#[test]
+fn image_texture_node_keeps_only_the_resolved_image_reference() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("not-decoded-during-node-build.png");
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        &format!(
+            "Texture \"albedo\" \"spectrum\" \"imagemap\" \"string filename\" [ \"{}\" ]",
+            path.display()
+        ),
+        &mut builder,
+    )
+    .expect("image texture should parse without opening its image");
+
+    let root = builder
+        .build_gpu_ir_node()
+        .expect("Node IR should not decode the missing image");
+    let root = root.read().unwrap();
+    let texture = root
+        .components
+        .iter()
+        .find_map(|component| match component {
+            Component::Scene(component) => component.scene.texture_nodes.first(),
+            _ => None,
+        })
+        .and_then(|node| node.components.first())
+        .and_then(|component| match component {
+            TextureComponent::Texture(texture) => Some(texture),
+            _ => None,
+        })
+        .expect("image texture should be present");
+
+    assert_eq!(texture.image_path(), Some(path));
 }
 
 #[test]
