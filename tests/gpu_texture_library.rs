@@ -3,9 +3,9 @@ use std::sync::Arc;
 use image::{ImageBuffer, Luma};
 use pbrt_r4::gpu::flat::texture::{
     compile_texture_library, evaluate_texture_program, evaluate_texture_program_at, ColorSpace,
-    ImageCompiler, ImageFilterMode, ImageOptimizationPolicy, ImageValueType, ImageWrapMode, Mipmap,
-    MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction, TextureRoot, TextureRootSpec,
-    TextureValue, TextureValueType,
+    ImageCompiler, ImageDecoder, ImageFilterMode, ImageOptimizationPolicy, ImageValueType,
+    ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction,
+    TextureRoot, TextureRootSpec, TextureValue, TextureValueType,
 };
 use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
@@ -87,6 +87,23 @@ fn default_image_compiler_uses_bounded_f16_storage() {
         .compile(&source, ImageValueType::LinearRgb)
         .unwrap();
     assert!(matches!(compiled.levels[0].data, MipmapLevelData::F16(_)));
+}
+
+#[test]
+fn image_decoder_interns_canonical_file_identity() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("image.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![128])
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    let alternate = directory.path().join(".").join("image.png");
+
+    let mut decoder = ImageDecoder::default();
+    let first = decoder.decode(&path, "linear").unwrap();
+    let second = decoder.decode(&alternate, "linear").unwrap();
+
+    assert!(Arc::ptr_eq(&first, &second));
 }
 
 #[test]

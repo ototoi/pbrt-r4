@@ -60,8 +60,14 @@ pub struct ImageDecoder {
 
 impl ImageDecoder {
     pub fn decode(&mut self, path: &Path, encoding_name: &str) -> Result<Arc<Mipmap>, PbrtError> {
+        let path = path.canonicalize().map_err(|error| {
+            PbrtError::error(&format!(
+                "Unable to resolve texture image \"{}\": {error}",
+                path.display()
+            ))
+        })?;
         let key = DecodedImageKey {
-            path: path.to_path_buf(),
+            path: path.clone(),
             encoding: encoding_name.to_string(),
         };
         if let Some(mipmap) = self.decoded.get(&key) {
@@ -72,7 +78,7 @@ impl ImageDecoder {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("exr"))
         {
-            let (raw, _, metadata) = crate::util::imageio::read_image_exr::read_raw_image_exr_with_channels_and_metadata(path)?;
+            let (raw, _, metadata) = crate::util::imageio::read_image_exr::read_raw_image_exr_with_channels_and_metadata(&path)?;
             let color_space = metadata
                 .color_space
                 .map(|space| match space.name {
