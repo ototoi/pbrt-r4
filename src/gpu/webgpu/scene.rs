@@ -7,7 +7,7 @@ use crate::gpu::flat;
 use crate::gpu::flat::texture::{
     ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
     MipmapLevel, MipmapLevelData, TextureInstruction, TextureLibrary, TextureRoot,
-    TextureValueType, TypedTextureProgram,
+    TextureValueType,
 };
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
@@ -113,7 +113,8 @@ fn lower_texture_library(
             let first_child = u32::try_from(children.len())
                 .map_err(|_| PbrtError::error("Texture child table exceeds u32."))?;
             children.extend(operands.iter().map(|operand| offset + *operand));
-            let lowered = lower_texture_instruction(instruction, program, binding_plan)?;
+            let lowered =
+                lower_texture_instruction(instruction, &library.image_views, binding_plan)?;
             nodes.push(TextureNodeRecord {
                 kind: lowered.kind,
                 first_child,
@@ -190,7 +191,7 @@ struct LoweredTextureInstruction {
 
 fn lower_texture_instruction(
     instruction: &TextureInstruction,
-    program: &TypedTextureProgram,
+    image_views: &[ImageView],
     binding_plan: &TextureBindingPlan,
 ) -> Result<LoweredTextureInstruction, PbrtError> {
     let identity = row_major_to_columns([
@@ -233,8 +234,7 @@ fn lower_texture_instruction(
             value_type: texture_type,
             ..
         } => {
-            let view = program
-                .image_views
+            let view = image_views
                 .get(*image_view as usize)
                 .ok_or_else(|| PbrtError::error("Texture instruction has invalid image view."))?;
             let (image, sampler) = *binding_plan

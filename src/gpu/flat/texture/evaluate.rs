@@ -8,6 +8,7 @@ use crate::gpu::node::{TextureMapping, UvMapping};
 use crate::util::base::inverse_gamma_correct;
 use crate::util::error::PbrtError;
 
+use super::compile::{TextureLibrary, TextureRoot};
 use super::program::{Instruction, TypedTextureProgram};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,11 +17,34 @@ pub enum TextureValue {
     LinearRgb([f32; 3]),
 }
 
-pub fn evaluate_texture_program(program: &TypedTextureProgram) -> Result<TextureValue, PbrtError> {
-    evaluate_texture_program_at(program, [0.0, 0.0])
+pub fn evaluate_texture_root(
+    library: &TextureLibrary,
+    root: u32,
+) -> Result<TextureValue, PbrtError> {
+    evaluate_texture_root_at(library, root, [0.0, 0.0])
 }
 
-pub fn evaluate_texture_program_at(
+pub fn evaluate_texture_root_at(
+    library: &TextureLibrary,
+    root: u32,
+    uv: [f32; 2],
+) -> Result<TextureValue, PbrtError> {
+    let root = library
+        .roots
+        .get(root as usize)
+        .ok_or_else(|| PbrtError::error("Texture library has an invalid root index."))?;
+    let program = match root {
+        TextureRoot::Float { program } | TextureRoot::Spectrum { program, .. } => *program,
+    };
+    let program = library
+        .programs
+        .get(program as usize)
+        .ok_or_else(|| PbrtError::error("Texture root has an invalid program index."))?;
+    evaluate_program_at(library, program, uv)
+}
+
+fn evaluate_program_at(
+    library: &TextureLibrary,
     program: &TypedTextureProgram,
     uv: [f32; 2],
 ) -> Result<TextureValue, PbrtError> {
@@ -79,11 +103,11 @@ pub fn evaluate_texture_program_at(
                 mapping,
                 ..
             } => {
-                let view = program
+                let view = library
                     .image_views
                     .get(*image_view as usize)
                     .ok_or_else(|| invalid_slot(*image_view))?;
-                let mipmap = program
+                let mipmap = library
                     .mipmaps
                     .get(view.mipmap as usize)
                     .ok_or_else(|| PbrtError::error("Image view has an invalid mipmap."))?;

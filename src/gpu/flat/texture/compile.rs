@@ -11,7 +11,7 @@ use super::image::{
     ImageCompiler, ImageDecoder, ImageFilterMode, ImageView, ImageWrapMode, Mipmap,
 };
 use super::optimize::equivalent_program;
-use super::program::{Instruction, TypedTextureProgram};
+use super::program::{compile_texture_program, Instruction, TypedTextureProgram};
 
 /// A texture entry point exported by a material attribute.
 ///
@@ -84,7 +84,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         let program = if let Some(&program) = programs_by_root.get(&key) {
             program
         } else {
-            let mut compiled = TypedTextureProgram::compile_with_images(node, &mut image_decoder)?;
+            let mut compiled = compile_texture_program(node, &mut image_decoder)?;
             let mut remap = Vec::with_capacity(compiled.image_views.len());
             for view in &compiled.image_views {
                 let source = compiled
@@ -126,7 +126,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
                 };
                 remap.push(global);
             }
-            for instruction in &mut compiled.instructions {
+            for instruction in &mut compiled.program.instructions {
                 if let Instruction::SampleImage { image_view, .. } = instruction {
                     *image_view = *remap.get(*image_view as usize).ok_or_else(|| {
                         PbrtError::error("Texture instruction references an invalid image view.")
@@ -135,14 +135,14 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
             }
             let program = if let Some(program) = programs
                 .iter()
-                .position(|candidate| equivalent_program(candidate, &compiled))
+                .position(|candidate| equivalent_program(candidate, &compiled.program))
             {
                 u32::try_from(program)
                     .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?
             } else {
                 let program = u32::try_from(programs.len())
                     .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
-                programs.push(compiled);
+                programs.push(compiled.program);
                 program
             };
             programs_by_root.insert(key, program);
@@ -155,11 +155,6 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
             },
             None => TextureRoot::Float { program },
         });
-    }
-
-    for program in &mut programs {
-        program.mipmaps = mipmaps.clone();
-        program.image_views = image_views.clone();
     }
 
     Ok(TextureLibrary {
