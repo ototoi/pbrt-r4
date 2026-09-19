@@ -57,6 +57,9 @@ pub enum Instruction {
 pub struct TypedTextureProgram {
     pub instructions: Vec<Instruction>,
     pub slot_types: Vec<ValueType>,
+    /// Last instruction index that reads each slot. The result slot is kept
+    /// live through the end of the program for backend consumers.
+    pub slot_last_use: Vec<u32>,
     pub result: u32,
 }
 
@@ -77,9 +80,24 @@ struct Compiler {
 impl Compiler {
     fn compile(mut self, root: &Arc<TextureNode>) -> Result<TypedTextureProgram, PbrtError> {
         let result = self.emit(root)?;
+        let mut slot_last_use = vec![0; self.slot_types.len()];
+        for (instruction_index, instruction) in self.instructions.iter().enumerate() {
+            let instruction_index = u32::try_from(instruction_index)
+                .map_err(|_| PbrtError::error("Texture program instruction index exceeds u32."))?;
+            for slot in instruction_operands(instruction) {
+                if let Some(last_use) = slot_last_use.get_mut(slot as usize) {
+                    *last_use = (*last_use).max(instruction_index);
+                }
+            }
+        }
+        if let Some(last_use) = slot_last_use.get_mut(result as usize) {
+            *last_use = u32::try_from(self.instructions.len().saturating_sub(1))
+                .map_err(|_| PbrtError::error("Texture program instruction index exceeds u32."))?;
+        }
         Ok(TypedTextureProgram {
             instructions: self.instructions,
             slot_types: self.slot_types,
+            slot_last_use,
             result,
         })
     }
@@ -192,6 +210,22 @@ impl Compiler {
             },
             _ => None,
         }
+    }
+}
+
+fn instruction_operands(instruction: &Instruction) -> Vec<u32> {
+    match instruction {
+        Instruction::Scale { input, .. } => vec![*input],
+        Instruction::Mix {
+            first,
+            second,
+            amount,
+            ..
+        } => amount.iter().copied().chain([*first, *second]).collect(),
+        Instruction::Procedural { operands, .. } => operands.clone(),
+        Instruction::ConstantFloat { .. }
+        | Instruction::ConstantRgb { .. }
+        | Instruction::SampleImage { .. } => Vec::new(),
     }
 }
 
