@@ -105,16 +105,25 @@ fn lower_texture_library(
     let mut children = Vec::new();
     let mut program_offsets = Vec::with_capacity(library.programs.len());
     for program in &library.programs {
+        if program.instructions.len() > 256 {
+            return Err(PbrtError::error(
+                "Texture program exceeds the WebGPU post-order VM slot limit.",
+            ));
+        }
         let offset = u32::try_from(nodes.len())
             .map_err(|_| PbrtError::error("Texture node table exceeds u32."))?;
         program_offsets.push(offset);
-        for instruction in &program.instructions {
+        for (instruction_index, instruction) in program.instructions.iter().enumerate() {
             let operands = texture_instruction_operands(instruction);
             let first_child = u32::try_from(children.len())
                 .map_err(|_| PbrtError::error("Texture child table exceeds u32."))?;
-            children.extend(operands.iter().map(|operand| offset + *operand));
-            let lowered =
-                lower_texture_instruction(instruction, &library.image_views, binding_plan)?;
+            children.extend(operands.iter().copied());
+            let lowered = lower_texture_instruction(
+                instruction,
+                program.slot_types[instruction_index],
+                &library.image_views,
+                binding_plan,
+            )?;
             nodes.push(TextureNodeRecord {
                 kind: lowered.kind,
                 first_child,
@@ -142,7 +151,12 @@ fn lower_texture_library(
                 TextureRoot::Float { program } => Ok(TextureRootRecord {
                     texture_node: program_offsets.get(*program as usize).copied().ok_or_else(
                         || PbrtError::error("Texture root references invalid program."),
-                    )? + library.programs[*program as usize].result,
+                    )?,
+                    instruction_count: u32::try_from(
+                        library.programs[*program as usize].instructions.len(),
+                    )
+                    .map_err(|_| PbrtError::error("Texture program length exceeds u32."))?,
+                    result: library.programs[*program as usize].result,
                     spectrum_type: 0,
                 }),
                 TextureRoot::Spectrum {
@@ -151,7 +165,12 @@ fn lower_texture_library(
                 } => Ok(TextureRootRecord {
                     texture_node: program_offsets.get(*program as usize).copied().ok_or_else(
                         || PbrtError::error("Texture root references invalid program."),
-                    )? + library.programs[*program as usize].result,
+                    )?,
+                    instruction_count: u32::try_from(
+                        library.programs[*program as usize].instructions.len(),
+                    )
+                    .map_err(|_| PbrtError::error("Texture program length exceeds u32."))?,
+                    result: library.programs[*program as usize].result,
                     spectrum_type: match spectrum_type {
                         crate::util::spectrum::SpectrumType::Albedo => 0,
                         crate::util::spectrum::SpectrumType::Unbounded => 1,
@@ -171,7 +190,10 @@ fn texture_instruction_operands(instruction: &TextureInstruction) -> Vec<u32> {
             second,
             amount,
             ..
-        } => amount.iter().copied().chain([*first, *second]).collect(),
+        } => [*first, *second]
+            .into_iter()
+            .chain(amount.iter().copied())
+            .collect(),
         TextureInstruction::Procedural { operands, .. } => operands.clone(),
         TextureInstruction::ConstantFloat { .. }
         | TextureInstruction::ConstantRgb { .. }
@@ -191,6 +213,7 @@ struct LoweredTextureInstruction {
 
 fn lower_texture_instruction(
     instruction: &TextureInstruction,
+    slot_type: TextureValueType,
     image_views: &[ImageView],
     binding_plan: &TextureBindingPlan,
 ) -> Result<LoweredTextureInstruction, PbrtError> {
@@ -257,7 +280,7 @@ fn lower_texture_instruction(
             })
         }
         TextureInstruction::Scale { factor, .. } => Ok(LoweredTextureInstruction {
-            kind: 0,
+            kind: value_type(&slot_type).0,
             implementation_hash: stable_texture_hash("scale"),
             operation: 2,
             constant_value: [*factor, 0.0, 0.0, 0.0],
@@ -268,7 +291,7 @@ fn lower_texture_instruction(
         TextureInstruction::Mix {
             constant_amount, ..
         } => Ok(LoweredTextureInstruction {
-            kind: 0,
+            kind: value_type(&slot_type).0,
             implementation_hash: stable_texture_hash("mix"),
             operation: 3,
             constant_value: [*constant_amount, 0.0, 0.0, 0.0],

@@ -131,6 +131,8 @@ pub struct AttributeRef {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TextureRootRecord {
     pub texture_node: u32,
+    pub instruction_count: u32,
+    pub result: u32,
     pub spectrum_type: u32,
 }
 
