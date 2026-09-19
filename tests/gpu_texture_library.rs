@@ -183,3 +183,42 @@ fn image_instruction_keeps_sampling_interpretation() {
         TextureValue::Float(2.25)
     );
 }
+
+#[test]
+fn image_views_are_shared_across_distinct_programs() {
+    let mipmap = Arc::new(Mipmap {
+        levels: vec![MipmapLevel {
+            resolution: [1, 1],
+            channels: 1,
+            data: MipmapLevelData::F32(vec![0.5]),
+        }],
+        color_space: ColorSpace::Unknown,
+        encoding: MipmapEncoding::Linear,
+    });
+    let make_node = |name: &str| {
+        let mut node = TextureNode::new(name);
+        node.components.push(TextureComponent::Texture(Texture {
+            name: "imagemap".to_string(),
+            kind: TextureKind::Float,
+            params: ParameterDictionary::default(),
+            mipmap: Some(mipmap.clone()),
+        }));
+        Arc::new(node)
+    };
+    let library = compile_texture_library(&[
+        TextureRootSpec::Float {
+            node: make_node("first"),
+        },
+        TextureRootSpec::Float {
+            node: make_node("second"),
+        },
+    ])
+    .unwrap();
+    assert_eq!(library.image_views.len(), 1);
+    for program in &library.programs {
+        assert!(matches!(
+            program.instructions[0],
+            TextureInstruction::SampleImage { image_view: 0, .. }
+        ));
+    }
+}
