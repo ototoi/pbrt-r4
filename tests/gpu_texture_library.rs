@@ -31,6 +31,7 @@ fn texture_library_keeps_root_interpretation_outside_programs() {
 
     let library = compile_texture_library(&roots).unwrap();
     assert_eq!(library.programs.len(), 1);
+    assert!(library.image_views.is_empty());
     assert_eq!(library.roots.len(), 2);
 
     assert!(matches!(
@@ -160,6 +161,7 @@ fn image_instruction_keeps_sampling_interpretation() {
         node: Arc::new(node),
     }])
     .unwrap();
+    assert_eq!(library.image_views.len(), 1);
     let TextureInstruction::SampleImage { image_view, .. } = &library.programs[0].instructions[0]
     else {
         panic!("expected image sample instruction");
