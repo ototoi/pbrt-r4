@@ -61,26 +61,23 @@ pub enum Instruction {
 pub struct TypedTextureProgram {
     pub instructions: Vec<Instruction>,
     pub slot_types: Vec<ValueType>,
-    pub mipmaps: Vec<Arc<Mipmap>>,
-    pub image_views: Vec<ImageView>,
     /// Last instruction index that reads each slot. The result slot is kept
     /// live through the end of the program for backend consumers.
     pub slot_last_use: Vec<u32>,
     pub result: u32,
 }
 
-impl TypedTextureProgram {
-    pub fn compile(root: &Arc<TextureNode>) -> Result<Self, PbrtError> {
-        let mut image_decoder = ImageDecoder::default();
-        Self::compile_with_images(root, &mut image_decoder)
-    }
+pub struct ProgramCompilation {
+    pub program: TypedTextureProgram,
+    pub mipmaps: Vec<Arc<Mipmap>>,
+    pub image_views: Vec<ImageView>,
+}
 
-    pub fn compile_with_images(
-        root: &Arc<TextureNode>,
-        image_decoder: &mut ImageDecoder,
-    ) -> Result<Self, PbrtError> {
-        Compiler::new(image_decoder).compile(root)
-    }
+pub fn compile_texture_program(
+    root: &Arc<TextureNode>,
+    image_decoder: &mut ImageDecoder,
+) -> Result<ProgramCompilation, PbrtError> {
+    Compiler::new(image_decoder).compile(root)
 }
 
 struct Compiler<'a> {
@@ -121,7 +118,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile(mut self, root: &Arc<TextureNode>) -> Result<TypedTextureProgram, PbrtError> {
+    fn compile(mut self, root: &Arc<TextureNode>) -> Result<ProgramCompilation, PbrtError> {
         let result = self.emit(root)?;
         optimize_texture_program(
             self.instructions,

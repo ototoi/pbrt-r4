@@ -1,13 +1,13 @@
 //! Executable and storage-oriented Flat IR texture representation.
 
-pub mod compile;
-pub mod evaluate;
-pub mod image;
+mod compile;
+mod evaluate;
+mod image;
 mod optimize;
-pub mod program;
+mod program;
 
 pub use compile::{compile_texture_library, TextureLibrary, TextureRoot, TextureRootSpec};
-pub use evaluate::{evaluate_texture_program, evaluate_texture_program_at, TextureValue};
+pub use evaluate::{evaluate_texture_root, evaluate_texture_root_at, TextureValue};
 pub use image::{
     project_float_mipmap, project_linear_rgb_mipmap, validate_mipmap, ColorSpace, ImageCompiler,
     ImageDecoder, ImageFilterMode, ImageOptimizationPolicy, ImageValueType, ImageView,

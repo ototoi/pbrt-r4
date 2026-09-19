@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use image::{ImageBuffer, Luma};
 use pbrt_r4::gpu::flat::texture::{
-    compile_texture_library, evaluate_texture_program, evaluate_texture_program_at, ColorSpace,
+    compile_texture_library, evaluate_texture_root, evaluate_texture_root_at, ColorSpace,
     ImageCompiler, ImageDecoder, ImageFilterMode, ImageOptimizationPolicy, ImageValueType,
     ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction,
     TextureRoot, TextureRootSpec, TextureValue, TextureValueType,
@@ -255,7 +255,7 @@ fn texture_program_is_typed_post_order() {
         TextureInstruction::ConstantFloat { dst: 0, value: 0.0 }
     ));
     assert_eq!(
-        evaluate_texture_program(program).unwrap(),
+        evaluate_texture_root(&library, 0).unwrap(),
         TextureValue::Float(0.0)
     );
 }
@@ -298,12 +298,8 @@ fn image_instruction_keeps_sampling_interpretation() {
     else {
         panic!("expected image sample instruction");
     };
-    let view = &library.programs[0].image_views[*image_view as usize];
+    let view = &library.image_views[*image_view as usize];
     assert_eq!(view.mipmap, 0);
-    assert!(Arc::ptr_eq(
-        &library.mipmaps[view.mipmap as usize],
-        &library.programs[0].mipmaps[view.mipmap as usize]
-    ));
     assert_eq!(view.swrap, ImageWrapMode::Black);
     assert_eq!(view.filter, ImageFilterMode::Nearest);
     assert_eq!(view.scale, 3.0);
@@ -315,8 +311,7 @@ fn image_instruction_keeps_sampling_interpretation() {
             ..
         }
     ));
-    let TextureValue::Float(value) =
-        evaluate_texture_program_at(&library.programs[0], [0.2, 0.2]).unwrap()
+    let TextureValue::Float(value) = evaluate_texture_root_at(&library, 0, [0.2, 0.2]).unwrap()
     else {
         panic!("expected float texture value");
     };
@@ -400,7 +395,7 @@ fn constant_folding_does_not_mutate_a_shared_child() {
         TextureInstruction::ConstantFloat { dst: 0, value: 4.0 }
     ));
     assert_eq!(
-        evaluate_texture_program(program).unwrap(),
+        evaluate_texture_root(&library, 0).unwrap(),
         TextureValue::Float(4.0)
     );
 }

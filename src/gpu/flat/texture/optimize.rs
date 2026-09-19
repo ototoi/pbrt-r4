@@ -7,7 +7,7 @@ use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 
 use super::image::{ImageView, Mipmap};
-use super::program::{Instruction, TypedTextureProgram, ValueType};
+use super::program::{Instruction, ProgramCompilation, TypedTextureProgram, ValueType};
 
 pub fn optimize_texture_program(
     instructions: Vec<Instruction>,
@@ -15,7 +15,7 @@ pub fn optimize_texture_program(
     mipmaps: Vec<Arc<Mipmap>>,
     image_views: Vec<ImageView>,
     result: u32,
-) -> Result<TypedTextureProgram, PbrtError> {
+) -> Result<ProgramCompilation, PbrtError> {
     let mut optimizer = Optimizer {
         source_types: slot_types,
         aliases: Vec::new(),
@@ -453,7 +453,7 @@ fn compact_program(
     mipmaps: Vec<Arc<Mipmap>>,
     image_views: Vec<ImageView>,
     result: u32,
-) -> Result<TypedTextureProgram, PbrtError> {
+) -> Result<ProgramCompilation, PbrtError> {
     let mut reachable = vec![false; instructions.len()];
     let mut stack = vec![result];
     while let Some(slot) = stack.pop() {
@@ -530,13 +530,15 @@ fn compact_program(
     }
 
     let slot_last_use = calculate_last_use(&compacted, result)?;
-    Ok(TypedTextureProgram {
-        instructions: compacted,
-        slot_types: compacted_types,
+    Ok(ProgramCompilation {
         mipmaps: compacted_mipmaps,
         image_views: compacted_views,
-        slot_last_use,
-        result,
+        program: TypedTextureProgram {
+            instructions: compacted,
+            slot_types: compacted_types,
+            slot_last_use,
+            result,
+        },
     })
 }
 
