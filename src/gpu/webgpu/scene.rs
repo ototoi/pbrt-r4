@@ -284,7 +284,7 @@ fn lower_texture_instruction(
         } => Ok(LoweredTextureInstruction {
             kind: value_type(texture_type).0,
             implementation_hash: stable_texture_hash(name),
-            operation: procedural_operation(name),
+            operation: procedural_operation(name)?,
             constant_value: *parameters,
             color_space: value_type(texture_type).1,
             image_view: empty_image,
@@ -327,17 +327,19 @@ fn lower_mapping(
     }
 }
 
-fn procedural_operation(name: &str) -> u32 {
+fn procedural_operation(name: &str) -> Result<u32, PbrtError> {
     match name {
-        "directionmix" => 5,
-        "dots" => 6,
-        "fbm" => 7,
-        "wrinkled" => 8,
-        "windy" => 9,
-        "bilerp" => 10,
-        "marble" => 11,
-        name if name.contains("checkerboard") => 4,
-        _ => 0,
+        "directionmix" => Ok(5),
+        "dots" => Ok(6),
+        "fbm" => Ok(7),
+        "wrinkled" => Ok(8),
+        "windy" => Ok(9),
+        "bilerp" => Ok(10),
+        "marble" => Ok(11),
+        name if name.contains("checkerboard") => Ok(4),
+        _ => Err(PbrtError::error(&format!(
+            "WebGPU texture operation \"{name}\" is not implemented."
+        ))),
     }
 }
 
