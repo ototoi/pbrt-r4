@@ -140,7 +140,12 @@ struct TextureNodeRecord {
     mapping: mat4x4<f32>,
 };
 struct AttributeRef { kind: u32, index: u32, };
-struct TextureRootRecord { texture_node: u32, spectrum_type: u32, };
+struct TextureRootRecord {
+    texture_node: u32,
+    instruction_count: u32,
+    result: u32,
+    spectrum_type: u32,
+};
 
 struct DenseSpectrum {
     samples: array<f32, 471>,

@@ -262,7 +262,7 @@ fn load_material_scalar(material_index: u32, ordinal: u32) -> f32 {
     let attr_ref = load_material_attribute(material_index, ordinal);
     if (attr_ref.kind == 2u) {
         if (attr_ref.index >= arrayLength(&texture_roots)) { set_render_error(); return 0.0; }
-        return sample_texture_rgb(texture_roots[attr_ref.index].texture_node, material_texture_uv).x;
+        return sample_texture_program(texture_roots[attr_ref.index], material_texture_uv).x;
     }
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
@@ -431,6 +431,70 @@ fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     }
     return value;
 }
+
+fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
+    var values: array<vec3<f32>, 256>;
+    if (root.instruction_count > 256u || root.result >= root.instruction_count) {
+        set_render_error();
+        return vec3<f32>(0.0);
+    }
+    for (var local = 0u; local < 256u; local++) {
+        if (local >= root.instruction_count) { break; }
+        let node_index = root.texture_node + local;
+        if (node_index >= arrayLength(&texture_nodes)) {
+            set_render_error();
+            return vec3<f32>(0.0);
+        }
+        let node = texture_nodes[node_index];
+        if (node.operation == 0u || node.operation >= 4u) {
+            values[local] = sample_texture_leaf(node_index, uv);
+        } else if (node.operation == 1u) {
+            values[local] = node.constant_value.rgb;
+        } else if (node.operation == 2u) {
+            if (node.child_count < 1u || node.first_child >= arrayLength(&texture_child_indices)) {
+                set_render_error();
+                return vec3<f32>(0.0);
+            }
+            let child = texture_child_indices[node.first_child];
+            if (child >= local) {
+                set_render_error();
+                return vec3<f32>(0.0);
+            }
+            values[local] = values[child] * node.constant_value.x;
+        } else if (node.operation == 3u) {
+            if (node.child_count < 2u
+                || node.first_child + 1u >= arrayLength(&texture_child_indices)) {
+                set_render_error();
+                return vec3<f32>(0.0);
+            }
+            let first = texture_child_indices[node.first_child];
+            let second = texture_child_indices[node.first_child + 1u];
+            if (first >= local || second >= local) {
+                set_render_error();
+                return vec3<f32>(0.0);
+            }
+            var amount = node.constant_value.x;
+            if (node.child_count >= 3u) {
+                if (node.first_child + 2u >= arrayLength(&texture_child_indices)) {
+                    set_render_error();
+                    return vec3<f32>(0.0);
+                }
+                let amount_slot = texture_child_indices[node.first_child + 2u];
+                if (amount_slot >= local) {
+                    set_render_error();
+                    return vec3<f32>(0.0);
+                }
+                amount = clamp(values[amount_slot].x, 0.0, 1.0);
+            }
+            values[local] = mix(values[first], values[second], amount);
+        }
+    }
+    return values[root.result];
+}
+
+/* Legacy graph evaluator retained in source history; the post-order VM above
+   is the only texture evaluation path. */
+/*
 fn texture_blend_amount(node: TextureNodeRecord, uv: vec2<f32>) -> f32 {
     if (node.operation == 3u && node.child_count >= 3u
         && node.first_child + 2u < arrayLength(&texture_child_indices)) {
@@ -553,6 +617,7 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
 fn sample_texture_rgb(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     return deferred_sample_texture_graph(texture_index, uv);
 }
+*/
 const RGB_TABLE_RESOLUTION: u32 = 64u;
 const RGB_TABLE_SCALE_COUNT: u32 = RGB_TABLE_RESOLUTION;
 const RGB_TABLE_COEFF_COUNT: u32 = 3u * RGB_TABLE_RESOLUTION * RGB_TABLE_RESOLUTION * RGB_TABLE_RESOLUTION * 3u;
@@ -638,14 +703,14 @@ fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) 
     if (attr_ref.kind == 2u) {
         if (attr_ref.index >= arrayLength(&texture_roots)) { set_render_error(); return vec4<f32>(0.0); }
         let root = texture_roots[attr_ref.index];
-        let rgb = sample_texture_rgb(root.texture_node, material_texture_uv);
-        if (texture_nodes[root.texture_node].kind == 0u) {
+        let rgb = sample_texture_program(root, material_texture_uv);
+        if (texture_nodes[root.texture_node + root.result].kind == 0u) {
             return vec4<f32>(rgb.x);
         }
         if (root.spectrum_type == 1u) {
-            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[root.texture_node].color_space);
+            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[root.texture_node + root.result].color_space);
         }
-        return rgb_to_spectrum4(rgb, lambda, texture_nodes[root.texture_node].color_space);
+        return rgb_to_spectrum4(rgb, lambda, texture_nodes[root.texture_node + root.result].color_space);
     }
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
