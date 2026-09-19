@@ -28,7 +28,7 @@ pub enum Instruction {
     },
     SampleImage {
         dst: u32,
-        view: Arc<ImageView>,
+        image_view: u32,
         mapping: Option<TextureMapping>,
         value_type: ValueType,
     },
@@ -57,6 +57,7 @@ pub enum Instruction {
 pub struct TypedTextureProgram {
     pub instructions: Vec<Instruction>,
     pub slot_types: Vec<ValueType>,
+    pub image_views: Vec<Arc<ImageView>>,
     /// Last instruction index that reads each slot. The result slot is kept
     /// live through the end of the program for backend consumers.
     pub slot_last_use: Vec<u32>,
@@ -75,6 +76,19 @@ struct Compiler {
     slot_types: Vec<ValueType>,
     slots_by_node: HashMap<usize, u32>,
     visiting: Vec<usize>,
+    image_views: Vec<Arc<ImageView>>,
+    image_views_by_key: HashMap<ImageViewKey, u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ImageViewKey {
+    mipmap: usize,
+    value_type: ImageValueType,
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilterMode,
+    scale: u32,
+    invert: bool,
 }
 
 impl Compiler {
@@ -97,6 +111,7 @@ impl Compiler {
         Ok(TypedTextureProgram {
             instructions: self.instructions,
             slot_types: self.slot_types,
+            image_views: self.image_views,
             slot_last_use,
             result,
         })
@@ -119,7 +134,15 @@ impl Compiler {
         let value_type = value_type(texture.kind, &texture.params);
         let dst = u32::try_from(self.slot_types.len())
             .map_err(|_| PbrtError::error("Texture program slot table exceeds u32."))?;
-        let instruction = instruction(dst, node, texture, value_type, operands)?;
+        let image_view = if texture.name == "imagemap" {
+            let mipmap = texture.mipmap.clone().ok_or_else(|| {
+                PbrtError::error(&format!("Image texture \"{}\" has no mipmap.", node.name))
+            })?;
+            Some(self.intern_image_view(image_view(texture, value_type, mipmap))?)
+        } else {
+            None
+        };
+        let instruction = instruction(dst, node, texture, value_type, operands, image_view)?;
         if let Some((slot, folded)) = self.fold_constant(instruction.clone()) {
             self.instructions[slot as usize] = folded;
             self.visiting.pop();
@@ -131,6 +154,26 @@ impl Compiler {
         self.slots_by_node.insert(key, dst);
         self.visiting.pop();
         Ok(dst)
+    }
+
+    fn intern_image_view(&mut self, view: ImageView) -> Result<u32, PbrtError> {
+        let key = ImageViewKey {
+            mipmap: Arc::as_ptr(&view.mipmap) as usize,
+            value_type: view.value_type,
+            swrap: view.swrap,
+            twrap: view.twrap,
+            filter: view.filter,
+            scale: view.scale.to_bits(),
+            invert: view.invert,
+        };
+        if let Some(&index) = self.image_views_by_key.get(&key) {
+            return Ok(index);
+        }
+        let index = u32::try_from(self.image_views.len())
+            .map_err(|_| PbrtError::error("Texture program image view table exceeds u32."))?;
+        self.image_views.push(Arc::new(view));
+        self.image_views_by_key.insert(key, index);
+        Ok(index)
     }
 
     fn fold_constant(&self, instruction: Instruction) -> Option<(u32, Instruction)> {
@@ -274,6 +317,7 @@ fn instruction(
     texture: &crate::gpu::node::Texture,
     value_type: ValueType,
     operands: Vec<u32>,
+    image_view: Option<u32>,
 ) -> Result<Instruction, PbrtError> {
     match texture.name.as_str() {
         "constant" => match texture.kind {
@@ -293,13 +337,9 @@ fn instruction(
         },
         "imagemap" => Ok(Instruction::SampleImage {
             dst,
-            view: Arc::new(image_view(
-                texture,
-                value_type,
-                texture.mipmap.clone().ok_or_else(|| {
-                    PbrtError::error(&format!("Image texture \"{}\" has no mipmap.", node.name))
-                })?,
-            )),
+            image_view: image_view.ok_or_else(|| {
+                PbrtError::error("Image texture instruction is missing its image view.")
+            })?,
             mapping: texture_mapping(node),
             value_type,
         }),

@@ -160,9 +160,11 @@ fn image_instruction_keeps_sampling_interpretation() {
         node: Arc::new(node),
     }])
     .unwrap();
-    let TextureInstruction::SampleImage { view, .. } = &library.programs[0].instructions[0] else {
+    let TextureInstruction::SampleImage { image_view, .. } = &library.programs[0].instructions[0]
+    else {
         panic!("expected image sample instruction");
     };
+    let view = &library.programs[0].image_views[*image_view as usize];
     assert_eq!(view.swrap, pbrt_r4::gpu::texture::ImageWrapMode::Black);
     assert_eq!(view.filter, pbrt_r4::gpu::texture::ImageFilterMode::Nearest);
     assert_eq!(view.scale, 3.0);
