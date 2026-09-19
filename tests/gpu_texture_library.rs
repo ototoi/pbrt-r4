@@ -72,6 +72,71 @@ fn image_compiler_projects_float_images_and_applies_f16_policy() {
 }
 
 #[test]
+fn image_compiler_projects_luminance_alpha_to_linear_rgb() {
+    let source = Arc::new(Mipmap {
+        levels: vec![MipmapLevel {
+            resolution: [2, 1],
+            channels: 2,
+            data: MipmapLevelData::U8(vec![64, 10, 128, 20]),
+        }],
+        color_space: ColorSpace::Srgb,
+        encoding: MipmapEncoding::U8Normalized,
+    });
+    let mut compiler = ImageCompiler::new(ImageOptimizationPolicy {
+        allow_f16: false,
+        max_absolute_error: 0.0,
+        max_relative_error: 0.0,
+    });
+
+    let projected = compiler
+        .compile(&source, ImageValueType::LinearRgb)
+        .unwrap();
+    assert_eq!(projected.levels[0].channels, 3);
+    assert_eq!(projected.encoding, MipmapEncoding::Linear);
+    assert_eq!(
+        projected.levels[0].data,
+        MipmapLevelData::F32(
+            vec![64.0 / 255.0; 3]
+                .into_iter()
+                .chain(vec![128.0 / 255.0; 3])
+                .collect()
+        )
+    );
+}
+
+#[test]
+fn image_compiler_discards_alpha_and_linearizes_srgb_spectrum() {
+    let source = Arc::new(Mipmap {
+        levels: vec![MipmapLevel {
+            resolution: [1, 1],
+            channels: 4,
+            data: MipmapLevelData::F32(vec![0.25, 0.5, 0.75, 0.125]),
+        }],
+        color_space: ColorSpace::Srgb,
+        encoding: MipmapEncoding::SrgbEncoded,
+    });
+    let mut compiler = ImageCompiler::new(ImageOptimizationPolicy {
+        allow_f16: false,
+        max_absolute_error: 0.0,
+        max_relative_error: 0.0,
+    });
+
+    let projected = compiler
+        .compile(&source, ImageValueType::LinearRgb)
+        .unwrap();
+    assert_eq!(projected.levels[0].channels, 3);
+    assert_eq!(projected.encoding, MipmapEncoding::Linear);
+    assert_eq!(
+        projected.levels[0].data,
+        MipmapLevelData::F32(vec![
+            inverse_gamma_correct(0.25),
+            inverse_gamma_correct(0.5),
+            inverse_gamma_correct(0.75),
+        ])
+    );
+}
+
+#[test]
 fn default_image_compiler_uses_bounded_f16_storage() {
     let source = Arc::new(Mipmap {
         levels: vec![MipmapLevel {

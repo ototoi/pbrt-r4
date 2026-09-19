@@ -241,7 +241,7 @@ impl ImageCompiler {
         }
         let projected = match value_type {
             ImageValueType::Float => project_float_mipmap(source)?,
-            ImageValueType::LinearRgb => source.clone(),
+            ImageValueType::LinearRgb => project_linear_rgb_mipmap(source)?,
         };
         let optimized = self.optimize_storage(&projected)?;
         self.compiled.insert(key, optimized.clone());
@@ -435,4 +435,67 @@ pub fn project_float_mipmap(mipmap: &Arc<Mipmap>) -> Result<Arc<Mipmap>, PbrtErr
         color_space: mipmap.color_space,
         encoding: MipmapEncoding::Linear,
     }))
+}
+
+pub fn project_linear_rgb_mipmap(mipmap: &Arc<Mipmap>) -> Result<Arc<Mipmap>, PbrtError> {
+    let mut levels = Vec::with_capacity(mipmap.levels.len());
+    for level in &mipmap.levels {
+        if !(1..=4).contains(&level.channels) {
+            return Err(PbrtError::error(
+                "Spectrum texture has invalid channel count.",
+            ));
+        }
+        let channels = usize::try_from(level.channels)
+            .map_err(|_| PbrtError::error("Texture channel count does not fit usize."))?;
+        let pixels = usize::try_from(level.resolution[0])
+            .ok()
+            .and_then(|width| {
+                usize::try_from(level.resolution[1])
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or_else(|| PbrtError::error("Texture resolution overflowed."))?;
+        let values = mipmap_level_values(level);
+        if values.len() != pixels.saturating_mul(channels) {
+            return Err(PbrtError::error(
+                "Texture mipmap data size is inconsistent.",
+            ));
+        }
+        let mut projected = Vec::with_capacity(pixels.saturating_mul(3));
+        for pixel in values.chunks_exact(channels) {
+            let mut rgb = if channels <= 2 {
+                [pixel[0]; 3]
+            } else {
+                [pixel[0], pixel[1], pixel[2]]
+            };
+            if matches!(mipmap.encoding, MipmapEncoding::SrgbEncoded) {
+                rgb = rgb.map(inverse_gamma_correct);
+            }
+            projected.extend_from_slice(&rgb);
+        }
+        levels.push(MipmapLevel {
+            resolution: level.resolution,
+            channels: 3,
+            data: MipmapLevelData::F32(projected),
+        });
+    }
+    Ok(Arc::new(Mipmap {
+        levels,
+        color_space: mipmap.color_space,
+        encoding: MipmapEncoding::Linear,
+    }))
+}
+
+fn mipmap_level_values(level: &MipmapLevel) -> Vec<f32> {
+    match &level.data {
+        MipmapLevelData::F32(values) => values.clone(),
+        MipmapLevelData::F16(values) => values
+            .iter()
+            .map(|value| half::f16::from_bits(*value).to_f32())
+            .collect(),
+        MipmapLevelData::U8(values) => values
+            .iter()
+            .map(|value| f32::from(*value) / 255.0)
+            .collect(),
+    }
 }
