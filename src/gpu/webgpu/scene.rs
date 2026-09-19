@@ -568,6 +568,7 @@ impl Scene {
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let materials = material_table.records;
+        flat.texture_library.validate()?;
         let mut attribute_refs = material_table.attributes;
         let all_lights = flat
             .lights
