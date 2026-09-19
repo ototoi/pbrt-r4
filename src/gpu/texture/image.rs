@@ -88,9 +88,13 @@ pub struct ImageOptimizationPolicy {
 impl Default for ImageOptimizationPolicy {
     fn default() -> Self {
         Self {
-            allow_f16: false,
-            max_absolute_error: 0.0,
-            max_relative_error: 0.0,
+            // GPU texture storage uses the bounded-error policy by default.
+            // Values that do not satisfy both finite representation and this
+            // tolerance remain F32, so high-dynamic-range inputs are not
+            // silently clipped.
+            allow_f16: true,
+            max_absolute_error: 0.001,
+            max_relative_error: 0.001,
         }
     }
 }
