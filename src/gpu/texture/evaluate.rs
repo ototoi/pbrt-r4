@@ -74,7 +74,15 @@ pub fn evaluate_texture_program_at(
                     (_, None) => return Err(invalid_slot(*second)),
                 }
             }
-            Instruction::SampleImage { view, mapping, .. } => {
+            Instruction::SampleImage {
+                image_view,
+                mapping,
+                ..
+            } => {
+                let view = program
+                    .image_views
+                    .get(*image_view as usize)
+                    .ok_or_else(|| invalid_slot(*image_view))?;
                 sample_image(view, mapping.as_ref(), uv)?
             }
             Instruction::Procedural { name, .. } => {
