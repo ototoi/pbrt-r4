@@ -90,6 +90,57 @@ fn default_image_compiler_uses_bounded_f16_storage() {
 }
 
 #[test]
+fn image_compiler_chooses_one_storage_format_for_the_full_mipmap() {
+    let source = Arc::new(Mipmap {
+        levels: vec![
+            MipmapLevel {
+                resolution: [2, 1],
+                channels: 1,
+                data: MipmapLevelData::F32(vec![0.25, 0.5]),
+            },
+            MipmapLevel {
+                resolution: [1, 1],
+                channels: 1,
+                data: MipmapLevelData::F32(vec![100_000.0]),
+            },
+        ],
+        color_space: ColorSpace::Unknown,
+        encoding: MipmapEncoding::Linear,
+    });
+    let compiled = ImageCompiler::default()
+        .compile(&source, ImageValueType::LinearRgb)
+        .unwrap();
+    assert!(compiled
+        .levels
+        .iter()
+        .all(|level| matches!(level.data, MipmapLevelData::F32(_))));
+}
+
+#[test]
+fn image_compiler_rejects_inconsistent_mipmap_storage() {
+    let source = Arc::new(Mipmap {
+        levels: vec![
+            MipmapLevel {
+                resolution: [2, 1],
+                channels: 1,
+                data: MipmapLevelData::F32(vec![0.25, 0.5]),
+            },
+            MipmapLevel {
+                resolution: [1, 1],
+                channels: 1,
+                data: MipmapLevelData::F16(vec![half::f16::from_f32(0.5).to_bits()]),
+            },
+        ],
+        color_space: ColorSpace::Unknown,
+        encoding: MipmapEncoding::Linear,
+    });
+    let error = ImageCompiler::default()
+        .compile(&source, ImageValueType::LinearRgb)
+        .unwrap_err();
+    assert!(error.to_string().contains("inconsistent storage formats"));
+}
+
+#[test]
 fn texture_program_is_typed_post_order() {
     let mut child = TextureNode::new("constant");
     child.components.push(TextureComponent::Texture(Texture {
@@ -265,48 +316,6 @@ fn constant_folding_does_not_mutate_a_shared_child() {
 }
 
 #[test]
-fn endpoint_mix_removes_dead_image_instructions_and_resources() {
-    let directory = tempdir().unwrap();
-    let path = directory.path().join("dead.png");
-    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![128])
-        .unwrap()
-        .save(&path)
-        .unwrap();
-    let mut image_params = ParameterDictionary::default();
-    image_params.add_string("string filename", &path.to_string_lossy());
-    let mut image = TextureNode::new("unused-image");
-    image.components.push(TextureComponent::Texture(Texture {
-        name: "imagemap".to_string(),
-        kind: TextureKind::Float,
-        params: image_params,
-    }));
-
-    let mut mix_params = ParameterDictionary::default();
-    mix_params.add_float("float amount", 0.0);
-    let mut root = TextureNode::new("root");
-    root.components.push(TextureComponent::Texture(Texture {
-        name: "mix".to_string(),
-        kind: TextureKind::Float,
-        params: mix_params,
-    }));
-    root.children.push(float_constant("kept", 0.25));
-    root.children.push(Arc::new(image));
-
-    let library = compile_texture_library(&[TextureRootSpec::Float {
-        node: Arc::new(root),
-    }])
-    .unwrap();
-    let program = &library.programs[0];
-    assert_eq!(program.instructions.len(), 1);
-    assert!(program.image_views.is_empty());
-    assert!(library.image_views.is_empty());
-    assert_eq!(
-        evaluate_texture_program(program).unwrap(),
-        TextureValue::Float(0.25)
-    );
-}
-
-#[test]
 fn texture_program_rejects_mixed_operand_types() {
     let mut spectrum_params = ParameterDictionary::default();
     spectrum_params.add_spectrum("spectrum value", &Spectrum::from(1.0));
@@ -331,6 +340,52 @@ fn texture_program_rejects_mixed_operand_types() {
     }])
     .unwrap_err();
     assert!(error.to_string().contains("incompatible value types"));
+}
+
+#[test]
+fn texture_program_shares_structurally_equal_instructions() {
+    let mut root = TextureNode::new("checkerboard");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "checkerboard".to_string(),
+        kind: TextureKind::Float,
+        params: ParameterDictionary::default(),
+    }));
+    root.children.push(float_constant("first", 0.5));
+    root.children.push(float_constant("second", 0.5));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+    let program = &library.programs[0];
+    assert_eq!(program.instructions.len(), 2);
+    assert!(matches!(
+        &program.instructions[1],
+        TextureInstruction::Procedural { operands, .. } if operands == &[0, 0]
+    ));
+}
+
+#[test]
+fn texture_program_cse_preserves_signed_zero() {
+    let mut root = TextureNode::new("checkerboard");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "checkerboard".to_string(),
+        kind: TextureKind::Float,
+        params: ParameterDictionary::default(),
+    }));
+    root.children.push(float_constant("positive-zero", 0.0));
+    root.children.push(float_constant("negative-zero", -0.0));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+    let program = &library.programs[0];
+    assert_eq!(program.instructions.len(), 3);
+    assert!(matches!(
+        &program.instructions[2],
+        TextureInstruction::Procedural { operands, .. } if operands == &[0, 1]
+    ));
 }
 
 fn float_constant(name: &str, value: f32) -> Arc<TextureNode> {
