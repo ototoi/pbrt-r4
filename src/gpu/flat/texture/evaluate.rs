@@ -83,7 +83,11 @@ pub fn evaluate_texture_program_at(
                     .image_views
                     .get(*image_view as usize)
                     .ok_or_else(|| invalid_slot(*image_view))?;
-                sample_image(view, mapping.as_ref(), uv)?
+                let mipmap = program
+                    .mipmaps
+                    .get(view.mipmap as usize)
+                    .ok_or_else(|| PbrtError::error("Image view has an invalid mipmap."))?;
+                sample_image(view, mipmap, mapping.as_ref(), uv)?
             }
             Instruction::Procedural { name, .. } => {
                 return Err(PbrtError::error(&format!(
@@ -101,6 +105,7 @@ pub fn evaluate_texture_program_at(
 
 fn sample_image(
     view: &ImageView,
+    mipmap: &super::image::Mipmap,
     mapping: Option<&TextureMapping>,
     uv: [f32; 2],
 ) -> Result<TextureValue, PbrtError> {
@@ -118,8 +123,7 @@ fn sample_image(
             ))
         }
     };
-    let level = view
-        .mipmap
+    let level = mipmap
         .levels
         .first()
         .ok_or_else(|| PbrtError::error("Image texture has no mipmap levels."))?;
@@ -132,7 +136,7 @@ fn sample_image(
         ImageFilterMode::Nearest | ImageFilterMode::Trilinear => {
             let u = wrap_coordinate(uv[0], view.swrap)?;
             let v = wrap_coordinate(uv[1], view.twrap)?;
-            sample_texel(level, &view.mipmap.encoding, u, v, view)?
+            sample_texel(level, &mipmap.encoding, u, v, view)?
         }
         ImageFilterMode::Bilinear => {
             let u = wrap_coordinate(uv[0], view.swrap)?;
@@ -143,10 +147,10 @@ fn sample_image(
             let y0 = y.floor();
             let tx = x - x0;
             let ty = y - y0;
-            let a = sample_indexed(level, &view.mipmap.encoding, x0, y0, view)?;
-            let b = sample_indexed(level, &view.mipmap.encoding, x0 + 1.0, y0, view)?;
-            let c = sample_indexed(level, &view.mipmap.encoding, x0, y0 + 1.0, view)?;
-            let d = sample_indexed(level, &view.mipmap.encoding, x0 + 1.0, y0 + 1.0, view)?;
+            let a = sample_indexed(level, &mipmap.encoding, x0, y0, view)?;
+            let b = sample_indexed(level, &mipmap.encoding, x0 + 1.0, y0, view)?;
+            let c = sample_indexed(level, &mipmap.encoding, x0, y0 + 1.0, view)?;
+            let d = sample_indexed(level, &mipmap.encoding, x0 + 1.0, y0 + 1.0, view)?;
             lerp_value(lerp_value(a, b, tx), lerp_value(c, d, tx), ty)
         }
     };

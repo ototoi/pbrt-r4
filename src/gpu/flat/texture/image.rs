@@ -177,7 +177,7 @@ pub enum ImageFilterMode {
 /// resource and sampling interpretation needed by backend adapters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageView {
-    pub mipmap: Arc<Mipmap>,
+    pub mipmap: u32,
     pub value_type: ImageValueType,
     pub swrap: ImageWrapMode,
     pub twrap: ImageWrapMode,

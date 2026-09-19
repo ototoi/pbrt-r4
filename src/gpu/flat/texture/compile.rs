@@ -7,7 +7,9 @@ use crate::gpu::node::TextureNode;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
-use super::image::{ImageCompiler, ImageDecoder, ImageFilterMode, ImageView, ImageWrapMode};
+use super::image::{
+    ImageCompiler, ImageDecoder, ImageFilterMode, ImageView, ImageWrapMode, Mipmap,
+};
 use super::optimize::equivalent_program;
 use super::program::{Instruction, TypedTextureProgram};
 
@@ -42,12 +44,13 @@ pub enum TextureRoot {
 pub struct TextureLibrary {
     pub programs: Vec<TypedTextureProgram>,
     pub roots: Vec<TextureRoot>,
+    pub mipmaps: Vec<Arc<Mipmap>>,
     pub image_views: Vec<ImageView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ImageViewKey {
-    mipmap: usize,
+    mipmap: u32,
     value_type: super::image::ImageValueType,
     swrap: ImageWrapMode,
     twrap: ImageWrapMode,
@@ -64,6 +67,8 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
     let mut programs_by_root = HashMap::new();
     let mut image_views = Vec::new();
     let mut image_views_by_key = HashMap::new();
+    let mut mipmaps = Vec::new();
+    let mut mipmaps_by_identity = HashMap::new();
     let mut image_compiler = ImageCompiler::default();
     let mut image_decoder = ImageDecoder::default();
 
@@ -82,12 +87,27 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
             let mut compiled = TypedTextureProgram::compile_with_images(node, &mut image_decoder)?;
             let mut remap = Vec::with_capacity(compiled.image_views.len());
             for view in &compiled.image_views {
+                let source = compiled
+                    .mipmaps
+                    .get(view.mipmap as usize)
+                    .ok_or_else(|| PbrtError::error("Texture view has an invalid mipmap."))?;
+                let mipmap = image_compiler.compile(source, view.value_type)?;
+                let mipmap_identity = Arc::as_ptr(&mipmap) as usize;
+                let mipmap = if let Some(&index) = mipmaps_by_identity.get(&mipmap_identity) {
+                    index
+                } else {
+                    let index = u32::try_from(mipmaps.len())
+                        .map_err(|_| PbrtError::error("Texture mipmap table exceeds u32."))?;
+                    mipmaps.push(mipmap);
+                    mipmaps_by_identity.insert(mipmap_identity, index);
+                    index
+                };
                 let optimized = ImageView {
-                    mipmap: image_compiler.compile(&view.mipmap, view.value_type)?,
-                    ..(**view).clone()
+                    mipmap,
+                    ..view.clone()
                 };
                 let key = ImageViewKey {
-                    mipmap: Arc::as_ptr(&optimized.mipmap) as usize,
+                    mipmap: optimized.mipmap,
                     value_type: optimized.value_type,
                     swrap: optimized.swrap,
                     twrap: optimized.twrap,
@@ -137,18 +157,15 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         });
     }
 
-    let shared_views = image_views
-        .iter()
-        .cloned()
-        .map(Arc::new)
-        .collect::<Vec<_>>();
     for program in &mut programs {
-        program.image_views = shared_views.clone();
+        program.mipmaps = mipmaps.clone();
+        program.image_views = image_views.clone();
     }
 
     Ok(TextureLibrary {
         programs,
         roots: compiled_roots,
+        mipmaps,
         image_views,
     })
 }

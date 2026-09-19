@@ -6,13 +6,14 @@ use std::sync::Arc;
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 
-use super::image::ImageView;
+use super::image::{ImageView, Mipmap};
 use super::program::{Instruction, TypedTextureProgram, ValueType};
 
 pub fn optimize_texture_program(
     instructions: Vec<Instruction>,
     slot_types: Vec<ValueType>,
-    image_views: Vec<Arc<ImageView>>,
+    mipmaps: Vec<Arc<Mipmap>>,
+    image_views: Vec<ImageView>,
     result: u32,
 ) -> Result<TypedTextureProgram, PbrtError> {
     let mut optimizer = Optimizer {
@@ -28,6 +29,7 @@ pub fn optimize_texture_program(
     compact_program(
         optimizer.instructions,
         optimizer.slot_types,
+        mipmaps,
         image_views,
         result,
     )
@@ -448,7 +450,8 @@ fn mapping_equal(first: Option<&TextureMapping>, second: Option<&TextureMapping>
 fn compact_program(
     instructions: Vec<Instruction>,
     slot_types: Vec<ValueType>,
-    image_views: Vec<Arc<ImageView>>,
+    mipmaps: Vec<Arc<Mipmap>>,
+    image_views: Vec<ImageView>,
     result: u32,
 ) -> Result<TypedTextureProgram, PbrtError> {
     let mut reachable = vec![false; instructions.len()];
@@ -507,10 +510,30 @@ fn compact_program(
         }
     }
 
+    let mut used_mipmaps = BTreeSet::new();
+    for view in &compacted_views {
+        used_mipmaps.insert(view.mipmap);
+    }
+    let mut mipmap_remap = vec![u32::MAX; mipmaps.len()];
+    let mut compacted_mipmaps = Vec::with_capacity(used_mipmaps.len());
+    for old_mipmap in used_mipmaps {
+        let mipmap = mipmaps
+            .get(old_mipmap as usize)
+            .ok_or_else(|| PbrtError::error("Texture view has an invalid mipmap."))?;
+        let new_mipmap = u32::try_from(compacted_mipmaps.len())
+            .map_err(|_| PbrtError::error("Texture mipmap table exceeds u32."))?;
+        mipmap_remap[old_mipmap as usize] = new_mipmap;
+        compacted_mipmaps.push(mipmap.clone());
+    }
+    for view in &mut compacted_views {
+        view.mipmap = mipmap_remap[view.mipmap as usize];
+    }
+
     let slot_last_use = calculate_last_use(&compacted, result)?;
     Ok(TypedTextureProgram {
         instructions: compacted,
         slot_types: compacted_types,
+        mipmaps: compacted_mipmaps,
         image_views: compacted_views,
         slot_last_use,
         result,

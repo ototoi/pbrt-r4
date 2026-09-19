@@ -44,19 +44,18 @@ struct TextureBindingPlan {
 
 fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtError> {
     let mut image_views = Vec::new();
-    let mut images_by_ptr = HashMap::new();
+    let mut images_by_mipmap = HashMap::new();
     let mut samplers = Vec::new();
     let mut samplers_by_key = HashMap::new();
     let mut view_bindings = Vec::with_capacity(views.len());
     for (view_index, view) in views.iter().enumerate() {
-        let image_key = Arc::as_ptr(&view.mipmap) as usize;
-        let image = if let Some(&index) = images_by_ptr.get(&image_key) {
+        let image = if let Some(&index) = images_by_mipmap.get(&view.mipmap) {
             index
         } else {
             let index = u32::try_from(image_views.len())
                 .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?;
             image_views.push(view_index);
-            images_by_ptr.insert(image_key, index);
+            images_by_mipmap.insert(view.mipmap, index);
             index
         };
         let sampler_key = SamplerKey {
@@ -411,13 +410,18 @@ fn mip_level_rgba(
 fn upload_texture_images(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    mipmaps: &[Arc<crate::gpu::flat::texture::Mipmap>],
     views: &[ImageView],
     image_views: &[usize],
 ) -> Result<Vec<wgpu::Texture>, PbrtError> {
     let mut images = Vec::new();
     for &view_index in image_views {
-        let view = &views[view_index];
-        let mipmap = &view.mipmap;
+        let view = views
+            .get(view_index)
+            .ok_or_else(|| PbrtError::error("Texture binding references an invalid image view."))?;
+        let mipmap = mipmaps
+            .get(view.mipmap as usize)
+            .ok_or_else(|| PbrtError::error("Texture view references an invalid mipmap."))?;
         let base_level = mipmap
             .levels
             .first()
@@ -730,6 +734,7 @@ impl Scene {
         let mut texture_images = upload_texture_images(
             device,
             queue,
+            &flat.texture_library.mipmaps,
             texture_views,
             &texture_binding_plan.image_views,
         )?;
@@ -1177,10 +1182,9 @@ fn convert_geometry(
 mod tests {
     use super::{mip_level_rgba, texture_binding_plan};
     use crate::gpu::flat::texture::{
-        ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap, MipmapEncoding,
-        MipmapLevel, MipmapLevelData,
+        ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
+        MipmapLevelData,
     };
-    use std::sync::Arc;
 
     #[test]
     fn upload_rejects_unprojected_spectrum_mipmap() {
@@ -1224,19 +1228,6 @@ mod tests {
 
     #[test]
     fn texture_binding_plan_shares_images_and_samplers_independently() {
-        let make_mipmap = || {
-            Arc::new(Mipmap {
-                levels: vec![MipmapLevel {
-                    resolution: [1, 1],
-                    channels: 3,
-                    data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3]),
-                }],
-                color_space: crate::gpu::flat::texture::ColorSpace::Unknown,
-                encoding: MipmapEncoding::Linear,
-            })
-        };
-        let first_mipmap = make_mipmap();
-        let second_mipmap = make_mipmap();
         let make_view = |mipmap, filter| ImageView {
             mipmap,
             value_type: ImageValueType::LinearRgb,
@@ -1247,9 +1238,9 @@ mod tests {
             invert: false,
         };
         let views = vec![
-            make_view(first_mipmap.clone(), ImageFilterMode::Bilinear),
-            make_view(first_mipmap, ImageFilterMode::Trilinear),
-            make_view(second_mipmap, ImageFilterMode::Bilinear),
+            make_view(0, ImageFilterMode::Bilinear),
+            make_view(0, ImageFilterMode::Trilinear),
+            make_view(1, ImageFilterMode::Bilinear),
         ];
 
         let plan = texture_binding_plan(&views).unwrap();
