@@ -41,7 +41,7 @@ pub enum TextureRoot {
 pub struct TextureLibrary {
     pub programs: Vec<TypedTextureProgram>,
     pub roots: Vec<TextureRoot>,
-    pub image_views: Vec<Arc<ImageView>>,
+    pub image_views: Vec<ImageView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -95,7 +95,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
                 } else {
                     let global = u32::try_from(image_views.len())
                         .map_err(|_| PbrtError::error("Texture image view table exceeds u32."))?;
-                    image_views.push(view.clone());
+                    image_views.push((**view).clone());
                     image_views_by_key.insert(key, global);
                     global
                 };
@@ -108,7 +108,7 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
                     })?;
                 }
             }
-            compiled.image_views = image_views.clone();
+            compiled.image_views = image_views.iter().cloned().map(Arc::new).collect();
             programs.push(compiled);
             programs_by_root.insert(key, program);
             program

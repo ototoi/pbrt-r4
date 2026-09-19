@@ -4,8 +4,11 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
-use crate::gpu::node::{MipmapEncoding, MipmapLevel, MipmapLevelData};
-use crate::gpu::texture::{ImageFilterMode, ImageView, ImageWrapMode};
+use crate::gpu::node::{MipmapEncoding, MipmapLevel, MipmapLevelData, TextureMapping};
+use crate::gpu::texture::{
+    ColorSpace, ImageFilterMode, ImageView, ImageWrapMode, TextureInstruction, TextureLibrary,
+    TextureRoot, TextureValueType, TypedTextureProgram,
+};
 use crate::util::error::PbrtError;
 
 use super::abi::{
@@ -44,14 +47,14 @@ fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtE
     let mut samplers = Vec::new();
     let mut samplers_by_key = HashMap::new();
     let mut view_bindings = Vec::with_capacity(views.len());
-    for view in views {
+    for (view_index, view) in views.iter().enumerate() {
         let image_key = Arc::as_ptr(&view.mipmap) as usize;
         let image = if let Some(&index) = images_by_ptr.get(&image_key) {
             index
         } else {
             let index = u32::try_from(image_views.len())
                 .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?;
-            image_views.push(view_bindings.len());
+            image_views.push(view_index);
             images_by_ptr.insert(image_key, index);
             index
         };
@@ -92,6 +95,250 @@ fn stable_texture_hash(value: &str) -> u32 {
     value.bytes().fold(2166136261u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(16777619)
     })
+}
+
+fn lower_texture_library(
+    library: &TextureLibrary,
+    binding_plan: &TextureBindingPlan,
+) -> Result<(Vec<TextureNodeRecord>, Vec<u32>, Vec<TextureRootRecord>), PbrtError> {
+    let mut nodes = Vec::new();
+    let mut children = Vec::new();
+    let mut program_offsets = Vec::with_capacity(library.programs.len());
+    for program in &library.programs {
+        let offset = u32::try_from(nodes.len())
+            .map_err(|_| PbrtError::error("Texture node table exceeds u32."))?;
+        program_offsets.push(offset);
+        for instruction in &program.instructions {
+            let operands = texture_instruction_operands(instruction);
+            let first_child = u32::try_from(children.len())
+                .map_err(|_| PbrtError::error("Texture child table exceeds u32."))?;
+            children.extend(operands.iter().map(|operand| offset + *operand));
+            let lowered = lower_texture_instruction(instruction, program, binding_plan)?;
+            nodes.push(TextureNodeRecord {
+                kind: lowered.kind,
+                first_child,
+                child_count: u32::try_from(operands.len())
+                    .map_err(|_| PbrtError::error("Texture child count exceeds u32."))?,
+                implementation_hash: lowered.implementation_hash,
+                swrap_mode: lowered.image_view.2,
+                twrap_mode: lowered.image_view.3,
+                color_space: lowered.color_space,
+                texture_index: lowered.image_view.0,
+                operation: lowered.operation,
+                mapping_kind: lowered.mapping.0,
+                sampler: lowered.image_view.1,
+                _operation_padding: 0,
+                constant_value: lowered.constant_value,
+                mapping: lowered.mapping.1,
+            });
+        }
+    }
+    let roots =
+        library
+            .roots
+            .iter()
+            .map(|root| match root {
+                TextureRoot::Float { program } => Ok(TextureRootRecord {
+                    texture_node: program_offsets.get(*program as usize).copied().ok_or_else(
+                        || PbrtError::error("Texture root references invalid program."),
+                    )? + library.programs[*program as usize].result,
+                    spectrum_type: 0,
+                }),
+                TextureRoot::Spectrum {
+                    program,
+                    spectrum_type,
+                } => Ok(TextureRootRecord {
+                    texture_node: program_offsets.get(*program as usize).copied().ok_or_else(
+                        || PbrtError::error("Texture root references invalid program."),
+                    )? + library.programs[*program as usize].result,
+                    spectrum_type: match spectrum_type {
+                        crate::util::spectrum::SpectrumType::Albedo => 0,
+                        crate::util::spectrum::SpectrumType::Unbounded => 1,
+                        crate::util::spectrum::SpectrumType::Illuminant => 2,
+                    },
+                }),
+            })
+            .collect::<Result<Vec<_>, PbrtError>>()?;
+    Ok((nodes, children, roots))
+}
+
+fn texture_instruction_operands(instruction: &TextureInstruction) -> Vec<u32> {
+    match instruction {
+        TextureInstruction::Scale { input, .. } => vec![*input],
+        TextureInstruction::Mix {
+            first,
+            second,
+            amount,
+            ..
+        } => amount.iter().copied().chain([*first, *second]).collect(),
+        TextureInstruction::Procedural { operands, .. } => operands.clone(),
+        TextureInstruction::ConstantFloat { .. }
+        | TextureInstruction::ConstantRgb { .. }
+        | TextureInstruction::SampleImage { .. } => Vec::new(),
+    }
+}
+
+struct LoweredTextureInstruction {
+    kind: u32,
+    implementation_hash: u32,
+    operation: u32,
+    constant_value: [f32; 4],
+    color_space: u32,
+    image_view: (u32, u32, u32, u32),
+    mapping: (u32, [[f32; 4]; 4]),
+}
+
+fn lower_texture_instruction(
+    instruction: &TextureInstruction,
+    program: &TypedTextureProgram,
+    binding_plan: &TextureBindingPlan,
+) -> Result<LoweredTextureInstruction, PbrtError> {
+    let identity = row_major_to_columns([
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]);
+    let value_type = |value_type: &TextureValueType| match value_type {
+        TextureValueType::Float => (0, 0),
+        TextureValueType::LinearRgb(color_space) => (1, color_space_id(*color_space)),
+    };
+    let empty_image = (INVALID_INDEX, INVALID_INDEX, 0, 0);
+    match instruction {
+        TextureInstruction::ConstantFloat { value, .. } => Ok(LoweredTextureInstruction {
+            kind: 0,
+            implementation_hash: stable_texture_hash("constant"),
+            operation: 1,
+            constant_value: [*value; 4],
+            color_space: 0,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::ConstantRgb {
+            value, color_space, ..
+        } => Ok(LoweredTextureInstruction {
+            kind: 1,
+            implementation_hash: stable_texture_hash("constant"),
+            operation: 1,
+            constant_value: [
+                value[0],
+                value[1],
+                value[2],
+                (value[0] + value[1] + value[2]) / 3.0,
+            ],
+            color_space: color_space_id(*color_space),
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::SampleImage {
+            image_view,
+            mapping,
+            value_type: texture_type,
+            ..
+        } => {
+            let view = program
+                .image_views
+                .get(*image_view as usize)
+                .ok_or_else(|| PbrtError::error("Texture instruction has invalid image view."))?;
+            let (image, sampler) = *binding_plan
+                .view_bindings
+                .get(*image_view as usize)
+                .ok_or_else(|| PbrtError::error("Texture instruction has invalid binding."))?;
+            let wrap_mode = |mode| match mode {
+                ImageWrapMode::Repeat => 0,
+                ImageWrapMode::Clamp => 1,
+                ImageWrapMode::Black => 2,
+            };
+            Ok(LoweredTextureInstruction {
+                kind: value_type(texture_type).0,
+                implementation_hash: stable_texture_hash("imagemap"),
+                operation: 0,
+                constant_value: [view.scale, if view.invert { 1.0 } else { 0.0 }, 0.0, 0.0],
+                color_space: value_type(texture_type).1,
+                image_view: (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap)),
+                mapping: lower_mapping(mapping.as_ref(), identity),
+            })
+        }
+        TextureInstruction::Scale { factor, .. } => Ok(LoweredTextureInstruction {
+            kind: 0,
+            implementation_hash: stable_texture_hash("scale"),
+            operation: 2,
+            constant_value: [*factor, 0.0, 0.0, 0.0],
+            color_space: 0,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::Mix {
+            constant_amount, ..
+        } => Ok(LoweredTextureInstruction {
+            kind: 0,
+            implementation_hash: stable_texture_hash("mix"),
+            operation: 3,
+            constant_value: [*constant_amount, 0.0, 0.0, 0.0],
+            color_space: 0,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::Procedural {
+            name,
+            parameters,
+            value_type: texture_type,
+            ..
+        } => Ok(LoweredTextureInstruction {
+            kind: value_type(texture_type).0,
+            implementation_hash: stable_texture_hash(name),
+            operation: procedural_operation(name),
+            constant_value: *parameters,
+            color_space: value_type(texture_type).1,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+    }
+}
+
+fn color_space_id(color_space: ColorSpace) -> u32 {
+    match color_space {
+        ColorSpace::Unknown | ColorSpace::Srgb => 0,
+        ColorSpace::Aces2065 => 1,
+        ColorSpace::DciP3 => 2,
+        ColorSpace::Rec2020 => 3,
+    }
+}
+
+fn lower_mapping(
+    mapping: Option<&TextureMapping>,
+    identity: [[f32; 4]; 4],
+) -> (u32, [[f32; 4]; 4]) {
+    match mapping {
+        Some(TextureMapping::Uv(uv)) => {
+            let mut matrix = [
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ];
+            matrix[0] = uv.uscale;
+            matrix[5] = uv.vscale;
+            matrix[3] = uv.udelta;
+            matrix[7] = uv.vdelta;
+            (0, row_major_to_columns(matrix))
+        }
+        Some(TextureMapping::Planar(transform)) => (1, row_major_to_columns(transform.matrix)),
+        Some(TextureMapping::Spherical(transform)) => (2, row_major_to_columns(transform.matrix)),
+        Some(TextureMapping::Cylindrical(transform)) => (3, row_major_to_columns(transform.matrix)),
+        Some(TextureMapping::PointTransform(transform)) => {
+            (0, row_major_to_columns(transform.matrix))
+        }
+        None => (0, identity),
+    }
+}
+
+fn procedural_operation(name: &str) -> u32 {
+    match name {
+        "directionmix" => 5,
+        "dots" => 6,
+        "fbm" => 7,
+        "wrinkled" => 8,
+        "windy" => 9,
+        "bilerp" => 10,
+        "marble" => 11,
+        name if name.contains("checkerboard") => 4,
+        _ => 0,
+    }
 }
 
 fn mip_level_rgba(
@@ -371,14 +618,30 @@ impl Scene {
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
-        let texture_roots = flat
-            .texture_roots
-            .iter()
-            .map(|root| TextureRootRecord {
-                texture_node: root.texture_node,
-                spectrum_type: root.spectrum_type,
-            })
-            .collect::<Vec<_>>();
+        let use_typed_texture_library = !flat.texture_library.programs.is_empty();
+        let texture_views = if use_typed_texture_library {
+            &flat.texture_library.image_views
+        } else {
+            &flat.image_views
+        };
+        let texture_binding_plan = texture_binding_plan(texture_views)?;
+        let (typed_texture_nodes, typed_texture_children, typed_texture_roots) =
+            if use_typed_texture_library {
+                let (nodes, children, roots) =
+                    lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
+                (Some(nodes), Some(children), Some(roots))
+            } else {
+                (None, None, None)
+            };
+        let texture_roots = typed_texture_roots.unwrap_or_else(|| {
+            flat.texture_roots
+                .iter()
+                .map(|root| TextureRootRecord {
+                    texture_node: root.texture_node,
+                    spectrum_type: root.spectrum_type,
+                })
+                .collect()
+        });
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
@@ -484,50 +747,52 @@ impl Scene {
             contents: buffer_contents(&texture_roots),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let texture_binding_plan = texture_binding_plan(&flat.image_views)?;
-        let texture_nodes = flat
-            .texture_nodes
-            .iter()
-            .map(|node| {
-                let mut constant_value = node.constant_value;
-                let (image_view, sampler, swrap_mode, twrap_mode) =
-                    if let Some(view_index) = node.image_view {
-                        let (image, sampler) = *texture_binding_plan
-                            .view_bindings
-                            .get(view_index as usize)
-                            .ok_or_else(|| {
-                                PbrtError::error("Texture node has an invalid image view.")
-                            })?;
-                        let view = &flat.image_views[view_index as usize];
-                        constant_value[0] = view.scale;
-                        constant_value[1] = if view.invert { 1.0 } else { 0.0 };
-                        let wrap_mode = |mode| match mode {
-                            ImageWrapMode::Repeat => 0,
-                            ImageWrapMode::Clamp => 1,
-                            ImageWrapMode::Black => 2,
+        let texture_nodes = if let Some(nodes) = typed_texture_nodes {
+            nodes
+        } else {
+            flat.texture_nodes
+                .iter()
+                .map(|node| {
+                    let mut constant_value = node.constant_value;
+                    let (image_view, sampler, swrap_mode, twrap_mode) =
+                        if let Some(view_index) = node.image_view {
+                            let (image, sampler) = *texture_binding_plan
+                                .view_bindings
+                                .get(view_index as usize)
+                                .ok_or_else(|| {
+                                    PbrtError::error("Texture node has an invalid image view.")
+                                })?;
+                            let view = &flat.image_views[view_index as usize];
+                            constant_value[0] = view.scale;
+                            constant_value[1] = if view.invert { 1.0 } else { 0.0 };
+                            let wrap_mode = |mode| match mode {
+                                ImageWrapMode::Repeat => 0,
+                                ImageWrapMode::Clamp => 1,
+                                ImageWrapMode::Black => 2,
+                            };
+                            (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap))
+                        } else {
+                            (INVALID_INDEX, INVALID_INDEX, 0, 0)
                         };
-                        (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap))
-                    } else {
-                        (INVALID_INDEX, INVALID_INDEX, 0, 0)
-                    };
-                Ok(TextureNodeRecord {
-                    kind: node.kind,
-                    first_child: node.first_child,
-                    child_count: node.child_count,
-                    implementation_hash: stable_texture_hash(&node.implementation),
-                    swrap_mode,
-                    twrap_mode,
-                    color_space: node.color_space,
-                    texture_index: image_view,
-                    operation: node.operation,
-                    mapping_kind: node.mapping_kind,
-                    sampler,
-                    _operation_padding: 0,
-                    constant_value,
-                    mapping: row_major_to_columns(node.mapping),
+                    Ok(TextureNodeRecord {
+                        kind: node.kind,
+                        first_child: node.first_child,
+                        child_count: node.child_count,
+                        implementation_hash: stable_texture_hash(&node.implementation),
+                        swrap_mode,
+                        twrap_mode,
+                        color_space: node.color_space,
+                        texture_index: image_view,
+                        operation: node.operation,
+                        mapping_kind: node.mapping_kind,
+                        sampler,
+                        _operation_padding: 0,
+                        constant_value,
+                        mapping: row_major_to_columns(node.mapping),
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
+                .collect::<Result<Vec<_>, PbrtError>>()?
+        };
         let texture_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture nodes SBO"),
             contents: buffer_contents(&texture_nodes),
@@ -535,7 +800,11 @@ impl Scene {
         });
         let texture_child_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture child indices SBO"),
-            contents: buffer_contents(&flat.texture_child_indices),
+            contents: buffer_contents(
+                typed_texture_children
+                    .as_deref()
+                    .unwrap_or(&flat.texture_child_indices),
+            ),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let mut rgb_spectrum_table = Vec::new();
@@ -556,7 +825,7 @@ impl Scene {
         let mut texture_images = upload_texture_images(
             device,
             queue,
-            &flat.image_views,
+            texture_views,
             &texture_binding_plan.image_views,
         )?;
         if texture_images.is_empty() {
