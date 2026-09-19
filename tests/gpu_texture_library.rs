@@ -292,12 +292,18 @@ fn image_instruction_keeps_sampling_interpretation() {
         node: Arc::new(node),
     }])
     .unwrap();
+    assert_eq!(library.mipmaps.len(), 1);
     assert_eq!(library.image_views.len(), 1);
     let TextureInstruction::SampleImage { image_view, .. } = &library.programs[0].instructions[0]
     else {
         panic!("expected image sample instruction");
     };
     let view = &library.programs[0].image_views[*image_view as usize];
+    assert_eq!(view.mipmap, 0);
+    assert!(Arc::ptr_eq(
+        &library.mipmaps[view.mipmap as usize],
+        &library.programs[0].mipmaps[view.mipmap as usize]
+    ));
     assert_eq!(view.swrap, ImageWrapMode::Black);
     assert_eq!(view.filter, ImageFilterMode::Nearest);
     assert_eq!(view.scale, 3.0);
@@ -347,7 +353,9 @@ fn image_views_are_shared_across_distinct_programs() {
     ])
     .unwrap();
     assert_eq!(library.programs.len(), 1);
+    assert_eq!(library.mipmaps.len(), 1);
     assert_eq!(library.image_views.len(), 1);
+    assert_eq!(library.image_views[0].mipmap, 0);
     for program in &library.programs {
         assert!(matches!(
             program.instructions[0],

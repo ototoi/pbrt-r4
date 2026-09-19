@@ -9,7 +9,7 @@ use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 
 use super::image::{
-    ColorSpace, ImageDecoder, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode,
+    ColorSpace, ImageDecoder, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
 };
 use super::optimize::optimize_texture_program;
 
@@ -61,7 +61,8 @@ pub enum Instruction {
 pub struct TypedTextureProgram {
     pub instructions: Vec<Instruction>,
     pub slot_types: Vec<ValueType>,
-    pub image_views: Vec<Arc<ImageView>>,
+    pub mipmaps: Vec<Arc<Mipmap>>,
+    pub image_views: Vec<ImageView>,
     /// Last instruction index that reads each slot. The result slot is kept
     /// live through the end of the program for backend consumers.
     pub slot_last_use: Vec<u32>,
@@ -87,14 +88,16 @@ struct Compiler<'a> {
     slot_types: Vec<ValueType>,
     slots_by_node: HashMap<usize, u32>,
     visiting: Vec<usize>,
-    image_views: Vec<Arc<ImageView>>,
+    image_views: Vec<ImageView>,
     image_views_by_key: HashMap<ImageViewKey, u32>,
     image_decoder: &'a mut ImageDecoder,
+    mipmaps: Vec<Arc<Mipmap>>,
+    mipmaps_by_identity: HashMap<usize, u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ImageViewKey {
-    mipmap: usize,
+    mipmap: u32,
     value_type: ImageValueType,
     swrap: ImageWrapMode,
     twrap: ImageWrapMode,
@@ -113,12 +116,20 @@ impl<'a> Compiler<'a> {
             image_views: Vec::new(),
             image_views_by_key: HashMap::new(),
             image_decoder,
+            mipmaps: Vec::new(),
+            mipmaps_by_identity: HashMap::new(),
         }
     }
 
     fn compile(mut self, root: &Arc<TextureNode>) -> Result<TypedTextureProgram, PbrtError> {
         let result = self.emit(root)?;
-        optimize_texture_program(self.instructions, self.slot_types, self.image_views, result)
+        optimize_texture_program(
+            self.instructions,
+            self.slot_types,
+            self.mipmaps,
+            self.image_views,
+            result,
+        )
     }
 
     fn emit(&mut self, node: &Arc<TextureNode>) -> Result<u32, PbrtError> {
@@ -152,6 +163,7 @@ impl<'a> Compiler<'a> {
             };
             let encoding = texture.params.get_one_string("encoding", default_encoding);
             let mipmap = self.image_decoder.decode(&path, &encoding)?;
+            let mipmap = self.intern_mipmap(mipmap)?;
             Some(self.intern_image_view(image_view(texture, value_type, mipmap))?)
         } else {
             None
@@ -166,7 +178,7 @@ impl<'a> Compiler<'a> {
 
     fn intern_image_view(&mut self, view: ImageView) -> Result<u32, PbrtError> {
         let key = ImageViewKey {
-            mipmap: Arc::as_ptr(&view.mipmap) as usize,
+            mipmap: view.mipmap,
             value_type: view.value_type,
             swrap: view.swrap,
             twrap: view.twrap,
@@ -179,8 +191,20 @@ impl<'a> Compiler<'a> {
         }
         let index = u32::try_from(self.image_views.len())
             .map_err(|_| PbrtError::error("Texture program image view table exceeds u32."))?;
-        self.image_views.push(Arc::new(view));
+        self.image_views.push(view);
         self.image_views_by_key.insert(key, index);
+        Ok(index)
+    }
+
+    fn intern_mipmap(&mut self, mipmap: Arc<Mipmap>) -> Result<u32, PbrtError> {
+        let identity = Arc::as_ptr(&mipmap) as usize;
+        if let Some(&index) = self.mipmaps_by_identity.get(&identity) {
+            return Ok(index);
+        }
+        let index = u32::try_from(self.mipmaps.len())
+            .map_err(|_| PbrtError::error("Texture mipmap table exceeds u32."))?;
+        self.mipmaps.push(mipmap);
+        self.mipmaps_by_identity.insert(identity, index);
         Ok(index)
     }
 }
@@ -314,7 +338,7 @@ fn texture_mapping(node: &TextureNode) -> Option<TextureMapping> {
 fn image_view(
     texture: &crate::gpu::node::Texture,
     value_type: ValueType,
-    mipmap: Arc<super::image::Mipmap>,
+    mipmap: u32,
 ) -> ImageView {
     let wrap = |name: &str| match name {
         "clamp" => ImageWrapMode::Clamp,
