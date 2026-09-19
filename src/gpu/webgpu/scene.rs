@@ -5,9 +5,9 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
 use crate::gpu::flat::texture::{
-    ColorSpace, ImageFilterMode, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
-    MipmapLevelData, TextureInstruction, TextureLibrary, TextureRoot, TextureValueType,
-    TypedTextureProgram,
+    ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
+    MipmapLevel, MipmapLevelData, TextureInstruction, TextureLibrary, TextureRoot,
+    TextureValueType, TypedTextureProgram,
 };
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
@@ -346,16 +346,32 @@ fn procedural_operation(name: &str) -> Result<u32, PbrtError> {
 
 fn mip_level_rgba(
     level: &MipmapLevel,
+    value_type: ImageValueType,
     encoding: MipmapEncoding,
 ) -> Result<(u32, u32, Vec<f32>), PbrtError> {
     let width = level.resolution[0];
     let height = level.resolution[1];
-    if width == 0 || height == 0 || !(1..=4).contains(&level.channels) {
+    if width == 0 || height == 0 {
         return Err(PbrtError::error(
             "Texture mipmap has an invalid resolution.",
         ));
     }
-    let mut values = match &level.data {
+    if encoding != MipmapEncoding::Linear {
+        return Err(PbrtError::error(
+            "WebGPU texture upload requires linear Flat IR mipmaps.",
+        ));
+    }
+    let expected_channels = match value_type {
+        ImageValueType::Float => 1,
+        ImageValueType::LinearRgb => 3,
+    };
+    if level.channels != expected_channels {
+        return Err(PbrtError::error(&format!(
+            "WebGPU texture upload expected {expected_channels} channels, got {}.",
+            level.channels
+        )));
+    }
+    let values = match &level.data {
         MipmapLevelData::F32(values) => values.clone(),
         MipmapLevelData::F16(values) => values
             .iter()
@@ -366,18 +382,6 @@ fn mip_level_rgba(
             .map(|value| f32::from(*value) / 255.0)
             .collect(),
     };
-    if matches!(encoding, MipmapEncoding::SrgbEncoded) {
-        for pixel in values.chunks_exact_mut(level.channels as usize) {
-            let color_channels = if level.channels == 4 {
-                3
-            } else {
-                level.channels as usize
-            };
-            for value in pixel.iter_mut().take(color_channels) {
-                *value = crate::util::base::inverse_gamma_correct(*value);
-            }
-        }
-    }
     let pixel_count = usize::try_from(width)
         .ok()
         .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
@@ -392,30 +396,14 @@ fn mip_level_rgba(
     let mut rgba = vec![0.0f32; pixel_count * 4];
     for pixel in 0..pixel_count {
         let source = pixel * channels;
-        if channels <= 2 {
-            // PBRT treats a two-channel image as luminance + alpha.  The
-            // alpha channel must not become the green component of the RGB
-            // sample; replicate luminance across RGB and preserve alpha only
-            // in the upload's fourth channel.
-            let luminance = values[source];
-            rgba[pixel * 4] = luminance;
-            rgba[pixel * 4 + 1] = luminance;
-            rgba[pixel * 4 + 2] = luminance;
-            rgba[pixel * 4 + 3] = if channels == 2 {
-                values[source + 1]
-            } else {
-                1.0
-            };
-        } else {
-            for channel in 0..3 {
-                rgba[pixel * 4 + channel] = values[source + channel];
-            }
-            rgba[pixel * 4 + 3] = if channels == 4 {
-                values[source + 3]
-            } else {
-                1.0
-            };
+        let rgb = match value_type {
+            ImageValueType::Float => [values[source]; 3],
+            ImageValueType::LinearRgb => [values[source], values[source + 1], values[source + 2]],
+        };
+        for (channel, value) in rgb.into_iter().enumerate() {
+            rgba[pixel * 4 + channel] = value;
         }
+        rgba[pixel * 4 + 3] = 1.0;
     }
     Ok((width, height, rgba))
 }
@@ -430,11 +418,11 @@ fn upload_texture_images(
     for &view_index in image_views {
         let view = &views[view_index];
         let mipmap = &view.mipmap;
-        let Some(base_level) = mipmap.levels.first() else {
-            images.push(create_empty_texture(device));
-            continue;
-        };
-        let (width, height, _) = mip_level_rgba(base_level, mipmap.encoding)?;
+        let base_level = mipmap
+            .levels
+            .first()
+            .ok_or_else(|| PbrtError::error("WebGPU texture upload received an empty mipmap."))?;
+        let (width, height, _) = mip_level_rgba(base_level, view.value_type, mipmap.encoding)?;
         let mip_level_count = u32::try_from(mipmap.levels.len())
             .map_err(|_| PbrtError::error("Texture mipmap has too many levels."))?;
         for (level_index, level) in mipmap.levels.iter().enumerate() {
@@ -462,7 +450,8 @@ fn upload_texture_images(
             view_formats: &[],
         });
         for (mip_level, level) in mipmap.levels.iter().enumerate() {
-            let (level_width, level_height, rgba) = mip_level_rgba(level, mipmap.encoding)?;
+            let (level_width, level_height, rgba) =
+                mip_level_rgba(level, view.value_type, mipmap.encoding)?;
             let mip_level = u32::try_from(mip_level)
                 .map_err(|_| PbrtError::error("Texture mipmap level index overflowed."))?;
             queue.write_texture(
@@ -488,23 +477,6 @@ fn upload_texture_images(
         images.push(texture);
     }
     Ok(images)
-}
-
-fn create_empty_texture(device: &wgpu::Device) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("pbrt-r4 empty texture"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    })
 }
 
 pub struct Scene {
@@ -1211,14 +1183,15 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn two_channel_mipmap_upload_replicates_luminance_and_preserves_alpha() {
+    fn upload_rejects_unprojected_spectrum_mipmap() {
         let level = MipmapLevel {
             resolution: [1, 1],
             channels: 2,
             data: MipmapLevelData::F32(vec![0.2, 0.75]),
         };
-        let (_, _, rgba) = mip_level_rgba(&level, MipmapEncoding::Linear).expect("valid mip level");
-        assert_eq!(rgba, vec![0.2, 0.2, 0.2, 0.75]);
+        let error =
+            mip_level_rgba(&level, ImageValueType::LinearRgb, MipmapEncoding::Linear).unwrap_err();
+        assert!(error.to_string().contains("expected 3 channels"));
     }
 
     #[test]
@@ -1228,15 +1201,25 @@ mod tests {
             channels: 3,
             data: MipmapLevelData::F32(vec![0.0, 0.3, 0.6]),
         };
-        let (_, _, rgba) = mip_level_rgba(&rgb, MipmapEncoding::Linear).unwrap();
+        let (_, _, rgba) =
+            mip_level_rgba(&rgb, ImageValueType::LinearRgb, MipmapEncoding::Linear).unwrap();
         assert_eq!(rgba, vec![0.0, 0.3, 0.6, 1.0]);
+    }
+
+    #[test]
+    fn upload_rejects_non_linear_flat_mipmap() {
         let rgba_level = MipmapLevel {
             resolution: [1, 1],
-            channels: 4,
-            data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3, 0.8]),
+            channels: 3,
+            data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3]),
         };
-        let (_, _, projected) = mip_level_rgba(&rgba_level, MipmapEncoding::Linear).unwrap();
-        assert_eq!(projected, vec![0.1, 0.2, 0.3, 0.8]);
+        let error = mip_level_rgba(
+            &rgba_level,
+            ImageValueType::LinearRgb,
+            MipmapEncoding::SrgbEncoded,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("requires linear"));
     }
 
     #[test]
