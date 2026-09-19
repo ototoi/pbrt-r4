@@ -228,6 +228,7 @@ impl ImageCompiler {
         source: &Arc<Mipmap>,
         value_type: ImageValueType,
     ) -> Result<Arc<Mipmap>, PbrtError> {
+        validate_mipmap(source)?;
         let key = (Arc::as_ptr(source) as usize, value_type);
         if let Some(mipmap) = self.compiled.get(&key) {
             return Ok(mipmap.clone());
@@ -248,21 +249,17 @@ impl ImageCompiler {
         let mut levels = Vec::with_capacity(source.levels.len());
         for level in &source.levels {
             let MipmapLevelData::F32(values) = &level.data else {
-                levels.push(level.clone());
-                continue;
+                return Ok(source.clone());
             };
             let mut converted = Vec::with_capacity(values.len());
-            let mut acceptable = true;
             for &value in values {
                 if !value.is_finite() {
-                    acceptable = false;
-                    break;
+                    return Ok(source.clone());
                 }
                 let half = half::f16::from_f32(value);
                 let round_trip = half.to_f32();
                 if !round_trip.is_finite() {
-                    acceptable = false;
-                    break;
+                    return Ok(source.clone());
                 }
                 let absolute_error = (round_trip - value).abs();
                 let relative_error = if value == 0.0 {
@@ -273,26 +270,99 @@ impl ImageCompiler {
                 if absolute_error > self.policy.max_absolute_error
                     && relative_error > self.policy.max_relative_error
                 {
-                    acceptable = false;
-                    break;
+                    return Ok(source.clone());
                 }
                 converted.push(half.to_bits());
             }
-            if acceptable {
-                levels.push(MipmapLevel {
-                    resolution: level.resolution,
-                    channels: level.channels,
-                    data: MipmapLevelData::F16(converted),
-                });
-            } else {
-                levels.push(level.clone());
-            }
+            levels.push(MipmapLevel {
+                resolution: level.resolution,
+                channels: level.channels,
+                data: MipmapLevelData::F16(converted),
+            });
         }
         Ok(Arc::new(Mipmap {
             levels,
             color_space: source.color_space,
             encoding: source.encoding,
         }))
+    }
+}
+
+pub fn validate_mipmap(mipmap: &Mipmap) -> Result<(), PbrtError> {
+    let Some(first) = mipmap.levels.first() else {
+        return Err(PbrtError::error("Texture mipmap has no levels."));
+    };
+    if first.resolution[0] == 0 || first.resolution[1] == 0 {
+        return Err(PbrtError::error(
+            "Texture mipmap has a zero-sized base level.",
+        ));
+    }
+    if !(1..=4).contains(&first.channels) {
+        return Err(PbrtError::error(
+            "Texture mipmap has an invalid channel count.",
+        ));
+    }
+    let storage = mipmap_storage(&first.data);
+    let mut expected_resolution = first.resolution;
+    for (index, level) in mipmap.levels.iter().enumerate() {
+        if level.resolution != expected_resolution {
+            return Err(PbrtError::error(&format!(
+                "Texture mipmap level {index} has resolution {:?}, expected {:?}.",
+                level.resolution, expected_resolution
+            )));
+        }
+        if level.channels != first.channels {
+            return Err(PbrtError::error(
+                "Texture mipmap levels have inconsistent channel counts.",
+            ));
+        }
+        if mipmap_storage(&level.data) != storage {
+            return Err(PbrtError::error(
+                "Texture mipmap levels have inconsistent storage formats.",
+            ));
+        }
+        let expected_len = usize::try_from(level.resolution[0])
+            .ok()
+            .and_then(|width| {
+                usize::try_from(level.resolution[1])
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(level.channels as usize))
+            .ok_or_else(|| PbrtError::error("Texture mipmap data size overflowed."))?;
+        if mipmap_data_len(&level.data) != expected_len {
+            return Err(PbrtError::error(&format!(
+                "Texture mipmap level {index} has an inconsistent data size."
+            )));
+        }
+        expected_resolution = [
+            (expected_resolution[0] / 2).max(1),
+            (expected_resolution[1] / 2).max(1),
+        ];
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MipmapStorage {
+    F32,
+    F16,
+    U8,
+}
+
+fn mipmap_storage(data: &MipmapLevelData) -> MipmapStorage {
+    match data {
+        MipmapLevelData::F32(_) => MipmapStorage::F32,
+        MipmapLevelData::F16(_) => MipmapStorage::F16,
+        MipmapLevelData::U8(_) => MipmapStorage::U8,
+    }
+}
+
+fn mipmap_data_len(data: &MipmapLevelData) -> usize {
+    match data {
+        MipmapLevelData::F32(values) => values.len(),
+        MipmapLevelData::F16(values) => values.len(),
+        MipmapLevelData::U8(values) => values.len(),
     }
 }
 

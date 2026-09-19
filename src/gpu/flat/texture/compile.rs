@@ -8,6 +8,7 @@ use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
 use super::image::{ImageCompiler, ImageDecoder, ImageFilterMode, ImageView, ImageWrapMode};
+use super::optimize::equivalent_program;
 use super::program::{Instruction, TypedTextureProgram};
 
 /// A texture entry point exported by a material attribute.
@@ -150,11 +151,4 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         roots: compiled_roots,
         image_views,
     })
-}
-
-fn equivalent_program(first: &TypedTextureProgram, second: &TypedTextureProgram) -> bool {
-    first.instructions == second.instructions
-        && first.slot_types == second.slot_types
-        && first.slot_last_use == second.slot_last_use
-        && first.result == second.result
 }

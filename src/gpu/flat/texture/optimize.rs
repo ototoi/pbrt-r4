@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 
 use super::image::ImageView;
@@ -123,13 +124,7 @@ impl Optimizer {
                     }
                     None => (None, constant_amount),
                 };
-                if amount.is_none() && constant_amount == 0.0 {
-                    first
-                } else if amount.is_none() && constant_amount == 1.0 {
-                    second
-                } else if first == second {
-                    first
-                } else if amount.is_none() {
+                if amount.is_none() {
                     if let Some(constant) =
                         self.mixed_constant(first, second, constant_amount, value_type)
                     {
@@ -192,6 +187,20 @@ impl Optimizer {
         mut instruction: Instruction,
         value_type: ValueType,
     ) -> Result<u32, PbrtError> {
+        set_instruction_dst(&mut instruction, 0);
+        if let Some(existing) =
+            self.instructions
+                .iter()
+                .enumerate()
+                .find_map(|(slot, candidate)| {
+                    (self.slot_types[slot] == value_type
+                        && equivalent_instruction(candidate, &instruction))
+                    .then_some(slot)
+                })
+        {
+            return u32::try_from(existing)
+                .map_err(|_| PbrtError::error("Texture program instruction table exceeds u32."));
+        }
         let dst = u32::try_from(self.instructions.len())
             .map_err(|_| PbrtError::error("Texture program instruction table exceeds u32."))?;
         set_instruction_dst(&mut instruction, dst);
@@ -291,6 +300,148 @@ impl Optimizer {
             }
             _ => None,
         }
+    }
+}
+
+fn equivalent_instruction(first: &Instruction, second: &Instruction) -> bool {
+    match (first, second) {
+        (
+            Instruction::ConstantFloat { value: first, .. },
+            Instruction::ConstantFloat { value: second, .. },
+        ) => first.to_bits() == second.to_bits(),
+        (
+            Instruction::ConstantRgb {
+                value: first,
+                color_space: first_space,
+                ..
+            },
+            Instruction::ConstantRgb {
+                value: second,
+                color_space: second_space,
+                ..
+            },
+        ) => float_array_equal(first, second) && first_space == second_space,
+        (
+            Instruction::SampleImage {
+                image_view: first_view,
+                mapping: first_mapping,
+                value_type: first_type,
+                ..
+            },
+            Instruction::SampleImage {
+                image_view: second_view,
+                mapping: second_mapping,
+                value_type: second_type,
+                ..
+            },
+        ) => {
+            first_view == second_view
+                && first_type == second_type
+                && mapping_equal(first_mapping.as_ref(), second_mapping.as_ref())
+        }
+        (
+            Instruction::Scale {
+                input: first_input,
+                factor: first_factor,
+                ..
+            },
+            Instruction::Scale {
+                input: second_input,
+                factor: second_factor,
+                ..
+            },
+        ) => first_input == second_input && first_factor.to_bits() == second_factor.to_bits(),
+        (
+            Instruction::Mix {
+                first: first_a,
+                second: first_b,
+                amount: first_amount,
+                constant_amount: first_constant,
+                ..
+            },
+            Instruction::Mix {
+                first: second_a,
+                second: second_b,
+                amount: second_amount,
+                constant_amount: second_constant,
+                ..
+            },
+        ) => {
+            first_a == second_a
+                && first_b == second_b
+                && first_amount == second_amount
+                && first_constant.to_bits() == second_constant.to_bits()
+        }
+        (
+            Instruction::Procedural {
+                name: first_name,
+                operands: first_operands,
+                parameters: first_parameters,
+                value_type: first_type,
+                ..
+            },
+            Instruction::Procedural {
+                name: second_name,
+                operands: second_operands,
+                parameters: second_parameters,
+                value_type: second_type,
+                ..
+            },
+        ) => {
+            first_name == second_name
+                && first_operands == second_operands
+                && float_array_equal(first_parameters, second_parameters)
+                && first_type == second_type
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn equivalent_program(
+    first: &TypedTextureProgram,
+    second: &TypedTextureProgram,
+) -> bool {
+    first.slot_types == second.slot_types
+        && first.slot_last_use == second.slot_last_use
+        && first.result == second.result
+        && first.instructions.len() == second.instructions.len()
+        && first
+            .instructions
+            .iter()
+            .zip(&second.instructions)
+            .all(|(first, second)| equivalent_instruction(first, second))
+}
+
+fn float_array_equal<const N: usize>(first: &[f32; N], second: &[f32; N]) -> bool {
+    first
+        .iter()
+        .zip(second)
+        .all(|(first, second)| first.to_bits() == second.to_bits())
+}
+
+fn mapping_equal(first: Option<&TextureMapping>, second: Option<&TextureMapping>) -> bool {
+    match (first, second) {
+        (None, None) => true,
+        (Some(TextureMapping::Uv(first)), Some(TextureMapping::Uv(second))) => [
+            first.uscale.to_bits() == second.uscale.to_bits(),
+            first.vscale.to_bits() == second.vscale.to_bits(),
+            first.udelta.to_bits() == second.udelta.to_bits(),
+            first.vdelta.to_bits() == second.vdelta.to_bits(),
+        ]
+        .into_iter()
+        .all(|equal| equal),
+        (Some(TextureMapping::Planar(first)), Some(TextureMapping::Planar(second)))
+        | (Some(TextureMapping::Spherical(first)), Some(TextureMapping::Spherical(second)))
+        | (Some(TextureMapping::Cylindrical(first)), Some(TextureMapping::Cylindrical(second)))
+        | (
+            Some(TextureMapping::PointTransform(first)),
+            Some(TextureMapping::PointTransform(second)),
+        ) => first
+            .matrix
+            .iter()
+            .zip(second.matrix.iter())
+            .all(|(first, second)| first.to_bits() == second.to_bits()),
+        _ => false,
     }
 }
 
