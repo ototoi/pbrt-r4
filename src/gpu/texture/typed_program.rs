@@ -102,11 +102,96 @@ impl Compiler {
         let dst = u32::try_from(self.slot_types.len())
             .map_err(|_| PbrtError::error("Texture program slot table exceeds u32."))?;
         let instruction = instruction(dst, node, texture, value_type, operands)?;
+        if let Some((slot, folded)) = self.fold_constant(instruction.clone()) {
+            self.instructions[slot as usize] = folded;
+            self.visiting.pop();
+            self.slots_by_node.insert(key, slot);
+            return Ok(slot);
+        }
         self.instructions.push(instruction);
         self.slot_types.push(value_type);
         self.slots_by_node.insert(key, dst);
         self.visiting.pop();
         Ok(dst)
+    }
+
+    fn fold_constant(&self, instruction: Instruction) -> Option<(u32, Instruction)> {
+        match instruction {
+            Instruction::Scale {
+                input,
+                factor,
+                dst: _,
+            } => match self.instructions.get(input as usize) {
+                Some(Instruction::ConstantFloat { value, .. }) => Some((
+                    input,
+                    Instruction::ConstantFloat {
+                        dst: input,
+                        value: value * factor,
+                    },
+                )),
+                Some(Instruction::ConstantRgb {
+                    value, color_space, ..
+                }) => Some((
+                    input,
+                    Instruction::ConstantRgb {
+                        dst: input,
+                        value: value.map(|value| value * factor),
+                        color_space: *color_space,
+                    },
+                )),
+                _ => None,
+            },
+            Instruction::Mix {
+                first,
+                second,
+                amount: None,
+                constant_amount,
+                dst: _,
+            } => match (
+                self.instructions.get(first as usize),
+                self.instructions.get(second as usize),
+            ) {
+                (
+                    Some(Instruction::ConstantFloat {
+                        value: first_value, ..
+                    }),
+                    Some(Instruction::ConstantFloat {
+                        value: second_value,
+                        ..
+                    }),
+                ) => Some((
+                    first,
+                    Instruction::ConstantFloat {
+                        dst: first,
+                        value: *first_value * (1.0 - constant_amount)
+                            + *second_value * constant_amount,
+                    },
+                )),
+                (
+                    Some(Instruction::ConstantRgb {
+                        value: first_value,
+                        color_space,
+                        ..
+                    }),
+                    Some(Instruction::ConstantRgb {
+                        value: second_value,
+                        ..
+                    }),
+                ) => Some((
+                    first,
+                    Instruction::ConstantRgb {
+                        dst: first,
+                        value: std::array::from_fn(|index| {
+                            first_value[index] * (1.0 - constant_amount)
+                                + second_value[index] * constant_amount
+                        }),
+                        color_space: *color_space,
+                    },
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 }
 
