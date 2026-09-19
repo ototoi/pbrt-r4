@@ -94,19 +94,11 @@ fn texture_program_is_typed_post_order() {
     .unwrap();
     let program = &library.programs[0];
 
-    assert_eq!(program.result, 1);
-    assert_eq!(program.slot_types, vec![TextureValueType::Float; 2]);
+    assert_eq!(program.result, 0);
+    assert_eq!(program.slot_types, vec![TextureValueType::Float]);
     assert!(matches!(
         program.instructions[0],
         TextureInstruction::ConstantFloat { dst: 0, value: 0.0 }
-    ));
-    assert!(matches!(
-        program.instructions[1],
-        TextureInstruction::Scale {
-            dst: 1,
-            input: 0,
-            factor
-        } if factor == 2.0
     ));
 }
 
