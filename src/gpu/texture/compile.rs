@@ -7,7 +7,8 @@ use crate::gpu::node::TextureNode;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
-use super::typed_program::TypedTextureProgram;
+use super::image::{ImageFilterMode, ImageView, ImageWrapMode};
+use super::typed_program::{Instruction, TypedTextureProgram};
 
 /// A texture entry point exported by a material attribute.
 ///
@@ -40,6 +41,18 @@ pub enum TextureRoot {
 pub struct TextureLibrary {
     pub programs: Vec<TypedTextureProgram>,
     pub roots: Vec<TextureRoot>,
+    pub image_views: Vec<Arc<ImageView>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ImageViewKey {
+    mipmap: usize,
+    value_type: super::image::ImageValueType,
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilterMode,
+    scale: u32,
+    invert: bool,
 }
 
 /// Compile exported texture roots while keeping root interpretation separate
@@ -48,6 +61,8 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
     let mut programs = Vec::with_capacity(roots.len());
     let mut compiled_roots = Vec::with_capacity(roots.len());
     let mut programs_by_root = HashMap::new();
+    let mut image_views = Vec::new();
+    let mut image_views_by_key = HashMap::new();
 
     for root in roots {
         let (node, spectrum_type) = match root {
@@ -63,7 +78,38 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         } else {
             let program = u32::try_from(programs.len())
                 .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
-            programs.push(TypedTextureProgram::compile(node)?);
+            let mut compiled = TypedTextureProgram::compile(node)?;
+            let mut remap = Vec::with_capacity(compiled.image_views.len());
+            for view in &compiled.image_views {
+                let key = ImageViewKey {
+                    mipmap: Arc::as_ptr(&view.mipmap) as usize,
+                    value_type: view.value_type,
+                    swrap: view.swrap,
+                    twrap: view.twrap,
+                    filter: view.filter,
+                    scale: view.scale.to_bits(),
+                    invert: view.invert,
+                };
+                let global = if let Some(&global) = image_views_by_key.get(&key) {
+                    global
+                } else {
+                    let global = u32::try_from(image_views.len())
+                        .map_err(|_| PbrtError::error("Texture image view table exceeds u32."))?;
+                    image_views.push(view.clone());
+                    image_views_by_key.insert(key, global);
+                    global
+                };
+                remap.push(global);
+            }
+            for instruction in &mut compiled.instructions {
+                if let Instruction::SampleImage { image_view, .. } = instruction {
+                    *image_view = *remap.get(*image_view as usize).ok_or_else(|| {
+                        PbrtError::error("Texture instruction references an invalid image view.")
+                    })?;
+                }
+            }
+            compiled.image_views = image_views.clone();
+            programs.push(compiled);
             programs_by_root.insert(key, program);
             program
         };
@@ -79,5 +125,6 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
     Ok(TextureLibrary {
         programs,
         roots: compiled_roots,
+        image_views,
     })
 }
