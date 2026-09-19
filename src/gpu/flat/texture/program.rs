@@ -11,6 +11,7 @@ use crate::util::spectrum::Spectrum;
 use super::image::{
     ColorSpace, ImageDecoder, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode,
 };
+use super::optimize::optimize_texture_program;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ValueType {
@@ -117,27 +118,7 @@ impl<'a> Compiler<'a> {
 
     fn compile(mut self, root: &Arc<TextureNode>) -> Result<TypedTextureProgram, PbrtError> {
         let result = self.emit(root)?;
-        let mut slot_last_use = vec![0; self.slot_types.len()];
-        for (instruction_index, instruction) in self.instructions.iter().enumerate() {
-            let instruction_index = u32::try_from(instruction_index)
-                .map_err(|_| PbrtError::error("Texture program instruction index exceeds u32."))?;
-            for slot in instruction_operands(instruction) {
-                if let Some(last_use) = slot_last_use.get_mut(slot as usize) {
-                    *last_use = (*last_use).max(instruction_index);
-                }
-            }
-        }
-        if let Some(last_use) = slot_last_use.get_mut(result as usize) {
-            *last_use = u32::try_from(self.instructions.len().saturating_sub(1))
-                .map_err(|_| PbrtError::error("Texture program instruction index exceeds u32."))?;
-        }
-        Ok(TypedTextureProgram {
-            instructions: self.instructions,
-            slot_types: self.slot_types,
-            image_views: self.image_views,
-            slot_last_use,
-            result,
-        })
+        optimize_texture_program(self.instructions, self.slot_types, self.image_views, result)
     }
 
     fn emit(&mut self, node: &Arc<TextureNode>) -> Result<u32, PbrtError> {
@@ -176,12 +157,6 @@ impl<'a> Compiler<'a> {
             None
         };
         let instruction = instruction(dst, node, texture, value_type, operands, image_view)?;
-        if let Some((slot, folded)) = self.fold_constant(instruction.clone()) {
-            self.instructions[slot as usize] = folded;
-            self.visiting.pop();
-            self.slots_by_node.insert(key, slot);
-            return Ok(slot);
-        }
         self.instructions.push(instruction);
         self.slot_types.push(value_type);
         self.slots_by_node.insert(key, dst);
@@ -207,101 +182,6 @@ impl<'a> Compiler<'a> {
         self.image_views.push(Arc::new(view));
         self.image_views_by_key.insert(key, index);
         Ok(index)
-    }
-
-    fn fold_constant(&self, instruction: Instruction) -> Option<(u32, Instruction)> {
-        match instruction {
-            Instruction::Scale {
-                input,
-                factor,
-                dst: _,
-            } => match self.instructions.get(input as usize) {
-                Some(Instruction::ConstantFloat { value, .. }) => Some((
-                    input,
-                    Instruction::ConstantFloat {
-                        dst: input,
-                        value: value * factor,
-                    },
-                )),
-                Some(Instruction::ConstantRgb {
-                    value, color_space, ..
-                }) => Some((
-                    input,
-                    Instruction::ConstantRgb {
-                        dst: input,
-                        value: value.map(|value| value * factor),
-                        color_space: *color_space,
-                    },
-                )),
-                _ => None,
-            },
-            Instruction::Mix {
-                first,
-                second,
-                amount: None,
-                constant_amount,
-                dst: _,
-            } => match (
-                self.instructions.get(first as usize),
-                self.instructions.get(second as usize),
-            ) {
-                (
-                    Some(Instruction::ConstantFloat {
-                        value: first_value, ..
-                    }),
-                    Some(Instruction::ConstantFloat {
-                        value: second_value,
-                        ..
-                    }),
-                ) => Some((
-                    first,
-                    Instruction::ConstantFloat {
-                        dst: first,
-                        value: *first_value * (1.0 - constant_amount)
-                            + *second_value * constant_amount,
-                    },
-                )),
-                (
-                    Some(Instruction::ConstantRgb {
-                        value: first_value,
-                        color_space,
-                        ..
-                    }),
-                    Some(Instruction::ConstantRgb {
-                        value: second_value,
-                        ..
-                    }),
-                ) => Some((
-                    first,
-                    Instruction::ConstantRgb {
-                        dst: first,
-                        value: std::array::from_fn(|index| {
-                            first_value[index] * (1.0 - constant_amount)
-                                + second_value[index] * constant_amount
-                        }),
-                        color_space: *color_space,
-                    },
-                )),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-fn instruction_operands(instruction: &Instruction) -> Vec<u32> {
-    match instruction {
-        Instruction::Scale { input, .. } => vec![*input],
-        Instruction::Mix {
-            first,
-            second,
-            amount,
-            ..
-        } => amount.iter().copied().chain([*first, *second]).collect(),
-        Instruction::Procedural { operands, .. } => operands.clone(),
-        Instruction::ConstantFloat { .. }
-        | Instruction::ConstantRgb { .. }
-        | Instruction::SampleImage { .. } => Vec::new(),
     }
 }
 

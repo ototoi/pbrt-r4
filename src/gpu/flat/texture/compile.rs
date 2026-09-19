@@ -78,8 +78,6 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         let program = if let Some(&program) = programs_by_root.get(&key) {
             program
         } else {
-            let program = u32::try_from(programs.len())
-                .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
             let mut compiled = TypedTextureProgram::compile_with_images(node, &mut image_decoder)?;
             let mut remap = Vec::with_capacity(compiled.image_views.len());
             for view in &compiled.image_views {
@@ -114,8 +112,18 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
                     })?;
                 }
             }
-            compiled.image_views = image_views.iter().cloned().map(Arc::new).collect();
-            programs.push(compiled);
+            let program = if let Some(program) = programs
+                .iter()
+                .position(|candidate| equivalent_program(candidate, &compiled))
+            {
+                u32::try_from(program)
+                    .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?
+            } else {
+                let program = u32::try_from(programs.len())
+                    .map_err(|_| PbrtError::error("Texture program table exceeds u32."))?;
+                programs.push(compiled);
+                program
+            };
             programs_by_root.insert(key, program);
             program
         };
@@ -128,9 +136,25 @@ pub fn compile_texture_library(roots: &[TextureRootSpec]) -> Result<TextureLibra
         });
     }
 
+    let shared_views = image_views
+        .iter()
+        .cloned()
+        .map(Arc::new)
+        .collect::<Vec<_>>();
+    for program in &mut programs {
+        program.image_views = shared_views.clone();
+    }
+
     Ok(TextureLibrary {
         programs,
         roots: compiled_roots,
         image_views,
     })
+}
+
+fn equivalent_program(first: &TypedTextureProgram, second: &TypedTextureProgram) -> bool {
+    first.instructions == second.instructions
+        && first.slot_types == second.slot_types
+        && first.slot_last_use == second.slot_last_use
+        && first.result == second.result
 }

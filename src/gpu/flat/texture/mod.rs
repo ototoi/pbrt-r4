@@ -3,6 +3,7 @@
 pub mod compile;
 pub mod evaluate;
 pub mod image;
+mod optimize;
 pub mod program;
 
 pub use compile::{compile_texture_library, TextureLibrary, TextureRoot, TextureRootSpec};

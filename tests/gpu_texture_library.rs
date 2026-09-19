@@ -11,7 +11,7 @@ use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::util::base::inverse_gamma_correct;
-use pbrt_r4::util::spectrum::SpectrumType;
+use pbrt_r4::util::spectrum::{Spectrum, SpectrumType};
 use tempfile::tempdir;
 
 #[test]
@@ -213,6 +213,7 @@ fn image_views_are_shared_across_distinct_programs() {
         },
     ])
     .unwrap();
+    assert_eq!(library.programs.len(), 1);
     assert_eq!(library.image_views.len(), 1);
     for program in &library.programs {
         assert!(matches!(
@@ -220,4 +221,126 @@ fn image_views_are_shared_across_distinct_programs() {
             TextureInstruction::SampleImage { image_view: 0, .. }
         ));
     }
+}
+
+#[test]
+fn constant_folding_does_not_mutate_a_shared_child() {
+    let shared = float_constant("shared", 2.0);
+
+    let mut scale_params = ParameterDictionary::default();
+    scale_params.add_float("float scale", 3.0);
+    let mut scaled = TextureNode::new("scaled");
+    scaled.components.push(TextureComponent::Texture(Texture {
+        name: "scale".to_string(),
+        kind: TextureKind::Float,
+        params: scale_params,
+    }));
+    scaled.children.push(shared.clone());
+
+    let mut mix_params = ParameterDictionary::default();
+    mix_params.add_float("float amount", 0.5);
+    let mut root = TextureNode::new("root");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "mix".to_string(),
+        kind: TextureKind::Float,
+        params: mix_params,
+    }));
+    root.children.push(shared);
+    root.children.push(Arc::new(scaled));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+    let program = &library.programs[0];
+    assert_eq!(program.instructions.len(), 1);
+    assert!(matches!(
+        program.instructions[0],
+        TextureInstruction::ConstantFloat { dst: 0, value: 4.0 }
+    ));
+    assert_eq!(
+        evaluate_texture_program(program).unwrap(),
+        TextureValue::Float(4.0)
+    );
+}
+
+#[test]
+fn endpoint_mix_removes_dead_image_instructions_and_resources() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("dead.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![128])
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    let mut image_params = ParameterDictionary::default();
+    image_params.add_string("string filename", &path.to_string_lossy());
+    let mut image = TextureNode::new("unused-image");
+    image.components.push(TextureComponent::Texture(Texture {
+        name: "imagemap".to_string(),
+        kind: TextureKind::Float,
+        params: image_params,
+    }));
+
+    let mut mix_params = ParameterDictionary::default();
+    mix_params.add_float("float amount", 0.0);
+    let mut root = TextureNode::new("root");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "mix".to_string(),
+        kind: TextureKind::Float,
+        params: mix_params,
+    }));
+    root.children.push(float_constant("kept", 0.25));
+    root.children.push(Arc::new(image));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+    let program = &library.programs[0];
+    assert_eq!(program.instructions.len(), 1);
+    assert!(program.image_views.is_empty());
+    assert!(library.image_views.is_empty());
+    assert_eq!(
+        evaluate_texture_program(program).unwrap(),
+        TextureValue::Float(0.25)
+    );
+}
+
+#[test]
+fn texture_program_rejects_mixed_operand_types() {
+    let mut spectrum_params = ParameterDictionary::default();
+    spectrum_params.add_spectrum("spectrum value", &Spectrum::from(1.0));
+    let mut spectrum = TextureNode::new("spectrum");
+    spectrum.components.push(TextureComponent::Texture(Texture {
+        name: "constant".to_string(),
+        kind: TextureKind::Spectrum,
+        params: spectrum_params,
+    }));
+
+    let mut root = TextureNode::new("invalid-mix");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "mix".to_string(),
+        kind: TextureKind::Float,
+        params: ParameterDictionary::default(),
+    }));
+    root.children.push(float_constant("float", 0.0));
+    root.children.push(Arc::new(spectrum));
+
+    let error = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap_err();
+    assert!(error.to_string().contains("incompatible value types"));
+}
+
+fn float_constant(name: &str, value: f32) -> Arc<TextureNode> {
+    let mut params = ParameterDictionary::default();
+    params.add_float("float value", value as _);
+    let mut node = TextureNode::new(name);
+    node.components.push(TextureComponent::Texture(Texture {
+        name: "constant".to_string(),
+        kind: TextureKind::Float,
+        params,
+    }));
+    Arc::new(node)
 }
