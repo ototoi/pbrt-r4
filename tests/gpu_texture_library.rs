@@ -69,6 +69,24 @@ fn image_compiler_projects_float_images_and_applies_f16_policy() {
 }
 
 #[test]
+fn default_image_compiler_uses_bounded_f16_storage() {
+    let source = Arc::new(Mipmap {
+        levels: vec![MipmapLevel {
+            resolution: [1, 1],
+            channels: 1,
+            data: MipmapLevelData::F32(vec![0.25]),
+        }],
+        color_space: ColorSpace::Unknown,
+        encoding: MipmapEncoding::Linear,
+    });
+    let mut compiler = ImageCompiler::default();
+    let compiled = compiler
+        .compile(&source, ImageValueType::LinearRgb)
+        .unwrap();
+    assert!(matches!(compiled.levels[0].data, MipmapLevelData::F16(_)));
+}
+
+#[test]
 fn texture_program_is_typed_post_order() {
     let mut child = TextureNode::new("constant");
     child.components.push(TextureComponent::Texture(Texture {
