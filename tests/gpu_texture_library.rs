@@ -3,9 +3,9 @@ use std::sync::Arc;
 use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
 use pbrt_r4::gpu::texture::{
-    compile_texture_library, ColorSpace, ImageCompiler, ImageOptimizationPolicy, ImageValueType,
-    Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction, TextureRoot,
-    TextureRootSpec, TextureValueType,
+    compile_texture_library, evaluate_texture_program, ColorSpace, ImageCompiler,
+    ImageOptimizationPolicy, ImageValueType, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData,
+    TextureInstruction, TextureRoot, TextureRootSpec, TextureValue, TextureValueType,
 };
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::util::spectrum::SpectrumType;
@@ -101,6 +101,10 @@ fn texture_program_is_typed_post_order() {
         program.instructions[0],
         TextureInstruction::ConstantFloat { dst: 0, value: 0.0 }
     ));
+    assert_eq!(
+        evaluate_texture_program(program).unwrap(),
+        TextureValue::Float(0.0)
+    );
 }
 
 #[test]
