@@ -406,13 +406,7 @@ fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
 fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     if (texture_index >= arrayLength(&texture_nodes)) { set_render_error(); return vec3<f32>(0.0); }
     let node = texture_nodes[texture_index];
-    if (node.operation == 1u) { return node.constant_value.rgb; }
-    // Procedural textures are placeholders until texture graphs are compiled
-    // to the planned post-order mini VM. Keeping their implementations out of
-    // this call graph also avoids pathological driver compilation time.
-    if (node.operation >= 4u) {
-        return vec3<f32>(1.0);
-    }
+    if (node.operation == TEXTURE_OPERATION_CONSTANT) { return node.constant_value.rgb; }
     let mapped_uv = mapped_texture_uv(node, uv);
     if ((node.swrap_mode == 2u && (mapped_uv.x < 0.0 || mapped_uv.x > 1.0))
         || (node.twrap_mode == 2u && (mapped_uv.y < 0.0 || mapped_uv.y > 1.0))) {
@@ -446,11 +440,11 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
             return vec3<f32>(0.0);
         }
         let node = texture_nodes[node_index];
-        if (node.operation == 0u || node.operation >= 4u) {
+        if (node.operation == TEXTURE_OPERATION_IMAGE) {
             values[local] = sample_texture_leaf(node_index, uv);
-        } else if (node.operation == 1u) {
+        } else if (node.operation == TEXTURE_OPERATION_CONSTANT) {
             values[local] = node.constant_value.rgb;
-        } else if (node.operation == 2u) {
+        } else if (node.operation == TEXTURE_OPERATION_SCALE) {
             if (node.child_count < 1u || node.first_child >= arrayLength(&texture_child_indices)) {
                 set_render_error();
                 return vec3<f32>(0.0);
@@ -461,7 +455,7 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
                 return vec3<f32>(0.0);
             }
             values[local] = values[child] * node.constant_value.x;
-        } else if (node.operation == 3u) {
+        } else if (node.operation == TEXTURE_OPERATION_MIX) {
             if (node.child_count < 2u
                 || node.first_child + 1u >= arrayLength(&texture_child_indices)) {
                 set_render_error();
@@ -487,6 +481,50 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
                 amount = clamp(values[amount_slot].x, 0.0, 1.0);
             }
             values[local] = mix(values[first], values[second], amount);
+        } else if (node.operation == TEXTURE_OPERATION_CHECKERBOARD
+            || node.operation == TEXTURE_OPERATION_DIRECTION_MIX
+            || node.operation == TEXTURE_OPERATION_BILERP) {
+            if (node.first_child + node.child_count > arrayLength(&texture_child_indices)) {
+                set_render_error();
+                return vec3<f32>(0.0);
+            }
+            if (node.operation == TEXTURE_OPERATION_BILERP) {
+                if (node.child_count != 4u) { set_render_error(); return vec3<f32>(0.0); }
+                let v00 = texture_child_indices[node.first_child];
+                let v01 = texture_child_indices[node.first_child + 1u];
+                let v10 = texture_child_indices[node.first_child + 2u];
+                let v11 = texture_child_indices[node.first_child + 3u];
+                if (v00 >= local || v01 >= local || v10 >= local || v11 >= local) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                let st = mapped_texture_uv(node, uv);
+                values[local] = mix(mix(values[v00], values[v10], st.x),
+                                    mix(values[v01], values[v11], st.x), st.y);
+            } else {
+                if (node.child_count != 2u) { set_render_error(); return vec3<f32>(0.0); }
+                let first = texture_child_indices[node.first_child];
+                let second = texture_child_indices[node.first_child + 1u];
+                if (first >= local || second >= local) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                if (node.operation == TEXTURE_OPERATION_DIRECTION_MIX) {
+                    let amount = abs((node.mapping * vec4<f32>(material_texture_normal, 0.0)).x);
+                    values[local] = mix(values[second], values[first], amount);
+                } else {
+                    var odd = false;
+                    if (node.mapping_kind == 4u) {
+                        let p = (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
+                        odd = (i32(floor(p.x)) + i32(floor(p.y)) + i32(floor(p.z))) % 2 != 0;
+                    } else {
+                        let st = mapped_texture_uv(node, uv);
+                        odd = (i32(floor(st.x)) + i32(floor(st.y))) % 2 != 0;
+                    }
+                    values[local] = select(values[first], values[second], odd);
+                }
+            }
+        } else {
+            set_render_error();
+            return vec3<f32>(0.0);
         }
     }
     return values[root.result];

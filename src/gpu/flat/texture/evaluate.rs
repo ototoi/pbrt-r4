@@ -10,11 +10,29 @@ use crate::util::error::PbrtError;
 
 use super::compile::{TextureLibrary, TextureRoot};
 use super::program::{Instruction, TypedTextureProgram};
+use super::ProceduralOperation;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextureValue {
     Float(f32),
     LinearRgb([f32; 3]),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureEvaluationContext {
+    pub uv: [f32; 2],
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+impl Default for TextureEvaluationContext {
+    fn default() -> Self {
+        Self {
+            uv: [0.0; 2],
+            position: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+        }
+    }
 }
 
 pub fn evaluate_texture_root(
@@ -29,6 +47,21 @@ pub fn evaluate_texture_root_at(
     root: u32,
     uv: [f32; 2],
 ) -> Result<TextureValue, PbrtError> {
+    evaluate_texture_root_with_context(
+        library,
+        root,
+        TextureEvaluationContext {
+            uv,
+            ..Default::default()
+        },
+    )
+}
+
+pub fn evaluate_texture_root_with_context(
+    library: &TextureLibrary,
+    root: u32,
+    context: TextureEvaluationContext,
+) -> Result<TextureValue, PbrtError> {
     library.validate()?;
     let root = library
         .roots
@@ -41,13 +74,13 @@ pub fn evaluate_texture_root_at(
         .programs
         .get(program as usize)
         .ok_or_else(|| PbrtError::error("Texture root has an invalid program index."))?;
-    evaluate_program_at(library, program, uv)
+    evaluate_program_at(library, program, context)
 }
 
 fn evaluate_program_at(
     library: &TextureLibrary,
     program: &TypedTextureProgram,
-    uv: [f32; 2],
+    context: TextureEvaluationContext,
 ) -> Result<TextureValue, PbrtError> {
     let mut values = Vec::with_capacity(program.slot_types.len());
     for instruction in &program.instructions {
@@ -112,13 +145,14 @@ fn evaluate_program_at(
                     .mipmaps
                     .get(view.mipmap as usize)
                     .ok_or_else(|| PbrtError::error("Image view has an invalid mipmap."))?;
-                sample_image(view, mipmap, mapping.as_ref(), uv)?
+                sample_image(view, mipmap, mapping.as_ref(), context.uv)?
             }
-            Instruction::Procedural { name, .. } => {
-                return Err(PbrtError::error(&format!(
-                    "Reference texture evaluator does not support procedural texture \"{name}\" yet."
-                )));
-            }
+            Instruction::Procedural {
+                operation,
+                operands,
+                mapping,
+                ..
+            } => evaluate_procedural(*operation, operands, mapping.as_ref(), &values, context)?,
         };
         values.push(value);
     }
@@ -126,6 +160,109 @@ fn evaluate_program_at(
         .get(program.result as usize)
         .copied()
         .ok_or_else(|| PbrtError::error("Texture program has no result value."))
+}
+
+fn evaluate_procedural(
+    operation: ProceduralOperation,
+    operands: &[u32],
+    mapping: Option<&TextureMapping>,
+    values: &[TextureValue],
+    context: TextureEvaluationContext,
+) -> Result<TextureValue, PbrtError> {
+    let operand = |index: usize| {
+        operands
+            .get(index)
+            .and_then(|slot| values.get(*slot as usize))
+            .copied()
+            .ok_or_else(|| PbrtError::error("Procedural texture has an invalid operand."))
+    };
+    let mix_values = |first: TextureValue, second: TextureValue, amount: f32| match (first, second)
+    {
+        (TextureValue::Float(first), TextureValue::Float(second)) => Ok(TextureValue::Float(
+            first * (1.0 - amount) + second * amount,
+        )),
+        (TextureValue::LinearRgb(first), TextureValue::LinearRgb(second)) => {
+            Ok(TextureValue::LinearRgb(std::array::from_fn(|index| {
+                first[index] * (1.0 - amount) + second[index] * amount
+            })))
+        }
+        _ => Err(PbrtError::error(
+            "Procedural texture operands have incompatible value types.",
+        )),
+    };
+    match operation {
+        ProceduralOperation::Bilerp => {
+            let st = mapped_uv(mapping, context)?;
+            let bottom = mix_values(operand(0)?, operand(2)?, st[0])?;
+            let top = mix_values(operand(1)?, operand(3)?, st[0])?;
+            mix_values(bottom, top, st[1])
+        }
+        ProceduralOperation::Checkerboard => {
+            let odd = match mapping {
+                Some(TextureMapping::PointTransform(transform)) => {
+                    let p = transform_point(transform.matrix, context.position);
+                    (p[0].floor() as i32 + p[1].floor() as i32 + p[2].floor() as i32) & 1 != 0
+                }
+                _ => {
+                    let st = mapped_uv(mapping, context)?;
+                    (st[0].floor() as i32 + st[1].floor() as i32) & 1 != 0
+                }
+            };
+            operand(usize::from(odd))
+        }
+        ProceduralOperation::DirectionMix => {
+            let direction = match mapping {
+                Some(TextureMapping::PointTransform(transform)) => [
+                    transform.matrix[0],
+                    transform.matrix[1],
+                    transform.matrix[2],
+                ],
+                _ => [0.0, 1.0, 0.0],
+            };
+            let amount = (context.normal[0] * direction[0]
+                + context.normal[1] * direction[1]
+                + context.normal[2] * direction[2])
+                .abs();
+            mix_values(operand(1)?, operand(0)?, amount)
+        }
+        _ => Err(PbrtError::error(&format!(
+            "Reference texture evaluator does not support procedural texture \"{}\" yet.",
+            operation.name()
+        ))),
+    }
+}
+
+fn mapped_uv(
+    mapping: Option<&TextureMapping>,
+    context: TextureEvaluationContext,
+) -> Result<[f32; 2], PbrtError> {
+    match mapping {
+        None => Ok(context.uv),
+        Some(TextureMapping::Uv(UvMapping {
+            uscale,
+            vscale,
+            udelta,
+            vdelta,
+        })) => Ok([
+            context.uv[0] * *uscale + *udelta,
+            context.uv[1] * *vscale + *vdelta,
+        ]),
+        Some(TextureMapping::Planar(transform)) => {
+            let p = transform_point(transform.matrix, context.position);
+            Ok([p[0], p[1]])
+        }
+        Some(_) => Err(PbrtError::error(
+            "Reference procedural evaluator does not support this 2D mapping.",
+        )),
+    }
+}
+
+fn transform_point(matrix: [f32; 16], point: [f32; 3]) -> [f32; 3] {
+    [
+        matrix[0] * point[0] + matrix[1] * point[1] + matrix[2] * point[2] + matrix[3],
+        matrix[4] * point[0] + matrix[5] * point[1] + matrix[6] * point[2] + matrix[7],
+        matrix[8] * point[0] + matrix[9] * point[1] + matrix[10] * point[2] + matrix[11],
+    ]
 }
 
 fn sample_image(

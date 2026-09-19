@@ -46,11 +46,14 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
-fn material_shader_uses_white_procedural_texture_placeholders() {
+fn material_shader_evaluates_non_noise_procedural_texture_programs() {
     let source = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(source.contains("if (node.operation >= 4u)"));
     assert!(source.contains("fn sample_texture_program(root: TextureRootRecord"));
-    assert!(source.contains("values[local] = sample_texture_leaf(node_index, uv);"));
+    assert!(source.contains("node.operation == TEXTURE_OPERATION_CHECKERBOARD"));
+    assert!(source.contains("node.operation == TEXTURE_OPERATION_DIRECTION_MIX"));
+    assert!(source.contains("node.operation == TEXTURE_OPERATION_BILERP"));
+    assert!(source.contains("values[local] = mix(mix(values[v00], values[v10], st.x)"));
+    assert!(!source.contains("if (node.operation >= 4u)"));
     assert!(!source.contains("fn texture_noise"));
     assert!(!source.contains("fn texture_fbm"));
     assert!(!source.contains("fn texture_marble"));

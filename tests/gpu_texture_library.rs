@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use image::{ImageBuffer, Luma};
 use pbrt_r4::gpu::flat::texture::{
-    compile_texture_library, evaluate_texture_root, evaluate_texture_root_at, ColorSpace,
-    ImageCompiler, ImageDecoder, ImageFilterMode, ImageOptimizationPolicy, ImageValueType,
-    ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData, TextureInstruction,
-    TextureRoot, TextureRootSpec, TextureValue, TextureValueType,
+    compile_texture_library, evaluate_texture_root, evaluate_texture_root_at,
+    evaluate_texture_root_with_context, ColorSpace, ImageCompiler, ImageDecoder, ImageFilterMode,
+    ImageOptimizationPolicy, ImageValueType, ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel,
+    MipmapLevelData, TextureEvaluationContext, TextureInstruction, TextureRoot, TextureRootSpec,
+    TextureValue, TextureValueType,
 };
 use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
@@ -471,6 +472,42 @@ fn texture_program_cse_preserves_signed_zero() {
         &program.instructions[2],
         TextureInstruction::Procedural { operands, .. } if operands == &[0, 1]
     ));
+}
+
+#[test]
+fn reference_vm_evaluates_bilerp_in_post_order() {
+    let mut root = TextureNode::new("bilerp");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "bilerp".to_string(),
+        kind: TextureKind::Float,
+        params: ParameterDictionary::default(),
+    }));
+    root.components
+        .push(TextureComponent::Mapping(TextureMapping::Uv(UvMapping {
+            uscale: 1.0,
+            vscale: 1.0,
+            udelta: 0.0,
+            vdelta: 0.0,
+        })));
+    root.children.push(float_constant("v00", 0.0));
+    root.children.push(float_constant("v01", 1.0));
+    root.children.push(float_constant("v10", 2.0));
+    root.children.push(float_constant("v11", 3.0));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+    let value = evaluate_texture_root_with_context(
+        &library,
+        0,
+        TextureEvaluationContext {
+            uv: [0.25, 0.75],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(value, TextureValue::Float(1.25));
 }
 
 fn float_constant(name: &str, value: f32) -> Arc<TextureNode> {
