@@ -157,9 +157,10 @@ impl Optimizer {
                 }
             }
             Instruction::Procedural {
-                name,
+                operation,
                 operands,
                 parameters,
+                mapping,
                 value_type: instruction_type,
                 ..
             } => {
@@ -171,9 +172,10 @@ impl Optimizer {
                 self.append(
                     Instruction::Procedural {
                         dst: 0,
-                        name,
+                        operation,
                         operands,
                         parameters,
+                        mapping,
                         value_type: instruction_type,
                     },
                     value_type,
@@ -376,23 +378,26 @@ fn equivalent_instruction(first: &Instruction, second: &Instruction) -> bool {
         }
         (
             Instruction::Procedural {
-                name: first_name,
+                operation: first_operation,
                 operands: first_operands,
                 parameters: first_parameters,
+                mapping: first_mapping,
                 value_type: first_type,
                 ..
             },
             Instruction::Procedural {
-                name: second_name,
+                operation: second_operation,
                 operands: second_operands,
                 parameters: second_parameters,
+                mapping: second_mapping,
                 value_type: second_type,
                 ..
             },
         ) => {
-            first_name == second_name
+            first_operation == second_operation
                 && first_operands == second_operands
                 && float_array_equal(first_parameters, second_parameters)
+                && mapping_equal(first_mapping.as_ref(), second_mapping.as_ref())
                 && first_type == second_type
         }
         _ => false,

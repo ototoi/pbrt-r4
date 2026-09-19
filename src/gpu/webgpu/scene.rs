@@ -6,8 +6,8 @@ use wgpu::util::DeviceExt;
 use crate::gpu::flat;
 use crate::gpu::flat::texture::{
     ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
-    MipmapLevel, MipmapLevelData, TextureInstruction, TextureLibrary, TextureRoot,
-    TextureValueType,
+    MipmapLevel, MipmapLevelData, ProceduralOperation, TextureInstruction, TextureLibrary,
+    TextureRoot, TextureValueType,
 };
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
@@ -20,6 +20,9 @@ use super::abi::{
     TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
     LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
     LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
+    TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT,
+    TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MIX,
+    TEXTURE_OPERATION_SCALE,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -229,7 +232,7 @@ fn lower_texture_instruction(
         TextureInstruction::ConstantFloat { value, .. } => Ok(LoweredTextureInstruction {
             kind: 0,
             implementation_hash: stable_texture_hash("constant"),
-            operation: 1,
+            operation: TEXTURE_OPERATION_CONSTANT,
             constant_value: [*value; 4],
             color_space: 0,
             image_view: empty_image,
@@ -240,7 +243,7 @@ fn lower_texture_instruction(
         } => Ok(LoweredTextureInstruction {
             kind: 1,
             implementation_hash: stable_texture_hash("constant"),
-            operation: 1,
+            operation: TEXTURE_OPERATION_CONSTANT,
             constant_value: [
                 value[0],
                 value[1],
@@ -272,7 +275,7 @@ fn lower_texture_instruction(
             Ok(LoweredTextureInstruction {
                 kind: value_type(texture_type).0,
                 implementation_hash: stable_texture_hash("imagemap"),
-                operation: 0,
+                operation: TEXTURE_OPERATION_IMAGE,
                 constant_value: [view.scale, if view.invert { 1.0 } else { 0.0 }, 0.0, 0.0],
                 color_space: value_type(texture_type).1,
                 image_view: (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap)),
@@ -282,7 +285,7 @@ fn lower_texture_instruction(
         TextureInstruction::Scale { factor, .. } => Ok(LoweredTextureInstruction {
             kind: value_type(&slot_type).0,
             implementation_hash: stable_texture_hash("scale"),
-            operation: 2,
+            operation: TEXTURE_OPERATION_SCALE,
             constant_value: [*factor, 0.0, 0.0, 0.0],
             color_space: 0,
             image_view: empty_image,
@@ -293,25 +296,26 @@ fn lower_texture_instruction(
         } => Ok(LoweredTextureInstruction {
             kind: value_type(&slot_type).0,
             implementation_hash: stable_texture_hash("mix"),
-            operation: 3,
+            operation: TEXTURE_OPERATION_MIX,
             constant_value: [*constant_amount, 0.0, 0.0, 0.0],
             color_space: 0,
             image_view: empty_image,
             mapping: (0, identity),
         }),
         TextureInstruction::Procedural {
-            name,
+            operation,
             parameters,
+            mapping,
             value_type: texture_type,
             ..
         } => Ok(LoweredTextureInstruction {
             kind: value_type(texture_type).0,
-            implementation_hash: stable_texture_hash(name),
-            operation: procedural_operation(name)?,
+            implementation_hash: stable_texture_hash(operation.name()),
+            operation: procedural_operation(*operation)?,
             constant_value: *parameters,
             color_space: value_type(texture_type).1,
             image_view: empty_image,
-            mapping: (0, identity),
+            mapping: lower_mapping(mapping.as_ref(), identity),
         }),
     }
 }
@@ -344,24 +348,20 @@ fn lower_mapping(
         Some(TextureMapping::Spherical(transform)) => (2, row_major_to_columns(transform.matrix)),
         Some(TextureMapping::Cylindrical(transform)) => (3, row_major_to_columns(transform.matrix)),
         Some(TextureMapping::PointTransform(transform)) => {
-            (0, row_major_to_columns(transform.matrix))
+            (4, row_major_to_columns(transform.matrix))
         }
         None => (0, identity),
     }
 }
 
-fn procedural_operation(name: &str) -> Result<u32, PbrtError> {
-    match name {
-        "directionmix" => Ok(5),
-        "dots" => Ok(6),
-        "fbm" => Ok(7),
-        "wrinkled" => Ok(8),
-        "windy" => Ok(9),
-        "bilerp" => Ok(10),
-        "marble" => Ok(11),
-        name if name.contains("checkerboard") => Ok(4),
+fn procedural_operation(operation: ProceduralOperation) -> Result<u32, PbrtError> {
+    match operation {
+        ProceduralOperation::Checkerboard => Ok(TEXTURE_OPERATION_CHECKERBOARD),
+        ProceduralOperation::DirectionMix => Ok(TEXTURE_OPERATION_DIRECTION_MIX),
+        ProceduralOperation::Bilerp => Ok(TEXTURE_OPERATION_BILERP),
         _ => Err(PbrtError::error(&format!(
-            "WebGPU texture operation \"{name}\" is not implemented."
+            "WebGPU texture operation \"{}\" is not implemented.",
+            operation.name()
         ))),
     }
 }

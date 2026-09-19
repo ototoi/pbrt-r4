@@ -19,6 +19,47 @@ pub enum ValueType {
     LinearRgb(ColorSpace),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProceduralOperation {
+    Checkerboard,
+    DirectionMix,
+    Dots,
+    Fbm,
+    Wrinkled,
+    Windy,
+    Bilerp,
+    Marble,
+}
+
+impl ProceduralOperation {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "directionmix" => Some(Self::DirectionMix),
+            "dots" => Some(Self::Dots),
+            "fbm" => Some(Self::Fbm),
+            "wrinkled" => Some(Self::Wrinkled),
+            "windy" => Some(Self::Windy),
+            "bilerp" => Some(Self::Bilerp),
+            "marble" => Some(Self::Marble),
+            name if name.contains("checkerboard") => Some(Self::Checkerboard),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Checkerboard => "checkerboard",
+            Self::DirectionMix => "directionmix",
+            Self::Dots => "dots",
+            Self::Fbm => "fbm",
+            Self::Wrinkled => "wrinkled",
+            Self::Windy => "windy",
+            Self::Bilerp => "bilerp",
+            Self::Marble => "marble",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Instruction {
     ConstantFloat {
@@ -50,9 +91,10 @@ pub enum Instruction {
     },
     Procedural {
         dst: u32,
-        name: String,
+        operation: ProceduralOperation,
         operands: Vec<u32>,
         parameters: [f32; 4],
+        mapping: Option<TextureMapping>,
         value_type: ValueType,
     },
 }
@@ -308,18 +350,44 @@ fn instruction(
                 constant_amount: texture.params.get_one_float("amount", 0.5) as f32,
             })
         }
-        name => Ok(Instruction::Procedural {
-            dst,
-            name: name.to_string(),
-            operands,
-            parameters: [
-                texture.params.get_one_float("roughness", 0.5) as f32,
-                texture.params.get_one_int("octaves", 8) as f32,
-                texture.params.get_one_float("scale", 1.0) as f32,
-                texture.params.get_one_float("variation", 0.2) as f32,
-            ],
-            value_type,
-        }),
+        name => {
+            let operation = ProceduralOperation::parse(name).ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Flat texture operation \"{name}\" is not implemented."
+                ))
+            })?;
+            let expected_operands = match operation {
+                ProceduralOperation::Bilerp => 4,
+                ProceduralOperation::Checkerboard
+                | ProceduralOperation::DirectionMix
+                | ProceduralOperation::Dots => 2,
+                ProceduralOperation::Fbm
+                | ProceduralOperation::Wrinkled
+                | ProceduralOperation::Windy
+                | ProceduralOperation::Marble => 0,
+            };
+            if operands.len() != expected_operands {
+                return Err(PbrtError::error(&format!(
+                    "Texture node \"{}\" {} expects {expected_operands} children, got {}.",
+                    node.name,
+                    operation.name(),
+                    operands.len()
+                )));
+            }
+            Ok(Instruction::Procedural {
+                dst,
+                operation,
+                operands,
+                parameters: [
+                    texture.params.get_one_float("roughness", 0.5) as f32,
+                    texture.params.get_one_int("octaves", 8) as f32,
+                    texture.params.get_one_float("scale", 1.0) as f32,
+                    texture.params.get_one_float("variation", 0.2) as f32,
+                ],
+                mapping: texture_mapping(node),
+                value_type,
+            })
+        }
     }
 }
 
