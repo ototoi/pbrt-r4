@@ -96,6 +96,7 @@ fn texture_program_is_typed_post_order() {
 
     assert_eq!(program.result, 0);
     assert_eq!(program.slot_types, vec![TextureValueType::Float]);
+    assert_eq!(program.slot_last_use, vec![0]);
     assert!(matches!(
         program.instructions[0],
         TextureInstruction::ConstantFloat { dst: 0, value: 0.0 }
