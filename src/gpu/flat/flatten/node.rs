@@ -1,8 +1,8 @@
 use super::{
     append_area_light, complete_triangle_attributes, flatten_light, geometry_index, material_index,
-    multiply_transform, register_root_component, register_texture_node, remove_invalid_triangles,
-    screen_window, viewport_resolution, Camera, Component, Film, FlatBuilder, Instance, NodeRef,
-    Output, Shape, Transform, Viewport, INVALID_INDEX,
+    multiply_transform, register_root_component, remove_invalid_triangles, screen_window,
+    viewport_resolution, Camera, Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape,
+    Transform, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::util::error::PbrtError;
@@ -46,13 +46,6 @@ pub fn flatten_node_ref(
                 Component::Material(component) => Some(Arc::clone(&component.material)),
                 _ => None,
             });
-        for component in &node.components {
-            if let Component::Scene(component) = component {
-                for texture_node in &component.scene.texture_nodes {
-                    register_texture_node(texture_node, builder)?;
-                }
-            }
-        }
         let mut shapes = Vec::new();
         let mut instances = Vec::new();
         let camera = node
