@@ -1,5 +1,6 @@
 use crate::base::bxdf::*;
 use crate::util::base::*;
+use crate::util::error::PbrtError;
 use crate::util::geometry::*;
 use crate::util::sampling::PiecewiseLinear2D;
 use crate::util::scattering::{abs_cos_theta, cos_theta, reflect, same_hemisphere};
@@ -85,6 +86,25 @@ impl MeasuredBxDFData {
         }
     }
 
+    pub fn try_from_file(filename: &str) -> Result<Arc<Self>, PbrtError> {
+        if filename.is_empty() {
+            return Err(PbrtError::error(
+                "Filename must be provided for measured BSDF data.",
+            ));
+        }
+        let tensor = TensorFile::open(filename).map_err(|error| {
+            PbrtError::error(&format!(
+                "Unable to load measured BSDF \"{filename}\": {error}"
+            ))
+        })?;
+        let data = Self::from_tensor(filename, tensor).map_err(|error| {
+            PbrtError::error(&format!(
+                "Unable to interpret measured BSDF \"{filename}\": {error}"
+            ))
+        })?;
+        Ok(Arc::new(data))
+    }
+
     fn from_tensor(filename: &str, tf: TensorFile) -> Result<Self, String> {
         let f32_field = |name: &str| -> Result<&[f32], String> {
             let f = tf
@@ -101,22 +121,41 @@ impl MeasuredBxDFData {
                 .ok_or_else(|| format!("missing field `{}`", name))
         };
 
+        let description = field("description")?;
+        let jacobian = field("jacobian")?;
+        let theta_i_field = field("theta_i")?;
+        let phi_i_field = field("phi_i")?;
+        let wavelengths_field = field("wavelengths")?;
+        if description.dtype != TensorType::UInt8 || description.shape.len() != 1 {
+            return Err("`description` must be a 1D UInt8 field".into());
+        }
+        if jacobian.dtype != TensorType::UInt8 || jacobian.shape != [1] {
+            return Err("`jacobian` must be a one-element UInt8 field".into());
+        }
+        if theta_i_field.shape.len() != 1
+            || phi_i_field.shape.len() != 1
+            || wavelengths_field.shape.len() != 1
+        {
+            return Err("`theta_i`, `phi_i`, and `wavelengths` must be 1D".into());
+        }
         let theta_i = f32_field("theta_i")?;
         let phi_i = f32_field("phi_i")?;
         let wavelengths = f32_field("wavelengths")?.to_vec();
 
         let ndf_f = field("ndf")?;
-        if ndf_f.shape.len() != 2 {
+        if ndf_f.shape.len() != 2 || ndf_f.shape.iter().any(|size| *size < 2) {
             return Err("`ndf` must be 2D".into());
         }
         let sigma_f = field("sigma")?;
-        if sigma_f.shape.len() != 2 {
+        if sigma_f.shape.len() != 2 || sigma_f.shape.iter().any(|size| *size < 2) {
             return Err("`sigma` must be 2D".into());
         }
         let vndf_f = field("vndf")?;
         if vndf_f.shape.len() != 4
             || vndf_f.shape[0] != phi_i.len()
             || vndf_f.shape[1] != theta_i.len()
+            || vndf_f.shape[2] < 2
+            || vndf_f.shape[3] < 2
         {
             return Err("`vndf` shape must be [phi_i, theta_i, ny, nx]".into());
         }
@@ -125,6 +164,7 @@ impl MeasuredBxDFData {
             || luminance_f.shape[0] != phi_i.len()
             || luminance_f.shape[1] != theta_i.len()
             || luminance_f.shape[2] != luminance_f.shape[3]
+            || luminance_f.shape[2] < 2
         {
             return Err("`luminance` shape must be [phi_i, theta_i, n, n]".into());
         }
@@ -134,6 +174,7 @@ impl MeasuredBxDFData {
             || spectra_f.shape[1] != theta_i.len()
             || spectra_f.shape[2] != wavelengths.len()
             || spectra_f.shape[3] != spectra_f.shape[4]
+            || spectra_f.shape[3] < 2
         {
             return Err("`spectra` shape must be [phi_i, theta_i, wavelengths, n, n]".into());
         }

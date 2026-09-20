@@ -22,6 +22,7 @@ impl MaterialTable {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::Measured => 3,
                     };
                     attributes.push(AttributeRef {
                         kind,
@@ -89,6 +90,7 @@ fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), Pbr
             (13, flat::AttributeKind::Spectrum),
             (14, flat::AttributeKind::Scalar),
         ][..],
+        "measured" => &[(0, flat::AttributeKind::Measured)][..],
         other => {
             return Err(PbrtError::error(&format!(
                 "Unsupported WebGPU material kind in attribute validation: {other}."
@@ -133,6 +135,7 @@ fn format_attribute_kind(kind: flat::AttributeKind) -> &'static str {
         flat::AttributeKind::Scalar => "scalar",
         flat::AttributeKind::Spectrum => "spectrum",
         flat::AttributeKind::Texture => "texture",
+        flat::AttributeKind::Measured => "measured",
     }
 }
 
@@ -148,6 +151,7 @@ pub enum MaterialKind {
     Mix,
     CoatedDiffuse,
     CoatedConductor,
+    Measured,
 }
 
 impl MaterialKind {
@@ -162,6 +166,7 @@ impl MaterialKind {
             Self::Mix => 7,
             Self::CoatedDiffuse => 8,
             Self::CoatedConductor => 9,
+            Self::Measured => 10,
         }
     }
 
@@ -177,6 +182,7 @@ impl MaterialKind {
             "mix" => Ok(Self::Mix),
             "coateddiffuse" => Ok(Self::CoatedDiffuse),
             "coatedconductor" => Ok(Self::CoatedConductor),
+            "measured" => Ok(Self::Measured),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),

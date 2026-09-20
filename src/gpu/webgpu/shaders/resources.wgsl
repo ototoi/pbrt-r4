@@ -83,5 +83,9 @@ var<storage, read_write> texture_eval_results: array<TextureEvalResult>;
 var<storage, read> material_roots: array<MaterialRoot>;
 @group(0) @binding(46)
 var<storage, read> material_nodes: array<MaterialNode>;
+@group(0) @binding(47)
+var<storage, read> measured_bsdfs: array<MeasuredBsdfRecord>;
+@group(0) @binding(48)
+var<storage, read> measured_tables: array<MeasuredTableRecord>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;

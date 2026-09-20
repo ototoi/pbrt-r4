@@ -146,6 +146,36 @@ pub struct AttributeRef {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MeasuredBsdfRecord {
+    pub ndf: u32,
+    pub sigma: u32,
+    pub vndf: u32,
+    pub luminance: u32,
+    pub spectra: u32,
+    pub isotropic: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MeasuredTableRecord {
+    pub size: [u32; 2],
+    pub parameter_count: u32,
+    pub padding0: u32,
+    pub parameter_sizes: [u32; 3],
+    pub padding1: u32,
+    pub parameter_strides: [u32; 3],
+    pub padding2: u32,
+    pub parameter_value_offsets: [u32; 3],
+    pub padding3: u32,
+    pub data_offset: u32,
+    pub marginal_cdf_offset: u32,
+    pub conditional_cdf_offset: u32,
+    pub padding4: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TextureRootRecord {
     pub texture_node: u32,
     pub instruction_count: u32,

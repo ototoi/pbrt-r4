@@ -246,10 +246,11 @@ impl SceneBuilder {
             .iter()
             .map(|material| {
                 let texture_attributes = texture_attributes_for_material(material, texture_lookup)?;
+                let params = make_absolute_path(&material.base.params, &self.seen_work_dirs);
                 Ok(Arc::new(Material {
                     name: material.base.name.clone(),
                     kind: material.base.name.clone(),
-                    params: material.base.params.clone(),
+                    params,
                     material_attributes: Vec::new(),
                     texture_attributes,
                 }))
