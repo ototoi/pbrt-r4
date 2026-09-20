@@ -7,6 +7,7 @@ fn records(count: usize) -> Vec<Light> {
             kind: LightKind::Point,
             attributes: Vec::new(),
             sampling_model: index as u32,
+            image_index: u32::MAX,
         })
         .collect()
 }

@@ -9,6 +9,8 @@ use crate::gpu::node::{AreaLight as NodeAreaLight, Light as NodeLight, TriangleM
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
+use super::super::texture::{project_linear_rgb_mipmap, MipmapLevelData};
+
 pub fn point_light(
     light: &NodeLight,
     parent_transform: &Transform,
@@ -305,9 +307,72 @@ pub fn flatten_light(
             kind: LightKind::Distant,
             attributes: vec![i_attr, scale_attr],
             sampling_model,
+            image_index: INVALID_INDEX,
         });
     } else if light.name == "infinite" {
         let (kind, intensity, scale) = infinite_light(&light, &name)?;
+        if kind == LightKind::PortalImageInfinite {
+            return Err(PbrtError::error(
+                "GPU PortalImageInfiniteLight is not implemented.",
+            ));
+        }
+        let light_transform = multiply_transform(world_transform, &light.transform.matrix);
+        let world_to_light = inverse_linear_transform(&light_transform).map_err(|message| {
+            PbrtError::error(&format!(
+                "Infinite light on node \"{}\" has an invalid transform: {}.",
+                name, message
+            ))
+        })?;
+        let image_index = if matches!(
+            kind,
+            LightKind::ImageInfinite | LightKind::PortalImageInfinite
+        ) {
+            let filename = light.params.get_one_string("filename", "");
+            if filename.is_empty() {
+                return Err(PbrtError::error(
+                    "Image infinite light is missing filename.",
+                ));
+            }
+            let encoding = light.params.get_one_string("encoding", "srgb");
+            let mipmap = builder
+                .infinite_light_image_decoder
+                .decode(std::path::Path::new(&filename), &encoding)?;
+            let base_level = mipmap.levels.first().ok_or_else(|| {
+                PbrtError::error("Image infinite light image has no mipmap levels.")
+            })?;
+            if base_level.resolution[0] != base_level.resolution[1] {
+                return Err(PbrtError::error(&format!(
+                    "Image infinite light image \"{}\" has non-square resolution {:?}.",
+                    filename, base_level.resolution
+                )));
+            }
+            if base_level.channels < 3 {
+                return Err(PbrtError::error(&format!(
+                    "Image infinite light image \"{}\" does not have RGB channels.",
+                    filename
+                )));
+            }
+            let contains_non_finite = match &base_level.data {
+                MipmapLevelData::F32(values) => values.iter().any(|value| !value.is_finite()),
+                MipmapLevelData::F16(values) => values
+                    .iter()
+                    .any(|value| !half::f16::from_bits(*value).is_finite()),
+                MipmapLevelData::U8(_) => false,
+            };
+            if contains_non_finite {
+                return Err(PbrtError::error(&format!(
+                    "Image infinite light image \"{}\" contains a non-finite value.",
+                    filename
+                )));
+            }
+            let mipmap = project_linear_rgb_mipmap(&mipmap)?;
+            let index = u32::try_from(builder.infinite_light_mipmaps.len())
+                .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
+            builder.infinite_light_mipmaps.push(mipmap);
+            index
+        } else {
+            INVALID_INDEX
+        };
         if matches!(
             kind,
             LightKind::UniformInfinite | LightKind::ImageInfinite | LightKind::PortalImageInfinite
@@ -335,7 +400,7 @@ pub fn flatten_light(
             distribution_count: 0,
             total_area: 0.0,
             flags: 0,
-            world_to_light: IDENTITY_LINEAR_TRANSFORM,
+            world_to_light,
         });
         let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
         let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
@@ -343,6 +408,7 @@ pub fn flatten_light(
             kind,
             attributes: vec![i_attr, scale_attr],
             sampling_model,
+            image_index,
         });
     } else {
         let (
@@ -430,6 +496,7 @@ pub fn flatten_light(
             kind,
             attributes,
             sampling_model,
+            image_index: INVALID_INDEX,
         });
     }
     Ok(())
@@ -537,6 +604,7 @@ pub fn append_area_light(
         kind: LightKind::Area,
         attributes: vec![emission_attr, scale_attr],
         sampling_model,
+        image_index: INVALID_INDEX,
     });
     builder.light_bound_inputs.push(LightBoundInput::AreaGroup {
         handle: light_handle,
