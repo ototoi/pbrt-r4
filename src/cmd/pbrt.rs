@@ -467,7 +467,7 @@ fn create_gpu_integrator(
     input_path: &Path,
     opts: &CommandOptions,
 ) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
-    // Keep the Node IR dump while validating the initial GPU backend lowering.
+    // The optional Node IR JSON dump remains commented out in build_gpu.rs for future diagnostics.
     let mut builder = SceneBuilder::new();
     let path = path_to_string(input_path)?;
     parse_file(&path, &mut builder)?;
