@@ -4,6 +4,7 @@ pub enum AttributeKind {
     Scalar,
     Spectrum,
     Texture,
+    Measured,
 }
 
 /// A reference into the scene-wide attribute tables.

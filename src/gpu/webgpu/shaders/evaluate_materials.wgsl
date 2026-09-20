@@ -68,7 +68,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
-            && material_kind != MATERIAL_KIND_CONDUCTOR)) {
+            && material_kind != MATERIAL_KIND_CONDUCTOR
+            && material_kind != MATERIAL_KIND_MEASURED)) {
         return;
     }
     var reflectance = vec4<f32>(0.0);
@@ -197,6 +198,14 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let g_i = 2.0 * cos_i / (cos_i + sqrt(cos_i * cos_i + alpha2 * (1.0 - cos_i * cos_i)));
         f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
         bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
+    }
+    if (material_kind == MATERIAL_KIND_MEASURED) {
+        let id = measured_id(material_node);
+        if (id == 0xffffffffu) { return; }
+        let local_wo = scattering_local_frame(wo, surface.tangent.xyz, shading_n);
+        let local_wi = scattering_local_frame(wi, surface.tangent.xyz, shading_n);
+        f = measured_f(id, local_wo, local_wi, lambda);
+        bsdf_pdf = measured_pdf(id, local_wo, local_wi);
     }
     let surface_kind = selected_evaluated.bxdf_kind;
     if (surface_kind == MATERIAL_KIND_COATED_DIFFUSE || surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {

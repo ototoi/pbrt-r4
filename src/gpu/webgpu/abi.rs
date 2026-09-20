@@ -56,7 +56,11 @@ pub struct MaterialTableUniform {
     pub debug_material_kind: u32,
     pub attributes_eval_stride: u32,
     pub texture_eval_stride: u32,
-    pub reserved: [u32; 13],
+    pub measured_texture_base: u32,
+    pub measured_texture_width: u32,
+    pub measured_texture_height: u32,
+    pub measured_texture_count: u32,
+    pub reserved: [u32; 9],
 }
 
 #[repr(C)]
@@ -146,6 +150,36 @@ pub struct AttributeRef {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MeasuredBsdfRecord {
+    pub ndf: u32,
+    pub sigma: u32,
+    pub vndf: u32,
+    pub luminance: u32,
+    pub spectra: u32,
+    pub isotropic: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MeasuredTableRecord {
+    pub size: [u32; 2],
+    pub parameter_count: u32,
+    pub padding0: u32,
+    pub parameter_sizes: [u32; 3],
+    pub padding1: u32,
+    pub parameter_strides: [u32; 3],
+    pub padding2: u32,
+    pub parameter_value_offsets: [u32; 3],
+    pub padding3: u32,
+    pub data_offset: u32,
+    pub marginal_cdf_offset: u32,
+    pub conditional_cdf_offset: u32,
+    pub padding4: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TextureRootRecord {
     pub texture_node: u32,
     pub instruction_count: u32,
@@ -203,6 +237,7 @@ pub struct SurfaceWorkItem {
     pub position_error: [f32; 4],
     pub normal: [f32; 4],
     pub geometric_normal: [f32; 4],
+    pub tangent: [f32; 4],
     pub uv: [f32; 2],
     pub uv_padding: [f32; 2],
     pub material_root: u32,
@@ -448,7 +483,11 @@ pub fn material_table_uniform(
         debug_material_kind: INVALID_INDEX,
         attributes_eval_stride: 0,
         texture_eval_stride: 0,
-        reserved: [0; 13],
+        measured_texture_base: 0,
+        measured_texture_width: 0,
+        measured_texture_height: 0,
+        measured_texture_count: 0,
+        reserved: [0; 9],
     })
 }
 

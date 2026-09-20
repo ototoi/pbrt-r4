@@ -16,14 +16,15 @@ use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
     material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, TextureNodeRecord,
-    TextureRootRecord, TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX,
-    LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
-    LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
-    TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT,
-    TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS, TEXTURE_OPERATION_FBM,
-    TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX,
-    TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
+    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, MeasuredBsdfRecord,
+    MeasuredTableRecord, TextureNodeRecord, TextureRootRecord, TriangleDistributionEntry, Vertex,
+    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE,
+    LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
+    LIGHT_KIND_UNIFORM_INFINITE, TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD,
+    TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS,
+    TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE,
+    TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY,
+    TEXTURE_OPERATION_WRINKLED,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -527,6 +528,67 @@ fn upload_texture_images(
     Ok(images)
 }
 
+fn upload_measured_atlas(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pages: &[flat::MeasuredAtlasPage],
+) -> Result<Vec<wgpu::Texture>, PbrtError> {
+    pages
+        .iter()
+        .map(|page| {
+            let [width, height] = page.resolution;
+            let expected = usize::try_from(width)
+                .ok()
+                .and_then(|width| {
+                    usize::try_from(height)
+                        .ok()
+                        .and_then(|height| width.checked_mul(height))
+                })
+                .and_then(|texels| texels.checked_mul(4))
+                .ok_or_else(|| PbrtError::error("Measured BSDF atlas size overflowed."))?;
+            if width == 0 || height == 0 || page.texels.len() != expected {
+                return Err(PbrtError::error(
+                    "Measured BSDF atlas page has inconsistent dimensions.",
+                ));
+            }
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("pbrt-r4 measured BSDF atlas"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&page.texels),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 16),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            Ok(texture)
+        })
+        .collect()
+}
+
 pub struct Scene {
     pub camera: CameraUniform,
     pub viewport: ViewportUniform,
@@ -545,6 +607,8 @@ pub struct Scene {
     pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
     pub spectrum_attribute_buffer: wgpu::Buffer,
+    pub measured_bsdf_buffer: wgpu::Buffer,
+    pub measured_table_buffer: wgpu::Buffer,
     pub texture_root_buffer: wgpu::Buffer,
     pub texture_node_buffer: wgpu::Buffer,
     pub texture_child_buffer: wgpu::Buffer,
@@ -612,6 +676,40 @@ impl Scene {
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
+        let measured_bsdfs = flat
+            .measured_bsdfs
+            .bsdfs
+            .iter()
+            .map(|record| MeasuredBsdfRecord {
+                ndf: record.ndf,
+                sigma: record.sigma,
+                vndf: record.vndf,
+                luminance: record.luminance,
+                spectra: record.spectra,
+                isotropic: u32::from(record.isotropic),
+                padding: [0; 2],
+            })
+            .collect::<Vec<_>>();
+        let measured_tables = flat
+            .measured_bsdfs
+            .tables
+            .iter()
+            .map(|record| MeasuredTableRecord {
+                size: record.size,
+                parameter_count: record.parameter_count,
+                padding0: 0,
+                parameter_sizes: record.parameter_sizes,
+                padding1: 0,
+                parameter_strides: record.parameter_strides,
+                padding2: 0,
+                parameter_value_offsets: record.parameter_value_offsets,
+                padding3: 0,
+                data_offset: record.data_offset,
+                marginal_cdf_offset: record.marginal_cdf_offset,
+                conditional_cdf_offset: record.conditional_cdf_offset,
+                padding4: 0,
+            })
+            .collect::<Vec<_>>();
         flat.texture_library.validate()?;
         let mut attribute_refs = material_table.attributes;
         let all_lights = flat
@@ -636,6 +734,7 @@ impl Scene {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
+                        flat::AttributeKind::Measured => 3,
                     },
                     index: attribute.index,
                 }),
@@ -853,6 +952,13 @@ impl Scene {
             &texture_views,
             &texture_binding_plan.image_views,
         )?;
+        let measured_texture_binding_base = u32::try_from(texture_images.len())
+            .map_err(|_| PbrtError::error("Texture image binding count exceeds u32."))?;
+        texture_images.extend(upload_measured_atlas(
+            device,
+            queue,
+            &flat.measured_bsdfs.atlas_pages,
+        )?);
         if texture_images.is_empty() {
             texture_images.push(device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("pbrt-r4 empty texture"),
@@ -924,6 +1030,16 @@ impl Scene {
                 contents: buffer_contents(&spectrum_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
+        let measured_bsdf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 measured BSDF records SBO"),
+            contents: buffer_contents(&measured_bsdfs),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let measured_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 measured BSDF tables SBO"),
+            contents: buffer_contents(&measured_tables),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let distribution_entries = flat
             .triangle_distributions
             .iter()
@@ -964,6 +1080,12 @@ impl Scene {
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
         let mut material_table = material_table_uniform(material_nodes.len())?;
+        material_table.measured_texture_base = measured_texture_binding_base;
+        material_table.measured_texture_width = flat::MEASURED_ATLAS_WIDTH;
+        material_table.measured_texture_height = flat::MEASURED_ATLAS_HEIGHT;
+        material_table.measured_texture_count =
+            u32::try_from(flat.measured_bsdfs.atlas_pages.len())
+                .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?;
         let mut light_table =
             light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
@@ -1040,6 +1162,8 @@ impl Scene {
             attribute_ref_buffer,
             scalar_attribute_buffer,
             spectrum_attribute_buffer,
+            measured_bsdf_buffer,
+            measured_table_buffer,
             texture_root_buffer,
             texture_node_buffer,
             texture_child_buffer,

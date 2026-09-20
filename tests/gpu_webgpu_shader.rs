@@ -52,6 +52,28 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
+fn measured_material_shader_uses_packed_texture_tables() {
+    let direct = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(direct.contains("fn measured_f("));
+    assert!(direct.contains("fn measured_pdf("));
+    assert!(direct.contains("textureLoad("));
+    assert!(direct.contains("var<storage, read> measured_bsdfs"));
+    assert!(direct.contains("var<storage, read> measured_tables"));
+
+    let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
+    assert!(bounce.contains("fn measured_sample_f("));
+    assert!(bounce.contains("material_kind != MATERIAL_KIND_MEASURED"));
+    assert!(bounce.contains("scattering_local_frame(wo, tangent, normal)"));
+
+    assert!(SHADE_SURFACE_SHADER.contains("surfaces[pixel_index].tangent"));
+    assert!(SHADE_SURFACE_SHADER.contains("object_dpdu"));
+    assert!(COMMON_SHADER.contains("fn scattering_local_frame("));
+    assert!(COMMON_SHADER.contains("fn scattering_world_frame("));
+    assert!(!direct.contains("max(p1 - p0"));
+    assert!(!direct.contains("max(abs(r0 + r1)"));
+}
+
+#[test]
 fn attribute_shader_evaluates_procedural_texture_programs() {
     let source = compose_source(EVALUATE_TEXTURES_SHADER);
     assert!(source.contains("fn sample_texture_program(root: TextureRootRecord"));
@@ -153,6 +175,9 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     assert!(evaluate.contains("fn equal_area_sphere_to_square("));
     assert!(evaluate.contains("dot(model.world_to_light0.xyz, direction)"));
     assert!(evaluate.contains("model.flags >> 28u"));
+    assert!(evaluate.contains(
+        "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
+    ));
     assert!(!evaluate.contains("atan2(d.y, d.x)"));
 }
 
