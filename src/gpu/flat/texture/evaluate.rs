@@ -302,15 +302,17 @@ fn sample_image(
     if width == 0 || height == 0 || !(1..=4).contains(&level.channels) {
         return Err(PbrtError::error("Image texture has invalid dimensions."));
     }
+    let Some(u) = wrap_coordinate(uv[0], view.swrap) else {
+        return Ok(black_image_value(view.value_type));
+    };
+    let Some(v) = wrap_coordinate(1.0 - uv[1], view.twrap) else {
+        return Ok(black_image_value(view.value_type));
+    };
     let value = match view.filter {
         ImageFilterMode::Nearest | ImageFilterMode::Trilinear => {
-            let u = wrap_coordinate(uv[0], view.swrap)?;
-            let v = wrap_coordinate(uv[1], view.twrap)?;
             sample_texel(level, &mipmap.encoding, u, v, view)?
         }
         ImageFilterMode::Bilinear => {
-            let u = wrap_coordinate(uv[0], view.swrap)?;
-            let v = wrap_coordinate(uv[1], view.twrap)?;
             let x = u * width as f32 - 0.5;
             let y = v * height as f32 - 0.5;
             let x0 = x.floor();
@@ -327,12 +329,19 @@ fn sample_image(
     Ok(apply_image_transform(value, view.scale, view.invert))
 }
 
-fn wrap_coordinate(value: f32, mode: ImageWrapMode) -> Result<f32, PbrtError> {
+fn wrap_coordinate(value: f32, mode: ImageWrapMode) -> Option<f32> {
     match mode {
-        ImageWrapMode::Repeat => Ok(value - value.floor()),
-        ImageWrapMode::Clamp => Ok(value.clamp(0.0, 1.0)),
-        ImageWrapMode::Black if !(0.0..=1.0).contains(&value) => Ok(0.0),
-        ImageWrapMode::Black => Ok(value),
+        ImageWrapMode::Repeat => Some(value - value.floor()),
+        ImageWrapMode::Clamp => Some(value.clamp(0.0, 1.0)),
+        ImageWrapMode::Black if !(0.0..=1.0).contains(&value) => None,
+        ImageWrapMode::Black => Some(value),
+    }
+}
+
+fn black_image_value(value_type: ImageValueType) -> TextureValue {
+    match value_type {
+        ImageValueType::Float => TextureValue::Float(0.0),
+        ImageValueType::LinearRgb => TextureValue::LinearRgb([0.0; 3]),
     }
 }
 
