@@ -7,9 +7,20 @@ use super::{
 };
 use crate::gpu::node::{AreaLight as NodeAreaLight, Light as NodeLight, TriangleMeshShape};
 use crate::util::error::PbrtError;
+use crate::util::spectrum::rgb_to_spectrum::{ACES2065_1, DCI_P3, REC2020, SRGB};
 use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
-use super::super::texture::{project_linear_rgb_mipmap, MipmapLevelData};
+use super::super::texture::{project_linear_rgb_mipmap, ColorSpace, MipmapLevelData};
+
+fn image_illuminant(color_space: ColorSpace) -> Spectrum {
+    let color_space = match color_space {
+        ColorSpace::Aces2065 => &ACES2065_1,
+        ColorSpace::DciP3 => &DCI_P3,
+        ColorSpace::Rec2020 => &REC2020,
+        ColorSpace::Unknown | ColorSpace::Srgb => &SRGB,
+    };
+    Spectrum::from(color_space.illuminant.to_dense())
+}
 
 pub fn point_light(
     light: &NodeLight,
@@ -323,7 +334,7 @@ pub fn flatten_light(
                 name, message
             ))
         })?;
-        let image_index = if matches!(
+        let (image_index, image_illuminant) = if matches!(
             kind,
             LightKind::ImageInfinite | LightKind::PortalImageInfinite
         ) {
@@ -366,12 +377,13 @@ pub fn flatten_light(
                 )));
             }
             let mipmap = project_linear_rgb_mipmap(&mipmap)?;
+            let illuminant = image_illuminant(mipmap.color_space);
             let index = u32::try_from(builder.infinite_light_mipmaps.len())
                 .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
             builder.infinite_light_mipmaps.push(mipmap);
-            index
+            (index, Some(illuminant))
         } else {
-            INVALID_INDEX
+            (INVALID_INDEX, None)
         };
         if matches!(
             kind,
@@ -404,9 +416,17 @@ pub fn flatten_light(
         });
         let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
         let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
+        let mut attributes = vec![i_attr, scale_attr];
+        if let Some(illuminant) = image_illuminant {
+            attributes.push(push_spectrum_attribute(
+                builder,
+                "image-illuminant",
+                &illuminant,
+            )?);
+        }
         builder.infinite_lights.push(Light {
             kind,
-            attributes: vec![i_attr, scale_attr],
+            attributes,
             sampling_model,
             image_index,
         });

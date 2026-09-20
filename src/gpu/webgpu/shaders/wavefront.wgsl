@@ -1460,7 +1460,8 @@ fn load_light_image_spectrum(index: u32, direction: vec3<f32>, lambda: vec4<f32>
     let uv = equal_area_sphere_to_square(d);
     let rgb = textureSampleLevel(texture_images[image_index], texture_samplers[0], uv, 0.0).rgb;
     let color_space = model.flags >> 28u;
-    return rgb_to_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space);
+    let illuminant = load_light_spectrum(index, 2u, lambda);
+    return rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant;
 }
 fn load_light_scale(index: u32) -> f32 {
     let attr = load_light_attribute(index, 1u);
