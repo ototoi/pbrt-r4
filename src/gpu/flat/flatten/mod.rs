@@ -38,7 +38,6 @@ use scene_settings::{
     register_root_component, render_settings, screen_window, viewport_resolution,
 };
 
-const MAX_GPU_RENDER_DEPTH: i32 = 32;
 const MAX_LAYER_DEPTH: i32 = 32;
 const MAX_LAYER_SAMPLES: i32 = 32;
 

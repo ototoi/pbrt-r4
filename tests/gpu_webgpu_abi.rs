@@ -2,8 +2,8 @@ use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform, DenseSpectrum,
     FilmUniform, Geometry, Instance, LightRecord, LightTableUniform, MaterialNode,
     MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord, PixelSampleState, QueueCounters,
-    QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
-    TriangleDistributionEntry, Vertex, ViewportUniform,
+    QueueState, RayWorkItem, RenderError, SamplerUniform, ShadowRayWorkItem, SurfaceWorkItem,
+    TextureEvalResult, TriangleDistributionEntry, Vertex, ViewportUniform,
 };
 
 #[test]
@@ -19,6 +19,7 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
+    assert_eq!(std::mem::size_of::<SamplerUniform>(), 48);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);

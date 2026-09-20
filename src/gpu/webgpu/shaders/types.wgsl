@@ -147,6 +147,17 @@ struct ViewportUniform {
     _padding: u32,
 };
 
+struct SamplerUniform {
+    kind: u32,
+    randomization: u32,
+    table_width: u32,
+    dimension_count: u32,
+    base_scales: vec2<u32>,
+    base_exponents: vec2<u32>,
+    mult_inverse: vec2<u32>,
+    _padding: vec2<u32>,
+};
+
 struct FilmUniform {
     sensor_response: vec4<u32>,
     imaging_ratio: f32,
@@ -309,6 +320,7 @@ struct AreaTriangleSelection {
     primitive: u32,
     area: f32,
     pmf: f32,
+    u_remapped: f32,
 };
 
 struct QueueState {

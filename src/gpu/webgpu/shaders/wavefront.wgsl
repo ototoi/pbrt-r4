@@ -188,14 +188,19 @@ fn load_area_distribution_word(index: u32, distribution_index: u32, word: u32) -
     return 0u;
 }
 
-fn load_area_distribution(index: u32, distribution_index: u32) -> AreaTriangleSelection {
+fn load_area_distribution_remapped(index: u32, distribution_index: u32, u_remapped: f32) -> AreaTriangleSelection {
     let total_area = load_area_total(index);
     let area = bitcast<f32>(load_area_distribution_word(index, distribution_index, 2u));
     return AreaTriangleSelection(
         load_area_distribution_word(index, distribution_index, 0u),
         area,
         area / total_area,
+        u_remapped,
     );
+}
+
+fn load_area_distribution(index: u32, distribution_index: u32) -> AreaTriangleSelection {
+    return load_area_distribution_remapped(index, distribution_index, 0.0);
 }
 
 fn select_area_triangle(index: u32, u: f32) -> AreaTriangleSelection {
@@ -212,7 +217,14 @@ fn select_area_triangle(index: u32, u: f32) -> AreaTriangleSelection {
             first = middle + 1u;
         }
     }
-    return load_area_distribution(index, min(first, count - 1u));
+    let selected = min(first, count - 1u);
+    var previous_cdf = 0.0;
+    if (selected > 0u) {
+        previous_cdf = bitcast<f32>(load_area_distribution_word(index, selected - 1u, 1u));
+    }
+    let selected_cdf = bitcast<f32>(load_area_distribution_word(index, selected, 1u));
+    let u_remapped = (clamped_u - previous_cdf) / (selected_cdf - previous_cdf);
+    return load_area_distribution_remapped(index, selected, u_remapped);
 }
 
 fn load_area_two_sided(index: u32) -> bool {
@@ -1541,18 +1553,19 @@ fn sample_layered_exponential(u: f32, rate: f32) -> f32 {
 }
 
 fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
+    let first_dimension = 6u + 7u * depth;
     return RaySamples(
         vec4<f32>(
-            random01(pixel_index, 2u, depth),
-            random01(pixel_index, 3u, depth),
-            random01(pixel_index, 4u, depth),
+            sampler_get_1d(pixel_index, first_dimension),
+            sampler_get_1d(pixel_index, first_dimension + 1u),
+            sampler_get_1d(pixel_index, first_dimension + 2u),
             0.0,
         ),
         vec4<f32>(
-            random01(pixel_index, 5u, depth),
-            random01(pixel_index, 6u, depth),
-            random01(pixel_index, 7u, depth),
-            random01(pixel_index, 8u, depth),
+            sampler_get_1d(pixel_index, first_dimension + 3u),
+            sampler_get_1d(pixel_index, first_dimension + 4u),
+            sampler_get_1d(pixel_index, first_dimension + 5u),
+            sampler_get_1d(pixel_index, first_dimension + 6u),
         ),
     );
 }

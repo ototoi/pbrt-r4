@@ -60,6 +60,8 @@ pub enum ResourceId {
     MaterialNode,
     MeasuredBsdf,
     MeasuredTable,
+    SamplerParams,
+    SamplerTable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -269,6 +271,18 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         20,
         ResourceId::LightSamplingParams,
         BindingClass::Uniform,
+        Access::Read,
+    );
+    push(
+        21,
+        ResourceId::SamplerParams,
+        BindingClass::Uniform,
+        Access::Read,
+    );
+    push(
+        49,
+        ResourceId::SamplerTable,
+        BindingClass::IntegerTexture,
         Access::Read,
     );
     for (binding, resource) in [

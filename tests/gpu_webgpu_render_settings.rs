@@ -4,6 +4,8 @@ use pbrt_r4::gpu::webgpu::render_settings::RenderSettings;
 #[test]
 fn render_settings_keep_only_webgpu_render_loop_values() {
     let settings = RenderSettings::from_flat(flat::RenderSettings {
+        sampler_kind: flat::SamplerKind::Halton,
+        halton_randomization: flat::HaltonRandomization::PermuteDigits,
         samples_per_pixel: 8,
         max_depth: 5,
         seed: 17,

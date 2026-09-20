@@ -45,6 +45,8 @@ var<storage, read_write> escaped_ray_indices: array<u32>;
 var<uniform> material_table: MaterialTableUniform;
 @group(0) @binding(20)
 var<uniform> light_table: LightTableUniform;
+@group(0) @binding(21)
+var<uniform> sampler_params: SamplerUniform;
 @group(0) @binding(22)
 var<storage, read> attribute_refs: array<AttributeRef>;
 @group(0) @binding(23)
@@ -87,5 +89,7 @@ var<storage, read> material_nodes: array<MaterialNode>;
 var<storage, read> measured_bsdfs: array<MeasuredBsdfRecord>;
 @group(0) @binding(48)
 var<storage, read> measured_tables: array<MeasuredTableRecord>;
+@group(0) @binding(49)
+var sampler_table: texture_2d<u32>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;

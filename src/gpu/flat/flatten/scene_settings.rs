@@ -1,6 +1,6 @@
-use super::MAX_GPU_RENDER_DEPTH;
-use crate::gpu::flat::RenderSettings;
+use crate::gpu::flat::{HaltonRandomization, RenderSettings, SamplerKind, MAX_GPU_RENDER_DEPTH};
 use crate::gpu::node::{Integrator as NodeIntegrator, Sampler as NodeSampler};
+use crate::options::PbrtOptions;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 
@@ -29,14 +29,35 @@ pub fn render_settings(
 ) -> Result<RenderSettings, PbrtError> {
     let sampler = sampler.as_ref();
     let integrator = integrator.as_ref();
-    if let Some(sampler) = sampler {
-        if sampler.name != "independent" {
-            log::warn!(
-                "GPU sampler '{}' is not implemented; falling back to independent sampler.",
-                sampler.name
-            );
+    let sampler_kind = match sampler.map(|sampler| sampler.name.as_str()) {
+        None | Some("independent") => SamplerKind::Independent,
+        Some("halton") => SamplerKind::Halton,
+        Some(name) => {
+            return Err(PbrtError::error(&format!(
+                "GPU sampler '{name}' is not implemented."
+            )))
         }
-    }
+    };
+    let halton_randomization = if sampler_kind == SamplerKind::Halton {
+        match sampler
+            .map(|sampler| {
+                sampler
+                    .params
+                    .get_one_string("randomization", "permutedigits")
+            })
+            .as_deref()
+        {
+            None | Some("permutedigits") => HaltonRandomization::PermuteDigits,
+            Some("none") => HaltonRandomization::None,
+            Some(value) => {
+                return Err(PbrtError::error(&format!(
+                    "GPU Halton randomization '{value}' is not implemented."
+                )))
+            }
+        }
+    } else {
+        HaltonRandomization::None
+    };
     if let Some(integrator) = integrator {
         if integrator.name != "path" && integrator.name != "volpath" {
             return Err(PbrtError::error(&format!(
@@ -45,10 +66,18 @@ pub fn render_settings(
             )));
         }
     }
+    let default_samples_per_pixel = match sampler_kind {
+        SamplerKind::Independent => 4,
+        SamplerKind::Halton => 16,
+    };
     let configured_samples_per_pixel = sampler
-        .map(|sampler| sampler.params.get_one_int("pixelsamples", 4))
-        .unwrap_or(4);
-    let samples_per_pixel = if crate::options::PbrtOptions::get().quick_render {
+        .map(|sampler| {
+            sampler
+                .params
+                .get_one_int("pixelsamples", default_samples_per_pixel)
+        })
+        .unwrap_or(default_samples_per_pixel);
+    let samples_per_pixel = if PbrtOptions::get().quick_render {
         1
     } else {
         configured_samples_per_pixel
@@ -56,18 +85,23 @@ pub fn render_settings(
     let configured_max_depth = integrator
         .map(|integrator| integrator.params.get_one_int("maxdepth", 5))
         .unwrap_or(5);
-    let max_depth = configured_max_depth.min(MAX_GPU_RENDER_DEPTH);
-    if configured_max_depth > MAX_GPU_RENDER_DEPTH {
+    let max_gpu_render_depth = MAX_GPU_RENDER_DEPTH as i32;
+    let max_depth = configured_max_depth.min(max_gpu_render_depth);
+    if configured_max_depth > max_gpu_render_depth {
         log::warn!(
             "GPU maxdepth {} exceeds the backend limit {}; clamping to {}.",
             configured_max_depth,
-            MAX_GPU_RENDER_DEPTH,
-            MAX_GPU_RENDER_DEPTH
+            max_gpu_render_depth,
+            max_gpu_render_depth
         );
     }
     let seed = sampler
-        .map(|sampler| sampler.params.get_one_int("seed", 0))
-        .unwrap_or(0);
+        .map(|sampler| {
+            sampler
+                .params
+                .get_one_int("seed", PbrtOptions::get().seed as i32)
+        })
+        .unwrap_or(PbrtOptions::get().seed as i32);
     let light_sampler = integrator
         .map(|integrator| integrator.params.get_one_string("lightsampler", "bvh"))
         .unwrap_or_else(|| "bvh".to_string());
@@ -77,13 +111,15 @@ pub fn render_settings(
         ));
     }
     Ok(RenderSettings {
+        sampler_kind,
+        halton_randomization,
         samples_per_pixel: u32::try_from(samples_per_pixel)
             .map_err(|_| PbrtError::error("GPU samples per pixel do not fit in u32."))?,
         max_depth: u32::try_from(max_depth)
             .map_err(|_| PbrtError::error("GPU max depth does not fit in u32."))?,
         seed: u32::try_from(seed).map_err(|_| PbrtError::error("GPU seed does not fit in u32."))?,
         light_sampler,
-        disable_wavelength_jitter: crate::options::PbrtOptions::get().disable_wavelength_jitter,
+        disable_wavelength_jitter: PbrtOptions::get().disable_wavelength_jitter,
     })
 }
 
