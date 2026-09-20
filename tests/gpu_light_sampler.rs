@@ -1,10 +1,12 @@
-use pbrt_r4::gpu::flat::{Light, LightKind, RenderSettings};
+use pbrt_r4::gpu::flat::{HaltonRandomization, Light, LightKind, RenderSettings, SamplerKind};
 use pbrt_r4::gpu::webgpu::light_sampler::{
     resolve_light_sampler, resolve_scene_light_sampler, LightSamplerKind,
 };
 
 fn settings(light_sampler: &str) -> RenderSettings {
     RenderSettings {
+        sampler_kind: SamplerKind::Independent,
+        halton_randomization: HaltonRandomization::None,
         samples_per_pixel: 1,
         max_depth: 1,
         seed: 0,
