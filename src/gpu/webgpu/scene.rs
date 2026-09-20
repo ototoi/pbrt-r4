@@ -106,8 +106,30 @@ fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtE
     })
 }
 
-pub fn texture_binding_counts(views: &[ImageView]) -> Result<(u32, u32), PbrtError> {
-    let plan = texture_binding_plan(views)?;
+fn scene_texture_views(flat: &flat::Scene) -> (Vec<ImageView>, usize) {
+    let mut views = Vec::new();
+    for light in &flat.infinite_lights {
+        if light.image_index == flat::INVALID_INDEX {
+            continue;
+        }
+        views.push(ImageView {
+            mipmap: light.image_index,
+            value_type: ImageValueType::LinearRgb,
+            swrap: ImageWrapMode::Clamp,
+            twrap: ImageWrapMode::Clamp,
+            filter: ImageFilterMode::Nearest,
+            scale: 1.0,
+            invert: false,
+        });
+    }
+    let material_view_offset = views.len();
+    views.extend(flat.texture_library.image_views.iter().cloned());
+    (views, material_view_offset)
+}
+
+pub fn texture_binding_counts(flat: &flat::Scene) -> Result<(u32, u32), PbrtError> {
+    let (views, _) = scene_texture_views(flat);
+    let plan = texture_binding_plan(&views)?;
     Ok((
         u32::try_from(plan.image_views.len())
             .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?,
@@ -125,6 +147,7 @@ fn stable_texture_hash(value: &str) -> u32 {
 fn lower_texture_library(
     library: &TextureLibrary,
     binding_plan: &TextureBindingPlan,
+    binding_view_offset: usize,
 ) -> Result<(Vec<TextureNodeRecord>, Vec<u32>, Vec<TextureRootRecord>), PbrtError> {
     let mut nodes = Vec::new();
     let mut children = Vec::new();
@@ -148,6 +171,7 @@ fn lower_texture_library(
                 program.slot_types[instruction_index],
                 &library.image_views,
                 binding_plan,
+                binding_view_offset,
             )?;
             nodes.push(TextureNodeRecord {
                 kind: lowered.kind,
@@ -241,6 +265,7 @@ fn lower_texture_instruction(
     slot_type: TextureValueType,
     image_views: &[ImageView],
     binding_plan: &TextureBindingPlan,
+    binding_view_offset: usize,
 ) -> Result<LoweredTextureInstruction, PbrtError> {
     let identity = row_major_to_columns([
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
@@ -287,7 +312,7 @@ fn lower_texture_instruction(
                 .ok_or_else(|| PbrtError::error("Texture instruction has invalid image view."))?;
             let (image, sampler) = *binding_plan
                 .view_bindings
-                .get(*image_view as usize)
+                .get(binding_view_offset + *image_view as usize)
                 .ok_or_else(|| PbrtError::error("Texture instruction has invalid binding."))?;
             let wrap_mode = |mode| match mode {
                 ImageWrapMode::Repeat => 0,
@@ -744,25 +769,13 @@ impl Scene {
         let scalar_attributes = flat.scalar_attributes.clone();
         // Keep the infinite-image sampler first. pbrt-v4 uses nearest lookup
         // for ImageInfiniteLight after equal-area sphere-to-square mapping.
-        let mut texture_views = Vec::new();
-        for light in &flat.infinite_lights {
-            if light.image_index == flat::INVALID_INDEX {
-                continue;
-            }
-            texture_views.push(ImageView {
-                mipmap: light.image_index,
-                value_type: ImageValueType::LinearRgb,
-                swrap: ImageWrapMode::Clamp,
-                twrap: ImageWrapMode::Clamp,
-                filter: ImageFilterMode::Nearest,
-                scale: 1.0,
-                invert: false,
-            });
-        }
-        texture_views.extend(flat.texture_library.image_views.iter().cloned());
+        let (texture_views, material_view_offset) = scene_texture_views(&flat);
         let texture_binding_plan = texture_binding_plan(&texture_views)?;
-        let (texture_nodes, texture_children, texture_roots) =
-            lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
+        let (texture_nodes, texture_children, texture_roots) = lower_texture_library(
+            &flat.texture_library,
+            &texture_binding_plan,
+            material_view_offset,
+        )?;
         let infinite_image_bindings = flat
             .infinite_lights
             .iter()
@@ -1428,10 +1441,10 @@ fn convert_geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::{mip_level_rgba, texture_binding_plan};
+    use super::{lower_texture_instruction, mip_level_rgba, texture_binding_plan};
     use crate::gpu::flat::texture::{
-        ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
-        MipmapLevelData,
+        ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
+        MipmapLevel, MipmapLevelData, TextureInstruction, TextureValueType,
     };
 
     #[test]
@@ -1496,5 +1509,39 @@ mod tests {
         assert_eq!(plan.image_views.len(), 2);
         assert_eq!(plan.samplers.len(), 2);
         assert_eq!(plan.view_bindings, vec![(0, 0), (0, 1), (1, 0)]);
+    }
+
+    #[test]
+    fn material_image_binding_follows_prefixed_infinite_image_view() {
+        let make_view = |mipmap, filter| ImageView {
+            mipmap,
+            value_type: ImageValueType::LinearRgb,
+            swrap: ImageWrapMode::Repeat,
+            twrap: ImageWrapMode::Clamp,
+            filter,
+            scale: 1.0,
+            invert: false,
+        };
+        let infinite_view = make_view(0, ImageFilterMode::Nearest);
+        let material_view = make_view(1, ImageFilterMode::Bilinear);
+        let plan = texture_binding_plan(&[infinite_view, material_view.clone()]).unwrap();
+        let instruction = TextureInstruction::SampleImage {
+            dst: 0,
+            image_view: 0,
+            mapping: None,
+            value_type: TextureValueType::LinearRgb(ColorSpace::Srgb),
+        };
+
+        let lowered = lower_texture_instruction(
+            &instruction,
+            TextureValueType::LinearRgb(ColorSpace::Srgb),
+            &[material_view],
+            &plan,
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(lowered.image_view.0, 1);
+        assert_eq!(lowered.image_view.1, 1);
     }
 }
