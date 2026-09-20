@@ -305,9 +305,31 @@ pub fn flatten_light(
             kind: LightKind::Distant,
             attributes: vec![i_attr, scale_attr],
             sampling_model,
+            image_index: INVALID_INDEX,
         });
     } else if light.name == "infinite" {
         let (kind, intensity, scale) = infinite_light(&light, &name)?;
+        let image_index = if matches!(
+            kind,
+            LightKind::ImageInfinite | LightKind::PortalImageInfinite
+        ) {
+            let filename = light.params.get_one_string("filename", "");
+            if filename.is_empty() {
+                return Err(PbrtError::error(
+                    "Image infinite light is missing filename.",
+                ));
+            }
+            let encoding = light.params.get_one_string("encoding", "srgb");
+            let mipmap = builder
+                .infinite_light_image_decoder
+                .decode(std::path::Path::new(&filename), &encoding)?;
+            let index = u32::try_from(builder.infinite_light_mipmaps.len())
+                .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
+            builder.infinite_light_mipmaps.push(mipmap);
+            index
+        } else {
+            INVALID_INDEX
+        };
         if matches!(
             kind,
             LightKind::UniformInfinite | LightKind::ImageInfinite | LightKind::PortalImageInfinite
@@ -343,6 +365,7 @@ pub fn flatten_light(
             kind,
             attributes: vec![i_attr, scale_attr],
             sampling_model,
+            image_index,
         });
     } else {
         let (
@@ -430,6 +453,7 @@ pub fn flatten_light(
             kind,
             attributes,
             sampling_model,
+            image_index: INVALID_INDEX,
         });
     }
     Ok(())
@@ -537,6 +561,7 @@ pub fn append_area_light(
         kind: LightKind::Area,
         attributes: vec![emission_attr, scale_attr],
         sampling_model,
+        image_index: INVALID_INDEX,
     });
     builder.light_bound_inputs.push(LightBoundInput::AreaGroup {
         handle: light_handle,

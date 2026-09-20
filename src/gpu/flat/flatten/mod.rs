@@ -80,7 +80,20 @@ pub fn flatten_node_with_material_override(
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
-    let texture_library = compile_texture_library(&builder.texture_root_specs)?;
+    let mut texture_library = compile_texture_library(&builder.texture_root_specs)?;
+    let image_offset = u32::try_from(texture_library.mipmaps.len())
+        .map_err(|_| PbrtError::error("Texture mipmap table exceeds u32."))?;
+    texture_library
+        .mipmaps
+        .extend(builder.infinite_light_mipmaps);
+    for light in &mut builder.infinite_lights {
+        if light.image_index != INVALID_INDEX {
+            light.image_index = light
+                .image_index
+                .checked_add(image_offset)
+                .ok_or_else(|| PbrtError::error("Infinite light image index overflowed."))?;
+        }
+    }
     let root_source_nodes = builder
         .instances
         .iter()
@@ -260,4 +273,6 @@ struct FlatBuilder {
     lights: Vec<Light>,
     infinite_lights: Vec<Light>,
     light_bound_inputs: Vec<LightBoundInput>,
+    infinite_light_mipmaps: Vec<Arc<super::texture::Mipmap>>,
+    infinite_light_image_decoder: super::texture::ImageDecoder,
 }
