@@ -538,7 +538,7 @@ fn reference_vm_uses_v4_cylindrical_mapping_coordinates() {
 fn reference_vm_applies_non_uv_mapping_to_image_textures() {
     let directory = tempdir().unwrap();
     let path = directory.path().join("mapped.png");
-    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![128])
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 2, vec![0, 255])
         .unwrap()
         .save(&path)
         .unwrap();
@@ -573,11 +573,47 @@ fn reference_vm_applies_non_uv_mapping_to_image_textures() {
     let TextureValue::Float(value) = value else {
         panic!("expected float texture value");
     };
-    let expected = inverse_gamma_correct(128.0 / 255.0) as f32;
-    assert!(
-        (value - expected).abs() < 1e-4,
-        "mapped image value {value} differs from expected {expected}"
-    );
+    assert_eq!(value, 1.0);
+}
+
+#[test]
+fn reference_vm_returns_black_outside_non_uv_image_mapping() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("black-wrap.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![255])
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", &path.to_string_lossy());
+    params.add_string("string filter", "nearest");
+    params.add_string("string wrap", "black");
+    let mut node = TextureNode::new("black-wrap-image");
+    node.components.push(TextureComponent::Texture(Texture {
+        name: "imagemap".to_string(),
+        kind: TextureKind::Float,
+        params,
+    }));
+    node.components
+        .push(TextureComponent::Mapping(TextureMapping::Planar(
+            Transform::default(),
+        )));
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(node),
+    }])
+    .unwrap();
+
+    let value = evaluate_texture_root_with_context(
+        &library,
+        0,
+        TextureEvaluationContext {
+            position: [-0.25, 0.5, 0.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(value, TextureValue::Float(0.0));
 }
 
 fn evaluate_mapped_bilerp(mapping: TextureMapping, position: [f32; 3]) -> f32 {
