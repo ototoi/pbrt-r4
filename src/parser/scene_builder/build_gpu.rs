@@ -2,16 +2,18 @@ use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
 use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
-    loop_subdiv_mesh_from_params, node_ref_to_json_string, tessellate_shapes,
-    triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
-    AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
-    CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
-    HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef,
-    NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene,
-    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
-    TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
+    loop_subdiv_mesh_from_params, tessellate_shapes, triangle_mesh_from_params, Accelerator,
+    AcceleratorComponent, AreaLight as NodeAreaLight, AreaLightComponent, BilinearMeshShape,
+    Camera, CameraComponent, Component, ConeShape, CylinderShape, DiskShape, Film, FilmComponent,
+    Filter, FilterComponent, HeightFieldShape, HyperboloidShape, Instance, InstanceComponent,
+    Integrator, IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
+    MediumComponent, Node, NodeRef, NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler,
+    SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture,
+    TextureComponent, TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform,
+    UvMapping,
 };
+// Uncomment together with the diagnostic blocks below when Node IR JSON output is needed.
+// use crate::gpu::node::node_ref_to_json_string;
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
@@ -43,12 +45,12 @@ impl SceneBuilder {
         // Build the declarative GPU Node IR for the scene.
         log::info!("GPU build: building Node IR");
         let ir_node = self.build_gpu_ir_node()?;
-        log::info!("GPU build: Node IR built; serializing before tessellation");
-        match node_ref_to_json_string(&ir_node) {
-            Ok(json) => println!("GPU Node IR before tessellation:\n{json}"),
-            Err(error) => eprintln!("Failed to serialize GPU Node IR before tessellation: {error}"),
-        }
-
+        // Keep this diagnostic available when inspecting the pre-tessellation Node IR.
+        // log::info!("GPU build: Node IR built; serializing before tessellation");
+        // match node_ref_to_json_string(&ir_node) {
+        //     Ok(json) => println!("GPU Node IR before tessellation:\n{json}"),
+        //     Err(error) => eprintln!("Failed to serialize GPU Node IR before tessellation: {error}"),
+        // }
         // Tessellate shapes in the IR node to ensure all shapes are represented as triangle meshes.
         {
             log::info!("GPU build: tessellating shapes");
@@ -57,12 +59,12 @@ impl SceneBuilder {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             tessellate_shapes(&mut ir_node)?;
         }
-        log::info!("GPU build: tessellation complete; serializing after tessellation");
-        match node_ref_to_json_string(&ir_node) {
-            Ok(json) => println!("GPU Node IR after tessellation:\n{json}"),
-            Err(error) => eprintln!("Failed to serialize GPU Node IR after tessellation: {error}"),
-        }
-
+        // Keep this diagnostic available when inspecting the post-tessellation Node IR.
+        // log::info!("GPU build: tessellation complete; serializing after tessellation");
+        // match node_ref_to_json_string(&ir_node) {
+        //     Ok(json) => println!("GPU Node IR after tessellation:\n{json}"),
+        //     Err(error) => eprintln!("Failed to serialize GPU Node IR after tessellation: {error}"),
+        // }
         // Lower the IR node to a flat scene representation.
         log::info!("GPU build: flattening Node IR");
         let flat_scene = flatten_node(ir_node)?;
