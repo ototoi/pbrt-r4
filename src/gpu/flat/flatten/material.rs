@@ -1,26 +1,141 @@
 use super::super::texture::TextureRootSpec;
 use super::material_attributes::build_material_attributes;
 use super::{
-    push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, Material,
-    UnsupportedTexturePolicy,
+    push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, UnsupportedTexturePolicy,
 };
+use crate::gpu::flat::{MaterialTreeLayout, MaterialTreeNode, INVALID_INDEX};
 use crate::gpu::node::{Material as NodeMaterial, TextureComponent, TextureKind, TextureNode};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 use std::sync::Arc;
 
-pub fn material_index(
+#[derive(Clone, Debug)]
+pub struct MaterialTreeSourceNode {
+    pub kind: String,
+    pub source_kind: String,
+    pub attributes: Vec<AttributeRef>,
+    pub children: Vec<u32>,
+}
+
+pub fn build_material_tree_layouts(
+    source_nodes: &[MaterialTreeSourceNode],
+    root_source_nodes: &[u32],
+) -> Result<(Vec<MaterialTreeLayout>, Vec<MaterialTreeNode>, Vec<u32>), PbrtError> {
+    fn append_node(
+        source_node_index: u32,
+        parent: u32,
+        parent_slot: u32,
+        source_nodes: &[MaterialTreeSourceNode],
+        visiting: &mut [bool],
+        nodes: &mut Vec<MaterialTreeNode>,
+    ) -> Result<u32, PbrtError> {
+        let source_index = usize::try_from(source_node_index)
+            .map_err(|_| PbrtError::error("Flat material source index does not fit usize."))?;
+        let source = source_nodes.get(source_index).ok_or_else(|| {
+            PbrtError::error("Flat material child is outside the source-node table.")
+        })?;
+        if visiting[source_index] {
+            return Err(PbrtError::error("Flat material graph contains a cycle."));
+        }
+        visiting[source_index] = true;
+
+        let node_index = u32::try_from(nodes.len())
+            .map_err(|_| PbrtError::error("Flat material tree exceeds u32."))?;
+        nodes.push(MaterialTreeNode {
+            kind: source.kind.clone(),
+            source_kind: source.source_kind.clone(),
+            attributes: source.attributes.clone(),
+            parent,
+            parent_slot,
+            child0: INVALID_INDEX,
+            child1: INVALID_INDEX,
+        });
+        if source.children.len() > 2 {
+            return Err(PbrtError::error(
+                "Flat material has more than two material children.",
+            ));
+        }
+        for (slot, child) in source.children.iter().enumerate() {
+            let child_index = append_node(
+                *child,
+                node_index,
+                slot as u32,
+                source_nodes,
+                visiting,
+                nodes,
+            )?;
+            if slot == 0 {
+                nodes[node_index as usize].child0 = child_index;
+            } else {
+                nodes[node_index as usize].child1 = child_index;
+            }
+        }
+        visiting[source_index] = false;
+        Ok(node_index)
+    }
+
+    let mut layouts = Vec::new();
+    let mut nodes = Vec::new();
+    let mut source_to_layout = vec![INVALID_INDEX; source_nodes.len()];
+    for &root in root_source_nodes {
+        let root_index = usize::try_from(root)
+            .map_err(|_| PbrtError::error("Flat material root does not fit usize."))?;
+        let mapped_layout = source_to_layout.get_mut(root_index).ok_or_else(|| {
+            PbrtError::error("Flat instance references a material outside the source-node table.")
+        })?;
+        if *mapped_layout != INVALID_INDEX {
+            continue;
+        }
+        let layout_index = u32::try_from(layouts.len())
+            .map_err(|_| PbrtError::error("Flat material layout table exceeds u32."))?;
+        *mapped_layout = layout_index;
+        let node_offset = u32::try_from(nodes.len())
+            .map_err(|_| PbrtError::error("Flat material tree table exceeds u32."))?;
+        let mut tree_nodes = Vec::new();
+        append_node(
+            root,
+            INVALID_INDEX,
+            INVALID_INDEX,
+            source_nodes,
+            &mut vec![false; source_nodes.len()],
+            &mut tree_nodes,
+        )?;
+        let node_count = u32::try_from(tree_nodes.len())
+            .map_err(|_| PbrtError::error("Flat material tree exceeds u32."))?;
+        for node in &mut tree_nodes {
+            if node.parent != INVALID_INDEX {
+                node.parent += node_offset;
+            }
+            if node.child0 != INVALID_INDEX {
+                node.child0 += node_offset;
+            }
+            if node.child1 != INVALID_INDEX {
+                node.child1 += node_offset;
+            }
+        }
+        nodes.extend(tree_nodes);
+        layouts.push(MaterialTreeLayout {
+            node_offset,
+            node_count,
+        });
+    }
+    Ok((layouts, nodes, source_to_layout))
+}
+
+pub fn register_material_tree(
     source_material: &Arc<NodeMaterial>,
     builder: &mut FlatBuilder,
     material_kind: Option<&str>,
 ) -> Result<u32, PbrtError> {
     if let Some(index) = builder
-        .source_materials
+        .material_tree_source_materials
         .iter()
         .position(|material| Arc::ptr_eq(material, source_material))
     {
         return u32::try_from(index).map_err(|_| {
-            PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
+            PbrtError::error(
+                "The flattened material source-node table exceeds the u32 index range.",
+            )
         });
     }
     let requested_kind = material_kind.unwrap_or(&source_material.kind);
@@ -96,13 +211,13 @@ pub fn material_index(
             });
         }
     }
+    let mut material_children = Vec::new();
     if matches!(kind, "coateddiffuse" | "coatedconductor") {
         let child_kinds: &[&str] = if kind == "coateddiffuse" {
             &["dielectric", "diffuse"]
         } else {
             &["dielectric", "conductor"]
         };
-        let mut children = Vec::with_capacity(2);
         for child_kind in child_kinds {
             let mut child_params = source_material.params.clone();
             // The synthetic substrate material must not inherit texture
@@ -122,41 +237,32 @@ pub fn material_index(
                 material_attributes: Vec::new(),
                 texture_attributes: Vec::new(),
             });
-            children.push(AttributeRef {
-                kind: AttributeKind::Material,
-                index: material_index(&child, builder, Some(child_kind))?,
-                name: (*child_kind).to_string(),
-            });
+            material_children.push(register_material_tree(&child, builder, Some(child_kind))?);
         }
-        children.append(&mut attributes);
-        attributes = children;
     } else if kind == "mix" {
-        let mut material_attributes = Vec::new();
-        for (name, child) in &source_material.material_attributes {
-            let child_index = material_index(child, builder, None)?;
-            material_attributes.push(AttributeRef {
-                kind: AttributeKind::Material,
-                index: child_index,
-                name: name.clone(),
-            });
+        for (_, child) in &source_material.material_attributes {
+            material_children.push(register_material_tree(child, builder, None)?);
         }
-        if material_attributes.len() != 2 {
+        if material_children.len() != 2 {
             return Err(PbrtError::error(
                 "GPU mix material must contain exactly two material references.",
             ));
         }
-        material_attributes.append(&mut attributes);
-        attributes = material_attributes;
     }
-    let index = u32::try_from(builder.materials.len()).map_err(|_| {
-        PbrtError::error("The flattened GPU material table exceeds the u32 index range.")
+    let index = u32::try_from(builder.material_tree_source_nodes.len()).map_err(|_| {
+        PbrtError::error("The flattened material source-node table exceeds the u32 index range.")
     })?;
-    builder.materials.push(Material {
-        kind: kind.to_string(),
-        source_kind: source_kind.to_string(),
-        attributes: attributes.clone(),
-    });
-    builder.source_materials.push(Arc::clone(source_material));
+    builder
+        .material_tree_source_nodes
+        .push(MaterialTreeSourceNode {
+            kind: kind.to_string(),
+            source_kind: source_kind.to_string(),
+            attributes: attributes.clone(),
+            children: material_children,
+        });
+    builder
+        .material_tree_source_materials
+        .push(Arc::clone(source_material));
     Ok(index)
 }
 

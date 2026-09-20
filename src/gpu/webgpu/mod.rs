@@ -7,6 +7,7 @@ pub mod light;
 pub mod light_bvh;
 pub mod light_sampler;
 pub mod material;
+pub mod noise;
 pub mod output;
 pub mod pipeline;
 pub mod queue;

@@ -1,10 +1,16 @@
-use pbrt_r4::gpu::webgpu::shader::{compose_source, required_limits_for_sources};
+use pbrt_r4::gpu::webgpu::shader::{
+    compose_source, compose_source_with_noise, required_limits_for_sources,
+};
 use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 
 const INTERSECT_SHADOW_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/intersect_shadow.wgsl");
 const EVALUATE_MATERIALS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_materials.wgsl");
+const EVALUATE_ATTRIBUTES_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/evaluate_attributes.wgsl");
+const EVALUATE_TEXTURES_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/evaluate_textures.wgsl");
 const GENERATE_PRIMARY_RAYS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
 const ESCAPED_TEST_SHADER: &str =
@@ -42,21 +48,30 @@ fn dense_spectrum_module_declares_one_structured_table() {
     assert!(source.contains("var<storage, read> spectrum_attributes: array<DenseSpectrum>;"));
     assert!(source.contains("struct DenseSpectrum"));
     assert!(source.contains("fn safe_div_spectrum"));
-    assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialTreeNode>;"));
 }
 
 #[test]
-fn material_shader_evaluates_non_noise_procedural_texture_programs() {
-    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+fn attribute_shader_evaluates_procedural_texture_programs() {
+    let source = compose_source(EVALUATE_TEXTURES_SHADER);
     assert!(source.contains("fn sample_texture_program(root: TextureRootRecord"));
     assert!(source.contains("node.operation == TEXTURE_OPERATION_CHECKERBOARD"));
     assert!(source.contains("node.operation == TEXTURE_OPERATION_DIRECTION_MIX"));
     assert!(source.contains("node.operation == TEXTURE_OPERATION_BILERP"));
     assert!(source.contains("values[local] = mix(mix(values[v00], values[v10], st.x)"));
     assert!(!source.contains("if (node.operation >= 4u)"));
+    assert!(source.contains("fn texture_noise"));
+    assert!(source.contains("fn texture_fbm"));
+    assert!(source.contains("fn texture_marble"));
+    assert!(source.contains("textureLoad(texture_noise_table"));
+    assert!(!source.contains("TEXTURE_NOISE_PERM"));
+}
+
+#[test]
+fn attribute_shader_omits_noise_call_graph_when_disabled() {
+    let source = compose_source_with_noise(EVALUATE_TEXTURES_SHADER, false);
     assert!(!source.contains("fn texture_noise"));
-    assert!(!source.contains("fn texture_fbm"));
-    assert!(!source.contains("fn texture_marble"));
+    assert!(!source.contains("texture_noise_table"));
 }
 
 #[test]
@@ -100,11 +115,12 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(19)"));
     assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
-    assert!(COMMON_SHADER.contains("struct MaterialRecord {"));
+    assert!(COMMON_SHADER.contains("struct MaterialTreeNode {"));
     assert!(!COMMON_SHADER.contains("tree_size"));
     assert!(!COMMON_SHADER.contains("tree_base"));
-    assert!(RESOURCES_SHADER.contains("@group(0) @binding(21)"));
-    assert!(RESOURCES_SHADER.contains("var<storage, read> materials: array<MaterialRecord>;"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(46)"));
+    assert!(RESOURCES_SHADER
+        .contains("var<storage, read> material_tree_nodes: array<MaterialTreeNode>;"));
     assert!(COMMON_SHADER.contains("struct AttributeRef {"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> attribute_refs: array<AttributeRef>;"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
@@ -157,7 +173,7 @@ fn composed_stage_contains_only_referenced_resources() {
         source.contains("var<storage, read_write> pixel_sample_states: array<PixelSampleState>;")
     );
     assert!(!source.contains("var<storage, read> light_records: array<LightRecord>;"));
-    assert!(!source.contains("var<storage, read> materials: array<MaterialRecord>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialTreeNode>;"));
 }
 
 #[test]
@@ -250,8 +266,9 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
 #[test]
 fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(COMMON_SHADER
-        .contains("fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>)"));
-    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = load_diffuse_reflectance"));
+        .contains("fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>)"));
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("load_diffuse_reflectance"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = selected_evaluated.values[0]"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
     assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * reflectance"));
 }
@@ -259,10 +276,8 @@ fn diffuse_shaders_load_type_specific_reflectance() {
 #[test]
 fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
-    assert!(
-        COMMON_SHADER.contains("fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>)")
-    );
-    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("load_dielectric_eta"));
+    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>)"));
+    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("evaluated.values[0]"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
@@ -294,10 +309,12 @@ fn composite_shader_uses_evaluated_material_tree() {
 #[test]
 fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
     let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    let attributes_source = compose_source(EVALUATE_ATTRIBUTES_SHADER);
     assert!(source.contains("evaluate_layered_f"));
     assert!(source.contains("evaluate_layered_pdf"));
     assert!(source.contains("sample_layered_bottom"));
-    assert!(source.contains("load_material_spectrum(current_index, 3u, lambda)"));
+    assert!(attributes_source.contains("load_material_spectrum(material_node, 1u, lambda)"));
+    assert!(!source.contains("fn sample_texture_program"));
     assert!(!source.contains("Phase 1 of layered evaluation"));
 }
 

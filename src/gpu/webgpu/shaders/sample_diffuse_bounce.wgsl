@@ -14,21 +14,12 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (surface.hit == 0u || surface.flags != 0u) {
         return;
     }
-    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_DIFFUSE) {
-        return;
-    }
-    var material_index = resolve_material_leaf(surface.material);
-    var material_kind = load_material_kind(material_index);
+    let leaf_evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
+    let material_node = leaf_evaluated.material_node;
+    let material_kind = leaf_evaluated.bxdf_kind;
+    if (material_kind == MATERIAL_KIND_COATED_DIFFUSE) { return; }
     if (material_kind != MATERIAL_KIND_DIFFUSE) {
         return;
-    }
-    let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
-    var leaf_evaluated = evaluated;
-    if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
-        if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
-        let selected = load_attributes_eval_work_item(evaluated.selected_child_work_item);
-        material_index = selected.material_index;
-        material_kind = selected.bxdf_kind;
     }
     let reflectance = leaf_evaluated.values[0];
     let normal = surface.normal.xyz;

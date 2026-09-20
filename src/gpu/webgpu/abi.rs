@@ -52,10 +52,11 @@ pub struct ViewportUniform {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialTableUniform {
     pub material_offset_words: u32,
-    pub material_count: u32,
+    pub material_node_count: u32,
     pub debug_material_kind: u32,
     pub attributes_eval_stride: u32,
-    pub reserved: [u32; 14],
+    pub texture_eval_stride: u32,
+    pub reserved: [u32; 13],
 }
 
 #[repr(C)]
@@ -116,7 +117,7 @@ pub struct TextureNodeRecord {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Instance {
     pub geometry: u32,
-    pub material: u32,
+    pub material_tree_layout: u32,
     pub area_light: u32,
     pub orientation_flags: u32,
     pub world_from_object: [[f32; 4]; 4],
@@ -125,10 +126,14 @@ pub struct Instance {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MaterialRecord {
+pub struct MaterialTreeNode {
     pub kind: u32,
     pub attribute_offset: u32,
     pub attribute_count: u32,
+    pub parent: u32,
+    pub parent_slot: u32,
+    pub child0: u32,
+    pub child1: u32,
     pub padding: u32,
 }
 
@@ -200,7 +205,7 @@ pub struct SurfaceWorkItem {
     pub geometric_normal: [f32; 4],
     pub uv: [f32; 2],
     pub uv_padding: [f32; 2],
-    pub material: u32,
+    pub material_tree_layout: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,
     pub padding: u32,
@@ -209,15 +214,30 @@ pub struct SurfaceWorkItem {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct AttributesEvalWorkItem {
-    pub surface_index: u32,
-    pub material_index: u32,
-    pub parent_work_item: u32,
-    pub parent_slot: u32,
+    pub material_node: u32,
     pub child_work_item0: u32,
     pub child_work_item1: u32,
     pub bxdf_kind: u32,
     pub selected_child_work_item: u32,
+    pub padding: [u32; 3],
     pub values: [[f32; 4]; 10],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MaterialTreeLayout {
+    pub node_offset: u32,
+    pub node_count: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TextureEvalResult {
+    pub material_node: u32,
+    pub attribute_ordinal: u32,
+    pub texture_root: u32,
+    pub valid: u32,
+    pub value: [f32; 4],
 }
 
 #[repr(C)]
@@ -415,17 +435,20 @@ pub fn viewport_uniform(
     })
 }
 
-pub fn material_table_uniform(material_count: usize) -> Result<MaterialTableUniform, PbrtError> {
+pub fn material_table_uniform(
+    material_node_count: usize,
+) -> Result<MaterialTableUniform, PbrtError> {
     let to_u32 = |value: usize, label: &str| {
         u32::try_from(value)
             .map_err(|_| PbrtError::error(&format!("WebGPU {label} does not fit in u32.")))
     };
     Ok(MaterialTableUniform {
         material_offset_words: 0,
-        material_count: to_u32(material_count, "material count")?,
+        material_node_count: to_u32(material_node_count, "material node count")?,
         debug_material_kind: INVALID_INDEX,
         attributes_eval_stride: 0,
-        reserved: [0; 14],
+        texture_eval_stride: 0,
+        reserved: [0; 13],
     })
 }
 

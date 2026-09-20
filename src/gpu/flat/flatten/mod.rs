@@ -3,8 +3,8 @@ use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
     Camera, DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput,
-    LightGeometryKind, LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap,
-    Scene, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
+    LightGeometryKind, LightKind, LightSamplingModel, Output, PrimitiveDistributionMap, Scene,
+    Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
     INVALID_INDEX,
 };
 use crate::gpu::node::{
@@ -22,7 +22,7 @@ use super::geometry::{
 };
 
 mod material;
-use material::material_index;
+use material::{build_material_tree_layouts, register_material_tree, MaterialTreeSourceNode};
 mod material_attributes;
 mod node;
 use node::flatten_node_ref;
@@ -31,7 +31,7 @@ mod shape;
 use shape::geometry_index;
 
 mod lights;
-use lights::{append_area_light, area_light_record, flatten_light};
+use lights::{append_area_light, flatten_light};
 
 mod scene_settings;
 use scene_settings::{
@@ -80,24 +80,20 @@ pub fn flatten_node_with_material_override(
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
-    let attribute_refs = builder
-        .materials
-        .iter()
-        .flat_map(|material| material.attributes.iter().cloned())
-        .chain(
-            builder
-                .lights
-                .iter()
-                .flat_map(|light| light.attributes.iter().cloned()),
-        )
-        .chain(
-            builder
-                .infinite_lights
-                .iter()
-                .flat_map(|light| light.attributes.iter().cloned()),
-        )
-        .collect();
     let texture_library = compile_texture_library(&builder.texture_root_specs)?;
+    let material_tree_roots = builder
+        .instances
+        .iter()
+        .map(|instance| instance.material_tree_layout)
+        .collect::<Vec<_>>();
+    let (material_tree_layouts, material_tree_nodes, source_to_layout) =
+        build_material_tree_layouts(&builder.material_tree_source_nodes, &material_tree_roots)?;
+    for instance in &mut builder.instances {
+        instance.material_tree_layout = *source_to_layout
+            .get(instance.material_tree_layout as usize)
+            .filter(|&&layout| layout != INVALID_INDEX)
+            .ok_or_else(|| PbrtError::error("Flat instance material layout was not generated."))?;
+    }
     let scene = Scene {
         camera,
         viewport,
@@ -115,8 +111,8 @@ pub fn flatten_node_with_material_override(
         indices: builder.indices,
         geometries: builder.geometries,
         instances: builder.instances,
-        materials: builder.materials,
-        attribute_refs,
+        material_tree_layouts,
+        material_tree_nodes,
         scalar_attributes: builder.scalar_attributes,
         texture_library,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
@@ -249,13 +245,13 @@ struct FlatBuilder {
     geometries: Vec<Geometry>,
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
-    materials: Vec<Material>,
+    material_tree_source_nodes: Vec<MaterialTreeSourceNode>,
     scalar_attributes: Vec<f32>,
     texture_root_specs: Vec<TextureRootSpec>,
     texture_roots_by_key: HashMap<(usize, u32), u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
-    source_materials: Vec<Arc<NodeMaterial>>,
+    material_tree_source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     light_sampling_models: Vec<LightSamplingModel>,

@@ -57,6 +57,10 @@ const NOISEPERM: [u32; 2 * NOISEPERMSIZE as usize] = [
     222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180,
 ];
 
+pub fn noise_permutation(index: usize) -> u8 {
+    NOISEPERM[index & (NOISEPERMSIZE as usize - 1)] as u8
+}
+
 pub fn noise(x: Float, y: Float, z: Float) -> Float {
     // Compute noise cell coordinates and offsets
     // Match v4's fmod(x, 1 << 30) guard against integer overflow when

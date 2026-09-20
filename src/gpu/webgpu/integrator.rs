@@ -7,6 +7,7 @@ use wgpu::util::DeviceExt;
 
 use crate::displays::Display;
 use crate::gpu::flat;
+use crate::gpu::flat::texture::{ProceduralOperation, TextureInstruction};
 use crate::util::error::PbrtError;
 use crate::util::misc::ProgressReporter;
 
@@ -14,6 +15,7 @@ use super::abi::WORKGROUP_SIZE;
 use super::context::Context;
 use super::film::Film;
 use super::material::MaterialKind;
+use super::noise::NoiseRuntimeResources;
 use super::pipeline::{Pipeline, StagePipeline};
 use super::queue::Queues;
 use super::scene::Scene;
@@ -30,6 +32,8 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/handle_escaped.wgsl"),
     include_str!("shaders/shade_surface.wgsl"),
     include_str!("shaders/handle_emissive.wgsl"),
+    include_str!("shaders/evaluate_textures.wgsl"),
+    include_str!("shaders/evaluate_attributes.wgsl"),
     include_str!("shaders/evaluate_materials.wgsl"),
     include_str!("shaders/intersect_shadow.wgsl"),
     include_str!("shaders/sample_diffuse_bounce.wgsl"),
@@ -51,6 +55,7 @@ pub struct WavefrontPathIntegrator {
     light_table_buffer: wgpu::Buffer,
     queues: Queues,
     film: Film,
+    noise_resources: NoiseRuntimeResources,
     pipeline: Pipeline,
     bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]>,
     rendered: bool,
@@ -69,6 +74,8 @@ impl WavefrontPathIntegrator {
         let attributes_eval_stride = u64::from(flat::max_attributes_eval_work_items_per_surface(
             &flat_scene,
         )?);
+        let texture_eval_stride =
+            u64::from(flat::max_texture_eval_results_per_surface(&flat_scene)?).max(1);
         let canonical_bindings = canonical_wavefront_bindings();
         let mut required_limits = super::shader::required_limits_for_sources(
             &canonical_bindings,
@@ -79,6 +86,31 @@ impl WavefrontPathIntegrator {
         required_limits.bind_groups = required_limits.bind_groups.max(2);
         let (texture_image_count, texture_sampler_count) =
             super::scene::texture_binding_counts(&flat_scene.texture_library.image_views)?;
+        let texture_program_capacity = flat_scene
+            .texture_library
+            .programs
+            .iter()
+            .map(|program| program.instructions.len())
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let texture_program_capacity = u32::try_from(texture_program_capacity)
+            .map_err(|_| PbrtError::error("Texture program capacity exceeds u32."))?;
+        let texture_noise_enabled = flat_scene.texture_library.programs.iter().any(|program| {
+            program.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction,
+                    TextureInstruction::Procedural {
+                        operation: ProceduralOperation::Dots
+                            | ProceduralOperation::Fbm
+                            | ProceduralOperation::Wrinkled
+                            | ProceduralOperation::Windy
+                            | ProceduralOperation::Marble,
+                        ..
+                    }
+                )
+            })
+        });
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );
@@ -99,6 +131,8 @@ impl WavefrontPathIntegrator {
         }
         scene.material_table.attributes_eval_stride = u32::try_from(attributes_eval_stride)
             .map_err(|_| PbrtError::error("GPU attributes eval stride exceeds u32 range."))?;
+        scene.material_table.texture_eval_stride = u32::try_from(texture_eval_stride)
+            .map_err(|_| PbrtError::error("GPU texture eval stride exceeds u32 range."))?;
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 camera UBO"),
             contents: bytes_of(&scene.camera),
@@ -125,7 +159,13 @@ impl WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
-        let queues = Queues::new(device, pixel_count, attributes_eval_stride)?;
+        let queues = Queues::new(
+            device,
+            pixel_count,
+            attributes_eval_stride,
+            texture_eval_stride,
+        )?;
+        let noise_resources = NoiseRuntimeResources::new(device, queue);
         log::info!("GPU create: queues and film resources ready");
         let film = Film::new(
             device,
@@ -138,6 +178,8 @@ impl WavefrontPathIntegrator {
             device,
             scene.texture_images.len() as u32,
             scene.texture_samplers.len() as u32,
+            texture_program_capacity,
+            texture_noise_enabled,
         )?;
         log::info!("GPU create: compute pipelines ready");
         let texture_image_views: Vec<&wgpu::TextureView> =
@@ -168,11 +210,15 @@ impl WavefrontPathIntegrator {
                 ResourceId::AttributesEvalWorkItems => {
                     queues.attributes_eval_work_items.as_entire_binding()
                 }
+                ResourceId::TextureEvalResult => queues.texture_eval_results.as_entire_binding(),
                 ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
-                ResourceId::MaterialRecord => scene.material_buffer.as_entire_binding(),
+                ResourceId::MaterialTreeLayout => {
+                    scene.material_tree_layout_buffer.as_entire_binding()
+                }
+                ResourceId::MaterialTreeNode => scene.material_tree_node_buffer.as_entire_binding(),
                 ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
                 ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
                 ResourceId::SpectrumAttribute => {
@@ -188,6 +234,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::TextureSamplerArray => {
                     wgpu::BindingResource::SamplerArray(&texture_samplers)
                 }
+                ResourceId::NoiseTable => wgpu::BindingResource::TextureView(&noise_resources.view),
                 ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
                 ResourceId::LightSamplingModel => {
                     scene.light_sampling_model_buffer.as_entire_binding()
@@ -206,7 +253,8 @@ impl WavefrontPathIntegrator {
                                stage: &StagePipeline,
                                stage_source: &'static str|
          -> [wgpu::BindGroup; 2] {
-            let source = super::shader::compose_source(stage_source);
+            let source =
+                super::shader::compose_source_with_noise(stage_source, texture_noise_enabled);
             let used_bindings = super::shader::resource_bindings(&source);
             std::array::from_fn(|group| {
                 let entries = canonical_wavefront_bindings()
@@ -264,6 +312,16 @@ impl WavefrontPathIntegrator {
                 "handle_emissive",
                 &pipeline.handle_emissive,
                 include_str!("shaders/handle_emissive.wgsl"),
+            ),
+            (
+                "evaluate_textures",
+                &pipeline.evaluate_textures,
+                include_str!("shaders/evaluate_textures.wgsl"),
+            ),
+            (
+                "evaluate_attributes",
+                &pipeline.evaluate_attributes,
+                include_str!("shaders/evaluate_attributes.wgsl"),
             ),
             (
                 "evaluate_materials",
@@ -329,6 +387,7 @@ impl WavefrontPathIntegrator {
             light_table_buffer,
             queues,
             film,
+            noise_resources,
             pipeline,
             bind_groups,
             rendered: false,
@@ -443,6 +502,20 @@ impl WavefrontPathIntegrator {
                     &mut encoder,
                     &self.pipeline.handle_emissive.pipeline,
                     self.bind_groups("handle_emissive"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.evaluate_textures.pipeline,
+                    self.bind_groups("evaluate_textures"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.evaluate_attributes.pipeline,
+                    self.bind_groups("evaluate_attributes"),
                     workgroups_x,
                     workgroups_y,
                 );

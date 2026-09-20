@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use crate::textures::noise::noise;
+use crate::textures::noise::{noise, noise_permutation};
 
 const POINT_COUNT: u32 = 262144;
 
@@ -444,23 +444,9 @@ fn noise_pair_texture_upload() {
 }
 
 fn permutation_table() -> Vec<u32> {
-    let source = include_str!("shaders/wavefront.wgsl");
-    let marker = "const TEXTURE_NOISE_PERM: array<u32, 256> = array<u32, 256>(";
-    let body = source
-        .split_once(marker)
-        .expect("Noise table marker missing")
-        .1;
-    let body = body
-        .split_once(");")
-        .expect("Noise table terminator missing")
-        .0;
-    let values = body
-        .split(|character: char| !character.is_ascii_digit())
-        .filter(|value| !value.is_empty())
-        .map(|value| value.parse::<u32>().expect("invalid Noise table value"))
-        .collect::<Vec<_>>();
-    assert_eq!(values.len(), 256, "Noise table must contain 256 values");
-    values
+    (0..256)
+        .map(|index| u32::from(noise_permutation(index)))
+        .collect()
 }
 
 fn shader_source(storage: TableStorage, permutation: &[u32]) -> String {

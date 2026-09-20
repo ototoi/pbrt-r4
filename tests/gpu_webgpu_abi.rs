@@ -1,8 +1,9 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform, DenseSpectrum,
-    FilmUniform, Geometry, Instance, LightRecord, LightTableUniform, MaterialRecord,
-    MaterialTableUniform, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
-    ShadowRayWorkItem, SurfaceWorkItem, TriangleDistributionEntry, Vertex, ViewportUniform,
+    FilmUniform, Geometry, Instance, LightRecord, LightTableUniform, MaterialTableUniform,
+    MaterialTreeNode, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
+    ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry, Vertex,
+    ViewportUniform,
 };
 
 #[test]
@@ -23,12 +24,13 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 144);
-    assert_eq!(std::mem::size_of::<MaterialRecord>(), 16);
+    assert_eq!(std::mem::size_of::<MaterialTreeNode>(), 32);
     assert_eq!(std::mem::size_of::<AttributeRef>(), 8);
     assert_eq!(std::mem::size_of::<DenseSpectrum>(), 1888);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 128);
+    assert_eq!(std::mem::size_of::<TextureEvalResult>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(
         std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LightSamplingModel>(),
