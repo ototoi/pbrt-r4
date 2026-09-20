@@ -85,7 +85,7 @@ impl WavefrontPathIntegrator {
         // binding arrays, even when an individual stage does not sample one.
         required_limits.bind_groups = required_limits.bind_groups.max(2);
         let (mut texture_image_count, texture_sampler_count) =
-            super::scene::texture_binding_counts(&flat_scene.texture_library.image_views)?;
+            super::scene::texture_binding_counts(&flat_scene)?;
         texture_image_count = texture_image_count
             .checked_add(
                 u32::try_from(flat_scene.measured_bsdfs.atlas_pages.len())
