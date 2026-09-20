@@ -1557,14 +1557,12 @@ fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
     return RaySamples(
         vec4<f32>(
             sampler_get_1d(pixel_index, first_dimension),
-            sampler_get_1d(pixel_index, first_dimension + 1u),
-            sampler_get_1d(pixel_index, first_dimension + 2u),
+            sampler_get_2d(pixel_index, first_dimension + 1u),
             0.0,
         ),
         vec4<f32>(
             sampler_get_1d(pixel_index, first_dimension + 3u),
-            sampler_get_1d(pixel_index, first_dimension + 4u),
-            sampler_get_1d(pixel_index, first_dimension + 5u),
+            sampler_get_2d(pixel_index, first_dimension + 4u),
             sampler_get_1d(pixel_index, first_dimension + 6u),
         ),
     );

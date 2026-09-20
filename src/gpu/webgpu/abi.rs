@@ -48,24 +48,6 @@ pub struct ViewportUniform {
     pub padding: [u32; 2],
 }
 
-pub const SAMPLER_KIND_INDEPENDENT: u32 = 0;
-pub const SAMPLER_KIND_HALTON: u32 = 1;
-pub const HALTON_RANDOMIZATION_NONE: u32 = 0;
-pub const HALTON_RANDOMIZATION_PERMUTE_DIGITS: u32 = 1;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct SamplerUniform {
-    pub kind: u32,
-    pub randomization: u32,
-    pub table_width: u32,
-    pub dimension_count: u32,
-    pub base_scales: [u32; 2],
-    pub base_exponents: [u32; 2],
-    pub mult_inverse: [u32; 2],
-    pub padding: [u32; 2],
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialTableUniform {

@@ -2,8 +2,8 @@ use std::sync::{Arc, RwLock};
 
 use image::{ImageBuffer, Rgb};
 use pbrt_r4::gpu::flat::{
-    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind,
-    HaltonRandomization, SamplerKind,
+    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, SamplerKind,
+    SamplerRandomization,
 };
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
@@ -405,8 +405,8 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     assert_eq!(scene.render_settings.samples_per_pixel, 8);
     assert_eq!(scene.render_settings.sampler_kind, SamplerKind::Independent);
     assert_eq!(
-        scene.render_settings.halton_randomization,
-        HaltonRandomization::None
+        scene.render_settings.randomization,
+        SamplerRandomization::None
     );
     assert_eq!(scene.render_settings.max_depth, 3);
     assert_eq!(scene.render_settings.seed, 13);
@@ -437,8 +437,8 @@ fn flatten_node_preserves_halton_sampler_settings() {
 
     assert_eq!(scene.render_settings.sampler_kind, SamplerKind::Halton);
     assert_eq!(
-        scene.render_settings.halton_randomization,
-        HaltonRandomization::None
+        scene.render_settings.randomization,
+        SamplerRandomization::None
     );
     assert_eq!(scene.render_settings.samples_per_pixel, 16);
     assert_eq!(scene.render_settings.seed, 29);
@@ -459,9 +459,62 @@ fn flatten_node_uses_halton_defaults() {
 
     assert_eq!(scene.render_settings.samples_per_pixel, 16);
     assert_eq!(
-        scene.render_settings.halton_randomization,
-        HaltonRandomization::PermuteDigits
+        scene.render_settings.randomization,
+        SamplerRandomization::PermuteDigits
     );
+}
+
+#[test]
+fn flatten_node_preserves_remaining_sampler_settings() {
+    let cases = [
+        ("sobol", SamplerKind::Sobol, SamplerRandomization::FastOwen),
+        (
+            "paddedsobol",
+            SamplerKind::PaddedSobol,
+            SamplerRandomization::FastOwen,
+        ),
+        (
+            "zsobol",
+            SamplerKind::ZSobol,
+            SamplerRandomization::FastOwen,
+        ),
+        ("pmj02bn", SamplerKind::Pmj02Bn, SamplerRandomization::None),
+        (
+            "stratified",
+            SamplerKind::Stratified,
+            SamplerRandomization::None,
+        ),
+    ];
+    for (name, kind, randomization) in cases {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_component(Component::Sampler(SamplerComponent {
+            sampler: NodeSampler {
+                name: name.to_string(),
+                params: Default::default(),
+            },
+        }));
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        assert_eq!(scene.render_settings.sampler_kind, kind);
+        assert_eq!(scene.render_settings.randomization, randomization);
+        assert_eq!(scene.render_settings.samples_per_pixel, 16);
+    }
+}
+
+#[test]
+fn flatten_node_normalizes_zsobol_samples_to_power_of_two() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_int("integer pixelsamples", 13);
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "zsobol".to_string(),
+            params,
+        },
+    }));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.render_settings.samples_per_pixel, 8);
 }
 
 #[test]
@@ -470,7 +523,7 @@ fn flatten_node_rejects_unimplemented_gpu_sampler() {
     add_camera_and_film(&mut root, Default::default());
     root.add_component(Component::Sampler(SamplerComponent {
         sampler: NodeSampler {
-            name: "sobol".to_string(),
+            name: "random".to_string(),
             params: Default::default(),
         },
     }));
@@ -484,7 +537,7 @@ fn flatten_node_rejects_unimplemented_halton_randomization() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
-    params.add_string("string randomization", "owen");
+    params.add_string("string randomization", "fastowen");
     root.add_component(Component::Sampler(SamplerComponent {
         sampler: NodeSampler {
             name: "halton".to_string(),
@@ -493,7 +546,7 @@ fn flatten_node_rejects_unimplemented_halton_randomization() {
     }));
 
     let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(format!("{error:?}").contains("randomization 'owen' is not implemented"));
+    assert!(format!("{error:?}").contains("randomization 'fastowen' is not supported"));
 }
 
 #[test]
