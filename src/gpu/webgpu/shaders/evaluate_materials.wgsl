@@ -202,8 +202,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (material_kind == MATERIAL_KIND_MEASURED) {
         let id = measured_id(material_node);
         if (id == 0xffffffffu) { return; }
-        let local_wo = scattering_local(wo, shading_n);
-        let local_wi = scattering_local(wi, shading_n);
+        let local_wo = scattering_local_frame(wo, surface.tangent.xyz, shading_n);
+        let local_wi = scattering_local_frame(wi, surface.tangent.xyz, shading_n);
         f = measured_f(id, local_wo, local_wi, lambda);
         bsdf_pdf = measured_pdf(id, local_wo, local_wi);
     }

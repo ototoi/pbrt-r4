@@ -22,7 +22,10 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let normal = surface.normal.xyz;
-    let tangent = make_tangent(normal);
+    var tangent = make_tangent(normal);
+    if (material_kind == MATERIAL_KIND_MEASURED) {
+        tangent = surface.tangent.xyz;
+    }
     let bitangent = cross(normal, tangent);
     let wo = -ray.direction.xyz;
     if (material_kind == MATERIAL_KIND_MEASURED) {
@@ -31,16 +34,14 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let lambda = load_sample_lambda(pixel_index);
         let sampled = measured_sample_f(
             id,
-            scattering_local(wo, normal),
+            scattering_local_frame(wo, tangent, normal),
             vec2<f32>(samples.indirect.y, samples.indirect.z),
             lambda,
         );
         if (sampled.valid == 0u || sampled.pdf <= 0.0 || all(sampled.f == vec4<f32>(0.0))) {
             return;
         }
-        let direction = normalize(
-            tangent * sampled.wi.x + bitangent * sampled.wi.y + normal * sampled.wi.z
-        );
+        let direction = normalize(scattering_world_frame(sampled.wi, tangent, normal));
         var next_throughput = ray.throughput * sampled.f * abs(sampled.wi.z) / sampled.pdf;
         if (ray.depth >= 1u) {
             let rr_beta = max(max_spectrum(next_throughput), 0.0) / max(ray.inv_w_u, 1e-7);
