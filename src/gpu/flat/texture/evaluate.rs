@@ -145,7 +145,7 @@ fn evaluate_program_at(
                     .mipmaps
                     .get(view.mipmap as usize)
                     .ok_or_else(|| PbrtError::error("Image view has an invalid mipmap."))?;
-                sample_image(view, mipmap, mapping.as_ref(), context.uv)?
+                sample_image(view, mipmap, mapping.as_ref(), context)?
             }
             Instruction::Procedural {
                 operation,
@@ -251,8 +251,29 @@ fn mapped_uv(
             let p = transform_point(transform.matrix, context.position);
             Ok([p[0], p[1]])
         }
-        Some(_) => Err(PbrtError::error(
-            "Reference procedural evaluator does not support this 2D mapping.",
+        Some(TextureMapping::Spherical(transform)) => {
+            let p = transform_point(transform.matrix, context.position);
+            let length = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            let q = [p[0] / length, p[1] / length, p[2] / length];
+            let phi = q[1].atan2(q[0]);
+            Ok([
+                q[2].clamp(-1.0, 1.0).acos() / std::f32::consts::PI,
+                if phi < 0.0 {
+                    phi / std::f32::consts::TAU + 1.0
+                } else {
+                    phi / std::f32::consts::TAU
+                },
+            ])
+        }
+        Some(TextureMapping::Cylindrical(transform)) => {
+            let p = transform_point(transform.matrix, context.position);
+            Ok([
+                (std::f32::consts::PI + p[1].atan2(p[0])) / std::f32::consts::TAU,
+                p[2],
+            ])
+        }
+        Some(TextureMapping::PointTransform(_)) => Err(PbrtError::error(
+            "Reference texture evaluator cannot use a 3D mapping as a 2D mapping.",
         )),
     }
 }
@@ -269,22 +290,9 @@ fn sample_image(
     view: &ImageView,
     mipmap: &super::image::Mipmap,
     mapping: Option<&TextureMapping>,
-    uv: [f32; 2],
+    context: TextureEvaluationContext,
 ) -> Result<TextureValue, PbrtError> {
-    let uv = match mapping {
-        None => uv,
-        Some(TextureMapping::Uv(UvMapping {
-            uscale,
-            vscale,
-            udelta,
-            vdelta,
-        })) => [uv[0] * *uscale + *udelta, uv[1] * *vscale + *vdelta],
-        Some(_) => {
-            return Err(PbrtError::error(
-                "Reference texture evaluator only supports UV image mapping.",
-            ))
-        }
-    };
+    let uv = mapped_uv(mapping, context)?;
     let level = mipmap
         .levels
         .first()
