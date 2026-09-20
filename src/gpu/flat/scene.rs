@@ -1,8 +1,8 @@
 use super::texture::TextureLibrary;
 use super::{
     Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightKind,
-    LightSamplingModel, MaterialNode, MaterialRoot, Output, PrimitiveDistributionMap,
-    RenderSettings, TriangleDistributionEntry, Vertex, Viewport,
+    LightSamplingModel, MaterialNode, MaterialRoot, MeasuredBsdfResources, Output,
+    PrimitiveDistributionMap, RenderSettings, TriangleDistributionEntry, Vertex, Viewport,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +29,7 @@ pub struct Scene {
     /// Typed, backend-independent texture programs and shared image resources.
     pub texture_library: TextureLibrary,
     pub spectrum_attributes: Vec<DenseSpectrum>,
+    pub measured_bsdfs: MeasuredBsdfResources,
     pub primitive_distribution_map: PrimitiveDistributionMap,
 }
 

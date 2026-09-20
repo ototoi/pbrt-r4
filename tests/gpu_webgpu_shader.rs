@@ -52,6 +52,20 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
+fn measured_material_shader_uses_packed_texture_tables() {
+    let direct = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(direct.contains("fn measured_f("));
+    assert!(direct.contains("fn measured_pdf("));
+    assert!(direct.contains("textureLoad("));
+    assert!(direct.contains("var<storage, read> measured_bsdfs"));
+    assert!(direct.contains("var<storage, read> measured_tables"));
+
+    let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
+    assert!(bounce.contains("fn measured_sample_f("));
+    assert!(bounce.contains("material_kind != MATERIAL_KIND_MEASURED"));
+}
+
+#[test]
 fn attribute_shader_evaluates_procedural_texture_programs() {
     let source = compose_source(EVALUATE_TEXTURES_SHADER);
     assert!(source.contains("fn sample_texture_program(root: TextureRootRecord"));

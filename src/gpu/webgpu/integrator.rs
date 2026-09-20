@@ -84,8 +84,14 @@ impl WavefrontPathIntegrator {
         // Every deployed pipeline has a second group reserved for texture
         // binding arrays, even when an individual stage does not sample one.
         required_limits.bind_groups = required_limits.bind_groups.max(2);
-        let (texture_image_count, texture_sampler_count) =
+        let (mut texture_image_count, texture_sampler_count) =
             super::scene::texture_binding_counts(&flat_scene.texture_library.image_views)?;
+        texture_image_count = texture_image_count
+            .checked_add(
+                u32::try_from(flat_scene.measured_bsdfs.atlas_pages.len())
+                    .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?,
+            )
+            .ok_or_else(|| PbrtError::error("Texture image binding count overflowed."))?;
         let texture_program_capacity = flat_scene
             .texture_library
             .programs
@@ -222,6 +228,8 @@ impl WavefrontPathIntegrator {
                 ResourceId::SpectrumAttribute => {
                     scene.spectrum_attribute_buffer.as_entire_binding()
                 }
+                ResourceId::MeasuredBsdf => scene.measured_bsdf_buffer.as_entire_binding(),
+                ResourceId::MeasuredTable => scene.measured_table_buffer.as_entire_binding(),
                 ResourceId::TextureNode => scene.texture_node_buffer.as_entire_binding(),
                 ResourceId::TextureRoot => scene.texture_root_buffer.as_entire_binding(),
                 ResourceId::TextureChild => scene.texture_child_buffer.as_entire_binding(),

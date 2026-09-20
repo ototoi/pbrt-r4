@@ -1,9 +1,9 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform, DenseSpectrum,
     FilmUniform, Geometry, Instance, LightRecord, LightTableUniform, MaterialNode,
-    MaterialTableUniform, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
-    ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry, Vertex,
-    ViewportUniform,
+    MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord, PixelSampleState, QueueCounters,
+    QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
+    TriangleDistributionEntry, Vertex, ViewportUniform,
 };
 
 #[test]
@@ -26,6 +26,8 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Instance>(), 144);
     assert_eq!(std::mem::size_of::<MaterialNode>(), 32);
     assert_eq!(std::mem::size_of::<AttributeRef>(), 8);
+    assert_eq!(std::mem::size_of::<MeasuredBsdfRecord>(), 32);
+    assert_eq!(std::mem::size_of::<MeasuredTableRecord>(), 80);
     assert_eq!(std::mem::size_of::<DenseSpectrum>(), 1888);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 80);
@@ -57,6 +59,8 @@ fn webgpu_storage_array_strides_are_16_byte_aligned() {
         std::mem::size_of::<SurfaceWorkItem>(),
         std::mem::size_of::<PixelSampleState>(),
         std::mem::size_of::<DenseSpectrum>(),
+        std::mem::size_of::<MeasuredBsdfRecord>(),
+        std::mem::size_of::<MeasuredTableRecord>(),
         std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LightSamplingModel>(),
     ] {
         assert_eq!(size % 16, 0, "storage stride {size} is not 16-byte aligned");

@@ -492,6 +492,30 @@ impl<const N: usize> PiecewiseLinear2D<N> {
         (self.size.x as usize, self.size.y as usize)
     }
 
+    pub fn parameter_sizes(&self) -> &[usize; N] {
+        &self.param_size
+    }
+
+    pub fn parameter_strides(&self) -> &[usize; N] {
+        &self.param_strides
+    }
+
+    pub fn parameter_values(&self) -> [&[f32]; N] {
+        std::array::from_fn(|index| self.param_values[index].as_slice())
+    }
+
+    pub fn data(&self) -> &[f32] {
+        &self.data
+    }
+
+    pub fn marginal_cdf(&self) -> &[f32] {
+        &self.marginal_cdf
+    }
+
+    pub fn conditional_cdf(&self) -> &[f32] {
+        &self.conditional_cdf
+    }
+
     pub fn bytes_used(&self) -> usize {
         4 * (self.data.capacity() + self.marginal_cdf.capacity() + self.conditional_cdf.capacity())
             + self

@@ -18,13 +18,54 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let material_node = leaf_evaluated.material_node;
     let material_kind = leaf_evaluated.bxdf_kind;
     if (material_kind == MATERIAL_KIND_COATED_DIFFUSE) { return; }
-    if (material_kind != MATERIAL_KIND_DIFFUSE) {
+    if (material_kind != MATERIAL_KIND_DIFFUSE && material_kind != MATERIAL_KIND_MEASURED) {
         return;
     }
-    let reflectance = leaf_evaluated.values[0];
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
+    let wo = -ray.direction.xyz;
+    if (material_kind == MATERIAL_KIND_MEASURED) {
+        let id = measured_id(material_node);
+        if (id == 0xffffffffu) { return; }
+        let lambda = load_sample_lambda(pixel_index);
+        let sampled = measured_sample_f(
+            id,
+            scattering_local(wo, normal),
+            vec2<f32>(samples.indirect.y, samples.indirect.z),
+            lambda,
+        );
+        if (sampled.valid == 0u || sampled.pdf <= 0.0 || all(sampled.f == vec4<f32>(0.0))) {
+            return;
+        }
+        let direction = normalize(
+            tangent * sampled.wi.x + bitangent * sampled.wi.y + normal * sampled.wi.z
+        );
+        var next_throughput = ray.throughput * sampled.f * abs(sampled.wi.z) / sampled.pdf;
+        if (ray.depth >= 1u) {
+            let rr_beta = max(max_spectrum(next_throughput), 0.0) / max(ray.inv_w_u, 1e-7);
+            let q = max(0.0, 1.0 - rr_beta);
+            if (samples.indirect.w < q) { return; }
+            next_throughput /= max(1.0 - q, 1e-7);
+        }
+        let next_ray = RayWorkItem(
+            vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
+                surface.geometric_normal.xyz, direction), 1.0),
+            vec4<f32>(direction, 0.0), next_throughput,
+            surface.position, surface.position_error, surface.geometric_normal,
+            vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
+            ray.inv_w_u, ray.inv_w_u / sampled.pdf, sampled.pdf, 0u, 0u, 0u,
+        );
+        let next_index = atomicAdd(&queue_counters.next.count, 1u);
+        if (next_index >= pixel_count()) {
+            atomicStore(&queue_counters.next.overflow, 1u);
+            return;
+        }
+        store_ray_samples(pixel_index, generate_ray_samples(pixel_index, ray.depth + 1u));
+        store_next_ray(next_index, next_ray);
+        return;
+    }
+    let reflectance = leaf_evaluated.values[0];
     let u = vec2<f32>(samples.indirect.y, samples.indirect.z);
     let radius = sqrt(u.x);
     let phi = 2.0 * PI * u.y;
@@ -37,7 +78,6 @@ fn sample_diffuse_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // side of the shading frame that contains wo (`if (wo.z < 0) wi.z *= -1`),
     // and use AbsCosTheta for the pdf. This bounces outward even when the
     // mesh shading normals are globally inverted.
-    let wo = -ray.direction.xyz;
     if (dot(normal, wo) < 0.0) {
         local.z = -local.z;
     }
