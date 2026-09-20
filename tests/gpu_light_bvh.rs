@@ -43,6 +43,7 @@ fn empty_and_zero_power_lights_produce_empty_bvh() {
         kind: LightKind::Point,
         attributes: Vec::new(),
         sampling_model: 0,
+        image_index: u32::MAX,
     }];
     let bvh = build_light_bvh(&records, &zero).unwrap();
     assert!(bvh.nodes.is_empty());
@@ -57,6 +58,7 @@ fn bvh_has_dfs_layout_and_handle_mapping() {
             kind: LightKind::Point,
             attributes: Vec::new(),
             sampling_model: 0,
+            image_index: u32::MAX,
         };
         3
     ];
@@ -82,6 +84,7 @@ fn mismatched_light_and_bounds_are_rejected() {
         kind: LightKind::Point,
         attributes: Vec::new(),
         sampling_model: 0,
+        image_index: u32::MAX,
     }];
     assert!(build_light_bvh(&records, &bounds).is_err());
 }
@@ -114,6 +117,7 @@ fn reference_sampling_and_pmf_are_consistent() {
             kind: LightKind::Point,
             attributes: Vec::new(),
             sampling_model: 0,
+            image_index: u32::MAX,
         };
         3
     ];

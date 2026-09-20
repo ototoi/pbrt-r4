@@ -18,6 +18,7 @@ pub struct Light {
     pub kind: LightKind,
     pub attributes: Vec<AttributeRef>,
     pub sampling_model: u32,
+    pub image_index: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
