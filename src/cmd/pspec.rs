@@ -230,7 +230,7 @@ fn generated_samples(name: &str, npoints: usize, set: usize) -> Result<Vec<Point
         "stratified" => {
             let side = (npoints as f64).sqrt() as u32;
             let effective = side * side;
-            let mut stratified = StratifiedSampler::new(side, side, true, seed, 2);
+            let mut stratified = StratifiedSampler::new(side, side, true, seed);
             stratified.start_pixel(&Point2i::zero());
             let mut sampler = GeneratedSampler::Stratified(stratified);
             for i in 0..effective as usize {

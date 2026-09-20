@@ -4,6 +4,7 @@ const WAVEFRONT_SHADER: &str = include_str!("shaders/wavefront.wgsl");
 const SPECTRUM_SHADER: &str = include_str!("shaders/spectrum.wgsl");
 const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
 const MEASURED_SHADER: &str = include_str!("shaders/measured.wgsl");
+const SAMPLER_SHADER: &str = include_str!("shaders/sampler.wgsl");
 
 use std::collections::{HashMap, HashSet};
 
@@ -34,7 +35,9 @@ pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> Str
             "// TEXTURE_NOISE_BRANCH_END",
         )
     };
-    let common_input = format!("{TYPES_SHADER}\n{wavefront}\n{SPECTRUM_SHADER}\n{MEASURED_SHADER}");
+    let common_input = format!(
+        "{TYPES_SHADER}\n{wavefront}\n{SPECTRUM_SHADER}\n{MEASURED_SHADER}\n{SAMPLER_SHADER}"
+    );
     let common_source = prune_common_source(&common_input, &roots);
     let references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     let resource_source = select_resources(RESOURCES_SHADER, &references);

@@ -83,7 +83,7 @@ fn hash_base_digit_seed(base: i32, digit_index: i32, seed: u32) -> u64 {
 /// Kensler 2013 randomised permutation. Identical bit-mixing constants
 /// to the existing copies in `samplers/halton.rs`,
 /// `samplers/pmj02bn.rs` and `samplers/paddedsobol.rs`.
-fn permutation_element(mut i: u32, l: u32, p: u32) -> u32 {
+pub fn permutation_element(mut i: u32, l: u32, p: u32) -> u32 {
     let mut w = l - 1;
     w |= w >> 1;
     w |= w >> 2;
@@ -116,10 +116,18 @@ fn permutation_element(mut i: u32, l: u32, p: u32) -> u32 {
     (i + p) % l
 }
 
+/// pbrt-v4 variadic `Hash(uint32_t, uint32_t)` specialized for two
+/// native-representation values.
+pub fn hash_u32_pair(first: u32, second: u32) -> u64 {
+    let mut buf = [0u8; 8];
+    buf[0..4].copy_from_slice(&first.to_ne_bytes());
+    buf[4..8].copy_from_slice(&second.to_ne_bytes());
+    murmur_hash_64a(&buf, 0)
+}
+
 /// MurmurHash64A (Austin Appleby), as used by pbrt-v4
-/// `pbrt::MurmurHash64A` (util/hash.h:19-66). Inlined here so the
-/// `DigitPermutation` ctor doesn't depend on any sampler-local copy.
-fn murmur_hash_64a(key: &[u8], seed: u64) -> u64 {
+/// `pbrt::MurmurHash64A` (util/hash.h:19-66).
+pub fn murmur_hash_64a(key: &[u8], seed: u64) -> u64 {
     let m: u64 = 0xc6a4a7935bd1e995;
     let r: u32 = 47;
 

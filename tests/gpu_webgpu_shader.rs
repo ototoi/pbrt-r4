@@ -32,6 +32,7 @@ const COMMON_SHADER: &str = concat!(
     include_str!("../src/gpu/webgpu/shaders/wavefront.wgsl")
 );
 const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
+const SAMPLER_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sampler.wgsl");
 const SPECTRUM_TEST_SHADER: &str = r#"
     @compute @workgroup_size(1) fn test_stage() {
         let value = evaluate_spectrum(0u, vec4<f32>(360.0, 400.5, 700.0, 830.0));
@@ -101,9 +102,21 @@ fn required_limits_are_derived_from_each_composed_stage() {
     let bindings = canonical_wavefront_bindings();
     let limits = required_limits_for_sources(&bindings, &[GENERATE_PRIMARY_RAYS_SHADER]).unwrap();
 
-    assert_eq!(limits.storage_buffers_per_shader_stage, 8);
-    assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
+    assert_eq!(limits.storage_buffers_per_shader_stage, 9);
+    assert_eq!(limits.uniform_buffers_per_shader_stage, 3);
     assert_eq!(limits.bind_groups, 1);
+}
+
+#[test]
+fn primary_and_path_samples_use_the_sampler_module() {
+    let primary = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    assert!(primary.contains("fn sampler_get_1d("));
+    assert!(primary.contains("fn sampler_get_pixel_2d("));
+    assert!(primary.contains("var sampler_table: texture_2d<u32>;"));
+    assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
+    assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
+    assert!(COMMON_SHADER.contains("let first_dimension = 6u + 7u * depth;"));
+    assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
 }
 
 #[test]
@@ -255,7 +268,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
     assert!(emissive.contains("light_pmf_for_handle("));
     assert!(evaluate.contains("select_area_triangle(light_payload, samples.direct.y)"));
-    assert!(evaluate.contains("vec2<f32>(samples.direct.z, samples.direct.w)"));
+    assert!(evaluate.contains("vec2<f32>(triangle_selection.u_remapped, samples.direct.z)"));
     assert!(evaluate.contains("sample_uniform_triangle_for_context("));
     assert!(!evaluate.contains("sample_spherical_triangle("));
     assert!(!evaluate.contains("MIN_SPHERICAL_SAMPLE_AREA"));

@@ -211,24 +211,16 @@ fn sample_dimension_with_strategy(
     randomize: RandomizeStrategy,
     seed: u32,
 ) -> Float {
+    // pbrt-v4 `SobolSampler::SampleDimension()` uses
+    // `Hash(dimension, seed)` for every randomized strategy.
+    let hash = hash_u32_pair(dimension, seed) as u32;
     match randomize {
         RandomizeStrategy::None => sobol_sample(index, dimension, 0),
-        RandomizeStrategy::PermuteDigits => {
-            let hash = mix_bits(((dimension as u64) << 32) | seed as u64) as u32;
-            sobol_sample(index, dimension, hash as u64)
+        RandomizeStrategy::PermuteDigits => sobol_sample(index, dimension, hash as u64),
+        RandomizeStrategy::FastOwen => {
+            randomized_sobol_sample(index, dimension, fast_owen_scramble, hash)
         }
-        RandomizeStrategy::FastOwen => randomized_sobol_sample(
-            index,
-            dimension,
-            fast_owen_scramble,
-            mix_bits(((dimension as u64) << 32) | seed as u64) as u32,
-        ),
-        RandomizeStrategy::Owen => randomized_sobol_sample(
-            index,
-            dimension,
-            owen_scramble,
-            mix_bits(((dimension as u64) << 32) | seed as u64) as u32,
-        ),
+        RandomizeStrategy::Owen => randomized_sobol_sample(index, dimension, owen_scramble, hash),
     }
 }
 

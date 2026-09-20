@@ -5,6 +5,7 @@ use pbrt_r4::gpu::webgpu::abi::{
     QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
     TriangleDistributionEntry, Vertex, ViewportUniform,
 };
+use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
 
 #[test]
 fn webgpu_matrices_are_uploaded_as_column_major() {
@@ -46,6 +47,8 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<PixelSampleState>(), 80);
     assert_eq!(std::mem::size_of::<FilmUniform>(), 32);
     assert_eq!(std::mem::size_of::<TriangleDistributionEntry>(), 16);
+    assert_eq!(SAMPLER_UNIFORM_SIZE, 64);
+    assert_eq!(SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET, 32);
 }
 
 #[test]

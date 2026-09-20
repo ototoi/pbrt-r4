@@ -324,39 +324,6 @@ pub fn owen_scrambled_radical_inverse(base_index: u32, a: u64, hash: u32) -> Flo
     Float::min(inv_base_n * reversed_digits as Float, ONE_MINUS_EPSILON)
 }
 
-fn permutation_element(mut i: u32, l: u32, p: u32) -> u32 {
-    let mut w = l - 1;
-    w |= w >> 1;
-    w |= w >> 2;
-    w |= w >> 4;
-    w |= w >> 8;
-    w |= w >> 16;
-    loop {
-        i ^= p;
-        i = i.wrapping_mul(0xe170893d);
-        i ^= p >> 16;
-        i ^= (i & w) >> 4;
-        i ^= p >> 8;
-        i = i.wrapping_mul(0x0929eb3f);
-        i ^= p >> 23;
-        i ^= (i & w) >> 1;
-        i = i.wrapping_mul(1 | (p >> 27));
-        i = i.wrapping_mul(0x6935fa69);
-        i ^= (i & w) >> 11;
-        i = i.wrapping_mul(0x74dcb303);
-        i ^= (i & w) >> 2;
-        i = i.wrapping_mul(0x9e501cc3);
-        i ^= (i & w) >> 2;
-        i = i.wrapping_mul(0xc860a3df);
-        i &= w;
-        i ^= i >> 5;
-        if i < l {
-            break;
-        }
-    }
-    (i + p) % l
-}
-
 fn mix_bits(mut v: u64) -> u64 {
     v ^= v >> 31;
     v = v.wrapping_mul(0x7fb5d329728ea185);

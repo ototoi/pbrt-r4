@@ -164,7 +164,7 @@ fn stratified_sampler_uses_option_seed_when_seed_parameter_is_missing() {
 
     let params = ParameterDictionary::new();
     let mut sampler = StratifiedSampler::create(&params).unwrap();
-    let mut expected = StratifiedSampler::new(4, 4, true, 23, 4);
+    let mut expected = StratifiedSampler::new(4, 4, true, 23);
     let pixel = Point2i::new(2, 3);
     sampler.start_pixel(&pixel);
     expected.start_pixel(&pixel);
