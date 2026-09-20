@@ -1409,6 +1409,26 @@ fn load_light_spectrum(index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32>
     if (attr.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr.index, lambda);
 }
+fn load_light_image_index(index: u32) -> u32 {
+    let record = light_records[index];
+    if (record.sampling_model >= arrayLength(&light_sampling_models)) {
+        set_render_error();
+        return 0xffffffffu;
+    }
+    return light_sampling_models[record.sampling_model].flags;
+}
+fn load_light_image_spectrum(index: u32, direction: vec3<f32>, lambda: vec4<f32>) -> vec4<f32> {
+    let image_index = load_light_image_index(index);
+    if (image_index == 0xffffffffu) {
+        return load_light_spectrum(index, 0u, lambda);
+    }
+    let d = normalize(direction);
+    var u = atan2(d.y, d.x) / (2.0 * PI);
+    if (u < 0.0) { u = u + 1.0; }
+    let uv = vec2<f32>(u, acos(clamp(d.z, -1.0, 1.0)) / PI);
+    let rgb = textureSampleLevel(texture_images[image_index], texture_samplers[0], uv, 0.0).rgb;
+    return rgb_to_spectrum4(rgb, lambda, 0u);
+}
 fn load_light_scale(index: u32) -> f32 {
     let attr = load_light_attribute(index, 1u);
     if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
