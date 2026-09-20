@@ -1,17 +1,29 @@
 use bytemuck::cast_slice;
+use std::collections::HashMap;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
+use crate::gpu::flat::texture::{
+    ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
+    MipmapLevel, MipmapLevelData, ProceduralOperation, TextureInstruction, TextureLibrary,
+    TextureRoot, TextureValueType,
+};
+use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
     material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialRecord, MaterialTableUniform, TextureNodeRecord,
-    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
+    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, TextureNodeRecord,
+    TextureRootRecord, TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX,
+    LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
     LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
+    TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT,
+    TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS, TEXTURE_OPERATION_FBM,
+    TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX,
+    TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -21,29 +33,375 @@ use super::material::MaterialTable;
 use super::output::Output;
 use super::render_settings::RenderSettings;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SamplerKey {
+    swrap: ImageWrapMode,
+    twrap: ImageWrapMode,
+    filter: ImageFilterMode,
+}
+
+struct TextureBindingPlan {
+    image_views: Vec<usize>,
+    samplers: Vec<SamplerKey>,
+    view_bindings: Vec<(u32, u32)>,
+}
+
+fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtError> {
+    let mut image_views = Vec::new();
+    let mut images_by_mipmap = HashMap::new();
+    let mut samplers = Vec::new();
+    let mut samplers_by_key = HashMap::new();
+    let mut view_bindings = Vec::with_capacity(views.len());
+    for (view_index, view) in views.iter().enumerate() {
+        let image = if let Some(&index) = images_by_mipmap.get(&view.mipmap) {
+            index
+        } else {
+            let index = u32::try_from(image_views.len())
+                .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?;
+            image_views.push(view_index);
+            images_by_mipmap.insert(view.mipmap, index);
+            index
+        };
+        let sampler_key = SamplerKey {
+            swrap: view.swrap,
+            twrap: view.twrap,
+            filter: view.filter,
+        };
+        let sampler = if let Some(&index) = samplers_by_key.get(&sampler_key) {
+            index
+        } else {
+            let index = u32::try_from(samplers.len())
+                .map_err(|_| PbrtError::error("Texture sampler table exceeds u32."))?;
+            samplers.push(sampler_key);
+            samplers_by_key.insert(sampler_key, index);
+            index
+        };
+        view_bindings.push((image, sampler));
+    }
+    Ok(TextureBindingPlan {
+        image_views,
+        samplers,
+        view_bindings,
+    })
+}
+
+pub fn texture_binding_counts(views: &[ImageView]) -> Result<(u32, u32), PbrtError> {
+    let plan = texture_binding_plan(views)?;
+    Ok((
+        u32::try_from(plan.image_views.len())
+            .map_err(|_| PbrtError::error("Texture image table exceeds u32."))?,
+        u32::try_from(plan.samplers.len())
+            .map_err(|_| PbrtError::error("Texture sampler table exceeds u32."))?,
+    ))
+}
+
 fn stable_texture_hash(value: &str) -> u32 {
     value.bytes().fold(2166136261u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(16777619)
     })
 }
 
+fn lower_texture_library(
+    library: &TextureLibrary,
+    binding_plan: &TextureBindingPlan,
+) -> Result<(Vec<TextureNodeRecord>, Vec<u32>, Vec<TextureRootRecord>), PbrtError> {
+    let mut nodes = Vec::new();
+    let mut children = Vec::new();
+    let mut program_offsets = Vec::with_capacity(library.programs.len());
+    for program in &library.programs {
+        if program.instructions.len() > 256 {
+            return Err(PbrtError::error(
+                "Texture program exceeds the WebGPU post-order VM slot limit.",
+            ));
+        }
+        let offset = u32::try_from(nodes.len())
+            .map_err(|_| PbrtError::error("Texture node table exceeds u32."))?;
+        program_offsets.push(offset);
+        for (instruction_index, instruction) in program.instructions.iter().enumerate() {
+            let operands = texture_instruction_operands(instruction);
+            let first_child = u32::try_from(children.len())
+                .map_err(|_| PbrtError::error("Texture child table exceeds u32."))?;
+            children.extend(operands.iter().copied());
+            let lowered = lower_texture_instruction(
+                instruction,
+                program.slot_types[instruction_index],
+                &library.image_views,
+                binding_plan,
+            )?;
+            nodes.push(TextureNodeRecord {
+                kind: lowered.kind,
+                first_child,
+                child_count: u32::try_from(operands.len())
+                    .map_err(|_| PbrtError::error("Texture child count exceeds u32."))?,
+                implementation_hash: lowered.implementation_hash,
+                swrap_mode: lowered.image_view.2,
+                twrap_mode: lowered.image_view.3,
+                color_space: lowered.color_space,
+                texture_index: lowered.image_view.0,
+                operation: lowered.operation,
+                mapping_kind: lowered.mapping.0,
+                sampler: lowered.image_view.1,
+                _operation_padding: 0,
+                constant_value: lowered.constant_value,
+                mapping: lowered.mapping.1,
+            });
+        }
+    }
+    let roots =
+        library
+            .roots
+            .iter()
+            .map(|root| match root {
+                TextureRoot::Float { program } => Ok(TextureRootRecord {
+                    texture_node: program_offsets.get(*program as usize).copied().ok_or_else(
+                        || PbrtError::error("Texture root references invalid program."),
+                    )?,
+                    instruction_count: u32::try_from(
+                        library.programs[*program as usize].instructions.len(),
+                    )
+                    .map_err(|_| PbrtError::error("Texture program length exceeds u32."))?,
+                    result: library.programs[*program as usize].result,
+                    spectrum_type: 0,
+                }),
+                TextureRoot::Spectrum {
+                    program,
+                    spectrum_type,
+                } => Ok(TextureRootRecord {
+                    texture_node: program_offsets.get(*program as usize).copied().ok_or_else(
+                        || PbrtError::error("Texture root references invalid program."),
+                    )?,
+                    instruction_count: u32::try_from(
+                        library.programs[*program as usize].instructions.len(),
+                    )
+                    .map_err(|_| PbrtError::error("Texture program length exceeds u32."))?,
+                    result: library.programs[*program as usize].result,
+                    spectrum_type: match spectrum_type {
+                        crate::util::spectrum::SpectrumType::Albedo => 0,
+                        crate::util::spectrum::SpectrumType::Unbounded => 1,
+                        crate::util::spectrum::SpectrumType::Illuminant => 2,
+                    },
+                }),
+            })
+            .collect::<Result<Vec<_>, PbrtError>>()?;
+    Ok((nodes, children, roots))
+}
+
+fn texture_instruction_operands(instruction: &TextureInstruction) -> Vec<u32> {
+    match instruction {
+        TextureInstruction::Scale { input, .. } => vec![*input],
+        TextureInstruction::Mix {
+            first,
+            second,
+            amount,
+            ..
+        } => [*first, *second]
+            .into_iter()
+            .chain(amount.iter().copied())
+            .collect(),
+        TextureInstruction::Procedural { operands, .. } => operands.clone(),
+        TextureInstruction::ConstantFloat { .. }
+        | TextureInstruction::ConstantRgb { .. }
+        | TextureInstruction::SampleImage { .. } => Vec::new(),
+    }
+}
+
+struct LoweredTextureInstruction {
+    kind: u32,
+    implementation_hash: u32,
+    operation: u32,
+    constant_value: [f32; 4],
+    color_space: u32,
+    image_view: (u32, u32, u32, u32),
+    mapping: (u32, [[f32; 4]; 4]),
+}
+
+fn lower_texture_instruction(
+    instruction: &TextureInstruction,
+    slot_type: TextureValueType,
+    image_views: &[ImageView],
+    binding_plan: &TextureBindingPlan,
+) -> Result<LoweredTextureInstruction, PbrtError> {
+    let identity = row_major_to_columns([
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]);
+    let value_type = |value_type: &TextureValueType| match value_type {
+        TextureValueType::Float => (0, 0),
+        TextureValueType::LinearRgb(color_space) => (1, color_space_id(*color_space)),
+    };
+    let empty_image = (INVALID_INDEX, INVALID_INDEX, 0, 0);
+    match instruction {
+        TextureInstruction::ConstantFloat { value, .. } => Ok(LoweredTextureInstruction {
+            kind: 0,
+            implementation_hash: stable_texture_hash("constant"),
+            operation: TEXTURE_OPERATION_CONSTANT,
+            constant_value: [*value; 4],
+            color_space: 0,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::ConstantRgb {
+            value, color_space, ..
+        } => Ok(LoweredTextureInstruction {
+            kind: 1,
+            implementation_hash: stable_texture_hash("constant"),
+            operation: TEXTURE_OPERATION_CONSTANT,
+            constant_value: [
+                value[0],
+                value[1],
+                value[2],
+                (value[0] + value[1] + value[2]) / 3.0,
+            ],
+            color_space: color_space_id(*color_space),
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::SampleImage {
+            image_view,
+            mapping,
+            value_type: texture_type,
+            ..
+        } => {
+            let view = image_views
+                .get(*image_view as usize)
+                .ok_or_else(|| PbrtError::error("Texture instruction has invalid image view."))?;
+            let (image, sampler) = *binding_plan
+                .view_bindings
+                .get(*image_view as usize)
+                .ok_or_else(|| PbrtError::error("Texture instruction has invalid binding."))?;
+            let wrap_mode = |mode| match mode {
+                ImageWrapMode::Repeat => 0,
+                ImageWrapMode::Clamp => 1,
+                ImageWrapMode::Black => 2,
+            };
+            Ok(LoweredTextureInstruction {
+                kind: value_type(texture_type).0,
+                implementation_hash: stable_texture_hash("imagemap"),
+                operation: TEXTURE_OPERATION_IMAGE,
+                constant_value: [view.scale, if view.invert { 1.0 } else { 0.0 }, 0.0, 0.0],
+                color_space: value_type(texture_type).1,
+                image_view: (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap)),
+                mapping: lower_mapping(mapping.as_ref(), identity),
+            })
+        }
+        TextureInstruction::Scale { factor, .. } => Ok(LoweredTextureInstruction {
+            kind: value_type(&slot_type).0,
+            implementation_hash: stable_texture_hash("scale"),
+            operation: TEXTURE_OPERATION_SCALE,
+            constant_value: [*factor, 0.0, 0.0, 0.0],
+            color_space: 0,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::Mix {
+            constant_amount, ..
+        } => Ok(LoweredTextureInstruction {
+            kind: value_type(&slot_type).0,
+            implementation_hash: stable_texture_hash("mix"),
+            operation: TEXTURE_OPERATION_MIX,
+            constant_value: [*constant_amount, 0.0, 0.0, 0.0],
+            color_space: 0,
+            image_view: empty_image,
+            mapping: (0, identity),
+        }),
+        TextureInstruction::Procedural {
+            operation,
+            parameters,
+            mapping,
+            value_type: texture_type,
+            ..
+        } => Ok(LoweredTextureInstruction {
+            kind: value_type(texture_type).0,
+            implementation_hash: stable_texture_hash(operation.name()),
+            operation: procedural_operation(*operation)?,
+            constant_value: *parameters,
+            color_space: value_type(texture_type).1,
+            image_view: empty_image,
+            mapping: lower_mapping(mapping.as_ref(), identity),
+        }),
+    }
+}
+
+fn color_space_id(color_space: ColorSpace) -> u32 {
+    match color_space {
+        ColorSpace::Unknown | ColorSpace::Srgb => 0,
+        ColorSpace::Aces2065 => 1,
+        ColorSpace::DciP3 => 2,
+        ColorSpace::Rec2020 => 3,
+    }
+}
+
+fn lower_mapping(
+    mapping: Option<&TextureMapping>,
+    identity: [[f32; 4]; 4],
+) -> (u32, [[f32; 4]; 4]) {
+    match mapping {
+        Some(TextureMapping::Uv(uv)) => {
+            let mut matrix = [
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ];
+            matrix[0] = uv.uscale;
+            matrix[5] = uv.vscale;
+            matrix[3] = uv.udelta;
+            matrix[7] = uv.vdelta;
+            (0, row_major_to_columns(matrix))
+        }
+        Some(TextureMapping::Planar(transform)) => (1, row_major_to_columns(transform.matrix)),
+        Some(TextureMapping::Spherical(transform)) => (2, row_major_to_columns(transform.matrix)),
+        Some(TextureMapping::Cylindrical(transform)) => (3, row_major_to_columns(transform.matrix)),
+        Some(TextureMapping::PointTransform(transform)) => {
+            (4, row_major_to_columns(transform.matrix))
+        }
+        None => (0, identity),
+    }
+}
+
+fn procedural_operation(operation: ProceduralOperation) -> Result<u32, PbrtError> {
+    match operation {
+        ProceduralOperation::Checkerboard => Ok(TEXTURE_OPERATION_CHECKERBOARD),
+        ProceduralOperation::DirectionMix => Ok(TEXTURE_OPERATION_DIRECTION_MIX),
+        ProceduralOperation::Bilerp => Ok(TEXTURE_OPERATION_BILERP),
+        ProceduralOperation::Dots => Ok(TEXTURE_OPERATION_DOTS),
+        ProceduralOperation::Fbm => Ok(TEXTURE_OPERATION_FBM),
+        ProceduralOperation::Wrinkled => Ok(TEXTURE_OPERATION_WRINKLED),
+        ProceduralOperation::Windy => Ok(TEXTURE_OPERATION_WINDY),
+        ProceduralOperation::Marble => Ok(TEXTURE_OPERATION_MARBLE),
+    }
+}
+
 fn mip_level_rgba(
-    level: &crate::gpu::node::MipmapLevel,
+    level: &MipmapLevel,
+    value_type: ImageValueType,
+    encoding: MipmapEncoding,
 ) -> Result<(u32, u32, Vec<f32>), PbrtError> {
     let width = level.resolution[0];
     let height = level.resolution[1];
-    if width == 0 || height == 0 || !(1..=4).contains(&level.channels) {
+    if width == 0 || height == 0 {
         return Err(PbrtError::error(
             "Texture mipmap has an invalid resolution.",
         ));
     }
+    if encoding != MipmapEncoding::Linear {
+        return Err(PbrtError::error(
+            "WebGPU texture upload requires linear Flat IR mipmaps.",
+        ));
+    }
+    let expected_channels = match value_type {
+        ImageValueType::Float => 1,
+        ImageValueType::LinearRgb => 3,
+    };
+    if level.channels != expected_channels {
+        return Err(PbrtError::error(&format!(
+            "WebGPU texture upload expected {expected_channels} channels, got {}.",
+            level.channels
+        )));
+    }
     let values = match &level.data {
-        crate::gpu::node::MipmapLevelData::F32(values) => values.clone(),
-        crate::gpu::node::MipmapLevelData::F16(values) => values
+        MipmapLevelData::F32(values) => values.clone(),
+        MipmapLevelData::F16(values) => values
             .iter()
             .map(|value| half::f16::from_bits(*value).to_f32())
             .collect(),
-        crate::gpu::node::MipmapLevelData::U8(values) => values
+        MipmapLevelData::U8(values) => values
             .iter()
             .map(|value| f32::from(*value) / 255.0)
             .collect(),
@@ -62,30 +420,14 @@ fn mip_level_rgba(
     let mut rgba = vec![0.0f32; pixel_count * 4];
     for pixel in 0..pixel_count {
         let source = pixel * channels;
-        if channels <= 2 {
-            // PBRT treats a two-channel image as luminance + alpha.  The
-            // alpha channel must not become the green component of the RGB
-            // sample; replicate luminance across RGB and preserve alpha only
-            // in the upload's fourth channel.
-            let luminance = values[source];
-            rgba[pixel * 4] = luminance;
-            rgba[pixel * 4 + 1] = luminance;
-            rgba[pixel * 4 + 2] = luminance;
-            rgba[pixel * 4 + 3] = if channels == 2 {
-                values[source + 1]
-            } else {
-                1.0
-            };
-        } else {
-            for channel in 0..3 {
-                rgba[pixel * 4 + channel] = values[source + channel];
-            }
-            rgba[pixel * 4 + 3] = if channels == 4 {
-                values[source + 3]
-            } else {
-                1.0
-            };
+        let rgb = match value_type {
+            ImageValueType::Float => [values[source]; 3],
+            ImageValueType::LinearRgb => [values[source], values[source + 1], values[source + 2]],
+        };
+        for (channel, value) in rgb.into_iter().enumerate() {
+            rgba[pixel * 4 + channel] = value;
         }
+        rgba[pixel * 4 + 3] = 1.0;
     }
     Ok((width, height, rgba))
 }
@@ -93,19 +435,23 @@ fn mip_level_rgba(
 fn upload_texture_images(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    nodes: &[flat::TextureNode],
+    mipmaps: &[Arc<crate::gpu::flat::texture::Mipmap>],
+    views: &[ImageView],
+    image_views: &[usize],
 ) -> Result<Vec<wgpu::Texture>, PbrtError> {
     let mut images = Vec::new();
-    for node in nodes {
-        let Some(mipmap) = &node.mipmap else {
-            images.push(create_empty_texture(device));
-            continue;
-        };
-        let Some(base_level) = mipmap.levels.first() else {
-            images.push(create_empty_texture(device));
-            continue;
-        };
-        let (width, height, _) = mip_level_rgba(base_level)?;
+    for &view_index in image_views {
+        let view = views
+            .get(view_index)
+            .ok_or_else(|| PbrtError::error("Texture binding references an invalid image view."))?;
+        let mipmap = mipmaps
+            .get(view.mipmap as usize)
+            .ok_or_else(|| PbrtError::error("Texture view references an invalid mipmap."))?;
+        let base_level = mipmap
+            .levels
+            .first()
+            .ok_or_else(|| PbrtError::error("WebGPU texture upload received an empty mipmap."))?;
+        let (width, height, _) = mip_level_rgba(base_level, view.value_type, mipmap.encoding)?;
         let mip_level_count = u32::try_from(mipmap.levels.len())
             .map_err(|_| PbrtError::error("Texture mipmap has too many levels."))?;
         for (level_index, level) in mipmap.levels.iter().enumerate() {
@@ -133,7 +479,8 @@ fn upload_texture_images(
             view_formats: &[],
         });
         for (mip_level, level) in mipmap.levels.iter().enumerate() {
-            let (level_width, level_height, rgba) = mip_level_rgba(level)?;
+            let (level_width, level_height, rgba) =
+                mip_level_rgba(level, view.value_type, mipmap.encoding)?;
             let mip_level = u32::try_from(mip_level)
                 .map_err(|_| PbrtError::error("Texture mipmap level index overflowed."))?;
             queue.write_texture(
@@ -161,23 +508,6 @@ fn upload_texture_images(
     Ok(images)
 }
 
-fn create_empty_texture(device: &wgpu::Device) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("pbrt-r4 empty texture"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    })
-}
-
 pub struct Scene {
     pub camera: CameraUniform,
     pub viewport: ViewportUniform,
@@ -191,11 +521,12 @@ pub struct Scene {
     pub index_buffer: wgpu::Buffer,
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub material_buffer: wgpu::Buffer,
+    pub material_root_buffer: wgpu::Buffer,
+    pub material_node_buffer: wgpu::Buffer,
     pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
     pub spectrum_attribute_buffer: wgpu::Buffer,
-    pub texture_attribute_buffer: wgpu::Buffer,
+    pub texture_root_buffer: wgpu::Buffer,
     pub texture_node_buffer: wgpu::Buffer,
     pub texture_child_buffer: wgpu::Buffer,
     pub rgb_spectrum_table_buffer: wgpu::Buffer,
@@ -212,8 +543,7 @@ pub struct Scene {
     pub light_leaf_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
-    pub materials: Vec<MaterialRecord>,
-    pub attribute_refs: Vec<AttributeRef>,
+    pub material_nodes: Vec<MaterialNode>,
     pub light_sampling_models: Vec<LightSamplingModel>,
     pub light_records: Vec<LightRecord>,
     pub light_sampler_kind: LightSamplerKind,
@@ -243,7 +573,7 @@ impl Scene {
                         "Flat instance {index} references an invalid geometry."
                     )));
                 }
-                if instance.material as usize >= flat.materials.len() {
+                if instance.material_root as usize >= flat.material_roots.len() {
                     return Err(PbrtError::error(&format!(
                         "Flat instance {index} references an invalid material."
                     )));
@@ -252,7 +582,7 @@ impl Scene {
                 let label = format!("Flat instance {index}");
                 Ok(Instance {
                     geometry: instance.geometry,
-                    material: instance.material,
+                    material_root: instance.material_root,
                     area_light: instance.area_light,
                     orientation_flags: u32::from(instance.reverse_orientation)
                         | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
@@ -262,7 +592,8 @@ impl Scene {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
-        let materials = material_table.records;
+        let material_nodes = material_table.nodes;
+        flat.texture_library.validate()?;
         let mut attribute_refs = material_table.attributes;
         let all_lights = flat
             .lights
@@ -286,14 +617,15 @@ impl Scene {
                         flat::AttributeKind::Scalar => 0,
                         flat::AttributeKind::Spectrum => 1,
                         flat::AttributeKind::Texture => 2,
-                        flat::AttributeKind::TextureUnbounded => 4,
-                        flat::AttributeKind::Material => 3,
                     },
                     index: attribute.index,
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
-        let texture_attributes = flat.texture_attributes.clone();
+        let texture_views = &flat.texture_library.image_views;
+        let texture_binding_plan = texture_binding_plan(texture_views)?;
+        let (texture_nodes, texture_children, texture_roots) =
+            lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
@@ -351,7 +683,10 @@ impl Scene {
         let film = film_uniform(&flat.film);
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
         let film_scale = flat.film.scale;
-        if vertices.is_empty() || indices.is_empty() || instances.is_empty() || materials.is_empty()
+        if vertices.is_empty()
+            || indices.is_empty()
+            || instances.is_empty()
+            || material_nodes.is_empty()
         {
             return Err(PbrtError::error(
                 "WebGPU primary-ray rendering requires non-empty geometry, instances, and materials.",
@@ -378,10 +713,23 @@ impl Scene {
             contents: buffer_contents(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 material record SBO"),
-            contents: buffer_contents(&materials),
+        let material_roots = flat
+            .material_roots
+            .iter()
+            .map(|layout| MaterialRoot {
+                node_offset: layout.node_offset,
+                node_count: layout.node_count,
+            })
+            .collect::<Vec<_>>();
+        let material_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material tree layouts SBO"),
+            contents: buffer_contents(&material_roots),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let material_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material tree nodes SBO"),
+            contents: buffer_contents(&material_nodes),
+            usage: wgpu::BufferUsages::STORAGE,
         });
         let attribute_ref_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material attribute refs SBO"),
@@ -394,31 +742,11 @@ impl Scene {
                 contents: buffer_contents(&scalar_attributes),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let texture_attribute_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 texture attributes SBO"),
-                contents: buffer_contents(&texture_attributes),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-        let texture_nodes = flat
-            .texture_nodes
-            .iter()
-            .map(|node| TextureNodeRecord {
-                kind: node.kind,
-                first_child: node.first_child,
-                child_count: node.child_count,
-                implementation_hash: stable_texture_hash(&node.implementation),
-                swrap_mode: node.swrap_mode,
-                twrap_mode: node.twrap_mode,
-                color_space: node.color_space,
-                _padding: 0,
-                operation: node.operation,
-                mapping_kind: node.mapping_kind,
-                _operation_padding: [0; 2],
-                constant_value: node.constant_value,
-                mapping: row_major_to_columns(node.mapping),
-            })
-            .collect::<Vec<_>>();
+        let texture_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 texture roots SBO"),
+            contents: buffer_contents(&texture_roots),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let texture_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture nodes SBO"),
             contents: buffer_contents(&texture_nodes),
@@ -426,7 +754,7 @@ impl Scene {
         });
         let texture_child_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 texture child indices SBO"),
-            contents: buffer_contents(&flat.texture_child_indices),
+            contents: buffer_contents(&texture_children),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let mut rgb_spectrum_table = Vec::new();
@@ -444,7 +772,13 @@ impl Scene {
                 contents: &rgb_spectrum_table,
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let mut texture_images = upload_texture_images(device, queue, &flat.texture_nodes)?;
+        let mut texture_images = upload_texture_images(
+            device,
+            queue,
+            &flat.texture_library.mipmaps,
+            texture_views,
+            &texture_binding_plan.image_views,
+        )?;
         if texture_images.is_empty() {
             texture_images.push(device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("pbrt-r4 empty texture"),
@@ -467,29 +801,31 @@ impl Scene {
             .iter()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()))
             .collect();
-        let texture_samplers = if flat.texture_nodes.is_empty() {
+        let texture_samplers = if texture_binding_plan.samplers.is_empty() {
             vec![device.create_sampler(&wgpu::SamplerDescriptor::default())]
         } else {
-            flat.texture_nodes
+            texture_binding_plan
+                .samplers
                 .iter()
-                .map(|node| {
+                .map(|sampler| {
                     let address_mode = |mode| match mode {
-                        1 => wgpu::AddressMode::ClampToEdge,
-                        2 => wgpu::AddressMode::ClampToEdge,
-                        _ => wgpu::AddressMode::Repeat,
+                        ImageWrapMode::Clamp | ImageWrapMode::Black => {
+                            wgpu::AddressMode::ClampToEdge
+                        }
+                        ImageWrapMode::Repeat => wgpu::AddressMode::Repeat,
                     };
-                    let filter = if node.filter_mode == 0 {
+                    let filter = if sampler.filter == ImageFilterMode::Nearest {
                         wgpu::FilterMode::Nearest
                     } else {
                         wgpu::FilterMode::Linear
                     };
                     device.create_sampler(&wgpu::SamplerDescriptor {
                         label: Some("pbrt-r4 texture sampler"),
-                        address_mode_u: address_mode(node.swrap_mode),
-                        address_mode_v: address_mode(node.twrap_mode),
+                        address_mode_u: address_mode(sampler.swrap),
+                        address_mode_v: address_mode(sampler.twrap),
                         mag_filter: filter,
                         min_filter: filter,
-                        mipmap_filter: if node.filter_mode >= 2 {
+                        mipmap_filter: if sampler.filter == ImageFilterMode::Trilinear {
                             wgpu::MipmapFilterMode::Linear
                         } else {
                             wgpu::MipmapFilterMode::Nearest
@@ -553,7 +889,7 @@ impl Scene {
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
-        let mut material_table = material_table_uniform(materials.len())?;
+        let mut material_table = material_table_uniform(material_nodes.len())?;
         let mut light_table =
             light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
@@ -625,11 +961,12 @@ impl Scene {
             index_buffer,
             geometry_buffer,
             instance_buffer,
-            material_buffer,
+            material_root_buffer,
+            material_node_buffer,
             attribute_ref_buffer,
             scalar_attribute_buffer,
             spectrum_attribute_buffer,
-            texture_attribute_buffer,
+            texture_root_buffer,
             texture_node_buffer,
             texture_child_buffer,
             rgb_spectrum_table_buffer,
@@ -646,8 +983,7 @@ impl Scene {
             light_leaf_buffer,
             geometries,
             instances,
-            materials,
-            attribute_refs: attribute_refs,
+            material_nodes,
             light_sampling_models,
             light_records,
             light_sampler_kind,
@@ -658,13 +994,13 @@ impl Scene {
 
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
         self.material_table.debug_material_kind = kind.tag();
-        for material in &mut self.materials {
+        for material in &mut self.material_nodes {
             material.kind = kind.tag();
         }
         queue.write_buffer(
-            &self.material_buffer,
+            &self.material_node_buffer,
             0,
-            bytemuck::cast_slice(&self.materials),
+            bytemuck::cast_slice(&self.material_nodes),
         );
     }
 }
@@ -885,17 +1221,73 @@ fn convert_geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::mip_level_rgba;
-    use crate::gpu::node::{MipmapLevel, MipmapLevelData};
+    use super::{mip_level_rgba, texture_binding_plan};
+    use crate::gpu::flat::texture::{
+        ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
+        MipmapLevelData,
+    };
 
     #[test]
-    fn two_channel_mipmap_upload_replicates_luminance_and_preserves_alpha() {
+    fn upload_rejects_unprojected_spectrum_mipmap() {
         let level = MipmapLevel {
             resolution: [1, 1],
             channels: 2,
             data: MipmapLevelData::F32(vec![0.2, 0.75]),
         };
-        let (_, _, rgba) = mip_level_rgba(&level).expect("valid mip level");
-        assert_eq!(rgba, vec![0.2, 0.2, 0.2, 0.75]);
+        let error =
+            mip_level_rgba(&level, ImageValueType::LinearRgb, MipmapEncoding::Linear).unwrap_err();
+        assert!(error.to_string().contains("expected 3 channels"));
+    }
+
+    #[test]
+    fn spectrum_upload_preserves_rgb_and_alpha() {
+        let rgb = MipmapLevel {
+            resolution: [1, 1],
+            channels: 3,
+            data: MipmapLevelData::F32(vec![0.0, 0.3, 0.6]),
+        };
+        let (_, _, rgba) =
+            mip_level_rgba(&rgb, ImageValueType::LinearRgb, MipmapEncoding::Linear).unwrap();
+        assert_eq!(rgba, vec![0.0, 0.3, 0.6, 1.0]);
+    }
+
+    #[test]
+    fn upload_rejects_non_linear_flat_mipmap() {
+        let rgba_level = MipmapLevel {
+            resolution: [1, 1],
+            channels: 3,
+            data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3]),
+        };
+        let error = mip_level_rgba(
+            &rgba_level,
+            ImageValueType::LinearRgb,
+            MipmapEncoding::SrgbEncoded,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("requires linear"));
+    }
+
+    #[test]
+    fn texture_binding_plan_shares_images_and_samplers_independently() {
+        let make_view = |mipmap, filter| ImageView {
+            mipmap,
+            value_type: ImageValueType::LinearRgb,
+            swrap: ImageWrapMode::Repeat,
+            twrap: ImageWrapMode::Clamp,
+            filter,
+            scale: 1.0,
+            invert: false,
+        };
+        let views = vec![
+            make_view(0, ImageFilterMode::Bilinear),
+            make_view(0, ImageFilterMode::Trilinear),
+            make_view(1, ImageFilterMode::Bilinear),
+        ];
+
+        let plan = texture_binding_plan(&views).unwrap();
+
+        assert_eq!(plan.image_views.len(), 2);
+        assert_eq!(plan.samplers.len(), 2);
+        assert_eq!(plan.view_bindings, vec![(0, 0), (0, 1), (1, 0)]);
     }
 }

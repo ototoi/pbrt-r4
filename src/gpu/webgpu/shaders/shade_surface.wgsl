@@ -46,12 +46,13 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
         normal = -normal;
     }
-    let material_kind = load_material_kind(instance.material);
+    let material_root = material_roots[instance.material_root];
+    let material_kind = load_material_kind(material_root.node_offset);
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
     surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);
     surfaces[pixel_index].uv = uv;
-    surfaces[pixel_index].material = instance.material;
+    surfaces[pixel_index].material_root = instance.material_root;
     surfaces[pixel_index].flags = 0u;
     let material_queue_index = append_material_eval(ray_index);
     surfaces[pixel_index].attributes_eval_work_item =

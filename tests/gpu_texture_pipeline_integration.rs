@@ -12,5 +12,5 @@ fn texture_material_pipeline_compiles() {
         bind_groups: 2,
     };
     let context = Context::new(required, 1, 1).unwrap();
-    Pipeline::new(&context.device, 1, 1).unwrap();
+    Pipeline::new(&context.device, 1, 1, 1, false).unwrap();
 }

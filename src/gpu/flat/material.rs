@@ -1,57 +1,59 @@
 use super::{AttributeKind, AttributeRef, Scene};
 use crate::util::error::PbrtError;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaterialRoot {
+    pub node_offset: u32,
+    pub node_count: u32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct Material {
+pub struct MaterialNode {
     pub kind: String,
     pub source_kind: String,
     pub attributes: Vec<AttributeRef>,
+    pub parent: u32,
+    pub parent_slot: u32,
+    pub child0: u32,
+    pub child1: u32,
 }
 
 pub fn max_attributes_eval_work_items_per_surface(scene: &Scene) -> Result<u32, PbrtError> {
-    fn occurrence_count(
-        material_index: u32,
-        scene: &Scene,
-        counts: &mut [Option<u32>],
-        visiting: &mut [bool],
-    ) -> Result<u32, PbrtError> {
-        let index = usize::try_from(material_index)
-            .map_err(|_| PbrtError::error("Flat material index does not fit usize."))?;
-        let material = scene
-            .materials
-            .get(index)
-            .ok_or_else(|| PbrtError::error("Flat material reference is outside the table."))?;
-        if let Some(count) = counts[index] {
-            return Ok(count);
-        }
-        if visiting[index] {
-            return Err(PbrtError::error("Flat material graph contains a cycle."));
-        }
-        visiting[index] = true;
-        let mut count = 1u32;
-        for child in material
-            .attributes
-            .iter()
-            .filter(|attribute| attribute.kind == AttributeKind::Material)
-        {
-            count = count
-                .checked_add(occurrence_count(child.index, scene, counts, visiting)?)
-                .ok_or_else(|| PbrtError::error("Flat material work item count overflowed."))?;
-        }
-        visiting[index] = false;
-        counts[index] = Some(count);
-        Ok(count)
-    }
-
-    let mut counts = vec![None; scene.materials.len()];
-    let mut visiting = vec![false; scene.materials.len()];
     scene.instances.iter().try_fold(0, |maximum, instance| {
-        Ok(maximum.max(occurrence_count(
-            instance.material,
-            scene,
-            &mut counts,
-            &mut visiting,
-        )?))
+        let layout = scene
+            .material_roots
+            .get(instance.material_root as usize)
+            .ok_or_else(|| PbrtError::error("Instance material tree layout is missing."))?;
+        Ok(maximum.max(layout.node_count))
+    })
+}
+
+pub fn max_texture_eval_results_per_surface(scene: &Scene) -> Result<u32, PbrtError> {
+    scene.instances.iter().try_fold(0, |maximum, instance| {
+        let layout = scene
+            .material_roots
+            .get(instance.material_root as usize)
+            .ok_or_else(|| PbrtError::error("Instance material tree layout is missing."))?;
+        let start = layout.node_offset as usize;
+        let end = start
+            .checked_add(layout.node_count as usize)
+            .ok_or_else(|| PbrtError::error("Material tree layout range overflowed."))?;
+        let count = scene
+            .material_nodes
+            .get(start..end)
+            .ok_or_else(|| PbrtError::error("Material tree layout is outside the node table."))?
+            .iter()
+            .map(|node| {
+                node.attributes
+                    .iter()
+                    .filter(|a| a.kind == AttributeKind::Texture)
+                    .count() as u32
+            })
+            .try_fold(0u32, |sum, count| {
+                sum.checked_add(count)
+                    .ok_or_else(|| PbrtError::error("Flat texture result count overflowed."))
+            })?;
+        Ok(maximum.max(count))
     })
 }
 

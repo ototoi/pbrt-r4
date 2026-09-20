@@ -15,7 +15,6 @@ use crate::gpu::node::{
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
-use crate::util::imageio::{read_raw_image_with_encoding, ColorEncoding};
 use crate::util::spectrum::Spectrum;
 
 use super::path_resolver::make_absolute_path;
@@ -519,93 +518,10 @@ fn texture_node(
         )));
     }
     let mut node = TextureNode::new(name);
-    let mipmap = if implementation_name == "imagemap" {
-        let filename = params.get_one_string("filename", "");
-        if filename.is_empty() {
-            None
-        } else {
-            let default_encoding = if filename.to_ascii_lowercase().ends_with(".png") {
-                "sRGB"
-            } else {
-                "linear"
-            };
-            let encoding_name = params.get_one_string("encoding", default_encoding);
-            let encoding = ColorEncoding::parse(&encoding_name)?;
-            let (raw, color_space) = if filename.to_ascii_lowercase().ends_with(".exr") {
-                let path = std::path::Path::new(&filename);
-                let (raw, _, metadata) =
-                    crate::util::imageio::read_image_exr::read_raw_image_exr_with_channels_and_metadata(path)?;
-                let color_space = metadata
-                    .color_space
-                    .map(|space| match space.name {
-                        "ACES2065-1" => crate::gpu::node::ColorSpaceId::Aces2065,
-                        "DCI-P3" => crate::gpu::node::ColorSpaceId::DciP3,
-                        "Rec2020" => crate::gpu::node::ColorSpaceId::Rec2020,
-                        _ => crate::gpu::node::ColorSpaceId::Srgb,
-                    })
-                    .unwrap_or(crate::gpu::node::ColorSpaceId::Srgb);
-                (raw, color_space)
-            } else {
-                (
-                    read_raw_image_with_encoding(&filename, encoding)?,
-                    crate::gpu::node::ColorSpaceId::Srgb,
-                )
-            };
-            let channels = raw.channels;
-            let mut resolution = [raw.resolution.x as u32, raw.resolution.y as u32];
-            let mut data = raw.data_f32();
-            let mut levels = Vec::new();
-            loop {
-                levels.push(crate::gpu::node::MipmapLevel {
-                    resolution,
-                    channels: channels as u32,
-                    data: crate::gpu::node::MipmapLevelData::F32(data.clone()),
-                });
-                if resolution == [1, 1] {
-                    break;
-                }
-                let next_resolution = [(resolution[0] / 2).max(1), (resolution[1] / 2).max(1)];
-                let mut next =
-                    vec![0.0; next_resolution[0] as usize * next_resolution[1] as usize * channels];
-                for y in 0..next_resolution[1] {
-                    for x in 0..next_resolution[0] {
-                        let mut count = 0.0f32;
-                        for oy in 0..2 {
-                            for ox in 0..2 {
-                                let sx = (2 * x + ox).min(resolution[0] - 1);
-                                let sy = (2 * y + oy).min(resolution[1] - 1);
-                                let source = (sy * resolution[0] + sx) as usize * channels;
-                                let target = (y * next_resolution[0] + x) as usize * channels;
-                                for channel in 0..channels {
-                                    next[target + channel] += data[source + channel];
-                                }
-                                count += 1.0;
-                            }
-                        }
-                        let target = (y * next_resolution[0] + x) as usize * channels;
-                        for channel in 0..channels {
-                            next[target + channel] /= count;
-                        }
-                    }
-                }
-                resolution = next_resolution;
-                data = next;
-            }
-            Some(Arc::new(crate::gpu::node::Mipmap {
-                levels,
-                // The samples themselves are already linear; retain the image
-                // primaries until the material spectrum boundary.
-                color_space: Some(color_space),
-            }))
-        }
-    } else {
-        None
-    };
     node.components.push(TextureComponent::Texture(Texture {
         name: implementation_name.to_string(),
         kind,
         params: params.clone(),
-        mipmap,
     }));
     if implementation_name == "checkerboard3d"
         || (implementation_name == "checkerboard" && params.get_one_int("dimension", 2) == 3)
@@ -907,7 +823,6 @@ fn constant_texture_child(
         name: "constant".to_string(),
         kind,
         params: constant_params,
-        mipmap: None,
     }));
     Arc::new(node)
 }
