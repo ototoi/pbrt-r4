@@ -33,6 +33,7 @@ use super::material::MaterialKind;
 use super::material::MaterialTable;
 use super::output::Output;
 use super::render_settings::RenderSettings;
+use super::sampler::SamplerResources;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct SamplerKey {
@@ -597,6 +598,7 @@ pub struct Scene {
     pub film_scale: f32,
     pub material_table: MaterialTableUniform,
     pub light_table: LightTableUniform,
+    pub sampler: SamplerResources,
     pub output: Output,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -853,6 +855,12 @@ impl Scene {
             .collect::<Vec<_>>();
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
+        let sampler = SamplerResources::new(
+            device,
+            queue,
+            &flat.render_settings,
+            flat.viewport.resolution,
+        )?;
         let film = film_uniform(&flat.film);
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
         let film_scale = flat.film.scale;
@@ -1152,6 +1160,7 @@ impl Scene {
             film_scale,
             material_table,
             light_table,
+            sampler,
             output: Output::from_flat(flat.output),
             vertex_buffer,
             index_buffer,

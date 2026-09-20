@@ -5,6 +5,7 @@ use crate::samplers::*;
 
 use crate::util::base::*;
 use crate::util::error::*;
+use crate::util::lowdiscrepancy::murmur_hash_64a;
 use crate::util::sampling::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,83 +140,4 @@ fn hash_pixel_seed(pixel: &Point2i, seed: u32) -> u64 {
     buf[4..8].copy_from_slice(&pixel.y.to_ne_bytes());
     buf[8..12].copy_from_slice(&seed.to_ne_bytes());
     murmur_hash_64a(&buf, 0)
-}
-
-fn murmur_hash_64a(key: &[u8], seed: u64) -> u64 {
-    let m = 0xc6a4a7935bd1e995u64;
-    let r = 47u32;
-
-    let len = key.len() as u64;
-    let mut h = seed ^ len.wrapping_mul(m);
-
-    let nblocks = key.len() / 8;
-    for i in 0..nblocks {
-        let start = i * 8;
-        let mut k = u64::from_ne_bytes(key[start..start + 8].try_into().unwrap());
-        k = k.wrapping_mul(m);
-        k ^= k >> r;
-        k = k.wrapping_mul(m);
-
-        h ^= k;
-        h = h.wrapping_mul(m);
-    }
-
-    let tail = &key[nblocks * 8..];
-    match tail.len() {
-        7 => {
-            h ^= (tail[6] as u64) << 48;
-            h ^= (tail[5] as u64) << 40;
-            h ^= (tail[4] as u64) << 32;
-            h ^= (tail[3] as u64) << 24;
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        6 => {
-            h ^= (tail[5] as u64) << 40;
-            h ^= (tail[4] as u64) << 32;
-            h ^= (tail[3] as u64) << 24;
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        5 => {
-            h ^= (tail[4] as u64) << 32;
-            h ^= (tail[3] as u64) << 24;
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        4 => {
-            h ^= (tail[3] as u64) << 24;
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        3 => {
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        2 => {
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        1 => {
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        _ => {}
-    }
-
-    h ^= h >> r;
-    h = h.wrapping_mul(m);
-    h ^= h >> r;
-    h
 }

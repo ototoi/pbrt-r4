@@ -130,7 +130,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let triangle_sample = sample_uniform_triangle_for_context(
             triangle,
             light_sample_origin,
-            vec2<f32>(samples.direct.z, samples.direct.w),
+            vec2<f32>(triangle_selection.u_remapped, samples.direct.z),
             triangle_selection.area,
         );
         if (triangle_sample.w <= 0.0) {
