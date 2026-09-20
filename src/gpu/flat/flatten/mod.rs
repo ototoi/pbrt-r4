@@ -129,6 +129,7 @@ pub fn flatten_node_with_material_override(
         scalar_attributes: builder.scalar_attributes,
         texture_library,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
+        measured_bsdfs: builder.measured_bsdf_library.finish()?,
         primitive_distribution_map: PrimitiveDistributionMap {
             offsets: vec![0],
             entries: Vec::new(),
@@ -275,4 +276,5 @@ struct FlatBuilder {
     light_bound_inputs: Vec<LightBoundInput>,
     infinite_light_mipmaps: Vec<Arc<super::texture::Mipmap>>,
     infinite_light_image_decoder: super::texture::ImageDecoder,
+    measured_bsdf_library: super::MeasuredBsdfLibrary,
 }

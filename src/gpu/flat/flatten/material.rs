@@ -149,6 +149,7 @@ pub fn register_material_source(
             | "mix"
             | "coateddiffuse"
             | "coatedconductor"
+            | "measured"
     );
     let texture_fallback = if supported && has_texture_attribute(source_material) {
         match UnsupportedTexturePolicy::from_environment()? {
@@ -184,10 +185,37 @@ pub fn register_material_source(
             vec![push_spectrum_attribute(builder, "reflectance", &yellow)?]
         })
     } else {
-        (
-            requested_kind,
-            build_material_attributes(source_material, requested_kind, builder)?,
-        )
+        if requested_kind == "measured" {
+            let filename = source_material.params.get_one_string("filename", "");
+            if filename.is_empty() {
+                return Err(PbrtError::error(&format!(
+                    "Material \"{}\" requires a measured BSDF filename.",
+                    source_material.name
+                )));
+            }
+            let index = builder
+                .measured_bsdf_library
+                .intern(std::path::Path::new(&filename))
+                .map_err(|error| {
+                    PbrtError::error(&format!(
+                        "Unable to build GPU measured material \"{}\": {error}",
+                        source_material.name
+                    ))
+                })?;
+            (
+                requested_kind,
+                vec![AttributeRef {
+                    kind: AttributeKind::Measured,
+                    index,
+                    name: "filename".to_string(),
+                }],
+            )
+        } else {
+            (
+                requested_kind,
+                build_material_attributes(source_material, requested_kind, builder)?,
+            )
+        }
     };
     for (name, texture_node) in &source_material.texture_attributes {
         // Displacement is consumed during CPU shape realization and is not a

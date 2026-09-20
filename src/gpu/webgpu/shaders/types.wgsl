@@ -11,6 +11,7 @@ const MATERIAL_KIND_CONDUCTOR: u32 = 6u;
 const MATERIAL_KIND_MIX: u32 = 7u;
 const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
+const MATERIAL_KIND_MEASURED: u32 = 10u;
 struct AttributesEvalWorkItem {
     material_node: u32,
     child_work_item0: u32,
@@ -37,6 +38,50 @@ struct MaterialNode {
     child0: u32,
     child1: u32,
     _padding: u32,
+};
+
+struct MeasuredBsdfRecord {
+    ndf: u32,
+    sigma: u32,
+    vndf: u32,
+    luminance: u32,
+    spectra: u32,
+    isotropic: u32,
+    _padding0: u32,
+    _padding1: u32,
+};
+
+struct MeasuredTableRecord {
+    size: vec2<u32>,
+    parameter_count: u32,
+    _padding0: u32,
+    parameter_sizes: vec3<u32>,
+    _padding1: u32,
+    parameter_strides: vec3<u32>,
+    _padding2: u32,
+    parameter_value_offsets: vec3<u32>,
+    _padding3: u32,
+    data_offset: u32,
+    marginal_cdf_offset: u32,
+    conditional_cdf_offset: u32,
+    _padding4: u32,
+};
+
+struct MeasuredPlSample {
+    p: vec2<f32>,
+    pdf: f32,
+};
+
+struct MeasuredLookup {
+    offset: u32,
+    weights: array<f32, 6>,
+};
+
+struct MeasuredBxdfSample {
+    f: vec4<f32>,
+    wi: vec3<f32>,
+    pdf: f32,
+    valid: u32,
 };
 
 struct TextureEvalResult {
@@ -113,8 +158,10 @@ struct FilmUniform {
 struct MaterialTableUniform {
     material_offset_words: u32, material_node_count: u32,
     debug_material_kind: u32,
-    attributes_eval_stride: u32, texture_eval_stride: u32, _reserved2: u32, _reserved3: u32,
-    _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
+    attributes_eval_stride: u32, texture_eval_stride: u32,
+    measured_texture_base: u32, measured_texture_width: u32,
+    measured_texture_height: u32, measured_texture_count: u32,
+    _reserved6: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
 };
@@ -221,6 +268,7 @@ struct SurfaceWorkItem {
     position_error: vec4<f32>,
     normal: vec4<f32>,
     geometric_normal: vec4<f32>,
+    tangent: vec4<f32>,
     uv: vec2<f32>,
     _uv_padding: vec2<f32>,
     material_root: u32,
