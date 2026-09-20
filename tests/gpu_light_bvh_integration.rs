@@ -3,6 +3,8 @@ use std::process::Command;
 use pbrt_r4::util::imageio::read_image::read_image;
 use pbrt_r4::util::spectrum::RGBSpectrum;
 
+use image::{ImageBuffer, Rgb};
+
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn area_light_scene_renders_through_gpu_light_bvh() {
@@ -77,6 +79,58 @@ fn spot_and_distant_lights_render_with_separate_sampling_paths() {
     let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
     assert_eq!(resolution.x, 32);
     assert_eq!(resolution.y, 32);
+    assert!(pixels.iter().all(RGBSpectrum::is_valid));
+    assert!(pixels.iter().any(|pixel| !pixel.is_black()));
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn image_infinite_light_renders_through_gpu_environment_lookup() {
+    let directory = tempfile::tempdir().unwrap();
+    let image = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(
+        2,
+        2,
+        vec![255, 32, 16, 16, 255, 32, 32, 16, 255, 255, 255, 255],
+    )
+    .unwrap()
+    .save(&image)
+    .unwrap();
+    let scene = directory.path().join("image-infinite.pbrt");
+    std::fs::write(
+        &scene,
+        format!(
+            r#"LookAt 0 0 3  0 0 0  0 1 0
+Camera "perspective" "float fov" [45]
+Film "rgb" "integer xresolution" [16] "integer yresolution" [16]
+Sampler "independent" "integer pixelsamples" [4]
+Integrator "path" "integer maxdepth" [1]
+WorldBegin
+LightSource "infinite" "string filename" ["{}"] "string encoding" ["linear"]
+Material "diffuse" "rgb reflectance" [0.5 0.5 0.5]
+Shape "trianglemesh"
+    "point3 P" [-2 -2 0  2 -2 0  0 2 0]
+    "integer indices" [0 1 2]
+"#,
+            image.display()
+        ),
+    )
+    .unwrap();
+    let output = directory.path().join("image-infinite.exr");
+    let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
+        .args([
+            "--use-gpu",
+            "--outfile",
+            output.to_str().unwrap(),
+            scene.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "GPU ImageInfinite render failed");
+
+    let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+    assert_eq!(resolution.x, 16);
+    assert_eq!(resolution.y, 16);
     assert!(pixels.iter().all(RGBSpectrum::is_valid));
     assert!(pixels.iter().any(|pixel| !pixel.is_black()));
 }
