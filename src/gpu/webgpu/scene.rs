@@ -1080,11 +1080,12 @@ impl Scene {
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
         let mut material_table = material_table_uniform(material_nodes.len())?;
-        material_table.reserved[0] = measured_texture_binding_base;
-        material_table.reserved[1] = flat::MEASURED_ATLAS_WIDTH;
-        material_table.reserved[2] = flat::MEASURED_ATLAS_HEIGHT;
-        material_table.reserved[3] = u32::try_from(flat.measured_bsdfs.atlas_pages.len())
-            .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?;
+        material_table.measured_texture_base = measured_texture_binding_base;
+        material_table.measured_texture_width = flat::MEASURED_ATLAS_WIDTH;
+        material_table.measured_texture_height = flat::MEASURED_ATLAS_HEIGHT;
+        material_table.measured_texture_count =
+            u32::try_from(flat.measured_bsdfs.atlas_pages.len())
+                .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?;
         let mut light_table =
             light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;

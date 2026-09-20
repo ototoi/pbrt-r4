@@ -158,8 +158,10 @@ struct FilmUniform {
 struct MaterialTableUniform {
     material_offset_words: u32, material_node_count: u32,
     debug_material_kind: u32,
-    attributes_eval_stride: u32, texture_eval_stride: u32, _reserved2: u32, _reserved3: u32,
-    _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
+    attributes_eval_stride: u32, texture_eval_stride: u32,
+    measured_texture_base: u32, measured_texture_width: u32,
+    measured_texture_height: u32, measured_texture_count: u32,
+    _reserved6: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
 };
@@ -266,6 +268,7 @@ struct SurfaceWorkItem {
     position_error: vec4<f32>,
     normal: vec4<f32>,
     geometric_normal: vec4<f32>,
+    tangent: vec4<f32>,
     uv: vec2<f32>,
     _uv_padding: vec2<f32>,
     material_root: u32,

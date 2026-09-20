@@ -1,16 +1,16 @@
 fn measured_scalar(address: u32) -> f32 {
-    let width = material_table._reserved3;
-    let height = material_table._reserved4;
+    let width = material_table.measured_texture_width;
+    let height = material_table.measured_texture_height;
     let page_capacity = width * height * 4u;
     let page = address / page_capacity;
-    if (page >= material_table._reserved5) {
+    if (page >= material_table.measured_texture_count) {
         set_render_error();
         return 0.0;
     }
     let local = address - page * page_capacity;
     let texel = local / 4u;
     let value = textureLoad(
-        texture_images[material_table._reserved2 + page],
+        texture_images[material_table.measured_texture_base + page],
         vec2<i32>(i32(texel % width), i32(texel / width)),
         0,
     );
@@ -49,7 +49,7 @@ fn measured_parameter_lookup(table: MeasuredTableRecord, params: vec3<f32>) -> M
         let index = min(select(0u, first - 1u, first > 0u), size - 2u);
         let p0 = measured_scalar(values + index);
         let p1 = measured_scalar(values + index + 1u);
-        let high = clamp((params[dim] - p0) / max(p1 - p0, 1.17549435e-38), 0.0, 1.0);
+        let high = clamp((params[dim] - p0) / (p1 - p0), 0.0, 1.0);
         result.weights[2u * dim] = 1.0 - high;
         result.weights[2u * dim + 1u] = high;
         result.offset += table.parameter_strides[dim] * index;
@@ -100,7 +100,8 @@ fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
     let table = measured_tables[table_index];
     let lookup = measured_parameter_lookup(table, params);
     let slice_size = table.size.x * table.size.y;
-    var sample = clamp(sample_in, vec2<f32>(MACHINE_EPSILON), vec2<f32>(1.0 - MACHINE_EPSILON));
+    const ONE_MINUS_EPSILON: f32 = 0.9999999403953552;
+    var sample = clamp(sample_in, vec2<f32>(1.0 - ONE_MINUS_EPSILON), vec2<f32>(ONE_MINUS_EPSILON));
     var marginal_offset = lookup.offset * table.size.y;
     var first = 0u;
     var len = table.size.y;
@@ -121,7 +122,7 @@ fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
         offset + table.size.x - 1u, slice_size, lookup);
     let r1 = measured_lookup(table, table.conditional_cdf_offset,
         offset + 2u * table.size.x - 1u, slice_size, lookup);
-    let row_constant = abs(r0 - r1) < 1e-4 * max(abs(r0 + r1), 1e-12);
+    let row_constant = abs(r0 - r1) < 1e-4 * (r0 + r1);
     sample.y = select(r0 - sqrt(max(0.0, r0 * r0 - 2.0 * sample.y * (r0 - r1))),
                       2.0 * sample.y, row_constant);
     sample.y /= select(r0 - r1, r0 + r1, row_constant);
@@ -153,7 +154,7 @@ fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
     let v11 = measured_lookup(table, table.data_offset, offset + table.size.x + 1u, slice_size, lookup);
     let c0 = mix(v00, v01, sample.y);
     let c1 = mix(v10, v11, sample.y);
-    let column_constant = abs(c0 - c1) < 1e-4 * max(abs(c0 + c1), 1e-12);
+    let column_constant = abs(c0 - c1) < 1e-4 * (c0 + c1);
     sample.x = select(c0 - sqrt(max(0.0, c0 * c0 - 2.0 * sample.x * (c0 - c1))),
                       2.0 * sample.x, column_constant);
     sample.x /= select(c0 - c1, c0 + c1, column_constant);

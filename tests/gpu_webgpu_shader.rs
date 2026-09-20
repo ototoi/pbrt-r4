@@ -63,6 +63,14 @@ fn measured_material_shader_uses_packed_texture_tables() {
     let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
     assert!(bounce.contains("fn measured_sample_f("));
     assert!(bounce.contains("material_kind != MATERIAL_KIND_MEASURED"));
+    assert!(bounce.contains("scattering_local_frame(wo, tangent, normal)"));
+
+    assert!(SHADE_SURFACE_SHADER.contains("surfaces[pixel_index].tangent"));
+    assert!(SHADE_SURFACE_SHADER.contains("object_dpdu"));
+    assert!(COMMON_SHADER.contains("fn scattering_local_frame("));
+    assert!(COMMON_SHADER.contains("fn scattering_world_frame("));
+    assert!(!direct.contains("max(p1 - p0"));
+    assert!(!direct.contains("max(abs(r0 + r1)"));
 }
 
 #[test]

@@ -56,7 +56,11 @@ pub struct MaterialTableUniform {
     pub debug_material_kind: u32,
     pub attributes_eval_stride: u32,
     pub texture_eval_stride: u32,
-    pub reserved: [u32; 13],
+    pub measured_texture_base: u32,
+    pub measured_texture_width: u32,
+    pub measured_texture_height: u32,
+    pub measured_texture_count: u32,
+    pub reserved: [u32; 9],
 }
 
 #[repr(C)]
@@ -233,6 +237,7 @@ pub struct SurfaceWorkItem {
     pub position_error: [f32; 4],
     pub normal: [f32; 4],
     pub geometric_normal: [f32; 4],
+    pub tangent: [f32; 4],
     pub uv: [f32; 2],
     pub uv_padding: [f32; 2],
     pub material_root: u32,
@@ -478,7 +483,11 @@ pub fn material_table_uniform(
         debug_material_kind: INVALID_INDEX,
         attributes_eval_stride: 0,
         texture_eval_stride: 0,
-        reserved: [0; 13],
+        measured_texture_base: 0,
+        measured_texture_width: 0,
+        measured_texture_height: 0,
+        measured_texture_count: 0,
+        reserved: [0; 9],
     })
 }
 
