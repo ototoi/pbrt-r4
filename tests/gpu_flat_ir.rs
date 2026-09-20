@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use image::{ImageBuffer, Rgb};
 use pbrt_r4::gpu::flat::{
     evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind,
 };
@@ -483,6 +484,12 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
 
 #[test]
 fn flatten_node_classifies_infinite_light_variants() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
     let cases = [
         (
             Default::default(),
@@ -491,18 +498,11 @@ fn flatten_node_classifies_infinite_light_variants() {
         (
             {
                 let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
-                params.add_string("string filename", "environment.exr");
+                params.add_string("string filename", image_path.to_str().unwrap());
+                params.add_string("string encoding", "linear");
                 params
             },
             pbrt_r4::gpu::flat::LightKind::ImageInfinite,
-        ),
-        (
-            {
-                let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
-                params.add_point("point portal", &[0.0, 0.0, 0.0]);
-                params
-            },
-            pbrt_r4::gpu::flat::LightKind::PortalImageInfinite,
         ),
     ];
     for (params, expected_kind) in cases {
@@ -517,6 +517,72 @@ fn flatten_node_classifies_infinite_light_variants() {
             pbrt_r4::gpu::flat::LightGeometryKind::Direction
         );
     }
+}
+
+#[test]
+fn flatten_node_rejects_portal_infinite_image_until_portal_mapping_is_supported() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("GPU PortalImageInfiniteLight is not implemented"));
+}
+
+#[test]
+fn flatten_node_prepares_equal_area_infinite_image_and_transform() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    let light = light_node("environment", "infinite", params);
+    light.write().unwrap().transform.matrix = [
+        2.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let light = &scene.infinite_lights[0];
+    let model = &scene.light_sampling_models[light.sampling_model as usize];
+    assert_eq!(model.world_to_light[0][0], 0.5);
+    assert_eq!(model.world_to_light[1][1], 0.25);
+    assert_eq!(model.world_to_light[2][2], 0.2);
+    let mipmap = &scene.texture_library.mipmaps[light.image_index as usize];
+    assert_eq!(mipmap.levels[0].resolution, [2, 2]);
+    assert_eq!(mipmap.levels[0].channels, 3);
+}
+
+#[test]
+fn flatten_node_rejects_non_square_infinite_image() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 1, vec![255, 0, 0, 0, 255, 0])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-square resolution"));
 }
 
 #[test]

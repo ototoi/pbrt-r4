@@ -1415,19 +1415,52 @@ fn load_light_image_index(index: u32) -> u32 {
         set_render_error();
         return 0xffffffffu;
     }
-    return light_sampling_models[record.sampling_model].flags;
+    return light_sampling_models[record.sampling_model].flags & 0x0fffffffu;
+}
+fn equal_area_sphere_to_square(direction: vec3<f32>) -> vec2<f32> {
+    let d = normalize(direction);
+    let x = abs(d.x);
+    let y = abs(d.y);
+    let z = abs(d.z);
+    let r = sqrt(max(0.0, 1.0 - z));
+    let a = max(x, y);
+    let b = select(min(x, y) / a, 0.0, a == 0.0);
+    let t1 = 0.406758566246788489601959989e-5;
+    let t2 = 0.636226545274016134946890922156;
+    let t3 = 0.61572017898280213493197203466e-2;
+    let t4 = -0.247333733281268944196501420480;
+    let t5 = 0.881770664775316294736387951347e-1;
+    let t6 = 0.419038818029165735901852432784e-1;
+    let t7 = -0.251390972343483509333252996350e-1;
+    var phi = ((((((t7 * b + t6) * b + t5) * b + t4) * b + t3) * b + t2) * b + t1);
+    if (x < y) { phi = 1.0 - phi; }
+    var v = phi * r;
+    var u = r - v;
+    if (d.z < 0.0) {
+        let old_u = u;
+        u = 1.0 - v;
+        v = 1.0 - old_u;
+    }
+    u = select(-u, u, d.x >= 0.0);
+    v = select(-v, v, d.y >= 0.0);
+    return vec2<f32>(0.5 * (u + 1.0), 0.5 * (v + 1.0));
 }
 fn load_light_image_spectrum(index: u32, direction: vec3<f32>, lambda: vec4<f32>) -> vec4<f32> {
     let image_index = load_light_image_index(index);
     if (image_index == 0xffffffffu) {
         return load_light_spectrum(index, 0u, lambda);
     }
-    let d = normalize(direction);
-    var u = atan2(d.y, d.x) / (2.0 * PI);
-    if (u < 0.0) { u = u + 1.0; }
-    let uv = vec2<f32>(u, acos(clamp(d.z, -1.0, 1.0)) / PI);
+    let record = light_records[index];
+    let model = light_sampling_models[record.sampling_model];
+    let d = normalize(vec3<f32>(
+        dot(model.world_to_light0.xyz, direction),
+        dot(model.world_to_light1.xyz, direction),
+        dot(model.world_to_light2.xyz, direction),
+    ));
+    let uv = equal_area_sphere_to_square(d);
     let rgb = textureSampleLevel(texture_images[image_index], texture_samplers[0], uv, 0.0).rgb;
-    return rgb_to_spectrum4(rgb, lambda, 0u);
+    let color_space = model.flags >> 28u;
+    return rgb_to_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space);
 }
 fn load_light_scale(index: u32) -> f32 {
     let attr = load_light_attribute(index, 1u);
