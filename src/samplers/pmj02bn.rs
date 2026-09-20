@@ -17,6 +17,7 @@ use crate::paramdict::*;
 use crate::samplers::*;
 use crate::util::base::*;
 use crate::util::error::*;
+use crate::util::lowdiscrepancy::{murmur_hash_64a, permutation_element};
 use crate::util::math::{is_power_of_four, log4_int, round_up_power_of_four};
 use crate::util::rng::mix_bits;
 
@@ -55,39 +56,6 @@ fn blue_noise(texture_index: i32, p: Point2i) -> Float {
     v as Float / 65535.0
 }
 
-// --- Hash + PermutationElement ------------------------------------------
-
-/// pbrt-v4 `MurmurHash64A` (`util/hash.h:35-72`). Standard 64-bit Murmur2
-/// variant used by `Hash(...)` to mix multiple arguments.
-fn murmur_hash_64a(key: &[u8], seed: u64) -> u64 {
-    const M: u64 = 0xc6a4a7935bd1e995u64;
-    const R: u32 = 47;
-    let len = key.len() as u64;
-    let mut h = seed ^ len.wrapping_mul(M);
-    let nblocks = key.len() / 8;
-    for i in 0..nblocks {
-        let s = i * 8;
-        let mut k = u64::from_le_bytes(key[s..s + 8].try_into().unwrap());
-        k = k.wrapping_mul(M);
-        k ^= k >> R;
-        k = k.wrapping_mul(M);
-        h ^= k;
-        h = h.wrapping_mul(M);
-    }
-    let tail = &key[nblocks * 8..];
-    if !tail.is_empty() {
-        let mut hi = h;
-        for (i, b) in tail.iter().enumerate() {
-            hi ^= (*b as u64) << (i * 8);
-        }
-        h = hi.wrapping_mul(M);
-    }
-    h ^= h >> R;
-    h = h.wrapping_mul(M);
-    h ^= h >> R;
-    h
-}
-
 /// pbrt-v4 `Hash(pixel, dimension, seed)`. The variadic v4 helper packs its
 /// arguments into a byte buffer via `memcpy` and hashes that. r4 inlines
 /// the exact byte layout for `(Point2i, i32, i32)` so the resulting hashes
@@ -99,43 +67,6 @@ fn hash_pixel_dim_seed(pixel: Point2i, dim: i32, seed: i32) -> u64 {
     buf[8..12].copy_from_slice(&dim.to_le_bytes());
     buf[12..16].copy_from_slice(&seed.to_le_bytes());
     murmur_hash_64a(&buf, 0)
-}
-
-/// pbrt-v4 `PermutationElement(i, l, p)` (`util/math.h`). Owen-style
-/// permutation that maps an index `i ∈ [0, l)` to another index in
-/// `[0, l)` under the seed `p`.
-fn permutation_element(i: u32, l: u32, p: u32) -> u32 {
-    let mut w = l - 1;
-    w |= w >> 1;
-    w |= w >> 2;
-    w |= w >> 4;
-    w |= w >> 8;
-    w |= w >> 16;
-    let mut i = i;
-    loop {
-        i ^= p;
-        i = i.wrapping_mul(0xe170893d);
-        i ^= p >> 16;
-        i ^= (i & w) >> 4;
-        i ^= p >> 8;
-        i = i.wrapping_mul(0x0929eb3f);
-        i ^= p >> 23;
-        i ^= (i & w) >> 1;
-        i = i.wrapping_mul(1 | p >> 27);
-        i = i.wrapping_mul(0x6935fa69);
-        i ^= (i & w) >> 11;
-        i = i.wrapping_mul(0x74dcb303);
-        i ^= (i & w) >> 2;
-        i = i.wrapping_mul(0x9e501cc3);
-        i ^= (i & w) >> 2;
-        i = i.wrapping_mul(0xc860a3df);
-        i &= w;
-        i ^= i >> 5;
-        if i < l {
-            break;
-        }
-    }
-    (i + p) % l
 }
 
 // --- PMJ02BNSampler ------------------------------------------------------

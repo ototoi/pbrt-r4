@@ -225,11 +225,41 @@ fn compare_sampler_with_settings(
     settings: RenderSettings,
     mut cpu: Sampler,
 ) {
-    let pixel = Point2i::new(37, 23);
-    let pixel_index = pixel.y as u32 * resolution[0] + pixel.x as u32;
-    let sample_index = 11;
     let resources =
         SamplerResources::new(&context.device, &context.queue, &settings, resolution).unwrap();
+    let cases = [
+        (Point2i::new(37, 23), 11, 6),
+        (Point2i::new(0, 0), 0, 13),
+        (Point2i::new(319, 179), 15, 20),
+    ];
+    for (pixel, sample_index, first_dimension) in cases {
+        compare_sampler_case(
+            context,
+            resolution,
+            seed,
+            &settings,
+            &resources,
+            &mut cpu,
+            pixel,
+            sample_index,
+            first_dimension,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_sampler_case(
+    context: &Context,
+    resolution: [u32; 2],
+    seed: u32,
+    settings: &RenderSettings,
+    resources: &SamplerResources,
+    cpu: &mut Sampler,
+    pixel: Point2i,
+    sample_index: u32,
+    first_dimension: u32,
+) {
+    let pixel_index = pixel.y as u32 * resolution[0] + pixel.x as u32;
     let viewport = ViewportUniform {
         width: resolution[0],
         height: resolution[1],
@@ -243,7 +273,7 @@ fn compare_sampler_with_settings(
     cpu.start_pixel_sample(pixel, sample_index, 0);
     let wavelength = cpu.get_1d();
     let pixel_sample = cpu.get_pixel_2d();
-    cpu.start_pixel_sample(pixel, sample_index, 6);
+    cpu.start_pixel_sample(pixel, sample_index, first_dimension);
     let direct_uc = cpu.get_1d();
     let direct_u = cpu.get_2d();
     let indirect_uc = cpu.get_1d();
@@ -265,24 +295,24 @@ fn compare_sampler_with_settings(
 
     let device = &context.device;
     let output = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Halton test output"),
+        label: Some("Sampler test output"),
         size: (RESULT_FLOATS * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Halton test readback"),
+        label: Some("Sampler test readback"),
         size: (RESULT_FLOATS * 4) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Halton test viewport"),
+        label: Some("Sampler test viewport"),
         contents: bytemuck::bytes_of(&viewport),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let error_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Halton test error"),
+        label: Some("Sampler test error"),
         contents: bytemuck::bytes_of(&RenderError {
             value: 0,
             padding: [0; 3],
@@ -290,7 +320,7 @@ fn compare_sampler_with_settings(
         usage: wgpu::BufferUsages::STORAGE,
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Halton test layout"),
+        label: Some("Sampler test layout"),
         entries: &[
             buffer_layout(1, wgpu::BufferBindingType::Uniform),
             buffer_layout(9, wgpu::BufferBindingType::Storage { read_only: false }),
@@ -309,57 +339,70 @@ fn compare_sampler_with_settings(
         ],
     });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Halton test bindings"),
+        label: Some("Sampler test bindings"),
         layout: &layout,
         entries: &[
             binding(1, viewport_buffer.as_entire_binding()),
             binding(9, output.as_entire_binding()),
             binding(11, error_buffer.as_entire_binding()),
-            binding(21, resources.params_binding()),
+            binding(
+                21,
+                resources
+                    .bindings()
+                    .resource(pbrt_r4::gpu::webgpu::stages::ResourceId::SamplerParams)
+                    .unwrap(),
+            ),
             wgpu::BindGroupEntry {
                 binding: 49,
-                resource: wgpu::BindingResource::TextureView(resources.table_view()),
+                resource: resources
+                    .bindings()
+                    .resource(pbrt_r4::gpu::webgpu::stages::ResourceId::SamplerTable)
+                    .unwrap(),
             },
         ],
     });
     let source = compose_source(&format!(
         r#"
 @compute @workgroup_size(1)
-fn halton_test() {{
+fn sampler_test() {{
     let pixel = sampler_get_pixel_2d({pixel_index}u);
     framebuffer[0] = vec4<f32>(
         pixel,
         sampler_get_1d({pixel_index}u, 0u),
-        sampler_get_1d({pixel_index}u, 6u),
+        sampler_get_1d({pixel_index}u, {first_dimension}u),
     );
     framebuffer[1] = vec4<f32>(
-        sampler_get_2d({pixel_index}u, 7u),
-        sampler_get_1d({pixel_index}u, 9u),
-        sampler_get_2d({pixel_index}u, 10u).x,
+        sampler_get_2d({pixel_index}u, {first_dimension_plus_1}u),
+        sampler_get_1d({pixel_index}u, {first_dimension_plus_3}u),
+        sampler_get_2d({pixel_index}u, {first_dimension_plus_4}u).x,
     );
     framebuffer[2] = vec4<f32>(
-        sampler_get_2d({pixel_index}u, 10u).y,
-        sampler_get_1d({pixel_index}u, 12u),
+        sampler_get_2d({pixel_index}u, {first_dimension_plus_4}u).y,
+        sampler_get_1d({pixel_index}u, {first_dimension_plus_6}u),
         0.0,
         0.0,
     );
 }}
-"#
+"#,
+        first_dimension_plus_1 = first_dimension + 1,
+        first_dimension_plus_3 = first_dimension + 3,
+        first_dimension_plus_4 = first_dimension + 4,
+        first_dimension_plus_6 = first_dimension + 6,
     ));
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Halton numerical test"),
+        label: Some("Sampler numerical test"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Halton numerical test"),
+        label: Some("Sampler numerical test"),
         bind_group_layouts: &[Some(&layout)],
         immediate_size: 0,
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("Halton numerical test"),
+        label: Some("Sampler numerical test"),
         layout: Some(&pipeline_layout),
         module: &module,
-        entry_point: Some("halton_test"),
+        entry_point: Some("sampler_test"),
         compilation_options: Default::default(),
         cache: None,
     });
@@ -376,7 +419,7 @@ fn halton_test() {{
     for (index, expected) in expected.iter().enumerate() {
         assert!(
             (actual[index] - expected).abs() <= 2e-6,
-            "kind={:?}, strategy={:?}, value={index}: GPU {} != CPU {expected}",
+            "kind={:?}, strategy={:?}, pixel={pixel:?}, sample={sample_index}, dimension={first_dimension}, value={index}: GPU {} != CPU {expected}",
             settings.sampler_kind,
             settings.randomization,
             actual[index]

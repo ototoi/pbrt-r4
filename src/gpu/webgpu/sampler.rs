@@ -14,6 +14,8 @@ use crate::util::lowdiscrepancy::sobol::sobolmatrices::{
 };
 use crate::util::lowdiscrepancy::DigitPermutation;
 
+use super::stages::ResourceId;
+
 const TABLE_WIDTH: u32 = 256;
 const HALTON_DIMENSION_COUNT: u32 = 6 + 7 * (MAX_GPU_RENDER_DEPTH + 1);
 const WORDS_PER_TEXEL: usize = 4;
@@ -26,8 +28,8 @@ const SAMPLER_KIND_PADDED_SOBOL: u32 = 3;
 const SAMPLER_KIND_Z_SOBOL: u32 = 4;
 const SAMPLER_KIND_PMJ02BN: u32 = 5;
 const SAMPLER_KIND_STRATIFIED: u32 = 6;
-const HALTON_RANDOMIZATION_NONE: u32 = 0;
-const HALTON_RANDOMIZATION_PERMUTE_DIGITS: u32 = 1;
+const SAMPLER_RANDOMIZATION_NONE: u32 = 0;
+const SAMPLER_RANDOMIZATION_PERMUTE_DIGITS: u32 = 1;
 const SAMPLER_RANDOMIZATION_FAST_OWEN: u32 = 2;
 const SAMPLER_RANDOMIZATION_OWEN: u32 = 3;
 
@@ -41,8 +43,12 @@ struct SamplerUniform {
     samples_per_pixel: u32,
     seed: u32,
     padding: [u32; 2],
-    payload: [[u32; 4]; 2],
+    variant_words: [[u32; 4]; 2],
 }
+
+pub const SAMPLER_UNIFORM_SIZE: usize = std::mem::size_of::<SamplerUniform>();
+pub const SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET: usize =
+    std::mem::offset_of!(SamplerUniform, variant_words);
 
 #[derive(Clone, Copy, Debug)]
 enum SamplerParameters {
@@ -84,7 +90,7 @@ struct SamplerConfiguration {
 
 impl SamplerConfiguration {
     fn encode(self) -> SamplerUniform {
-        let mut payload = [[0; 4]; 2];
+        let mut variant_words = [[0; 4]; 2];
         match self.parameters {
             SamplerParameters::Independent => {}
             SamplerParameters::Halton {
@@ -92,13 +98,13 @@ impl SamplerConfiguration {
                 base_exponents,
                 mult_inverse,
             } => {
-                payload[0] = [
+                variant_words[0] = [
                     base_scales[0],
                     base_scales[1],
                     base_exponents[0],
                     base_exponents[1],
                 ];
-                payload[1][..2].copy_from_slice(&mult_inverse);
+                variant_words[1][..2].copy_from_slice(&mult_inverse);
             }
             SamplerParameters::Sobol {
                 scale,
@@ -108,8 +114,8 @@ impl SamplerConfiguration {
                 vdc_offset,
                 vdc_inverse_offset,
             } => {
-                payload[0] = [scale, log2_samples_per_pixel, n_base4_digits, sobol_offset];
-                payload[1] = [vdc_offset, vdc_inverse_offset, 0, 0];
+                variant_words[0] = [scale, log2_samples_per_pixel, n_base4_digits, sobol_offset];
+                variant_words[1] = [vdc_offset, vdc_inverse_offset, 0, 0];
             }
             SamplerParameters::Pmj02Bn {
                 pmj_offset,
@@ -117,7 +123,7 @@ impl SamplerConfiguration {
                 blue_noise_offset,
                 pixel_tile_size,
             } => {
-                payload[0] = [
+                variant_words[0] = [
                     pmj_offset,
                     pmj_pixel_offset,
                     blue_noise_offset,
@@ -128,7 +134,7 @@ impl SamplerConfiguration {
                 x_samples,
                 y_samples,
                 jitter,
-            } => payload[0] = [x_samples, y_samples, u32::from(jitter), 0],
+            } => variant_words[0] = [x_samples, y_samples, u32::from(jitter), 0],
         }
         SamplerUniform {
             kind: match self.kind {
@@ -141,8 +147,8 @@ impl SamplerConfiguration {
                 SamplerKind::Stratified => SAMPLER_KIND_STRATIFIED,
             },
             randomization: match self.randomization {
-                SamplerRandomization::None => HALTON_RANDOMIZATION_NONE,
-                SamplerRandomization::PermuteDigits => HALTON_RANDOMIZATION_PERMUTE_DIGITS,
+                SamplerRandomization::None => SAMPLER_RANDOMIZATION_NONE,
+                SamplerRandomization::PermuteDigits => SAMPLER_RANDOMIZATION_PERMUTE_DIGITS,
                 SamplerRandomization::FastOwen => SAMPLER_RANDOMIZATION_FAST_OWEN,
                 SamplerRandomization::Owen => SAMPLER_RANDOMIZATION_OWEN,
             },
@@ -151,7 +157,7 @@ impl SamplerConfiguration {
             samples_per_pixel: self.samples_per_pixel,
             seed: self.seed,
             padding: [0; 2],
-            payload,
+            variant_words,
         }
     }
 }
@@ -160,6 +166,21 @@ pub struct SamplerResources {
     params_buffer: wgpu::Buffer,
     _table_texture: wgpu::Texture,
     table_view: wgpu::TextureView,
+}
+
+pub struct SamplerBindings<'a> {
+    params_buffer: &'a wgpu::Buffer,
+    table_view: &'a wgpu::TextureView,
+}
+
+impl<'a> SamplerBindings<'a> {
+    pub fn resource(&self, resource: ResourceId) -> Option<wgpu::BindingResource<'a>> {
+        match resource {
+            ResourceId::SamplerParams => Some(self.params_buffer.as_entire_binding()),
+            ResourceId::SamplerTable => Some(wgpu::BindingResource::TextureView(self.table_view)),
+            _ => None,
+        }
+    }
 }
 
 pub struct SamplerData {
@@ -231,12 +252,11 @@ impl SamplerResources {
         })
     }
 
-    pub fn params_binding(&self) -> wgpu::BindingResource<'_> {
-        self.params_buffer.as_entire_binding()
-    }
-
-    pub fn table_view(&self) -> &wgpu::TextureView {
-        &self.table_view
+    pub fn bindings(&self) -> SamplerBindings<'_> {
+        SamplerBindings {
+            params_buffer: &self.params_buffer,
+            table_view: &self.table_view,
+        }
     }
 }
 
@@ -470,14 +490,4 @@ fn pack_halton_table(
     }
     headers.extend(permutations);
     headers
-}
-
-#[cfg(test)]
-mod tests {
-    use super::SamplerUniform;
-
-    #[test]
-    fn sampler_uniform_matches_shader_layout() {
-        assert_eq!(std::mem::size_of::<SamplerUniform>(), 64);
-    }
 }

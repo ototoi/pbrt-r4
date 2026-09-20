@@ -5,28 +5,28 @@ const SAMPLER_KIND_PADDED_SOBOL: u32 = 3u;
 const SAMPLER_KIND_Z_SOBOL: u32 = 4u;
 const SAMPLER_KIND_PMJ02BN: u32 = 5u;
 const SAMPLER_KIND_STRATIFIED: u32 = 6u;
-const HALTON_RANDOMIZATION_NONE: u32 = 0u;
-const HALTON_RANDOMIZATION_PERMUTE_DIGITS: u32 = 1u;
+const SAMPLER_RANDOMIZATION_NONE: u32 = 0u;
+const SAMPLER_RANDOMIZATION_PERMUTE_DIGITS: u32 = 1u;
 const SAMPLER_RANDOMIZATION_FAST_OWEN: u32 = 2u;
 const SAMPLER_RANDOMIZATION_OWEN: u32 = 3u;
 const HALTON_ONE_MINUS_EPSILON: f32 = 0.9999999403953552;
 
-fn halton_base_scales() -> vec2<u32> { return sampler_params.payload[0].xy; }
-fn halton_base_exponents() -> vec2<u32> { return sampler_params.payload[0].zw; }
-fn halton_mult_inverse() -> vec2<u32> { return sampler_params.payload[1].xy; }
-fn sobol_scale() -> u32 { return sampler_params.payload[0].x; }
-fn sobol_log2_samples_per_pixel() -> u32 { return sampler_params.payload[0].y; }
-fn zsobol_base4_digits() -> u32 { return sampler_params.payload[0].z; }
-fn sobol_table_offset() -> u32 { return sampler_params.payload[0].w; }
-fn sobol_vdc_offset() -> u32 { return sampler_params.payload[1].x; }
-fn sobol_vdc_inverse_offset() -> u32 { return sampler_params.payload[1].y; }
-fn pmj_table_offset() -> u32 { return sampler_params.payload[0].x; }
-fn pmj_pixel_table_offset() -> u32 { return sampler_params.payload[0].y; }
-fn pmj_blue_noise_offset() -> u32 { return sampler_params.payload[0].z; }
-fn pmj_pixel_tile_size() -> u32 { return sampler_params.payload[0].w; }
-fn stratified_x_samples() -> u32 { return sampler_params.payload[0].x; }
-fn stratified_y_samples() -> u32 { return sampler_params.payload[0].y; }
-fn stratified_jitter() -> bool { return sampler_params.payload[0].z != 0u; }
+fn halton_base_scales() -> vec2<u32> { return sampler_params.variant_words[0].xy; }
+fn halton_base_exponents() -> vec2<u32> { return sampler_params.variant_words[0].zw; }
+fn halton_mult_inverse() -> vec2<u32> { return sampler_params.variant_words[1].xy; }
+fn sobol_scale() -> u32 { return sampler_params.variant_words[0].x; }
+fn sobol_log2_samples_per_pixel() -> u32 { return sampler_params.variant_words[0].y; }
+fn zsobol_base4_digits() -> u32 { return sampler_params.variant_words[0].z; }
+fn sobol_table_offset() -> u32 { return sampler_params.variant_words[0].w; }
+fn sobol_vdc_offset() -> u32 { return sampler_params.variant_words[1].x; }
+fn sobol_vdc_inverse_offset() -> u32 { return sampler_params.variant_words[1].y; }
+fn pmj_table_offset() -> u32 { return sampler_params.variant_words[0].x; }
+fn pmj_pixel_table_offset() -> u32 { return sampler_params.variant_words[0].y; }
+fn pmj_blue_noise_offset() -> u32 { return sampler_params.variant_words[0].z; }
+fn pmj_pixel_tile_size() -> u32 { return sampler_params.variant_words[0].w; }
+fn stratified_x_samples() -> u32 { return sampler_params.variant_words[0].x; }
+fn stratified_y_samples() -> u32 { return sampler_params.variant_words[0].y; }
+fn stratified_jitter() -> bool { return sampler_params.variant_words[0].z != 0u; }
 
 fn u64_add(a: vec2<u32>, b: vec2<u32>) -> vec2<u32> {
     let low = a.x + b.x;
@@ -210,7 +210,7 @@ fn sobol_raw_sample(index: vec2<u32>, dimension: u32, scramble: u32) -> f32 {
 }
 
 fn sobol_sample(index: vec2<u32>, dimension: u32, hash: u32) -> f32 {
-    var value = sobol_bits(index, dimension, select(0u, hash, sampler_params.randomization == HALTON_RANDOMIZATION_PERMUTE_DIGITS));
+    var value = sobol_bits(index, dimension, select(0u, hash, sampler_params.randomization == SAMPLER_RANDOMIZATION_PERMUTE_DIGITS));
     if (sampler_params.randomization == SAMPLER_RANDOMIZATION_FAST_OWEN) {
         value = fast_owen_scramble(value, hash);
     } else if (sampler_params.randomization == SAMPLER_RANDOMIZATION_OWEN) {
@@ -220,7 +220,7 @@ fn sobol_sample(index: vec2<u32>, dimension: u32, hash: u32) -> f32 {
 }
 
 fn sobol_dimension_hash(dimension: u32) -> u32 {
-    return mix_bits_64(vec2<u32>(sampler_params.seed, dimension)).x;
+    return murmur_hash_8(vec2<u32>(dimension, sampler_params.seed)).x;
 }
 
 fn sobol_interval_index(pixel: vec2<u32>, sample_index: u32) -> vec2<u32> {
@@ -461,7 +461,7 @@ fn halton_radical_inverse_impl(dimension: u32, index_in: u32, randomize: bool) -
         if (!(1.0 - f32(base - 1u) * inv_base_m < 1.0)) { break; }
         let next = inverse / base;
         var digit_value = inverse - next * base;
-        if (randomize && sampler_params.randomization == HALTON_RANDOMIZATION_PERMUTE_DIGITS) {
+        if (randomize && sampler_params.randomization == SAMPLER_RANDOMIZATION_PERMUTE_DIGITS) {
             let digit_count = sampler_table_word(header + 1u);
             if (digit_index >= digit_count) {
                 set_render_error();
