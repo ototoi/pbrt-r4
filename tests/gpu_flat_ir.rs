@@ -124,8 +124,8 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.film.imaging_ratio, 1.0);
     validate_dense_spectra(&scene.spectrum_attributes).unwrap();
     assert_eq!(scene.scalar_attributes.len(), 3);
-    assert_eq!(scene.material_tree_nodes[0].attributes.len(), 1);
-    assert_eq!(scene.material_tree_nodes[1].attributes.len(), 4);
+    assert_eq!(scene.material_nodes[0].attributes.len(), 1);
+    assert_eq!(scene.material_nodes[1].attributes.len(), 4);
     assert_eq!(
         scene.geometries,
         vec![
@@ -145,14 +145,14 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     );
     assert_eq!(scene.instances.len(), 2);
     assert_eq!(scene.instances[0].geometry, 0);
-    assert_eq!(scene.instances[0].material_tree_layout, 0);
+    assert_eq!(scene.instances[0].material_root, 0);
     assert_eq!(scene.instances[0].transform[3], 1.0);
     assert_eq!(scene.instances[0].transform[7], 2.0);
     assert_eq!(scene.instances[0].transform[11], 3.0);
     assert_eq!(scene.instances[1].geometry, 1);
-    assert_eq!(scene.instances[1].material_tree_layout, 1);
-    assert_eq!(scene.material_tree_nodes[0].kind, "diffuse");
-    assert_eq!(scene.material_tree_nodes[1].kind, "dielectric");
+    assert_eq!(scene.instances[1].material_root, 1);
+    assert_eq!(scene.material_nodes[0].kind, "diffuse");
+    assert_eq!(scene.material_nodes[1].kind, "dielectric");
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
@@ -289,11 +289,11 @@ fn flatten_node_shares_geometry_across_instances() {
     assert_eq!(scene.instances.len(), 2);
     assert_eq!(scene.instances[0].geometry, 0);
     assert_eq!(scene.instances[1].geometry, 0);
-    assert_eq!(scene.material_tree_layouts.len(), 1);
-    assert_eq!(scene.material_tree_nodes.len(), 1);
+    assert_eq!(scene.material_roots.len(), 1);
+    assert_eq!(scene.material_nodes.len(), 1);
     assert_eq!(
-        scene.instances[0].material_tree_layout,
-        scene.instances[1].material_tree_layout
+        scene.instances[0].material_root,
+        scene.instances[1].material_root
     );
     assert_eq!(scene.instances[0].transform[3], 1.0);
     assert_eq!(scene.instances[1].transform[7], 2.0);
@@ -597,17 +597,14 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root)))
         .expect("diffuse reflectance should be normalized into Flat IR");
-    assert_eq!(scene.material_tree_nodes[0].kind, "diffuse");
-    assert_eq!(scene.material_tree_nodes[0].attributes.len(), 1);
+    assert_eq!(scene.material_nodes[0].kind, "diffuse");
+    assert_eq!(scene.material_nodes[0].attributes.len(), 1);
     assert_eq!(
-        scene.material_tree_nodes[0].attributes[0].kind,
+        scene.material_nodes[0].attributes[0].kind,
         AttributeKind::Spectrum
     );
-    assert_eq!(
-        scene.material_tree_nodes[0].attributes[0].name,
-        "reflectance"
-    );
-    let attribute = &scene.material_tree_nodes[0].attributes[0];
+    assert_eq!(scene.material_nodes[0].attributes[0].name, "reflectance");
+    let attribute = &scene.material_nodes[0].attributes[0];
     let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
     assert!(
         scene.spectrum_attributes[attribute.index as usize].samples[..3]
@@ -639,25 +636,16 @@ fn flatten_node_extracts_dielectric_eta() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.material_tree_nodes[0].attributes.len(), 4);
+    assert_eq!(scene.material_nodes[0].attributes.len(), 4);
     assert_eq!(
-        scene.material_tree_nodes[0].attributes[0].kind,
+        scene.material_nodes[0].attributes[0].kind,
         AttributeKind::Spectrum
     );
-    assert_eq!(scene.material_tree_nodes[0].attributes[0].name, "eta");
-    assert_eq!(
-        scene.material_tree_nodes[0].attributes[1].name,
-        "uroughness"
-    );
-    assert_eq!(
-        scene.material_tree_nodes[0].attributes[2].name,
-        "vroughness"
-    );
-    assert_eq!(
-        scene.material_tree_nodes[0].attributes[3].name,
-        "remaproughness"
-    );
-    let attribute = &scene.material_tree_nodes[0].attributes[0];
+    assert_eq!(scene.material_nodes[0].attributes[0].name, "eta");
+    assert_eq!(scene.material_nodes[0].attributes[1].name, "uroughness");
+    assert_eq!(scene.material_nodes[0].attributes[2].name, "vroughness");
+    assert_eq!(scene.material_nodes[0].attributes[3].name, "remaproughness");
+    let attribute = &scene.material_nodes[0].attributes[0];
     assert!(
         (evaluate_dense_spectrum(&scene.spectrum_attributes, attribute.index, 550.0).unwrap()
             - 1.33)
@@ -673,12 +661,12 @@ fn flatten_node_extracts_thin_dielectric_leaf() {
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.material_tree_nodes[0].attributes.len(), 1);
+    assert_eq!(scene.material_nodes[0].attributes.len(), 1);
     assert_eq!(
-        scene.material_tree_nodes[0].attributes[0].kind,
+        scene.material_nodes[0].attributes[0].kind,
         AttributeKind::Spectrum
     );
-    assert_eq!(scene.material_tree_nodes[0].attributes[0].name, "eta");
+    assert_eq!(scene.material_nodes[0].attributes[0].name, "eta");
 }
 
 #[test]
@@ -690,8 +678,8 @@ fn flatten_node_expands_coateddiffuse_children() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    let layout = scene.material_tree_layouts[scene.instances[0].material_tree_layout as usize];
-    let material = &scene.material_tree_nodes[layout.node_offset as usize];
+    let layout = scene.material_roots[scene.instances[0].material_root as usize];
+    let material = &scene.material_nodes[layout.node_offset as usize];
     assert_eq!(material.source_kind, "coateddiffuse");
     assert_eq!(material.kind, "coateddiffuse");
     assert_eq!(material.attributes.len(), 10);
@@ -736,8 +724,8 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let layout = scene.material_tree_layouts[scene.instances[0].material_tree_layout as usize];
-    let material = &scene.material_tree_nodes[layout.node_offset as usize];
+    let layout = scene.material_roots[scene.instances[0].material_root as usize];
+    let material = &scene.material_nodes[layout.node_offset as usize];
     assert_eq!(material.kind, "coatedconductor");
     assert_eq!(material.attributes.len(), 15);
     assert_eq!(material.attributes[5].name, "interface.eta");
@@ -784,11 +772,11 @@ fn material_table_uses_generic_attribute_ranges() {
     }
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let table = MaterialTable::from_flat(&scene).unwrap();
-    assert_eq!(table.nodes.len(), scene.material_tree_nodes.len());
+    assert_eq!(table.nodes.len(), scene.material_nodes.len());
     assert_eq!(
         table.attributes.len(),
         scene
-            .material_tree_nodes
+            .material_nodes
             .iter()
             .map(|m| m.attributes.len())
             .sum::<usize>()
@@ -835,9 +823,9 @@ fn flatten_node_extracts_conductor_attributes() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.material_tree_nodes[0].kind, "conductor");
-    assert_eq!(scene.material_tree_nodes[0].attributes.len(), 3);
-    for attribute in &scene.material_tree_nodes[0].attributes[..2] {
+    assert_eq!(scene.material_nodes[0].kind, "conductor");
+    assert_eq!(scene.material_nodes[0].attributes.len(), 3);
+    for attribute in &scene.material_nodes[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
         assert!(
             scene.spectrum_attributes[attribute.index as usize].samples[..3]

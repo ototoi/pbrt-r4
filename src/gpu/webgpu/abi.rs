@@ -117,7 +117,7 @@ pub struct TextureNodeRecord {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Instance {
     pub geometry: u32,
-    pub material_tree_layout: u32,
+    pub material_root: u32,
     pub area_light: u32,
     pub orientation_flags: u32,
     pub world_from_object: [[f32; 4]; 4],
@@ -126,7 +126,7 @@ pub struct Instance {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MaterialTreeNode {
+pub struct MaterialNode {
     pub kind: u32,
     pub attribute_offset: u32,
     pub attribute_count: u32,
@@ -205,7 +205,7 @@ pub struct SurfaceWorkItem {
     pub geometric_normal: [f32; 4],
     pub uv: [f32; 2],
     pub uv_padding: [f32; 2],
-    pub material_tree_layout: u32,
+    pub material_root: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,
     pub padding: u32,
@@ -225,7 +225,7 @@ pub struct AttributesEvalWorkItem {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MaterialTreeLayout {
+pub struct MaterialRoot {
     pub node_offset: u32,
     pub node_count: u32,
 }

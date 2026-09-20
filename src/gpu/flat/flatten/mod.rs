@@ -22,7 +22,7 @@ use super::geometry::{
 };
 
 mod material;
-use material::{build_material_tree_layouts, register_material_tree, MaterialTreeSourceNode};
+use material::{build_material_roots, register_material_source, MaterialSourceNode};
 mod material_attributes;
 mod node;
 use node::flatten_node_ref;
@@ -81,16 +81,16 @@ pub fn flatten_node_with_material_override(
     let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
     let texture_library = compile_texture_library(&builder.texture_root_specs)?;
-    let material_tree_roots = builder
+    let root_source_nodes = builder
         .instances
         .iter()
-        .map(|instance| instance.material_tree_layout)
+        .map(|instance| instance.material_root)
         .collect::<Vec<_>>();
-    let (material_tree_layouts, material_tree_nodes, source_to_layout) =
-        build_material_tree_layouts(&builder.material_tree_source_nodes, &material_tree_roots)?;
+    let (material_roots, material_nodes, source_to_root) =
+        build_material_roots(&builder.material_source_nodes, &root_source_nodes)?;
     for instance in &mut builder.instances {
-        instance.material_tree_layout = *source_to_layout
-            .get(instance.material_tree_layout as usize)
+        instance.material_root = *source_to_root
+            .get(instance.material_root as usize)
             .filter(|&&layout| layout != INVALID_INDEX)
             .ok_or_else(|| PbrtError::error("Flat instance material layout was not generated."))?;
     }
@@ -111,8 +111,8 @@ pub fn flatten_node_with_material_override(
         indices: builder.indices,
         geometries: builder.geometries,
         instances: builder.instances,
-        material_tree_layouts,
-        material_tree_nodes,
+        material_roots,
+        material_nodes,
         scalar_attributes: builder.scalar_attributes,
         texture_library,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
@@ -245,13 +245,13 @@ struct FlatBuilder {
     geometries: Vec<Geometry>,
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
-    material_tree_source_nodes: Vec<MaterialTreeSourceNode>,
+    material_source_nodes: Vec<MaterialSourceNode>,
     scalar_attributes: Vec<f32>,
     texture_root_specs: Vec<TextureRootSpec>,
     texture_roots_by_key: HashMap<(usize, u32), u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
-    material_tree_source_materials: Vec<Arc<NodeMaterial>>,
+    source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     light_sampling_models: Vec<LightSamplingModel>,

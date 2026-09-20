@@ -215,10 +215,8 @@ impl WavefrontPathIntegrator {
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
-                ResourceId::MaterialTreeLayout => {
-                    scene.material_tree_layout_buffer.as_entire_binding()
-                }
-                ResourceId::MaterialTreeNode => scene.material_tree_node_buffer.as_entire_binding(),
+                ResourceId::MaterialRoot => scene.material_root_buffer.as_entire_binding(),
+                ResourceId::MaterialNode => scene.material_node_buffer.as_entire_binding(),
                 ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
                 ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
                 ResourceId::SpectrumAttribute => {

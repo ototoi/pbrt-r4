@@ -80,8 +80,8 @@ var texture_noise_table: texture_2d<u32>;
 @group(0) @binding(44)
 var<storage, read_write> texture_eval_results: array<TextureEvalResult>;
 @group(0) @binding(45)
-var<storage, read> material_tree_layouts: array<MaterialTreeLayout>;
+var<storage, read> material_roots: array<MaterialRoot>;
 @group(0) @binding(46)
-var<storage, read> material_tree_nodes: array<MaterialTreeNode>;
+var<storage, read> material_nodes: array<MaterialNode>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;

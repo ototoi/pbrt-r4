@@ -1,10 +1,10 @@
 use crate::util::error::PbrtError;
 
-use super::abi::{AttributeRef, MaterialTreeNode};
+use super::abi::{AttributeRef, MaterialNode};
 use crate::gpu::flat;
 
 pub struct MaterialTable {
-    pub nodes: Vec<MaterialTreeNode>,
+    pub nodes: Vec<MaterialNode>,
     pub attributes: Vec<AttributeRef>,
 }
 
@@ -12,7 +12,7 @@ impl MaterialTable {
     pub fn from_flat(scene: &flat::Scene) -> Result<Self, PbrtError> {
         let mut attributes = Vec::new();
         let nodes = scene
-            .material_tree_nodes
+            .material_nodes
             .iter()
             .map(|material| {
                 validate_material_attributes(material)?;
@@ -28,7 +28,7 @@ impl MaterialTable {
                         index: attr.index,
                     });
                 }
-                Ok(MaterialTreeNode {
+                Ok(MaterialNode {
                     kind: MaterialKind::from_flat(&material.kind)?.tag(),
                     attribute_offset: offset,
                     attribute_count: material.attributes.len() as u32,
@@ -44,7 +44,7 @@ impl MaterialTable {
     }
 }
 
-fn validate_material_attributes(material: &flat::MaterialTreeNode) -> Result<(), PbrtError> {
+fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), PbrtError> {
     let expected = match material.kind.as_str() {
         "diffuse" => &[(0, flat::AttributeKind::Spectrum)][..],
         "dielectric" => &[

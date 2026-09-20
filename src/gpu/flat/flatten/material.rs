@@ -3,31 +3,31 @@ use super::material_attributes::build_material_attributes;
 use super::{
     push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, UnsupportedTexturePolicy,
 };
-use crate::gpu::flat::{MaterialTreeLayout, MaterialTreeNode, INVALID_INDEX};
+use crate::gpu::flat::{MaterialNode, MaterialRoot, INVALID_INDEX};
 use crate::gpu::node::{Material as NodeMaterial, TextureComponent, TextureKind, TextureNode};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
-pub struct MaterialTreeSourceNode {
+pub struct MaterialSourceNode {
     pub kind: String,
     pub source_kind: String,
     pub attributes: Vec<AttributeRef>,
     pub children: Vec<u32>,
 }
 
-pub fn build_material_tree_layouts(
-    source_nodes: &[MaterialTreeSourceNode],
+pub fn build_material_roots(
+    source_nodes: &[MaterialSourceNode],
     root_source_nodes: &[u32],
-) -> Result<(Vec<MaterialTreeLayout>, Vec<MaterialTreeNode>, Vec<u32>), PbrtError> {
+) -> Result<(Vec<MaterialRoot>, Vec<MaterialNode>, Vec<u32>), PbrtError> {
     fn append_node(
         source_node_index: u32,
         parent: u32,
         parent_slot: u32,
-        source_nodes: &[MaterialTreeSourceNode],
+        source_nodes: &[MaterialSourceNode],
         visiting: &mut [bool],
-        nodes: &mut Vec<MaterialTreeNode>,
+        nodes: &mut Vec<MaterialNode>,
     ) -> Result<u32, PbrtError> {
         let source_index = usize::try_from(source_node_index)
             .map_err(|_| PbrtError::error("Flat material source index does not fit usize."))?;
@@ -41,7 +41,7 @@ pub fn build_material_tree_layouts(
 
         let node_index = u32::try_from(nodes.len())
             .map_err(|_| PbrtError::error("Flat material tree exceeds u32."))?;
-        nodes.push(MaterialTreeNode {
+        nodes.push(MaterialNode {
             kind: source.kind.clone(),
             source_kind: source.source_kind.clone(),
             attributes: source.attributes.clone(),
@@ -76,19 +76,19 @@ pub fn build_material_tree_layouts(
 
     let mut layouts = Vec::new();
     let mut nodes = Vec::new();
-    let mut source_to_layout = vec![INVALID_INDEX; source_nodes.len()];
+    let mut source_to_root = vec![INVALID_INDEX; source_nodes.len()];
     for &root in root_source_nodes {
         let root_index = usize::try_from(root)
             .map_err(|_| PbrtError::error("Flat material root does not fit usize."))?;
-        let mapped_layout = source_to_layout.get_mut(root_index).ok_or_else(|| {
+        let mapped_root = source_to_root.get_mut(root_index).ok_or_else(|| {
             PbrtError::error("Flat instance references a material outside the source-node table.")
         })?;
-        if *mapped_layout != INVALID_INDEX {
+        if *mapped_root != INVALID_INDEX {
             continue;
         }
         let layout_index = u32::try_from(layouts.len())
             .map_err(|_| PbrtError::error("Flat material layout table exceeds u32."))?;
-        *mapped_layout = layout_index;
+        *mapped_root = layout_index;
         let node_offset = u32::try_from(nodes.len())
             .map_err(|_| PbrtError::error("Flat material tree table exceeds u32."))?;
         let mut tree_nodes = Vec::new();
@@ -114,21 +114,21 @@ pub fn build_material_tree_layouts(
             }
         }
         nodes.extend(tree_nodes);
-        layouts.push(MaterialTreeLayout {
+        layouts.push(MaterialRoot {
             node_offset,
             node_count,
         });
     }
-    Ok((layouts, nodes, source_to_layout))
+    Ok((layouts, nodes, source_to_root))
 }
 
-pub fn register_material_tree(
+pub fn register_material_source(
     source_material: &Arc<NodeMaterial>,
     builder: &mut FlatBuilder,
     material_kind: Option<&str>,
 ) -> Result<u32, PbrtError> {
     if let Some(index) = builder
-        .material_tree_source_materials
+        .source_materials
         .iter()
         .position(|material| Arc::ptr_eq(material, source_material))
     {
@@ -237,11 +237,11 @@ pub fn register_material_tree(
                 material_attributes: Vec::new(),
                 texture_attributes: Vec::new(),
             });
-            material_children.push(register_material_tree(&child, builder, Some(child_kind))?);
+            material_children.push(register_material_source(&child, builder, Some(child_kind))?);
         }
     } else if kind == "mix" {
         for (_, child) in &source_material.material_attributes {
-            material_children.push(register_material_tree(child, builder, None)?);
+            material_children.push(register_material_source(child, builder, None)?);
         }
         if material_children.len() != 2 {
             return Err(PbrtError::error(
@@ -249,20 +249,16 @@ pub fn register_material_tree(
             ));
         }
     }
-    let index = u32::try_from(builder.material_tree_source_nodes.len()).map_err(|_| {
+    let index = u32::try_from(builder.material_source_nodes.len()).map_err(|_| {
         PbrtError::error("The flattened material source-node table exceeds the u32 index range.")
     })?;
-    builder
-        .material_tree_source_nodes
-        .push(MaterialTreeSourceNode {
-            kind: kind.to_string(),
-            source_kind: source_kind.to_string(),
-            attributes: attributes.clone(),
-            children: material_children,
-        });
-    builder
-        .material_tree_source_materials
-        .push(Arc::clone(source_material));
+    builder.material_source_nodes.push(MaterialSourceNode {
+        kind: kind.to_string(),
+        source_kind: source_kind.to_string(),
+        attributes: attributes.clone(),
+        children: material_children,
+    });
+    builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
 }
 

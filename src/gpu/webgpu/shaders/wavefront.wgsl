@@ -245,16 +245,16 @@ fn load_material_kind(index: u32) -> u32 {
     if (material_table.debug_material_kind != 0xffffffffu) {
         return material_table.debug_material_kind;
     }
-    if (index >= arrayLength(&material_tree_nodes) || index >= material_table.material_node_count) {
+    if (index >= arrayLength(&material_nodes) || index >= material_table.material_node_count) {
         set_render_error();
         return MATERIAL_KIND_NORMAL;
     }
-    return material_tree_nodes[index].kind;
+    return material_nodes[index].kind;
 }
 
 fn load_material_attribute(material_node: u32, ordinal: u32) -> AttributeRef {
-    if (material_node >= arrayLength(&material_tree_nodes) || material_node >= material_table.material_node_count) { set_render_error(); return AttributeRef(0u, 0u); }
-    let material = material_tree_nodes[material_node];
+    if (material_node >= arrayLength(&material_nodes) || material_node >= material_table.material_node_count) { set_render_error(); return AttributeRef(0u, 0u); }
+    let material = material_nodes[material_node];
     if (ordinal >= material.attribute_count || material.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
     return attribute_refs[material.attribute_offset + ordinal];
 }
@@ -837,18 +837,18 @@ fn resolve_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     set_render_error();
     return load_attributes_eval_work_item(root);
 }
-fn next_material_tree_node(tree_layout: MaterialTreeLayout, current: u32) -> u32 {
-    if (current < tree_layout.node_offset || current >= tree_layout.node_offset + tree_layout.node_count) {
+fn next_material_node(material_root: MaterialRoot, current: u32) -> u32 {
+    if (current < material_root.node_offset || current >= material_root.node_offset + material_root.node_count) {
         set_render_error();
         return 0xffffffffu;
     }
-    var node = material_tree_nodes[current];
+    var node = material_nodes[current];
     if (node.child0 != 0xffffffffu) { return node.child0; }
     if (node.child1 != 0xffffffffu) { return node.child1; }
     var child = current;
-    for (var climbed = 0u; climbed < tree_layout.node_count; climbed++) {
+    for (var climbed = 0u; climbed < material_root.node_count; climbed++) {
         if (node.parent == 0xffffffffu) { return 0xffffffffu; }
-        let parent = material_tree_nodes[node.parent];
+        let parent = material_nodes[node.parent];
         if (parent.child0 == child && parent.child1 != 0xffffffffu) {
             return parent.child1;
         }
