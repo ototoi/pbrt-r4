@@ -155,7 +155,7 @@ struct SamplerUniform {
     samples_per_pixel: u32,
     seed: u32,
     _padding: vec2<u32>,
-    payload: array<vec4<u32>, 2>,
+    variant_words: array<vec4<u32>, 2>,
 };
 
 struct FilmUniform {

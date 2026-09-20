@@ -221,10 +221,11 @@ impl WavefrontPathIntegrator {
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
-                ResourceId::SamplerParams => scene.sampler.params_binding(),
-                ResourceId::SamplerTable => {
-                    wgpu::BindingResource::TextureView(scene.sampler.table_view())
-                }
+                ResourceId::SamplerParams | ResourceId::SamplerTable => scene
+                    .sampler
+                    .bindings()
+                    .resource(binding.resource)
+                    .expect("sampler resource binding"),
                 ResourceId::MaterialRoot => scene.material_root_buffer.as_entire_binding(),
                 ResourceId::MaterialNode => scene.material_node_buffer.as_entire_binding(),
                 ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),

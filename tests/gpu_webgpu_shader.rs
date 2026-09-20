@@ -116,7 +116,7 @@ fn primary_and_path_samples_use_the_sampler_module() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
     assert!(COMMON_SHADER.contains("let first_dimension = 6u + 7u * depth;"));
-    assert!(SAMPLER_SHADER.contains("HALTON_RANDOMIZATION_PERMUTE_DIGITS"));
+    assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
 }
 
 #[test]

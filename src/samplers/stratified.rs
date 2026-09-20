@@ -3,6 +3,7 @@ use crate::options::*;
 use crate::paramdict::*;
 use crate::util::base::*;
 use crate::util::error::*;
+use crate::util::lowdiscrepancy::{murmur_hash_64a, permutation_element};
 use crate::util::rng::RNG;
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -145,95 +146,10 @@ fn hash_pixel_dimension_seed(pixel: &Point2i, dimension: u32, seed: u32) -> u64 
     murmur_hash_64a(&buf, 0)
 }
 
-fn permutation_element(mut index: u32, length: u32, permutation: u32) -> u32 {
-    let mut mask = length - 1;
-    mask |= mask >> 1;
-    mask |= mask >> 2;
-    mask |= mask >> 4;
-    mask |= mask >> 8;
-    mask |= mask >> 16;
-    loop {
-        index ^= permutation;
-        index = index.wrapping_mul(0xe170893d);
-        index ^= permutation >> 16;
-        index ^= (index & mask) >> 4;
-        index ^= permutation >> 8;
-        index = index.wrapping_mul(0x0929eb3f);
-        index ^= permutation >> 23;
-        index ^= (index & mask) >> 1;
-        index = index.wrapping_mul(1 | permutation >> 27);
-        index = index.wrapping_mul(0x6935fa69);
-        index ^= (index & mask) >> 11;
-        index = index.wrapping_mul(0x74dcb303);
-        index ^= (index & mask) >> 2;
-        index = index.wrapping_mul(0x9e501cc3);
-        index ^= (index & mask) >> 2;
-        index = index.wrapping_mul(0xc860a3df);
-        index &= mask;
-        index ^= index >> 5;
-        if index < length {
-            break;
-        }
-    }
-    (index + permutation) % length
-}
-
 fn hash_pixel_seed(pixel: &Point2i, seed: u32) -> u64 {
     let mut buf = [0u8; 12];
     buf[0..4].copy_from_slice(&pixel.x.to_ne_bytes());
     buf[4..8].copy_from_slice(&pixel.y.to_ne_bytes());
     buf[8..12].copy_from_slice(&seed.to_ne_bytes());
     murmur_hash_64a(&buf, 0)
-}
-
-fn murmur_hash_64a(key: &[u8], seed: u64) -> u64 {
-    let m = 0xc6a4a7935bd1e995u64;
-    let r = 47u32;
-
-    let len = key.len() as u64;
-    let mut h = seed ^ len.wrapping_mul(m);
-
-    let nblocks = key.len() / 8;
-    for i in 0..nblocks {
-        let start = i * 8;
-        let mut k = u64::from_ne_bytes(key[start..start + 8].try_into().unwrap());
-        k = k.wrapping_mul(m);
-        k ^= k >> r;
-        k = k.wrapping_mul(m);
-
-        h ^= k;
-        h = h.wrapping_mul(m);
-    }
-
-    let tail = &key[nblocks * 8..];
-    match tail.len() {
-        4 => {
-            h ^= (tail[3] as u64) << 24;
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        3 => {
-            h ^= (tail[2] as u64) << 16;
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        2 => {
-            h ^= (tail[1] as u64) << 8;
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        1 => {
-            h ^= tail[0] as u64;
-            h = h.wrapping_mul(m);
-        }
-        _ => {}
-    }
-
-    h ^= h >> r;
-    h = h.wrapping_mul(m);
-    h ^= h >> r;
-    h
 }
