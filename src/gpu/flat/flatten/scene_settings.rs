@@ -45,9 +45,14 @@ pub fn render_settings(
             )));
         }
     }
-    let samples_per_pixel = sampler
+    let configured_samples_per_pixel = sampler
         .map(|sampler| sampler.params.get_one_int("pixelsamples", 4))
         .unwrap_or(4);
+    let samples_per_pixel = if crate::options::PbrtOptions::get().quick_render {
+        1
+    } else {
+        configured_samples_per_pixel
+    };
     let configured_max_depth = integrator
         .map(|integrator| integrator.params.get_one_int("maxdepth", 5))
         .unwrap_or(5);
@@ -83,8 +88,13 @@ pub fn render_settings(
 }
 
 pub fn viewport_resolution(params: &ParameterDictionary) -> Result<[u32; 2], PbrtError> {
-    let xresolution = params.get_one_int("xresolution", 1280);
-    let yresolution = params.get_one_int("yresolution", 720);
+    let mut xresolution = params.get_one_int("xresolution", 1280);
+    let mut yresolution = params.get_one_int("yresolution", 720);
+    let options = crate::options::PbrtOptions::get();
+    if options.quick_render && !options.quick_render_full_resolution {
+        xresolution = (xresolution / 4).max(1);
+        yresolution = (yresolution / 4).max(1);
+    }
     let resolution = [
         u32::try_from(xresolution)
             .map_err(|_| PbrtError::error("Film xresolution must be positive and fit in u32."))?,

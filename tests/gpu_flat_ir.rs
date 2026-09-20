@@ -12,7 +12,7 @@ use pbrt_r4::gpu::node::{
     SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
-use pbrt_r4::util::spectrum::rgb_to_spectrum::ACES2065_1;
+use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
 fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
@@ -564,6 +564,12 @@ fn flatten_node_prepares_equal_area_infinite_image_and_transform() {
     let mipmap = &scene.texture_library.mipmaps[light.image_index as usize];
     assert_eq!(mipmap.levels[0].resolution, [2, 2]);
     assert_eq!(mipmap.levels[0].channels, 3);
+    assert_eq!(light.attributes.len(), 3);
+    assert_eq!(light.attributes[2].name, "image-illuminant");
+    let actual =
+        evaluate_dense_spectrum(&scene.spectrum_attributes, light.attributes[2].index, 450.0)
+            .unwrap();
+    assert!((actual - SRGB.illuminant.sample_at(450.0)).abs() < 1e-6);
 }
 
 #[test]

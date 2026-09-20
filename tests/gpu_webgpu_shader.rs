@@ -153,6 +153,9 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     assert!(evaluate.contains("fn equal_area_sphere_to_square("));
     assert!(evaluate.contains("dot(model.world_to_light0.xyz, direction)"));
     assert!(evaluate.contains("model.flags >> 28u"));
+    assert!(evaluate.contains(
+        "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
+    ));
     assert!(!evaluate.contains("atan2(d.y, d.x)"));
 }
 
