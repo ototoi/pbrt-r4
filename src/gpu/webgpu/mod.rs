@@ -7,6 +7,7 @@ pub mod light;
 pub mod light_bvh;
 pub mod light_sampler;
 pub mod material;
+pub mod noise;
 pub mod output;
 pub mod pipeline;
 pub mod queue;
@@ -15,3 +16,6 @@ pub mod scene;
 pub mod shader;
 pub mod shader_composer;
 pub mod stages;
+
+#[cfg(test)]
+mod noise_table_benchmark;

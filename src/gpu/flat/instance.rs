@@ -4,7 +4,7 @@ use super::Transform;
 pub struct Instance {
     pub geometry: u32,
     pub transform: Transform,
-    pub material: u32,
+    pub material_root: u32,
     pub area_light: u32,
     pub reverse_orientation: bool,
 }

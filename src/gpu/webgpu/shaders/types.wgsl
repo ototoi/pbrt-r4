@@ -12,15 +12,39 @@ const MATERIAL_KIND_MIX: u32 = 7u;
 const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
 struct AttributesEvalWorkItem {
-    surface_index: u32,
-    material_index: u32,
-    parent_work_item: u32,
-    parent_slot: u32,
+    material_node: u32,
     child_work_item0: u32,
     child_work_item1: u32,
     bxdf_kind: u32,
     selected_child_work_item: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
     values: array<vec4<f32>, 10>,
+};
+
+struct MaterialRoot {
+    node_offset: u32,
+    node_count: u32,
+};
+
+struct MaterialNode {
+    kind: u32,
+    attribute_offset: u32,
+    attribute_count: u32,
+    parent: u32,
+    parent_slot: u32,
+    child0: u32,
+    child1: u32,
+    _padding: u32,
+};
+
+struct TextureEvalResult {
+    material_node: u32,
+    attribute_ordinal: u32,
+    texture_root: u32,
+    valid: u32,
+    value: vec4<f32>,
 };
 
 struct LayeredParams {
@@ -48,6 +72,19 @@ const LIGHT_KIND_UNIFORM_INFINITE: u32 = 4u;
 const LIGHT_KIND_IMAGE_INFINITE: u32 = 5u;
 const LIGHT_KIND_PORTAL_IMAGE_INFINITE: u32 = 6u;
 const LIGHT_SAMPLER_KIND_BVH: u32 = 1u;
+const TEXTURE_OPERATION_IMAGE: u32 = 0u;
+const TEXTURE_OPERATION_CONSTANT: u32 = 1u;
+const TEXTURE_OPERATION_SCALE: u32 = 2u;
+const TEXTURE_OPERATION_MIX: u32 = 3u;
+const TEXTURE_OPERATION_CHECKERBOARD: u32 = 4u;
+const TEXTURE_OPERATION_DIRECTION_MIX: u32 = 5u;
+const TEXTURE_OPERATION_DOTS: u32 = 6u;
+const TEXTURE_OPERATION_FBM: u32 = 7u;
+const TEXTURE_OPERATION_WRINKLED: u32 = 8u;
+const TEXTURE_OPERATION_WINDY: u32 = 9u;
+const TEXTURE_OPERATION_BILERP: u32 = 10u;
+const TEXTURE_OPERATION_MARBLE: u32 = 11u;
+const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;
 
 struct CameraUniform {
     camera_to_world: mat4x4<f32>,
@@ -74,9 +111,9 @@ struct FilmUniform {
 };
 
 struct MaterialTableUniform {
-    material_offset_words: u32, material_count: u32,
+    material_offset_words: u32, material_node_count: u32,
     debug_material_kind: u32,
-    attributes_eval_stride: u32, _reserved1: u32, _reserved2: u32, _reserved3: u32,
+    attributes_eval_stride: u32, texture_eval_stride: u32, _reserved2: u32, _reserved3: u32,
     _reserved4: u32, _reserved5: u32, _reserved6: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
@@ -114,14 +151,12 @@ struct Geometry {
 
 struct Instance {
     geometry: u32,
-    material: u32,
+    material_root: u32,
     area_light: u32,
     orientation_flags: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
 };
-
-struct MaterialRecord { kind: u32, attribute_offset: u32, attribute_count: u32, _padding: u32, };
 
 struct TextureNodeRecord {
     kind: u32,
@@ -131,14 +166,21 @@ struct TextureNodeRecord {
     swrap_mode: u32,
     twrap_mode: u32,
     color_space: u32,
-    _padding: u32,
+    texture_index: u32,
     operation: u32,
     mapping_kind: u32,
-    operation_pad: array<u32, 2>,
+    sampler: u32,
+    operation_pad: u32,
     constant_value: vec4<f32>,
     mapping: mat4x4<f32>,
 };
 struct AttributeRef { kind: u32, index: u32, };
+struct TextureRootRecord {
+    texture_node: u32,
+    instruction_count: u32,
+    result: u32,
+    spectrum_type: u32,
+};
 
 struct DenseSpectrum {
     samples: array<f32, 471>,
@@ -181,7 +223,7 @@ struct SurfaceWorkItem {
     geometric_normal: vec4<f32>,
     uv: vec2<f32>,
     _uv_padding: vec2<f32>,
-    material: u32,
+    material_root: u32,
     flags: u32,
     attributes_eval_work_item: u32,
     _padding: u32,

@@ -1,7 +1,8 @@
+use super::texture::TextureLibrary;
 use super::{
-    AttributeRef, Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds,
-    LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
-    TriangleDistributionEntry, Vertex, Viewport,
+    Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightKind,
+    LightSamplingModel, MaterialNode, MaterialRoot, Output, PrimitiveDistributionMap,
+    RenderSettings, TriangleDistributionEntry, Vertex, Viewport,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,42 +17,19 @@ pub struct Scene {
     pub triangle_distributions: Vec<TriangleDistributionEntry>,
     pub lights: Vec<Light>,
     pub infinite_lights: Vec<Light>,
-    /// One upload arena shared by material and light attribute references.
-    pub attribute_refs: Vec<AttributeRef>,
     pub light_bounds: Vec<LightBounds>,
     pub light_bvh: LightBVH,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
-    pub materials: Vec<Material>,
+    pub material_roots: Vec<MaterialRoot>,
+    pub material_nodes: Vec<MaterialNode>,
     pub scalar_attributes: Vec<f32>,
-    pub texture_attributes: Vec<u32>,
-    pub texture_nodes: Vec<TextureNode>,
-    pub texture_child_indices: Vec<u32>,
+    /// Typed, backend-independent texture programs and shared image resources.
+    pub texture_library: TextureLibrary,
     pub spectrum_attributes: Vec<DenseSpectrum>,
     pub primitive_distribution_map: PrimitiveDistributionMap,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextureNode {
-    pub name: String,
-    pub kind: u32,
-    pub implementation: String,
-    pub first_child: u32,
-    pub child_count: u32,
-    pub mipmap: Option<std::sync::Arc<crate::gpu::node::Mipmap>>,
-    pub mapping: [f32; 16],
-    pub swrap_mode: u32,
-    pub twrap_mode: u32,
-    pub filter_mode: u32,
-    /// RGB colour space used when converting a spectrum texture at the
-    /// material boundary (0=sRGB, 1=ACES2065-1, 2=DCI-P3, 3=Rec.2020).
-    pub color_space: u32,
-    pub operation: u32,
-    /// Mapping kind: 0=UV, 1=planar, 2=spherical, 3=cylindrical.
-    pub mapping_kind: u32,
-    pub constant_value: [f32; 4],
 }
 
 impl Scene {

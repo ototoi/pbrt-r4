@@ -15,6 +15,8 @@ pub struct Pipeline {
     pub prepare_sample: StagePipeline,
     pub shade_surface: StagePipeline,
     pub handle_emissive: StagePipeline,
+    pub evaluate_textures: StagePipeline,
+    pub evaluate_attributes: StagePipeline,
     pub evaluate_materials: StagePipeline,
     pub intersect_shadow: StagePipeline,
     pub sample_diffuse_bounce: StagePipeline,
@@ -34,77 +36,84 @@ impl Pipeline {
         device: &wgpu::Device,
         texture_image_count: u32,
         texture_sampler_count: u32,
+        texture_program_capacity: u32,
+        texture_noise_enabled: bool,
     ) -> Result<Self, PbrtError> {
         // Validate the complete stage contract before creating the deployed
         // layout. The canonical registry supplies the current ABI entries.
         RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let canonical_bindings = canonical_wavefront_bindings();
-        let compute =
-            |label: &'static str, stage_source: &'static str, entry_point: &'static str| {
-                log::info!("GPU pipeline: creating {label}");
-                let source = shader::compose_source(stage_source)
-                    .replace(
-                        "binding_array<texture_2d<f32>>",
-                        &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
-                    )
-                    .replace(
-                        "binding_array<sampler>",
-                        &format!("binding_array<sampler, {texture_sampler_count}u>"),
-                    );
-                log::info!(
-                    "GPU pipeline: {label} source composed ({} bytes)",
-                    source.len()
+        let compute = |label: &'static str,
+                       stage_source: &'static str,
+                       entry_point: &'static str| {
+            log::info!("GPU pipeline: creating {label}");
+            let source = shader::compose_source_with_noise(stage_source, texture_noise_enabled)
+                .replace(
+                    "const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;",
+                    &format!("const TEXTURE_PROGRAM_CAPACITY: u32 = {texture_program_capacity}u;"),
+                )
+                .replace(
+                    "binding_array<texture_2d<f32>>",
+                    &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
+                )
+                .replace(
+                    "binding_array<sampler>",
+                    &format!("binding_array<sampler, {texture_sampler_count}u>"),
                 );
-                let used_bindings = shader::resource_bindings(&source);
-                let bind_group_layouts = (0..=1)
-                    .map(|group| {
-                        let layout_entries = canonical_bindings
-                            .iter()
-                            .filter(|binding| {
-                                binding.group == group
-                                    && used_bindings.contains(&(binding.group, binding.binding))
-                            })
-                            .map(|binding| {
-                                layout_entry(binding, texture_image_count, texture_sampler_count)
-                            })
-                            .collect::<Vec<_>>();
-                        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                            label: Some(label),
-                            entries: &layout_entries,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                log::info!("GPU pipeline: {label} bind group layouts created");
-                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(label),
-                    bind_group_layouts: bind_group_layouts
+            log::info!(
+                "GPU pipeline: {label} source composed ({} bytes)",
+                source.len()
+            );
+            let used_bindings = shader::resource_bindings(&source);
+            let bind_group_layouts = (0..=1)
+                .map(|group| {
+                    let layout_entries = canonical_bindings
                         .iter()
-                        .map(Some)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    immediate_size: 0,
-                });
-                log::info!("GPU pipeline: {label} pipeline layout created");
-                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(label),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
-                });
-                log::info!("GPU pipeline: {label} shader module created");
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&layout),
-                    module: &module,
-                    entry_point: Some(entry_point),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
-                log::info!("GPU pipeline: created {label}");
-                StagePipeline {
-                    pipeline,
-                    bind_group_layouts,
-                }
-            };
+                        .filter(|binding| {
+                            binding.group == group
+                                && used_bindings.contains(&(binding.group, binding.binding))
+                        })
+                        .map(|binding| {
+                            layout_entry(binding, texture_image_count, texture_sampler_count)
+                        })
+                        .collect::<Vec<_>>();
+                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some(label),
+                        entries: &layout_entries,
+                    })
+                })
+                .collect::<Vec<_>>();
+            log::info!("GPU pipeline: {label} bind group layouts created");
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: bind_group_layouts
+                    .iter()
+                    .map(Some)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                immediate_size: 0,
+            });
+            log::info!("GPU pipeline: {label} pipeline layout created");
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
+            });
+            log::info!("GPU pipeline: {label} shader module created");
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            log::info!("GPU pipeline: created {label}");
+            StagePipeline {
+                pipeline,
+                bind_group_layouts,
+            }
+        };
         let pipeline = Self {
             generate_primary_rays: compute(
                 "pbrt-r4 generate primary rays",
@@ -135,6 +144,16 @@ impl Pipeline {
                 "pbrt-r4 handle emissive",
                 include_str!("shaders/handle_emissive.wgsl"),
                 "handle_emissive",
+            ),
+            evaluate_textures: compute(
+                "pbrt-r4 evaluate textures",
+                include_str!("shaders/evaluate_textures.wgsl"),
+                "evaluate_textures",
+            ),
+            evaluate_attributes: compute(
+                "pbrt-r4 evaluate attributes",
+                include_str!("shaders/evaluate_attributes.wgsl"),
+                "evaluate_attributes",
             ),
             evaluate_materials: compute(
                 "pbrt-r4 evaluate materials",
@@ -229,6 +248,11 @@ fn layout_entry(
         },
         BindingClass::SampledTexture => wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        BindingClass::IntegerTexture => wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Uint,
             view_dimension: wgpu::TextureViewDimension::D2,
             multisampled: false,
         },

@@ -1,5 +1,6 @@
 use super::transform::Transform;
 use crate::paramdict::ParameterDictionary;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -13,45 +14,16 @@ pub struct Texture {
     pub name: String,
     pub kind: TextureKind,
     pub params: ParameterDictionary,
-    pub mipmap: Option<Arc<Mipmap>>,
 }
 
-/// The color space of RGB texels stored by an image texture.
-///
-/// The texel value returned by texture evaluation is linear RGB in this color
-/// space. The color space is retained until the material attribute boundary,
-/// where RGB-to-spectrum conversion is performed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ColorSpaceId {
-    Srgb,
-    Aces2065,
-    DciP3,
-    Rec2020,
-}
-
-/// Storage for one immutable image mip level in the Node IR.
-///
-/// `F16` contains the IEEE-754 binary16 bit pattern in native-endian `u16`
-/// values. The WebGPU adapter converts the selected storage to its upload
-/// format without changing the Node IR ownership model.
-#[derive(Clone, Debug, PartialEq)]
-pub enum MipmapLevelData {
-    F32(Vec<f32>),
-    F16(Vec<u16>),
-    U8(Vec<u8>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct MipmapLevel {
-    pub resolution: [u32; 2],
-    pub channels: u32,
-    pub data: MipmapLevelData,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Mipmap {
-    pub levels: Vec<MipmapLevel>,
-    pub color_space: Option<ColorSpaceId>,
+impl Texture {
+    pub fn image_path(&self) -> Option<PathBuf> {
+        if self.name != "imagemap" {
+            return None;
+        }
+        let filename = self.params.get_one_string("filename", "");
+        (!filename.is_empty()).then(|| filename.into())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

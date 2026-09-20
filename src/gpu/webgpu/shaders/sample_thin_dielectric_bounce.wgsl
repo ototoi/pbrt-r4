@@ -6,10 +6,14 @@ fn sample_thin_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(surface.material) != MATERIAL_KIND_THIN_DIELECTRIC) { return; }
-    if (!dielectric_eta_is_constant(surface.material)) { terminate_secondary_wavelengths(pixel_index); }
-    var eta = load_dielectric_eta(surface.material, load_sample_lambda(pixel_index)).x;
+    material_texture_eval_base = (surface.attributes_eval_work_item / material_table.attributes_eval_stride)
+        * material_table.texture_eval_stride;
+    if (surface.hit == 0u || surface.flags != 0u) { return; }
+    let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
+    if (evaluated.bxdf_kind != MATERIAL_KIND_THIN_DIELECTRIC) { return; }
+    let eta_attribute = load_material_attribute(evaluated.material_node, 0u);
+    if (eta_attribute.kind != 1u) { terminate_secondary_wavelengths(pixel_index); }
+    var eta = evaluated.values[0].x;
     if (eta == 0.0) { eta = 1.0; }
     let wo = normalize(-ray.direction.xyz);
     let r0 = dielectric_fresnel(dot(wo, normalize(surface.normal.xyz)), eta);

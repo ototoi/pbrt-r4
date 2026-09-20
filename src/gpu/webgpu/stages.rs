@@ -45,16 +45,19 @@ pub enum ResourceId {
     ConstantBxdf,
     Film,
     MaterialTable,
-    MaterialRecord,
     AttributeRef,
     ScalarAttribute,
     SpectrumAttribute,
-    TextureAttribute,
+    TextureRoot,
     TextureNode,
     TextureChild,
     TextureImageArray,
     TextureSamplerArray,
     RgbSpectrumTable,
+    NoiseTable,
+    TextureEvalResult,
+    MaterialRoot,
+    MaterialNode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +66,7 @@ pub enum BindingClass {
     Storage,
     AccelerationStructure,
     SampledTexture,
+    IntegerTexture,
     Sampler,
 }
 
@@ -157,6 +161,30 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::Read,
     );
     push(
+        43,
+        ResourceId::NoiseTable,
+        BindingClass::IntegerTexture,
+        Access::Read,
+    );
+    push(
+        44,
+        ResourceId::TextureEvalResult,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        45,
+        ResourceId::MaterialRoot,
+        BindingClass::Storage,
+        Access::Read,
+    );
+    push(
+        46,
+        ResourceId::MaterialNode,
+        BindingClass::Storage,
+        Access::Read,
+    );
+    push(
         2,
         ResourceId::Tlas,
         BindingClass::AccelerationStructure,
@@ -230,7 +258,6 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::Read,
     );
     for (binding, resource) in [
-        (21, ResourceId::MaterialRecord),
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),
         (28, ResourceId::LightRecord),
@@ -244,6 +271,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (38, ResourceId::TextureChild),
         (36, ResourceId::LightPosition),
         (41, ResourceId::RgbSpectrumTable),
+        (42, ResourceId::TextureRoot),
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }
@@ -287,7 +315,9 @@ impl RequiredLimits {
                 BindingClass::Storage => required.storage_buffers_per_shader_stage += 1,
                 BindingClass::Uniform => required.uniform_buffers_per_shader_stage += 1,
                 BindingClass::AccelerationStructure => {}
-                BindingClass::SampledTexture | BindingClass::Sampler => {}
+                BindingClass::SampledTexture
+                | BindingClass::IntegerTexture
+                | BindingClass::Sampler => {}
             }
         }
         Ok(required)
@@ -305,7 +335,9 @@ impl RequiredLimits {
                     BindingClass::Storage => storage += 1,
                     BindingClass::Uniform => uniform += 1,
                     BindingClass::AccelerationStructure => {}
-                    BindingClass::SampledTexture | BindingClass::Sampler => {}
+                    BindingClass::SampledTexture
+                    | BindingClass::IntegerTexture
+                    | BindingClass::Sampler => {}
                 }
             }
             required.storage_buffers_per_shader_stage =
