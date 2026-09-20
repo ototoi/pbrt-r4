@@ -19,6 +19,7 @@ fn lights(count: usize) -> Vec<Light> {
             kind: LightKind::Point,
             attributes: Vec::new(),
             sampling_model: payload as u32,
+            image_index: u32::MAX,
         })
         .collect()
 }

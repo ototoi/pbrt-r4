@@ -46,6 +46,25 @@ struct TextureBindingPlan {
     view_bindings: Vec<(u32, u32)>,
 }
 
+const INFINITE_IMAGE_BINDING_MASK: u32 = 0x0fff_ffff;
+
+fn infinite_image_payload(binding: usize, color_space: ColorSpace) -> Result<u32, PbrtError> {
+    let binding = u32::try_from(binding)
+        .map_err(|_| PbrtError::error("Infinite light image binding exceeds u32."))?;
+    if binding > INFINITE_IMAGE_BINDING_MASK {
+        return Err(PbrtError::error(
+            "Infinite light image binding exceeds the packed payload range.",
+        ));
+    }
+    let color_space = match color_space {
+        ColorSpace::Unknown | ColorSpace::Srgb => 0,
+        ColorSpace::Aces2065 => 1,
+        ColorSpace::DciP3 => 2,
+        ColorSpace::Rec2020 => 3,
+    };
+    Ok(binding | (color_space << 28))
+}
+
 fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtError> {
     let mut image_views = Vec::new();
     let mut images_by_mipmap = HashMap::new();
@@ -622,14 +641,66 @@ impl Scene {
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
-        let texture_views = &flat.texture_library.image_views;
-        let texture_binding_plan = texture_binding_plan(texture_views)?;
+        // Keep the infinite-image sampler first. pbrt-v4 uses nearest lookup
+        // for ImageInfiniteLight after equal-area sphere-to-square mapping.
+        let mut texture_views = Vec::new();
+        for light in &flat.infinite_lights {
+            if light.image_index == flat::INVALID_INDEX {
+                continue;
+            }
+            texture_views.push(ImageView {
+                mipmap: light.image_index,
+                value_type: ImageValueType::LinearRgb,
+                swrap: ImageWrapMode::Clamp,
+                twrap: ImageWrapMode::Clamp,
+                filter: ImageFilterMode::Nearest,
+                scale: 1.0,
+                invert: false,
+            });
+        }
+        texture_views.extend(flat.texture_library.image_views.iter().cloned());
+        let texture_binding_plan = texture_binding_plan(&texture_views)?;
         let (texture_nodes, texture_children, texture_roots) =
             lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
+        let infinite_image_bindings = flat
+            .infinite_lights
+            .iter()
+            .map(|light| {
+                if light.image_index == flat::INVALID_INDEX {
+                    return Ok(None);
+                }
+                let view_index = texture_views
+                    .iter()
+                    .position(|view| view.mipmap == light.image_index)
+                    .ok_or_else(|| {
+                        PbrtError::error("Infinite light image view was not registered.")
+                    })?;
+                let binding = texture_binding_plan
+                    .image_views
+                    .iter()
+                    .position(|&index| index == view_index)
+                    .ok_or_else(|| {
+                        PbrtError::error("Infinite light image binding was not generated.")
+                    })?;
+                let mipmap = flat
+                    .texture_library
+                    .mipmaps
+                    .get(light.image_index as usize)
+                    .ok_or_else(|| {
+                        PbrtError::error("Infinite light references an invalid mipmap.")
+                    })?;
+                let payload = infinite_image_payload(binding, mipmap.color_space)?;
+                Ok(Some((light.sampling_model, payload)))
+            })
+            .collect::<Result<Vec<_>, PbrtError>>()?
+            .into_iter()
+            .flatten()
+            .collect::<HashMap<_, _>>();
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
-            .map(|model| LightSamplingModel {
+            .enumerate()
+            .map(|(model_index, model)| LightSamplingModel {
                 kind: match model.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
                     flat::LightKind::Spot => LIGHT_KIND_SPOT,
@@ -649,7 +720,10 @@ impl Scene {
                 distribution_offset_words: model.distribution_offset,
                 distribution_count: model.distribution_count,
                 total_area: model.total_area,
-                flags: model.flags,
+                flags: infinite_image_bindings
+                    .get(&(model_index as u32))
+                    .copied()
+                    .unwrap_or(model.flags),
                 world_to_light: model.world_to_light,
             })
             .collect::<Vec<_>>();
@@ -776,7 +850,7 @@ impl Scene {
             device,
             queue,
             &flat.texture_library.mipmaps,
-            texture_views,
+            &texture_views,
             &texture_binding_plan.image_views,
         )?;
         if texture_images.is_empty() {

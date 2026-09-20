@@ -113,7 +113,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else if (is_infinite_light_kind(light_kind)) {
         wi = sample_uniform_infinite_direction(samples.direct.yz);
         sampled_light_pdf = sampled_light_pdf / (4.0 * PI);
-        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+        if (light_kind == LIGHT_KIND_IMAGE_INFINITE || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
+            light_radiance = load_light_image_spectrum(light_index, wi, lambda) * load_light_scale(light_index);
+        } else {
+            light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+        }
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
         let distribution_count = load_area_distribution_count(light_payload);
