@@ -48,7 +48,7 @@ fn dense_spectrum_module_declares_one_structured_table() {
     assert!(source.contains("var<storage, read> spectrum_attributes: array<DenseSpectrum>;"));
     assert!(source.contains("struct DenseSpectrum"));
     assert!(source.contains("fn safe_div_spectrum"));
-    assert!(!source.contains("var<storage, read> materials: array<MaterialTreeNode>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialNode>;"));
 }
 
 #[test]
@@ -115,12 +115,11 @@ fn immutable_scene_metadata_is_separate_from_viewport_state() {
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(19)"));
     assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
-    assert!(COMMON_SHADER.contains("struct MaterialTreeNode {"));
+    assert!(COMMON_SHADER.contains("struct MaterialNode {"));
     assert!(!COMMON_SHADER.contains("tree_size"));
     assert!(!COMMON_SHADER.contains("tree_base"));
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(46)"));
-    assert!(RESOURCES_SHADER
-        .contains("var<storage, read> material_tree_nodes: array<MaterialTreeNode>;"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> material_nodes: array<MaterialNode>;"));
     assert!(COMMON_SHADER.contains("struct AttributeRef {"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> attribute_refs: array<AttributeRef>;"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
@@ -173,7 +172,7 @@ fn composed_stage_contains_only_referenced_resources() {
         source.contains("var<storage, read_write> pixel_sample_states: array<PixelSampleState>;")
     );
     assert!(!source.contains("var<storage, read> light_records: array<LightRecord>;"));
-    assert!(!source.contains("var<storage, read> materials: array<MaterialTreeNode>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialNode>;"));
 }
 
 #[test]
@@ -294,7 +293,7 @@ fn conductor_shader_uses_complex_fresnel_attributes() {
 }
 
 #[test]
-fn composite_shader_uses_evaluated_material_tree() {
+fn composite_shader_uses_evaluated_material_nodes() {
     let source = compose_source(SAMPLE_COMPOSITE_BOUNCE_SHADER);
     assert!(source.contains("MATERIAL_KIND_COATED_DIFFUSE"));
     assert!(source.contains("MATERIAL_KIND_COATED_CONDUCTOR"));

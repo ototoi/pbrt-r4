@@ -20,23 +20,23 @@ fn evaluate_textures(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     var result_slot = 0u;
-    if (surface.material_tree_layout >= arrayLength(&material_tree_layouts)) {
+    if (surface.material_root >= arrayLength(&material_roots)) {
         set_render_error();
         return;
     }
-    let tree_layout = material_tree_layouts[surface.material_tree_layout];
-    if (tree_layout.node_count > material_table.attributes_eval_stride
-        || tree_layout.node_offset + tree_layout.node_count > arrayLength(&material_tree_nodes)) {
+    let material_root = material_roots[surface.material_root];
+    if (material_root.node_count > material_table.attributes_eval_stride
+        || material_root.node_offset + material_root.node_count > arrayLength(&material_nodes)) {
         set_render_error();
         return;
     }
-    var tree_node_index = tree_layout.node_offset;
-    for (var visited = 0u; visited < tree_layout.node_count; visited++) {
-        let tree_node = material_tree_nodes[tree_node_index];
-        let material_node = tree_node_index;
-        let material = tree_node;
+    var material_node_index = material_root.node_offset;
+    for (var visited = 0u; visited < material_root.node_count; visited++) {
+        let material_node = material_nodes[material_node_index];
+        let material_node_index_value = material_node_index;
+        let material = material_node;
         for (var ordinal = 0u; ordinal < material.attribute_count; ordinal++) {
-            let attribute_ref = load_material_attribute(material_node, ordinal);
+            let attribute_ref = load_material_attribute(material_node_index_value, ordinal);
             if (attribute_ref.kind != 2u) {
                 continue;
             }
@@ -47,7 +47,7 @@ fn evaluate_textures(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
             let rgb = sample_texture_program(texture_roots[attribute_ref.index], surface.uv);
             texture_eval_results[result_base + result_slot] = TextureEvalResult(
-                material_node,
+                material_node_index_value,
                 ordinal,
                 attribute_ref.index,
                 1u,
@@ -55,6 +55,6 @@ fn evaluate_textures(@builtin(global_invocation_id) global_id: vec3<u32>) {
             );
             result_slot += 1u;
         }
-        tree_node_index = next_material_tree_node(tree_layout, tree_node_index);
+        material_node_index = next_material_node(material_root, material_node_index);
     }
 }

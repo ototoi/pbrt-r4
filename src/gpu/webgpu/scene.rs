@@ -16,15 +16,14 @@ use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
     material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
     DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialTableUniform, MaterialTreeLayout, MaterialTreeNode,
-    TextureNodeRecord, TextureRootRecord, TriangleDistributionEntry, Vertex, ViewportUniform,
-    INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE,
-    LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
-    LIGHT_KIND_UNIFORM_INFINITE, TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD,
-    TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS,
-    TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE,
-    TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY,
-    TEXTURE_OPERATION_WRINKLED,
+    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, TextureNodeRecord,
+    TextureRootRecord, TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX,
+    LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
+    LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
+    TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT,
+    TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS, TEXTURE_OPERATION_FBM,
+    TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX,
+    TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
 };
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
@@ -522,8 +521,8 @@ pub struct Scene {
     pub index_buffer: wgpu::Buffer,
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub material_tree_layout_buffer: wgpu::Buffer,
-    pub material_tree_node_buffer: wgpu::Buffer,
+    pub material_root_buffer: wgpu::Buffer,
+    pub material_node_buffer: wgpu::Buffer,
     pub attribute_ref_buffer: wgpu::Buffer,
     pub scalar_attribute_buffer: wgpu::Buffer,
     pub spectrum_attribute_buffer: wgpu::Buffer,
@@ -544,7 +543,7 @@ pub struct Scene {
     pub light_leaf_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
-    pub material_tree_nodes: Vec<MaterialTreeNode>,
+    pub material_nodes: Vec<MaterialNode>,
     pub light_sampling_models: Vec<LightSamplingModel>,
     pub light_records: Vec<LightRecord>,
     pub light_sampler_kind: LightSamplerKind,
@@ -574,7 +573,7 @@ impl Scene {
                         "Flat instance {index} references an invalid geometry."
                     )));
                 }
-                if instance.material_tree_layout as usize >= flat.material_tree_layouts.len() {
+                if instance.material_root as usize >= flat.material_roots.len() {
                     return Err(PbrtError::error(&format!(
                         "Flat instance {index} references an invalid material."
                     )));
@@ -583,7 +582,7 @@ impl Scene {
                 let label = format!("Flat instance {index}");
                 Ok(Instance {
                     geometry: instance.geometry,
-                    material_tree_layout: instance.material_tree_layout,
+                    material_root: instance.material_root,
                     area_light: instance.area_light,
                     orientation_flags: u32::from(instance.reverse_orientation)
                         | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
@@ -593,7 +592,7 @@ impl Scene {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
-        let material_tree_nodes = material_table.nodes;
+        let material_nodes = material_table.nodes;
         flat.texture_library.validate()?;
         let mut attribute_refs = material_table.attributes;
         let all_lights = flat
@@ -687,7 +686,7 @@ impl Scene {
         if vertices.is_empty()
             || indices.is_empty()
             || instances.is_empty()
-            || material_tree_nodes.is_empty()
+            || material_nodes.is_empty()
         {
             return Err(PbrtError::error(
                 "WebGPU primary-ray rendering requires non-empty geometry, instances, and materials.",
@@ -714,26 +713,24 @@ impl Scene {
             contents: buffer_contents(&instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let material_tree_layouts = flat
-            .material_tree_layouts
+        let material_roots = flat
+            .material_roots
             .iter()
-            .map(|layout| MaterialTreeLayout {
+            .map(|layout| MaterialRoot {
                 node_offset: layout.node_offset,
                 node_count: layout.node_count,
             })
             .collect::<Vec<_>>();
-        let material_tree_layout_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 material tree layouts SBO"),
-                contents: buffer_contents(&material_tree_layouts),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-        let material_tree_node_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 material tree nodes SBO"),
-                contents: buffer_contents(&material_tree_nodes),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let material_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material tree layouts SBO"),
+            contents: buffer_contents(&material_roots),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let material_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 material tree nodes SBO"),
+            contents: buffer_contents(&material_nodes),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let attribute_ref_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material attribute refs SBO"),
             contents: buffer_contents(&attribute_refs),
@@ -892,7 +889,7 @@ impl Scene {
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
-        let mut material_table = material_table_uniform(material_tree_nodes.len())?;
+        let mut material_table = material_table_uniform(material_nodes.len())?;
         let mut light_table =
             light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
@@ -964,8 +961,8 @@ impl Scene {
             index_buffer,
             geometry_buffer,
             instance_buffer,
-            material_tree_layout_buffer,
-            material_tree_node_buffer,
+            material_root_buffer,
+            material_node_buffer,
             attribute_ref_buffer,
             scalar_attribute_buffer,
             spectrum_attribute_buffer,
@@ -986,7 +983,7 @@ impl Scene {
             light_leaf_buffer,
             geometries,
             instances,
-            material_tree_nodes,
+            material_nodes,
             light_sampling_models,
             light_records,
             light_sampler_kind,
@@ -997,13 +994,13 @@ impl Scene {
 
     pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
         self.material_table.debug_material_kind = kind.tag();
-        for material in &mut self.material_tree_nodes {
+        for material in &mut self.material_nodes {
             material.kind = kind.tag();
         }
         queue.write_buffer(
-            &self.material_tree_node_buffer,
+            &self.material_node_buffer,
             0,
-            bytemuck::cast_slice(&self.material_tree_nodes),
+            bytemuck::cast_slice(&self.material_nodes),
         );
     }
 }

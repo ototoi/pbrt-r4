@@ -23,12 +23,12 @@ struct AttributesEvalWorkItem {
     values: array<vec4<f32>, 10>,
 };
 
-struct MaterialTreeLayout {
+struct MaterialRoot {
     node_offset: u32,
     node_count: u32,
 };
 
-struct MaterialTreeNode {
+struct MaterialNode {
     kind: u32,
     attribute_offset: u32,
     attribute_count: u32,
@@ -151,7 +151,7 @@ struct Geometry {
 
 struct Instance {
     geometry: u32,
-    material_tree_layout: u32,
+    material_root: u32,
     area_light: u32,
     orientation_flags: u32,
     world_from_object: mat4x4<f32>,
@@ -223,7 +223,7 @@ struct SurfaceWorkItem {
     geometric_normal: vec4<f32>,
     uv: vec2<f32>,
     _uv_padding: vec2<f32>,
-    material_tree_layout: u32,
+    material_root: u32,
     flags: u32,
     attributes_eval_work_item: u32,
     _padding: u32,

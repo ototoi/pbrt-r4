@@ -66,7 +66,7 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
     );
     assert_eq!(
         bindings.iter().find(|b| b.binding == 46).unwrap().resource,
-        ResourceId::MaterialTreeNode
+        ResourceId::MaterialNode
     );
     assert_eq!(
         bindings.iter().find(|b| b.binding == 10).unwrap().resource,

@@ -1,7 +1,7 @@
 use super::texture::TextureLibrary;
 use super::{
     Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightKind,
-    LightSamplingModel, MaterialTreeLayout, MaterialTreeNode, Output, PrimitiveDistributionMap,
+    LightSamplingModel, MaterialNode, MaterialRoot, Output, PrimitiveDistributionMap,
     RenderSettings, TriangleDistributionEntry, Vertex, Viewport,
 };
 
@@ -23,8 +23,8 @@ pub struct Scene {
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
-    pub material_tree_layouts: Vec<MaterialTreeLayout>,
-    pub material_tree_nodes: Vec<MaterialTreeNode>,
+    pub material_roots: Vec<MaterialRoot>,
+    pub material_nodes: Vec<MaterialNode>,
     pub scalar_attributes: Vec<f32>,
     /// Typed, backend-independent texture programs and shared image resources.
     pub texture_library: TextureLibrary,

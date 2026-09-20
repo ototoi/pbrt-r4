@@ -56,8 +56,8 @@ pub enum ResourceId {
     RgbSpectrumTable,
     NoiseTable,
     TextureEvalResult,
-    MaterialTreeLayout,
-    MaterialTreeNode,
+    MaterialRoot,
+    MaterialNode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,13 +174,13 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     );
     push(
         45,
-        ResourceId::MaterialTreeLayout,
+        ResourceId::MaterialRoot,
         BindingClass::Storage,
         Access::Read,
     );
     push(
         46,
-        ResourceId::MaterialTreeNode,
+        ResourceId::MaterialNode,
         BindingClass::Storage,
         Access::Read,
     );
