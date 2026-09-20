@@ -6,18 +6,13 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    if (load_material_kind(surface.material) == MATERIAL_KIND_COATED_CONDUCTOR) { return; }
-    var material_index = resolve_material_leaf(surface.material);
-    let evaluated = load_attributes_eval_work_item(surface.attributes_eval_work_item);
-    var leaf_evaluated = evaluated;
-    if (load_material_kind(surface.material) == MATERIAL_KIND_MIX) {
-        if (evaluated.selected_child_work_item == 0xffffffffu) { return; }
-        let selected = load_attributes_eval_work_item(evaluated.selected_child_work_item);
-        material_index = selected.material_index;
-        leaf_evaluated = selected;
-    }
+    material_texture_eval_base = (surface.attributes_eval_work_item / material_table.attributes_eval_stride)
+        * material_table.texture_eval_stride;
+    let leaf_evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
+    let material_node = leaf_evaluated.material_node;
+    if (leaf_evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) { return; }
     if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(material_index) != MATERIAL_KIND_CONDUCTOR) { return; }
+        || load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR) { return; }
     let lambda = load_sample_lambda(pixel_index);
     let roughness = leaf_evaluated.values[2].x;
     let normal = normalize(surface.normal.xyz);
@@ -43,7 +38,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let direction = normalize(reflect(-wo, half_world));
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
-    var f = conductor_fresnel(cos_i, evaluated.values[0], evaluated.values[1]) / cos_i;
+    var f = conductor_fresnel(cos_i, leaf_evaluated.values[0], leaf_evaluated.values[1]) / cos_i;
     if (roughness > 1e-3) {
         let wi_local = scattering_local(direction, normal);
         let wo_local = scattering_local(wo, normal);
@@ -53,7 +48,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         let d = a2 / (PI * pow(h_local.z * h_local.z * (a2 - 1.0) + 1.0, 2.0));
         let g = 2.0 * abs(wo_local.z) / (abs(wo_local.z) + sqrt(wo_local.z * wo_local.z + a2 * (1.0 - wo_local.z * wo_local.z)))
             * 2.0 * abs(wi_local.z) / (abs(wi_local.z) + sqrt(wi_local.z * wi_local.z + a2 * (1.0 - wi_local.z * wi_local.z)));
-        f = conductor_fresnel(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
+        f = conductor_fresnel(abs(dot(wo_local, h_local)), leaf_evaluated.values[0], leaf_evaluated.values[1]) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
     var next_throughput = ray.throughput * f * cos_i / pdf;

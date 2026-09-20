@@ -6,9 +6,9 @@ fn sample_composite_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let ray = load_current_ray(ray_index);
     let surface = surfaces[ray.pixel_index];
     if (surface.hit == 0u || surface.flags != 0u) { return; }
-    let kind = load_material_kind(surface.material);
+    let root = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
+    let kind = root.bxdf_kind;
     if (kind != MATERIAL_KIND_COATED_DIFFUSE && kind != MATERIAL_KIND_COATED_CONDUCTOR) { return; }
-    var root = load_attributes_eval_work_item(surface.attributes_eval_work_item);
     if (kind == MATERIAL_KIND_COATED_DIFFUSE || kind == MATERIAL_KIND_COATED_CONDUCTOR) {
         let params = load_layered_params(root, kind);
         let top = load_attributes_eval_work_item(root.child_work_item0);

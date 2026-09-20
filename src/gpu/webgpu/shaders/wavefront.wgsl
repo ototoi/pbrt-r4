@@ -245,50 +245,42 @@ fn load_material_kind(index: u32) -> u32 {
     if (material_table.debug_material_kind != 0xffffffffu) {
         return material_table.debug_material_kind;
     }
-    if (index >= arrayLength(&materials) || index >= material_table.material_count) {
+    if (index >= arrayLength(&material_tree_nodes) || index >= material_table.material_node_count) {
         set_render_error();
         return MATERIAL_KIND_NORMAL;
     }
-    return materials[index].kind;
+    return material_tree_nodes[index].kind;
 }
 
-fn load_material_attribute(material_index: u32, ordinal: u32) -> AttributeRef {
-    if (material_index >= arrayLength(&materials) || material_index >= material_table.material_count) { set_render_error(); return AttributeRef(0u, 0u); }
-    let material = materials[material_index];
+fn load_material_attribute(material_node: u32, ordinal: u32) -> AttributeRef {
+    if (material_node >= arrayLength(&material_tree_nodes) || material_node >= material_table.material_node_count) { set_render_error(); return AttributeRef(0u, 0u); }
+    let material = material_tree_nodes[material_node];
     if (ordinal >= material.attribute_count || material.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
     return attribute_refs[material.attribute_offset + ordinal];
 }
-fn load_material_scalar(material_index: u32, ordinal: u32) -> f32 {
-    let attr_ref = load_material_attribute(material_index, ordinal);
+fn load_texture_eval_result(material_node: u32, ordinal: u32, texture_root: u32) -> TextureEvalResult {
+    for (var slot = 0u; slot < material_table.texture_eval_stride; slot++) {
+        let result = texture_eval_results[material_texture_eval_base + slot];
+        if (result.valid != 0u
+            && result.material_node == material_node
+            && result.attribute_ordinal == ordinal) {
+            return result;
+        }
+        if (result.valid != 0u && result.texture_root == texture_root) {
+            return result;
+        }
+    }
+    set_render_error();
+    return TextureEvalResult(0u, 0u, 0u, 0u, vec4<f32>(0.0));
+}
+fn load_material_scalar(material_node: u32, ordinal: u32) -> f32 {
+    let attr_ref = load_material_attribute(material_node, ordinal);
     if (attr_ref.kind == 2u) {
-        if (attr_ref.index >= arrayLength(&texture_roots)) { set_render_error(); return 0.0; }
-        return sample_texture_program(texture_roots[attr_ref.index], material_texture_uv).x;
+        return load_texture_eval_result(material_node, ordinal, attr_ref.index).value.x;
     }
     if (attr_ref.kind != 0u || attr_ref.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr_ref.index];
 }
-
-// This is the same permutation used by pbrt-v4's Perlin noise implementation.
-// The table is indexed modulo 256; the C++/Rust implementations store the
-// permutation twice to avoid explicit wrapping at the second lookup.
-const TEXTURE_NOISE_PERM: array<u32, 256> = array<u32, 256>(
-    151u, 160u, 137u, 91u, 90u, 15u, 131u, 13u, 201u, 95u, 96u, 53u, 194u, 233u, 7u, 225u,
-    140u, 36u, 103u, 30u, 69u, 142u, 8u, 99u, 37u, 240u, 21u, 10u, 23u, 190u, 6u, 148u,
-    247u, 120u, 234u, 75u, 0u, 26u, 197u, 62u, 94u, 252u, 219u, 203u, 117u, 35u, 11u, 32u,
-    57u, 177u, 33u, 88u, 237u, 149u, 56u, 87u, 174u, 20u, 125u, 136u, 171u, 168u, 68u, 175u,
-    74u, 165u, 71u, 134u, 139u, 48u, 27u, 166u, 77u, 146u, 158u, 231u, 83u, 111u, 229u, 122u,
-    60u, 211u, 133u, 230u, 220u, 105u, 92u, 41u, 55u, 46u, 245u, 40u, 244u, 102u, 143u, 54u,
-    65u, 25u, 63u, 161u, 1u, 216u, 80u, 73u, 209u, 76u, 132u, 187u, 208u, 89u, 18u, 169u,
-    200u, 196u, 135u, 130u, 116u, 188u, 159u, 86u, 164u, 100u, 109u, 198u, 173u, 186u, 3u, 64u,
-    52u, 217u, 226u, 250u, 124u, 123u, 5u, 202u, 38u, 147u, 118u, 126u, 255u, 82u, 85u, 212u,
-    207u, 206u, 59u, 227u, 47u, 16u, 58u, 17u, 182u, 189u, 28u, 42u, 223u, 183u, 170u, 213u,
-    119u, 248u, 152u, 2u, 44u, 154u, 163u, 70u, 221u, 153u, 101u, 155u, 167u, 43u, 172u, 9u,
-    129u, 22u, 39u, 253u, 19u, 98u, 108u, 110u, 79u, 113u, 224u, 232u, 178u, 185u, 112u, 104u,
-    218u, 246u, 97u, 228u, 251u, 34u, 242u, 193u, 238u, 210u, 144u, 12u, 191u, 179u, 162u, 241u,
-    81u, 51u, 145u, 235u, 249u, 14u, 239u, 107u, 49u, 192u, 214u, 31u, 181u, 199u, 106u, 157u,
-    184u, 84u, 204u, 176u, 115u, 121u, 50u, 45u, 127u, 4u, 150u, 254u, 138u, 236u, 205u, 93u,
-    222u, 114u, 67u, 29u, 24u, 72u, 243u, 141u, 128u, 195u, 78u, 66u, 215u, 61u, 156u, 180u,
-);
 
 fn texture_noise_weight(t: f32) -> f32 {
     let t3 = t * t * t;
@@ -296,10 +288,21 @@ fn texture_noise_weight(t: f32) -> f32 {
     return 6.0 * t4 * t - 15.0 * t4 + 10.0 * t3;
 }
 
+fn texture_noise_perm(i: u32) -> u32 {
+    return textureLoad(texture_noise_table, vec2<i32>(i32(i & 255u), 0), 0).x;
+}
+
+fn texture_noise_pair(a: u32, b: u32) -> u32 {
+    return textureLoad(
+        texture_noise_table,
+        vec2<i32>(i32(a & 255u), i32((b & 255u) + 1u)),
+        0,
+    ).x;
+}
+
 fn texture_noise_grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 {
-    let a = (TEXTURE_NOISE_PERM[x & 255u] + y) & 255u;
-    let b = (TEXTURE_NOISE_PERM[a] + z) & 255u;
-    let h = TEXTURE_NOISE_PERM[b] & 15u;
+    let a = texture_noise_pair(x, y);
+    let h = texture_noise_perm(a + z) & 15u;
     let u = select(dy, dx, h < 8u || h == 12u || h == 13u);
     let v = select(dz, dy, h < 4u || h == 12u || h == 13u);
     return select(u, -u, (h & 1u) != 0u) + select(v, -v, (h & 2u) != 0u);
@@ -338,18 +341,16 @@ fn texture_fbm(p: vec3<f32>, omega: f32, octaves: f32, absolute_value: bool) -> 
     var sum = 0.0;
     var frequency = 1.0;
     var weight = 1.0;
-    for (var octave = 0u; octave < 8u; octave++) {
-        if (octave < count) {
-            let value = texture_noise(frequency * p);
-            sum += weight * select(value, abs(value), absolute_value);
-        }
+    for (var octave = 0u; octave < count; octave++) {
+        let value = texture_noise(frequency * p);
+        sum += weight * select(value, abs(value), absolute_value);
         frequency *= 1.99;
         weight *= omega;
     }
     if (absolute_value) {
         var tail_weight = weight;
-        for (var tail = 0u; tail < 8u; tail++) {
-            if (tail < count) { sum += tail_weight * 0.2; }
+        for (var tail = 0u; tail < count; tail++) {
+            sum += tail_weight * 0.2;
             tail_weight *= omega;
         }
     }
@@ -403,6 +404,10 @@ fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
     return (node.mapping * vec4<f32>(uv, 0.0, 1.0)).xy;
 }
 
+fn mapped_texture_position(node: TextureNodeRecord) -> vec3<f32> {
+    return (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
+}
+
 fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     if (texture_index >= arrayLength(&texture_nodes)) { set_render_error(); return vec3<f32>(0.0); }
     let node = texture_nodes[texture_index];
@@ -427,12 +432,14 @@ fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
 }
 
 fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
-    var values: array<vec3<f32>, 256>;
-    if (root.instruction_count > 256u || root.result >= root.instruction_count) {
+    var values: array<vec3<f32>, TEXTURE_PROGRAM_CAPACITY>;
+    if (root.instruction_count > TEXTURE_PROGRAM_CAPACITY
+        || root.result >= root.instruction_count) {
         set_render_error();
         return vec3<f32>(0.0);
     }
-    for (var local = 0u; local < 256u; local++) {
+    var local = 0u;
+    loop {
         if (local >= root.instruction_count) { break; }
         let node_index = root.texture_node + local;
         if (node_index >= arrayLength(&texture_nodes)) {
@@ -522,10 +529,62 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
                     values[local] = select(values[first], values[second], odd);
                 }
             }
+        // TEXTURE_NOISE_BRANCH_BEGIN
+        } else if (node.operation == TEXTURE_OPERATION_DOTS
+            || node.operation == TEXTURE_OPERATION_FBM
+            || node.operation == TEXTURE_OPERATION_WRINKLED
+            || node.operation == TEXTURE_OPERATION_WINDY
+            || node.operation == TEXTURE_OPERATION_MARBLE) {
+            if (node.operation == TEXTURE_OPERATION_DOTS) {
+                if (node.child_count != 2u
+                    || node.first_child + 1u >= arrayLength(&texture_child_indices)) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                let outside = texture_child_indices[node.first_child];
+                let inside = texture_child_indices[node.first_child + 1u];
+                if (outside >= local || inside >= local) {
+                    set_render_error(); return vec3<f32>(0.0);
+                }
+                let st = mapped_texture_uv(node, uv);
+                let cell = floor(st + vec2<f32>(0.5));
+                var is_inside = false;
+                if (texture_noise(vec3<f32>(cell + vec2<f32>(0.5), 0.0)) > 0.0) {
+                    let center = cell + 0.15 * vec2<f32>(
+                        texture_noise(vec3<f32>(cell.x + 1.5, cell.y + 2.8, 0.0)),
+                        texture_noise(vec3<f32>(cell.x + 4.5, cell.y + 9.8, 0.0)),
+                    );
+                    let delta = st - center;
+                    is_inside = dot(delta, delta) < 0.35 * 0.35;
+                }
+                values[local] = select(values[outside], values[inside], is_inside);
+            } else {
+                let p = mapped_texture_position(node);
+                if (node.operation == TEXTURE_OPERATION_FBM) {
+                    values[local] = vec3<f32>(texture_fbm(
+                        p, node.constant_value.x, node.constant_value.y, false));
+                } else if (node.operation == TEXTURE_OPERATION_WRINKLED) {
+                    values[local] = vec3<f32>(texture_fbm(
+                        p, node.constant_value.x, node.constant_value.y, true));
+                } else if (node.operation == TEXTURE_OPERATION_WINDY) {
+                    let wind = texture_fbm(0.1 * p, 0.5, 3.0, false);
+                    let wave = texture_fbm(p, 0.5, 6.0, false);
+                    values[local] = vec3<f32>(abs(wind) * wave);
+                } else {
+                    values[local] = texture_marble(
+                        p,
+                        node.constant_value.x,
+                        node.constant_value.y,
+                        node.constant_value.z,
+                        node.constant_value.w,
+                    );
+                }
+            }
+        // TEXTURE_NOISE_BRANCH_END
         } else {
             set_render_error();
             return vec3<f32>(0.0);
         }
+        local += 1u;
     }
     return values[root.result];
 }
@@ -736,12 +795,15 @@ fn rgb_to_unbounded_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u3
     let scale = 2.0 * max_value;
     return scale * rgb_to_spectrum4(rgb / scale, lambda, color_space);
 }
-fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
-    let attr_ref = load_material_attribute(material_index, ordinal);
+fn load_material_spectrum(material_node: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
+    let attr_ref = load_material_attribute(material_node, ordinal);
     if (attr_ref.kind == 2u) {
-        if (attr_ref.index >= arrayLength(&texture_roots)) { set_render_error(); return vec4<f32>(0.0); }
-        let root = texture_roots[attr_ref.index];
-        let rgb = sample_texture_program(root, material_texture_uv);
+        let result = load_texture_eval_result(material_node, ordinal, attr_ref.index);
+        if (result.valid == 0u || result.texture_root >= arrayLength(&texture_roots)) {
+            return vec4<f32>(0.0);
+        }
+        let root = texture_roots[result.texture_root];
+        let rgb = result.value.rgb;
         if (texture_nodes[root.texture_node + root.result].kind == 0u) {
             return vec4<f32>(rgb.x);
         }
@@ -753,30 +815,9 @@ fn load_material_spectrum(material_index: u32, ordinal: u32, lambda: vec4<f32>) 
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
 }
-fn resolve_material_leaf(material_index: u32) -> u32 {
-    var current = material_index;
-    for (var depth = 0u; depth < 32u; depth++) {
-        let kind = load_material_kind(current);
-        if (kind == MATERIAL_KIND_MIX) {
-            let amount = clamp(load_material_scalar(current, 2u), 0.0, 1.0);
-            let child = select(0u, 1u, amount >= 0.5);
-            let reference = load_material_attribute(current, child);
-            if (reference.kind != 3u) { set_render_error(); return current; }
-            current = reference.index;
-        } else if (kind == MATERIAL_KIND_COATED_DIFFUSE || kind == MATERIAL_KIND_COATED_CONDUCTOR) {
-            let reference = load_material_attribute(current, 1u);
-            if (reference.kind != 3u) { set_render_error(); return current; }
-            current = reference.index;
-        } else {
-            return current;
-        }
-    }
-    set_render_error();
-    return current;
-}
-fn load_diffuse_reflectance(material_index: u32, lambda: vec4<f32>) -> vec4<f32> {
+fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> {
     if (material_table.debug_material_kind == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
-    return load_material_spectrum(material_index, 0u, lambda);
+    return load_material_spectrum(material_node, 0u, lambda);
 }
 fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     if (root >= arrayLength(&attributes_eval_work_items)) {
@@ -784,6 +825,38 @@ fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
         return attributes_eval_work_items[0u];
     }
     return attributes_eval_work_items[root];
+}
+fn resolve_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
+    var current = root;
+    for (var depth = 0u; depth < material_table.attributes_eval_stride; depth++) {
+        let item = load_attributes_eval_work_item(current);
+        if (item.bxdf_kind != MATERIAL_KIND_MIX) { return item; }
+        if (item.selected_child_work_item == 0xffffffffu) { set_render_error(); return item; }
+        current = item.selected_child_work_item;
+    }
+    set_render_error();
+    return load_attributes_eval_work_item(root);
+}
+fn next_material_tree_node(tree_layout: MaterialTreeLayout, current: u32) -> u32 {
+    if (current < tree_layout.node_offset || current >= tree_layout.node_offset + tree_layout.node_count) {
+        set_render_error();
+        return 0xffffffffu;
+    }
+    var node = material_tree_nodes[current];
+    if (node.child0 != 0xffffffffu) { return node.child0; }
+    if (node.child1 != 0xffffffffu) { return node.child1; }
+    var child = current;
+    for (var climbed = 0u; climbed < tree_layout.node_count; climbed++) {
+        if (node.parent == 0xffffffffu) { return 0xffffffffu; }
+        let parent = material_tree_nodes[node.parent];
+        if (parent.child0 == child && parent.child1 != 0xffffffffu) {
+            return parent.child1;
+        }
+        child = node.parent;
+        node = parent;
+    }
+    set_render_error();
+    return 0xffffffffu;
 }
 fn load_layered_params(root: AttributesEvalWorkItem, kind: u32) -> LayeredParams {
     var params: LayeredParams;
@@ -1279,11 +1352,11 @@ fn evaluate_layered_pdf(
     }
     return mix(1.0 / (4.0 * PI), pdf_sum / f32(n_samples), 0.9);
 }
-fn load_dielectric_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
-fn dielectric_eta_is_constant(material_index: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_index, 0u).index); }
-fn load_conductor_eta(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 0u, lambda); }
-fn load_conductor_k(material_index: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_index, 1u, lambda); }
-fn load_conductor_roughness(material_index: u32) -> f32 { return load_material_scalar(material_index, 2u); }
+fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_node, 0u, lambda); }
+fn dielectric_eta_is_constant(material_node: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_node, 0u).index); }
+fn load_conductor_eta(material_node: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_node, 0u, lambda); }
+fn load_conductor_k(material_node: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_node, 1u, lambda); }
+fn load_conductor_roughness(material_node: u32) -> f32 { return load_material_scalar(material_node, 2u); }
 fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f32> {
     let c = clamp(abs(cosine_input), 0.0, 1.0);
     let c2 = c * c;
@@ -1738,3 +1811,4 @@ fn make_tangent(normal: vec3<f32>) -> vec3<f32> {
 var<private> material_texture_uv: vec2<f32>;
 var<private> material_texture_normal: vec3<f32>;
 var<private> material_texture_position: vec3<f32>;
+var<private> material_texture_eval_base: u32;

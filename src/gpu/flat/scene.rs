@@ -1,8 +1,8 @@
 use super::texture::TextureLibrary;
 use super::{
-    AttributeRef, Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds,
-    LightKind, LightSamplingModel, Material, Output, PrimitiveDistributionMap, RenderSettings,
-    TriangleDistributionEntry, Vertex, Viewport,
+    Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightKind,
+    LightSamplingModel, MaterialTreeLayout, MaterialTreeNode, Output, PrimitiveDistributionMap,
+    RenderSettings, TriangleDistributionEntry, Vertex, Viewport,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -17,15 +17,14 @@ pub struct Scene {
     pub triangle_distributions: Vec<TriangleDistributionEntry>,
     pub lights: Vec<Light>,
     pub infinite_lights: Vec<Light>,
-    /// One upload arena shared by material and light attribute references.
-    pub attribute_refs: Vec<AttributeRef>,
     pub light_bounds: Vec<LightBounds>,
     pub light_bvh: LightBVH,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
-    pub materials: Vec<Material>,
+    pub material_tree_layouts: Vec<MaterialTreeLayout>,
+    pub material_tree_nodes: Vec<MaterialTreeNode>,
     pub scalar_attributes: Vec<f32>,
     /// Typed, backend-independent texture programs and shared image resources.
     pub texture_library: TextureLibrary,

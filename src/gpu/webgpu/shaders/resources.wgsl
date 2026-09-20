@@ -45,8 +45,6 @@ var<storage, read_write> escaped_ray_indices: array<u32>;
 var<uniform> material_table: MaterialTableUniform;
 @group(0) @binding(20)
 var<uniform> light_table: LightTableUniform;
-@group(0) @binding(21)
-var<storage, read> materials: array<MaterialRecord>;
 @group(0) @binding(22)
 var<storage, read> attribute_refs: array<AttributeRef>;
 @group(0) @binding(23)
@@ -77,5 +75,13 @@ var texture_samplers: binding_array<sampler>;
 var<storage, read> rgb_spectrum_table: array<f32>;
 @group(0) @binding(42)
 var<storage, read> texture_roots: array<TextureRootRecord>;
+@group(0) @binding(43)
+var texture_noise_table: texture_2d<u32>;
+@group(0) @binding(44)
+var<storage, read_write> texture_eval_results: array<TextureEvalResult>;
+@group(0) @binding(45)
+var<storage, read> material_tree_layouts: array<MaterialTreeLayout>;
+@group(0) @binding(46)
+var<storage, read> material_tree_nodes: array<MaterialTreeNode>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;

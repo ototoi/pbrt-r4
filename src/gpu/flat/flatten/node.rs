@@ -1,8 +1,8 @@
 use super::{
-    append_area_light, complete_triangle_attributes, flatten_light, geometry_index, material_index,
-    multiply_transform, register_root_component, remove_invalid_triangles, screen_window,
-    viewport_resolution, Camera, Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape,
-    Transform, Viewport, INVALID_INDEX,
+    append_area_light, complete_triangle_attributes, flatten_light, geometry_index,
+    multiply_transform, register_material_tree, register_root_component, remove_invalid_triangles,
+    screen_window, viewport_resolution, Camera, Component, Film, FlatBuilder, Instance, NodeRef,
+    Output, Shape, Transform, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::util::error::PbrtError;
@@ -282,7 +282,7 @@ pub fn flatten_node_ref(
         shapes
     {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
-        let material = material_index(&material, builder, material_kind)?;
+        let material = register_material_tree(&material, builder, material_kind)?;
         let instance_index = u32::try_from(builder.instances.len())
             .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
         let area_light_handle = if let Some(area_light) = area_light {
@@ -301,7 +301,7 @@ pub fn flatten_node_ref(
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
-            material,
+            material_tree_layout: material,
             area_light: area_light_handle,
             reverse_orientation,
         });

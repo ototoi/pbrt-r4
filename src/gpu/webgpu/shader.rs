@@ -19,8 +19,21 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
+    compose_source_with_noise(stage_source, true)
+}
+
+pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> String {
     let roots = vec![stage_source, TRIANGLE_SAMPLING_SHADER];
-    let common_input = format!("{TYPES_SHADER}\n{WAVEFRONT_SHADER}\n{SPECTRUM_SHADER}");
+    let wavefront = if noise_enabled {
+        WAVEFRONT_SHADER.to_string()
+    } else {
+        remove_marked_section(
+            WAVEFRONT_SHADER,
+            "// TEXTURE_NOISE_BRANCH_BEGIN",
+            "// TEXTURE_NOISE_BRANCH_END",
+        )
+    };
+    let common_input = format!("{TYPES_SHADER}\n{wavefront}\n{SPECTRUM_SHADER}");
     let common_source = prune_common_source(&common_input, &roots);
     let references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     let resource_source = select_resources(RESOURCES_SHADER, &references);
@@ -55,6 +68,17 @@ pub fn compose_source(stage_source: &str) -> String {
         Ok(composed) => composed.source,
         Err(error) => unreachable!("built-in WebGPU shader module graph is invalid: {error}"),
     }
+}
+
+fn remove_marked_section(source: &str, begin: &str, end: &str) -> String {
+    let Some(begin_offset) = source.find(begin) else {
+        return source.to_string();
+    };
+    let Some(relative_end) = source[begin_offset..].find(end) else {
+        return source.to_string();
+    };
+    let end_offset = begin_offset + relative_end + end.len();
+    format!("{}{}", &source[..begin_offset], &source[end_offset..])
 }
 
 /// Returns the `(group, binding)` pairs declared by a composed WGSL module.
