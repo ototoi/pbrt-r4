@@ -15,7 +15,12 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (light_kind == LIGHT_KIND_UNIFORM_INFINITE
             || light_kind == LIGHT_KIND_IMAGE_INFINITE
             || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
-            radiance += load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+            if (light_kind == LIGHT_KIND_IMAGE_INFINITE || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
+                radiance += load_light_image_spectrum(light_index, ray.direction.xyz, lambda)
+                    * load_light_scale(light_index);
+            } else {
+                radiance += load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+            }
             light_pdf += light_pmf_for_handle(
                 light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
             ) / (4.0 * PI);

@@ -622,14 +622,50 @@ impl Scene {
                 }),
         );
         let scalar_attributes = flat.scalar_attributes.clone();
-        let texture_views = &flat.texture_library.image_views;
-        let texture_binding_plan = texture_binding_plan(texture_views)?;
+        // Keep the infinite-image sampler first. The shader uses sampler 0
+        // for environment lookups, whose horizontal coordinate repeats while
+        // the polar coordinate clamps at the poles.
+        let mut texture_views = Vec::new();
+        for light in &flat.infinite_lights {
+            if light.image_index == flat::INVALID_INDEX {
+                continue;
+            }
+            texture_views.push(ImageView {
+                mipmap: light.image_index,
+                value_type: ImageValueType::LinearRgb,
+                swrap: ImageWrapMode::Repeat,
+                twrap: ImageWrapMode::Clamp,
+                filter: ImageFilterMode::Bilinear,
+                scale: 1.0,
+                invert: false,
+            });
+        }
+        texture_views.extend(flat.texture_library.image_views.iter().cloned());
+        let texture_binding_plan = texture_binding_plan(&texture_views)?;
         let (texture_nodes, texture_children, texture_roots) =
             lower_texture_library(&flat.texture_library, &texture_binding_plan)?;
+        let infinite_image_bindings = flat
+            .infinite_lights
+            .iter()
+            .filter_map(|light| {
+                if light.image_index == flat::INVALID_INDEX {
+                    return None;
+                }
+                let view_index = texture_views
+                    .iter()
+                    .position(|view| view.mipmap == light.image_index)?;
+                let binding = texture_binding_plan
+                    .image_views
+                    .iter()
+                    .position(|&index| index == view_index)?;
+                Some((light.sampling_model, u32::try_from(binding).ok()?))
+            })
+            .collect::<HashMap<_, _>>();
         let light_sampling_models = flat
             .light_sampling_models
             .iter()
-            .map(|model| LightSamplingModel {
+            .enumerate()
+            .map(|(model_index, model)| LightSamplingModel {
                 kind: match model.kind {
                     flat::LightKind::Point => LIGHT_KIND_POINT,
                     flat::LightKind::Spot => LIGHT_KIND_SPOT,
@@ -649,7 +685,10 @@ impl Scene {
                 distribution_offset_words: model.distribution_offset,
                 distribution_count: model.distribution_count,
                 total_area: model.total_area,
-                flags: model.flags,
+                flags: infinite_image_bindings
+                    .get(&(model_index as u32))
+                    .copied()
+                    .unwrap_or(model.flags),
                 world_to_light: model.world_to_light,
             })
             .collect::<Vec<_>>();
@@ -776,7 +815,7 @@ impl Scene {
             device,
             queue,
             &flat.texture_library.mipmaps,
-            texture_views,
+            &texture_views,
             &texture_binding_plan.image_views,
         )?;
         if texture_images.is_empty() {
