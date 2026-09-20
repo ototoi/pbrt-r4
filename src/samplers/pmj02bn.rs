@@ -22,8 +22,10 @@ use crate::util::rng::mix_bits;
 
 // --- pmj02bnSamples (5 × 65536 × 2 u32) ---------------------------------
 const N_PMJ02BN_SETS: usize = 5;
-const N_PMJ02BN_SAMPLES: usize = 65536;
-const PMJ02BN_BYTES: &[u8] = include_bytes!("data/pmj02bn_samples.bin");
+/// Number of samples stored per PMJ02BN set.
+pub const N_PMJ02BN_SAMPLES: usize = 65536;
+/// Embedded pbrt-v4 PMJ02BN sample table shared by CPU and GPU samplers.
+pub const PMJ02BN_BYTES: &[u8] = include_bytes!("data/pmj02bn_samples.bin");
 
 fn pmj02bn_sample(set_index: usize, sample_index: usize) -> Point2f {
     let set = set_index % N_PMJ02BN_SETS;
@@ -41,14 +43,15 @@ fn pmj02bn_sample(set_index: usize, sample_index: usize) -> Point2f {
 // --- BlueNoiseTextures (48 × 128 × 128 u16) -----------------------------
 const BLUENOISE_RESOLUTION: usize = 128;
 const N_BLUENOISE_TEXTURES: usize = 48;
-const BLUENOISE_BYTES: &[u8] = include_bytes!("data/bluenoise_textures.bin");
+/// Embedded pbrt-v4 blue-noise table shared by CPU and GPU samplers.
+pub const BLUE_NOISE_BYTES: &[u8] = include_bytes!("data/bluenoise_textures.bin");
 
 fn blue_noise(texture_index: i32, p: Point2i) -> Float {
     let tex = (texture_index.rem_euclid(N_BLUENOISE_TEXTURES as i32)) as usize;
     let x = p.x.rem_euclid(BLUENOISE_RESOLUTION as i32) as usize;
     let y = p.y.rem_euclid(BLUENOISE_RESOLUTION as i32) as usize;
     let off = ((tex * BLUENOISE_RESOLUTION + x) * BLUENOISE_RESOLUTION + y) * 2;
-    let v = u16::from_le_bytes(BLUENOISE_BYTES[off..off + 2].try_into().unwrap());
+    let v = u16::from_le_bytes(BLUE_NOISE_BYTES[off..off + 2].try_into().unwrap());
     v as Float / 65535.0
 }
 

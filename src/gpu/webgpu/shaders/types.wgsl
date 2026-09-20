@@ -152,10 +152,10 @@ struct SamplerUniform {
     randomization: u32,
     table_width: u32,
     dimension_count: u32,
-    base_scales: vec2<u32>,
-    base_exponents: vec2<u32>,
-    mult_inverse: vec2<u32>,
+    samples_per_pixel: u32,
+    seed: u32,
     _padding: vec2<u32>,
+    payload: array<vec4<u32>, 2>,
 };
 
 struct FilmUniform {

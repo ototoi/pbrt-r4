@@ -53,7 +53,6 @@ pub struct WavefrontPathIntegrator {
     viewport_buffer: wgpu::Buffer,
     material_table_buffer: wgpu::Buffer,
     light_table_buffer: wgpu::Buffer,
-    sampler_params_buffer: wgpu::Buffer,
     queues: Queues,
     film: Film,
     noise_resources: NoiseRuntimeResources,
@@ -165,11 +164,6 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.light_table),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let sampler_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 sampler UBO"),
-            contents: bytes_of(&scene.sampler.uniform),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
         let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
         let queues = Queues::new(
             device,
@@ -227,9 +221,9 @@ impl WavefrontPathIntegrator {
                 ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
                 ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
                 ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
-                ResourceId::SamplerParams => sampler_params_buffer.as_entire_binding(),
+                ResourceId::SamplerParams => scene.sampler.params_binding(),
                 ResourceId::SamplerTable => {
-                    wgpu::BindingResource::TextureView(&scene.sampler.table_view)
+                    wgpu::BindingResource::TextureView(scene.sampler.table_view())
                 }
                 ResourceId::MaterialRoot => scene.material_root_buffer.as_entire_binding(),
                 ResourceId::MaterialNode => scene.material_node_buffer.as_entire_binding(),
@@ -401,7 +395,6 @@ impl WavefrontPathIntegrator {
             viewport_buffer,
             material_table_buffer,
             light_table_buffer,
-            sampler_params_buffer,
             queues,
             film,
             noise_resources,

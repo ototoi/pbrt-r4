@@ -1,14 +1,17 @@
-use pbrt_r4::gpu::flat::{HaltonRandomization, RenderSettings, SamplerKind};
+use pbrt_r4::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization};
 use pbrt_r4::gpu::webgpu::abi::{RenderError, ViewportUniform};
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::sampler::SamplerResources;
 use pbrt_r4::gpu::webgpu::shader::compose_source;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
-use pbrt_r4::samplers::{HaltonSampler, RandomizeStrategy};
+use pbrt_r4::samplers::{
+    HaltonSampler, IndependentSampler, PMJ02BNSampler, PaddedSobolSampler, RandomizeStrategy,
+    Sampler, SobolSampler, StratifiedSampler, ZSobolSampler,
+};
 use pbrt_r4::util::base::Point2i;
 use wgpu::util::DeviceExt;
 
-const RESULT_FLOATS: usize = 8;
+const RESULT_FLOATS: usize = 12;
 
 #[test]
 #[ignore = "requires a WebGPU adapter"]
@@ -24,33 +27,207 @@ fn halton_shader_matches_cpu_sampler() {
     )
     .unwrap();
 
-    compare_strategy(&context, HaltonRandomization::None, RandomizeStrategy::None);
     compare_strategy(
         &context,
-        HaltonRandomization::PermuteDigits,
+        SamplerRandomization::None,
+        RandomizeStrategy::None,
+    );
+    compare_strategy(
+        &context,
+        SamplerRandomization::PermuteDigits,
         RandomizeStrategy::PermuteDigits,
+    );
+    compare_strategy(
+        &context,
+        SamplerRandomization::Owen,
+        RandomizeStrategy::Owen,
+    );
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter"]
+fn remaining_shader_samplers_match_cpu() {
+    let context = Context::new(
+        RequiredLimits {
+            storage_buffers_per_shader_stage: 2,
+            uniform_buffers_per_shader_stage: 2,
+            bind_groups: 1,
+        },
+        1,
+        1,
+    )
+    .unwrap();
+    let resolution = [320, 180];
+    let spp = 16;
+    let seed = 17;
+    let cases = [
+        (
+            SamplerKind::Independent,
+            SamplerRandomization::None,
+            Sampler::Independent(IndependentSampler::new(spp, seed)),
+        ),
+        (
+            SamplerKind::Sobol,
+            SamplerRandomization::FastOwen,
+            Sampler::Sobol(SobolSampler::new(
+                spp,
+                Point2i::new(320, 180),
+                RandomizeStrategy::FastOwen,
+                seed,
+            )),
+        ),
+        (
+            SamplerKind::Sobol,
+            SamplerRandomization::None,
+            Sampler::Sobol(SobolSampler::new(
+                spp,
+                Point2i::new(320, 180),
+                RandomizeStrategy::None,
+                seed,
+            )),
+        ),
+        (
+            SamplerKind::Sobol,
+            SamplerRandomization::PermuteDigits,
+            Sampler::Sobol(SobolSampler::new(
+                spp,
+                Point2i::new(320, 180),
+                RandomizeStrategy::PermuteDigits,
+                seed,
+            )),
+        ),
+        (
+            SamplerKind::Sobol,
+            SamplerRandomization::Owen,
+            Sampler::Sobol(SobolSampler::new(
+                spp,
+                Point2i::new(320, 180),
+                RandomizeStrategy::Owen,
+                seed,
+            )),
+        ),
+        (
+            SamplerKind::PaddedSobol,
+            SamplerRandomization::FastOwen,
+            Sampler::PaddedSobol(PaddedSobolSampler::new(
+                spp,
+                RandomizeStrategy::FastOwen,
+                seed,
+            )),
+        ),
+        (
+            SamplerKind::ZSobol,
+            SamplerRandomization::FastOwen,
+            Sampler::ZSobol(ZSobolSampler::new(
+                spp,
+                Point2i::new(320, 180),
+                RandomizeStrategy::FastOwen,
+                seed,
+            )),
+        ),
+        (
+            SamplerKind::Pmj02Bn,
+            SamplerRandomization::None,
+            Sampler::PMJ02BN(PMJ02BNSampler::new(spp, seed as i32)),
+        ),
+        (
+            SamplerKind::Stratified,
+            SamplerRandomization::None,
+            Sampler::Stratified(StratifiedSampler::new(4, 4, true, seed)),
+        ),
+    ];
+    for (kind, randomization, sampler) in cases {
+        compare_sampler(&context, resolution, seed, kind, randomization, sampler);
+    }
+    compare_sampler_with_settings(
+        &context,
+        resolution,
+        seed,
+        RenderSettings {
+            sampler_kind: SamplerKind::Stratified,
+            randomization: SamplerRandomization::None,
+            samples_per_pixel: spp,
+            x_samples: 4,
+            y_samples: 4,
+            jitter: false,
+            max_depth: 5,
+            seed,
+            light_sampler: "bvh".to_string(),
+            disable_wavelength_jitter: false,
+        },
+        Sampler::Stratified(StratifiedSampler::new(4, 4, false, seed)),
     );
 }
 
 fn compare_strategy(
     context: &Context,
-    gpu_randomization: HaltonRandomization,
+    gpu_randomization: SamplerRandomization,
     cpu_randomization: RandomizeStrategy,
 ) {
     let resolution = [320, 180];
-    let pixel = Point2i::new(37, 23);
-    let pixel_index = pixel.y as u32 * resolution[0] + pixel.x as u32;
-    let sample_index = 11;
     let seed = 17;
     let settings = RenderSettings {
         sampler_kind: SamplerKind::Halton,
-        halton_randomization: gpu_randomization,
+        randomization: gpu_randomization,
         samples_per_pixel: 16,
+        x_samples: 1,
+        y_samples: 1,
+        jitter: false,
         max_depth: 5,
         seed,
         light_sampler: "bvh".to_string(),
         disable_wavelength_jitter: false,
     };
+    let cpu = Sampler::Halton(HaltonSampler::new(
+        settings.samples_per_pixel,
+        Point2i::new(resolution[0] as i32, resolution[1] as i32),
+        cpu_randomization,
+        seed,
+    ));
+    compare_sampler_with_settings(context, resolution, seed, settings, cpu);
+}
+
+fn compare_sampler(
+    context: &Context,
+    resolution: [u32; 2],
+    seed: u32,
+    kind: SamplerKind,
+    randomization: SamplerRandomization,
+    cpu: Sampler,
+) {
+    let settings = RenderSettings {
+        sampler_kind: kind,
+        randomization,
+        samples_per_pixel: 16,
+        x_samples: if kind == SamplerKind::Stratified {
+            4
+        } else {
+            1
+        },
+        y_samples: if kind == SamplerKind::Stratified {
+            4
+        } else {
+            1
+        },
+        jitter: kind == SamplerKind::Stratified,
+        max_depth: 5,
+        seed,
+        light_sampler: "bvh".to_string(),
+        disable_wavelength_jitter: false,
+    };
+    compare_sampler_with_settings(context, resolution, seed, settings, cpu);
+}
+
+fn compare_sampler_with_settings(
+    context: &Context,
+    resolution: [u32; 2],
+    seed: u32,
+    settings: RenderSettings,
+    mut cpu: Sampler,
+) {
+    let pixel = Point2i::new(37, 23);
+    let pixel_index = pixel.y as u32 * resolution[0] + pixel.x as u32;
+    let sample_index = 11;
     let resources =
         SamplerResources::new(&context.device, &context.queue, &settings, resolution).unwrap();
     let viewport = ViewportUniform {
@@ -63,26 +240,27 @@ fn compare_strategy(
         padding: [0; 2],
     };
 
-    let mut cpu = HaltonSampler::new(
-        settings.samples_per_pixel,
-        Point2i::new(resolution[0] as i32, resolution[1] as i32),
-        cpu_randomization,
-        seed,
-    );
-    cpu.start_pixel(&pixel);
-    cpu.start_pixel_sample(sample_index, 0);
+    cpu.start_pixel_sample(pixel, sample_index, 0);
     let wavelength = cpu.get_1d();
     let pixel_sample = cpu.get_pixel_2d();
-    cpu.start_pixel_sample(sample_index, 6);
+    cpu.start_pixel_sample(pixel, sample_index, 6);
+    let direct_uc = cpu.get_1d();
+    let direct_u = cpu.get_2d();
+    let indirect_uc = cpu.get_1d();
+    let indirect_u = cpu.get_2d();
     let expected = [
         pixel_sample.x,
         pixel_sample.y,
         wavelength,
+        direct_uc,
+        direct_u.x,
+        direct_u.y,
+        indirect_uc,
+        indirect_u.x,
+        indirect_u.y,
         cpu.get_1d(),
-        cpu.get_1d(),
-        cpu.get_1d(),
-        cpu.get_1d(),
-        cpu.get_1d(),
+        0.0,
+        0.0,
     ];
 
     let device = &context.device;
@@ -101,11 +279,6 @@ fn compare_strategy(
     let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Halton test viewport"),
         contents: bytemuck::bytes_of(&viewport),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let sampler_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Halton test params"),
-        contents: bytemuck::bytes_of(&resources.uniform),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let error_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -142,10 +315,10 @@ fn compare_strategy(
             binding(1, viewport_buffer.as_entire_binding()),
             binding(9, output.as_entire_binding()),
             binding(11, error_buffer.as_entire_binding()),
-            binding(21, sampler_buffer.as_entire_binding()),
+            binding(21, resources.params_binding()),
             wgpu::BindGroupEntry {
                 binding: 49,
-                resource: wgpu::BindingResource::TextureView(&resources.table_view),
+                resource: wgpu::BindingResource::TextureView(resources.table_view()),
             },
         ],
     });
@@ -160,10 +333,15 @@ fn halton_test() {{
         sampler_get_1d({pixel_index}u, 6u),
     );
     framebuffer[1] = vec4<f32>(
-        sampler_get_1d({pixel_index}u, 7u),
-        sampler_get_1d({pixel_index}u, 8u),
+        sampler_get_2d({pixel_index}u, 7u),
         sampler_get_1d({pixel_index}u, 9u),
-        sampler_get_1d({pixel_index}u, 10u),
+        sampler_get_2d({pixel_index}u, 10u).x,
+    );
+    framebuffer[2] = vec4<f32>(
+        sampler_get_2d({pixel_index}u, 10u).y,
+        sampler_get_1d({pixel_index}u, 12u),
+        0.0,
+        0.0,
     );
 }}
 "#
@@ -198,7 +376,9 @@ fn halton_test() {{
     for (index, expected) in expected.iter().enumerate() {
         assert!(
             (actual[index] - expected).abs() <= 2e-6,
-            "strategy={gpu_randomization:?}, value={index}: GPU {} != CPU {expected}",
+            "kind={:?}, strategy={:?}, value={index}: GPU {} != CPU {expected}",
+            settings.sampler_kind,
+            settings.randomization,
             actual[index]
         );
     }
