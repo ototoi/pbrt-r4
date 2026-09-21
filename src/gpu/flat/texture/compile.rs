@@ -79,10 +79,33 @@ impl TextureLibrary {
                     Instruction::ConstantFloat { .. }
                     | Instruction::ConstantRgb { .. }
                     | Instruction::SampleImage { .. } => {}
-                    Instruction::Scale { input, .. } => {
-                        if !valid_slot(*input) {
+                    Instruction::Scale {
+                        dst, input, scale, ..
+                    } => {
+                        if !valid_slot(*dst)
+                            || !valid_slot(*input)
+                            || scale.is_some_and(|slot| !valid_slot(slot))
+                        {
                             return Err(PbrtError::error(
                                 "Texture scale references an invalid slot.",
+                            ));
+                        }
+                        if *input >= *dst || scale.is_some_and(|slot| slot >= *dst) {
+                            return Err(PbrtError::error(
+                                "Texture scale operands are not in post-order.",
+                            ));
+                        }
+                        if program.slot_types[*input as usize] != program.slot_types[*dst as usize]
+                        {
+                            return Err(PbrtError::error(
+                                "Texture scale input has an incompatible value type.",
+                            ));
+                        }
+                        if scale.is_some_and(|slot| {
+                            program.slot_types[slot as usize] != super::program::ValueType::Float
+                        }) {
+                            return Err(PbrtError::error(
+                                "Texture scale factor must be a float value.",
                             ));
                         }
                     }

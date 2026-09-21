@@ -665,7 +665,7 @@ fn materialize_texture_node(
         })
         .unwrap_or("")
     {
-        "scale" => &["tex"],
+        "scale" => &["tex", "scale"],
         "mix" => &["tex1", "tex2", "amount"],
         "directionmix" => &["tex1", "tex2"],
         "dots" => &["outside", "inside"],
@@ -687,10 +687,36 @@ fn materialize_texture_node(
     let operation_name = implementation_name(node).unwrap_or("");
     let mut children = Vec::new();
 
-    // pbrt-v4 allows the two operands of mix, directionmix, and checkerboard
-    // to be either texture references or literal values.  Materialize literal
-    // operands as ordinary constant texture nodes so the flattened evaluator
-    // has one uniform child representation for both cases.
+    // pbrt-v4 allows scale's tex operand and the operands of mix,
+    // directionmix, and checkerboard to be either texture references or
+    // literal values. Materialize literal value operands as ordinary constant
+    // texture nodes. The optional scalar operands scale.scale and mix.amount
+    // remain parameters when they are literals.
+    if operation_name == "scale" {
+        let texture_key = texture_keys
+            .iter()
+            .find(|key| params.get_key_name(key) == "tex")
+            .cloned();
+        if let Some(key) = texture_key {
+            append_texture_children(
+                &mut children,
+                &key,
+                node,
+                kind,
+                &params,
+                lookup,
+                raw_nodes,
+                memo,
+                visiting,
+            )?;
+        } else {
+            children.push(constant_texture_child(
+                &node.name, "tex", kind, &params, 1.0,
+            ));
+        }
+        texture_keys.retain(|key| params.get_key_name(key) != "tex");
+    }
+
     if matches!(operation_name, "mix" | "directionmix" | "dots" | "bilerp")
         || operation_name.contains("checkerboard")
     {
@@ -781,17 +807,31 @@ fn append_texture_children(
         ))
     })?;
     for name in names.iter() {
-        let child_kind =
-            if implementation_name(node) == Some("mix") && params.get_key_name(key) == "amount" {
-                NodeTextureKind::Float
-            } else {
-                kind
-            };
+        let operation_name = implementation_name(node);
+        let slot = params.get_key_name(key);
+        let child_kind = if (operation_name == Some("mix") && slot == "amount")
+            || (operation_name == Some("scale") && slot == "scale")
+        {
+            NodeTextureKind::Float
+        } else {
+            kind
+        };
         let child_index = *lookup.get(&(child_kind, name.clone())).ok_or_else(|| {
-            PbrtError::error(&format!(
-                "Texture node \"{}\" references unknown child texture \"{}\".",
-                node.name, name
-            ))
+            if operation_name == Some("scale") {
+                let expected_kind = match child_kind {
+                    NodeTextureKind::Float => "float",
+                    NodeTextureKind::Spectrum => "spectrum",
+                };
+                PbrtError::error(&format!(
+                    "Texture node \"{}\" scale slot \"{}\" expects a {} texture, but \"{}\" was not found.",
+                    node.name, slot, expected_kind, name
+                ))
+            } else {
+                PbrtError::error(&format!(
+                    "Texture node \"{}\" references unknown child texture \"{}\".",
+                    node.name, name
+                ))
+            }
         })?;
         children.push(materialize_texture_node(
             child_index,
