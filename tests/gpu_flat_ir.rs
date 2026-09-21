@@ -820,6 +820,40 @@ fn flatten_node_rejects_non_finite_final_portal_scale() {
 }
 
 #[test]
+fn flatten_node_rejects_non_finite_final_uniform_infinite_scale() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_float("float scale", f32::MAX);
+    params.add_float("float illuminance", f32::MAX);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-finite scale"));
+}
+
+#[test]
+fn flatten_node_rejects_non_finite_final_image_infinite_scale() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("white.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([255, 255, 255]))
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    params.add_float("float scale", f32::MAX);
+    params.add_float("float illuminance", f32::MAX);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-finite scale"));
+}
+
+#[test]
 fn flatten_node_reports_degenerate_portal_geometry() {
     let mut params = ParameterDictionary::default();
     params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
