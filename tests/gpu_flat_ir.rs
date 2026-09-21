@@ -52,6 +52,14 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
 }
 
 fn add_camera_and_film(root: &mut Node, camera_params: pbrt_r4::paramdict::ParameterDictionary) {
+    add_camera_and_named_film(root, camera_params, "rgb");
+}
+
+fn add_camera_and_named_film(
+    root: &mut Node,
+    camera_params: pbrt_r4::paramdict::ParameterDictionary,
+    film_name: &str,
+) {
     root.add_component(Component::Output(OutputComponent {
         output: Output {
             filename: "test.exr".to_string(),
@@ -69,11 +77,34 @@ fn add_camera_and_film(root: &mut Node, camera_params: pbrt_r4::paramdict::Param
     film_params.add_int("integer yresolution", 32);
     camera.add_component(Component::Film(FilmComponent {
         film: Film {
-            name: "rgb".to_string(),
+            name: film_name.to_string(),
             params: film_params,
         },
     }));
     root.add_child(Arc::new(RwLock::new(camera)));
+}
+
+#[test]
+fn flatten_node_treats_gbuffer_film_as_rgb_output() {
+    let mut root = Node::new("root");
+    add_camera_and_named_film(&mut root, Default::default(), "gbuffer");
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.viewport.resolution, [64, 32]);
+    assert_eq!(scene.film.sensor_response, [0, 1, 2]);
+}
+
+#[test]
+fn flatten_node_still_rejects_other_film_types() {
+    let mut root = Node::new("root");
+    add_camera_and_named_film(&mut root, Default::default(), "spectral");
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("does not support film \"spectral\""));
 }
 
 fn light_node(
