@@ -437,10 +437,7 @@ pub struct RGBColorSpace {
 }
 
 impl RGBColorSpace {
-    /// Convert CIE XYZ values to this color space, matching v4's
-    /// `RGBColorSpace::ToRGB`. The matrix is derived from this space's
-    /// primaries and white point rather than using the fixed sRGB matrix.
-    pub fn xyz_to_rgb(&self, xyz: [Float; 3]) -> [Float; 3] {
+    fn rgb_to_xyz_matrix(&self) -> [[Float; 3]; 3] {
         let primary_xyz = |primary: [Float; 2]| {
             [
                 primary[0] / primary[1],
@@ -459,7 +456,7 @@ impl RGBColorSpace {
             inverse[1][0] * white[0] + inverse[1][1] * white[1] + inverse[1][2] * white[2],
             inverse[2][0] * white[0] + inverse[2][1] * white[1] + inverse[2][2] * white[2],
         ];
-        let xyz_from_rgb = [
+        [
             [
                 matrix[0][0] * scale[0],
                 matrix[0][1] * scale[1],
@@ -475,13 +472,24 @@ impl RGBColorSpace {
                 matrix[2][1] * scale[1],
                 matrix[2][2] * scale[2],
             ],
-        ];
-        let inverse = invert_3x3(xyz_from_rgb);
+        ]
+    }
+
+    /// Convert CIE XYZ values to this color space, matching v4's
+    /// `RGBColorSpace::ToRGB`. The matrix is derived from this space's
+    /// primaries and white point rather than using the fixed sRGB matrix.
+    pub fn xyz_to_rgb(&self, xyz: [Float; 3]) -> [Float; 3] {
+        let inverse = invert_3x3(self.rgb_to_xyz_matrix());
         [
             inverse[0][0] * xyz[0] + inverse[0][1] * xyz[1] + inverse[0][2] * xyz[2],
             inverse[1][0] * xyz[0] + inverse[1][1] * xyz[1] + inverse[1][2] * xyz[2],
             inverse[2][0] * xyz[0] + inverse[2][1] * xyz[1] + inverse[2][2] * xyz[2],
         ]
+    }
+
+    /// RGB coefficients whose dot product gives CIE Y luminance.
+    pub fn luminance_vector(&self) -> [Float; 3] {
+        self.rgb_to_xyz_matrix()[1]
     }
 
     pub fn albedo_to_polynomial(&self, rgb: [Float; 3]) -> RGBSigmoidPolynomial {

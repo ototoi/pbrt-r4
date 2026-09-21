@@ -318,6 +318,16 @@ pub struct PortalDistributionTexel {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PortalLightCandidate {
+    pub position_uv: [f32; 4],
+    pub sample_direction_pdf: [f32; 4],
+    pub state: u32,
+    pub light_index: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TriangleDistributionEntry {
     pub primitive: u32,
     pub cdf: f32,
@@ -344,7 +354,7 @@ pub struct FilmUniform {
     pub padding: u32,
 }
 
-pub fn film_uniform(film: &crate::gpu::flat::Film) -> FilmUniform {
+pub fn film_uniform(film: &flat::Film) -> FilmUniform {
     FilmUniform {
         sensor_response: [
             film.sensor_response[0],

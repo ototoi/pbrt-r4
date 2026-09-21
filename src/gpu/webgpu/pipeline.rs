@@ -1,7 +1,10 @@
 use crate::util::error::PbrtError;
 
 use super::shader;
-use super::stages::{all_stage_specs, canonical_wavefront_bindings, BindingClass, RequiredLimits};
+use super::stages::{
+    all_stage_specs, canonical_wavefront_bindings, BindingClass, BindingSpec, RequiredLimits,
+    ResourceId,
+};
 
 pub struct StagePipeline {
     pub pipeline: wgpu::ComputePipeline,
@@ -17,6 +20,8 @@ pub struct Pipeline {
     pub handle_emissive: StagePipeline,
     pub evaluate_textures: StagePipeline,
     pub evaluate_attributes: StagePipeline,
+    pub select_portal_direct: StagePipeline,
+    pub sample_portal_direct: StagePipeline,
     pub evaluate_materials: StagePipeline,
     pub intersect_shadow: StagePipeline,
     pub sample_diffuse_bounce: StagePipeline,
@@ -155,6 +160,16 @@ impl Pipeline {
                 include_str!("shaders/evaluate_attributes.wgsl"),
                 "evaluate_attributes",
             ),
+            select_portal_direct: compute(
+                "pbrt-r4 select portal direct",
+                include_str!("shaders/select_portal_direct.wgsl"),
+                "select_portal_direct",
+            ),
+            sample_portal_direct: compute(
+                "pbrt-r4 sample portal direct",
+                include_str!("shaders/sample_portal_direct.wgsl"),
+                "sample_portal_direct",
+            ),
             evaluate_materials: compute(
                 "pbrt-r4 evaluate materials",
                 include_str!("shaders/evaluate_materials.wgsl"),
@@ -226,7 +241,7 @@ impl Pipeline {
 }
 
 fn layout_entry(
-    binding: &super::stages::BindingSpec,
+    binding: &BindingSpec,
     texture_image_count: u32,
     texture_sampler_count: u32,
 ) -> wgpu::BindGroupLayoutEntry {
@@ -264,12 +279,11 @@ fn layout_entry(
         ty,
         count: if matches!(
             binding.resource,
-            super::stages::ResourceId::TextureImageArray
-                | super::stages::ResourceId::TextureSamplerArray
+            ResourceId::TextureImageArray | ResourceId::TextureSamplerArray
         ) {
             let count = match binding.resource {
-                super::stages::ResourceId::TextureImageArray => texture_image_count,
-                super::stages::ResourceId::TextureSamplerArray => texture_sampler_count,
+                ResourceId::TextureImageArray => texture_image_count,
+                ResourceId::TextureSamplerArray => texture_sampler_count,
                 _ => unreachable!("only texture arrays have a binding count"),
             };
             std::num::NonZeroU32::new(count.max(1))

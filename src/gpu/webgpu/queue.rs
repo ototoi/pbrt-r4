@@ -2,8 +2,8 @@ use bytemuck::{bytes_of, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::abi::{
-    AttributesEvalWorkItem, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
-    ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
+    AttributesEvalWorkItem, PixelSampleState, PortalLightCandidate, QueueCounters, QueueState,
+    RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
 };
 use crate::util::error::PbrtError;
 
@@ -24,6 +24,7 @@ pub struct TypedQueueSizes {
     pub texture_eval_results: u64,
     pub hit_area_ray_indices: u64,
     pub escaped_ray_indices: u64,
+    pub portal_light_candidates: u64,
 }
 
 impl TypedQueueSizes {
@@ -76,6 +77,10 @@ impl TypedQueueSizes {
             .ok_or_else(|| PbrtError::error("WebGPU texture results size overflowed."))?,
             hit_area_ray_indices: bytes(std::mem::size_of::<u32>(), "hit-area queue")?,
             escaped_ray_indices: bytes(std::mem::size_of::<u32>(), "escaped queue")?,
+            portal_light_candidates: bytes(
+                std::mem::size_of::<PortalLightCandidate>(),
+                "portal light candidates",
+            )?,
         })
     }
 }
@@ -93,6 +98,7 @@ pub struct Queues {
     pub texture_eval_results: wgpu::Buffer,
     pub hit_area_ray_indices: wgpu::Buffer,
     pub escaped_ray_indices: wgpu::Buffer,
+    pub portal_light_candidates: wgpu::Buffer,
     state_readback: wgpu::Buffer,
 }
 
@@ -163,6 +169,10 @@ impl Queues {
             escaped_ray_indices: storage(
                 "pbrt-r4 escaped ray index queue",
                 sizes.escaped_ray_indices,
+            ),
+            portal_light_candidates: storage(
+                "pbrt-r4 portal light candidates",
+                sizes.portal_light_candidates,
             ),
             state_readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 wavefront state readback"),

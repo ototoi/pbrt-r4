@@ -13,6 +13,7 @@ fn texture_material_pipeline_compiles() {
     let required = RequiredLimits {
         storage_buffers_per_shader_stage: 30,
         uniform_buffers_per_shader_stage: 5,
+        buffers_and_acceleration_structures_per_shader_stage: 36,
         bind_groups: 2,
     };
     let context = Context::new(required, 1, 1).unwrap();

@@ -1,4 +1,4 @@
-use super::portal::{PortalDistributionTexel, PreparedPortalImage};
+use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
 use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
@@ -134,7 +134,7 @@ pub fn flatten_node_with_material_override(
             offsets: vec![0],
             entries: Vec::new(),
         },
-        portal_images: builder.portal_images,
+        portal_infinite_lights: builder.portal_infinite_lights,
         portal_distribution: builder.portal_distribution,
     };
     let mut scene = scene;
@@ -278,7 +278,7 @@ struct FlatBuilder {
     light_bound_inputs: Vec<LightBoundInput>,
     infinite_light_mipmaps: Vec<Arc<super::texture::Mipmap>>,
     infinite_light_image_decoder: super::texture::ImageDecoder,
-    portal_images: Vec<PreparedPortalImage>,
+    portal_infinite_lights: Vec<PortalImageInfiniteLight>,
     portal_distribution: Vec<PortalDistributionTexel>,
     measured_bsdf_library: super::MeasuredBsdfLibrary,
 }
