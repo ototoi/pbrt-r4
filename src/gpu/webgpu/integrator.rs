@@ -252,6 +252,10 @@ impl WavefrontPathIntegrator {
                 }
                 ResourceId::LightPosition => scene.light_position_buffer.as_entire_binding(),
                 ResourceId::TriangleDistribution => scene.distribution_buffer.as_entire_binding(),
+                ResourceId::PortalInfiniteLight => scene.portal_image_buffer.as_entire_binding(),
+                ResourceId::PortalDistribution => {
+                    scene.portal_distribution_buffer.as_entire_binding()
+                }
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
                 ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),

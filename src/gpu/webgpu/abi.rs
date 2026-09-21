@@ -300,6 +300,24 @@ pub struct LightSamplingModel {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PortalImageInfiniteRecord {
+    pub portal: [[f32; 4]; 4],
+    pub world_to_portal: [[f32; 4]; 3],
+    pub distribution_offset: u32,
+    pub width: u32,
+    pub height: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PortalDistributionTexel {
+    pub function: f32,
+    pub summed_area: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TriangleDistributionEntry {
     pub primitive: u32,
     pub cdf: f32,

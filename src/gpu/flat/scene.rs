@@ -1,3 +1,4 @@
+use super::portal::PortalDistributionTexel;
 use super::texture::TextureLibrary;
 use super::{
     Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds, LightKind,
@@ -31,6 +32,8 @@ pub struct Scene {
     pub spectrum_attributes: Vec<DenseSpectrum>,
     pub measured_bsdfs: MeasuredBsdfResources,
     pub primitive_distribution_map: PrimitiveDistributionMap,
+    pub portal_images: Vec<super::portal::PreparedPortalImage>,
+    pub portal_distribution: Vec<PortalDistributionTexel>,
 }
 
 impl Scene {

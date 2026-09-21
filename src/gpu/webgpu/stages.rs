@@ -62,6 +62,8 @@ pub enum ResourceId {
     MeasuredTable,
     SamplerParams,
     SamplerTable,
+    PortalInfiniteLight,
+    PortalDistribution,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -285,6 +287,18 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::IntegerTexture,
         Access::Read,
     );
+    push(
+        24,
+        ResourceId::PortalInfiniteLight,
+        BindingClass::Storage,
+        Access::Read,
+    );
+    push(
+        25,
+        ResourceId::PortalDistribution,
+        BindingClass::Storage,
+        Access::Read,
+    );
     for (binding, resource) in [
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),
@@ -505,6 +519,20 @@ const SAMPLE_DIRECT_LIGHT_BINDINGS: &[BindingSpec] = &[
         class: BindingClass::Storage,
         access: Access::Write,
     },
+    BindingSpec {
+        group: 0,
+        binding: 24,
+        resource: ResourceId::PortalInfiniteLight,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 0,
+        binding: 25,
+        resource: ResourceId::PortalDistribution,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
 ];
 
 const BEGIN_SAMPLE_BINDINGS: &[BindingSpec] = &[
@@ -698,6 +726,20 @@ const SCATTER_BINDINGS: &[BindingSpec] = &[
         resource: ResourceId::RenderError,
         class: BindingClass::Storage,
         access: Access::ReadWrite,
+    },
+    BindingSpec {
+        group: 0,
+        binding: 24,
+        resource: ResourceId::PortalInfiniteLight,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 0,
+        binding: 25,
+        resource: ResourceId::PortalDistribution,
+        class: BindingClass::Storage,
+        access: Access::Read,
     },
 ];
 
