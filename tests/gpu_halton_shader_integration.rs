@@ -20,6 +20,7 @@ fn halton_shader_matches_cpu_sampler() {
         RequiredLimits {
             storage_buffers_per_shader_stage: 2,
             uniform_buffers_per_shader_stage: 2,
+            buffers_and_acceleration_structures_per_shader_stage: 4,
             bind_groups: 1,
         },
         1,
@@ -51,6 +52,7 @@ fn remaining_shader_samplers_match_cpu() {
         RequiredLimits {
             storage_buffers_per_shader_stage: 2,
             uniform_buffers_per_shader_stage: 2,
+            buffers_and_acceleration_structures_per_shader_stage: 4,
             bind_groups: 1,
         },
         1,

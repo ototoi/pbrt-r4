@@ -1,9 +1,12 @@
+use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 
 use image::{ImageBuffer, Rgb};
+use pbrt_r4::gpu::flat::portal::prepare_portal_image;
+use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
 use pbrt_r4::gpu::flat::{
     evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, SamplerKind,
-    SamplerRandomization,
+    SamplerRandomization, Scene as FlatScene,
 };
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
@@ -13,6 +16,7 @@ use pbrt_r4::gpu::node::{
     SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
+use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
@@ -51,15 +55,11 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
     Arc::new(RwLock::new(node))
 }
 
-fn add_camera_and_film(root: &mut Node, camera_params: pbrt_r4::paramdict::ParameterDictionary) {
+fn add_camera_and_film(root: &mut Node, camera_params: ParameterDictionary) {
     add_camera_and_named_film(root, camera_params, "rgb");
 }
 
-fn add_camera_and_named_film(
-    root: &mut Node,
-    camera_params: pbrt_r4::paramdict::ParameterDictionary,
-    film_name: &str,
-) {
+fn add_camera_and_named_film(root: &mut Node, camera_params: ParameterDictionary, film_name: &str) {
     root.add_component(Component::Output(OutputComponent {
         output: Output {
             filename: "test.exr".to_string(),
@@ -72,7 +72,7 @@ fn add_camera_and_named_film(
             medium: String::new(),
         },
     }));
-    let mut film_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut film_params = ParameterDictionary::default();
     film_params.add_int("integer xresolution", 64);
     film_params.add_int("integer yresolution", 32);
     camera.add_component(Component::Film(FilmComponent {
@@ -107,11 +107,7 @@ fn flatten_node_still_rejects_other_film_types() {
         .contains("does not support film \"spectral\""));
 }
 
-fn light_node(
-    name: &str,
-    light_kind: &str,
-    params: pbrt_r4::paramdict::ParameterDictionary,
-) -> Arc<RwLock<Node>> {
+fn light_node(name: &str, light_kind: &str, params: ParameterDictionary) -> Arc<RwLock<Node>> {
     let mut node = Node::new(name);
     node.add_component(Component::Light(LightComponent {
         light: NodeLight {
@@ -142,7 +138,7 @@ fn instance_node(name: &str, target: &Arc<RwLock<Node>>, offset: [f32; 3]) -> Ar
 #[test]
 fn flatten_node_packs_mesh_ranges_and_instances() {
     let mut root = Node::new("root");
-    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
     root.add_child(triangle_node("first", "diffuse", [1.0, 2.0, 3.0]));
@@ -247,7 +243,7 @@ fn flatten_node_rejects_unsupported_area_light_power() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     let area = triangle_node("powered-emitter", "diffuse", [0.0, 0.0, 0.0]);
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_float("float power", 10.0);
     area.write()
         .unwrap()
@@ -272,7 +268,7 @@ fn flatten_node_preserves_explicit_camera_screen_window() {
         },
     }));
     let mut camera = Node::new("camera");
-    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     camera_params.add_float("float halffov", 10.0);
     camera_params.add_float("float frameaspectratio", 1.0);
@@ -286,7 +282,7 @@ fn flatten_node_preserves_explicit_camera_screen_window() {
             medium: String::new(),
         },
     }));
-    let mut film_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut film_params = ParameterDictionary::default();
     film_params.add_int("integer xresolution", 64);
     film_params.add_int("integer yresolution", 32);
     camera.add_component(Component::Film(FilmComponent {
@@ -306,7 +302,7 @@ fn flatten_node_preserves_explicit_camera_screen_window() {
 #[test]
 fn flatten_node_shares_geometry_across_instances() {
     let mut root = Node::new("root");
-    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
 
@@ -335,7 +331,7 @@ fn flatten_node_shares_geometry_across_instances() {
 #[test]
 fn flatten_node_preserves_shape_reverse_orientation() {
     let mut root = Node::new("root");
-    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
     let shape = triangle_node("reversed", "diffuse", [0.0, 0.0, 0.0]);
@@ -378,7 +374,7 @@ fn flatten_node_requires_tessellated_shapes() {
 fn flatten_node_composes_parent_and_child_transforms() {
     let child = triangle_node("triangle", "diffuse", [0.0, 2.0, 0.0]);
     let mut root = Node::new("root");
-    let mut camera_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
     root.transform = Transform {
@@ -399,7 +395,7 @@ fn flatten_node_composes_parent_and_child_transforms() {
 fn flatten_node_extracts_render_settings_and_point_lights() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
-    let mut sampler_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut sampler_params = ParameterDictionary::default();
     sampler_params.add_int("integer pixelsamples", 8);
     sampler_params.add_int("integer seed", 13);
     root.add_component(Component::Sampler(SamplerComponent {
@@ -408,7 +404,7 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
             params: sampler_params,
         },
     }));
-    let mut integrator_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut integrator_params = ParameterDictionary::default();
     integrator_params.add_int("integer maxdepth", 3);
     integrator_params.add_string("string lightsampler", "uniform");
     root.add_component(Component::Integrator(IntegratorComponent {
@@ -417,7 +413,7 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
             params: integrator_params,
         },
     }));
-    let mut light_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut light_params = ParameterDictionary::default();
     light_params.add_point("point from", &[1.0, 2.0, 3.0]);
     light_params.add_rgb("rgb I", &[2.0, 2.0, 2.0]);
     let mut light = Node::new("point");
@@ -454,7 +450,7 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
 fn flatten_node_preserves_halton_sampler_settings() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_int("integer seed", 29);
     params.add_string("string randomization", "none");
     root.add_component(Component::Sampler(SamplerComponent {
@@ -536,7 +532,7 @@ fn flatten_node_preserves_remaining_sampler_settings() {
 fn flatten_node_normalizes_zsobol_samples_to_power_of_two() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_int("integer pixelsamples", 13);
     root.add_component(Component::Sampler(SamplerComponent {
         sampler: NodeSampler {
@@ -567,7 +563,7 @@ fn flatten_node_rejects_unimplemented_gpu_sampler() {
 fn flatten_node_rejects_unimplemented_halton_randomization() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_string("string randomization", "fastowen");
     root.add_component(Component::Sampler(SamplerComponent {
         sampler: NodeSampler {
@@ -585,12 +581,12 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
 
-    let mut distant_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut distant_params = ParameterDictionary::default();
     distant_params.add_point("point from", &[0.0, 0.0, 2.0]);
     distant_params.add_point("point to", &[0.0, 0.0, 0.0]);
     root.add_child(light_node("distant", "distant", distant_params));
 
-    let mut spot_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut spot_params = ParameterDictionary::default();
     spot_params.add_point("point from", &[1.0, 2.0, 3.0]);
     spot_params.add_point("point to", &[1.0, 2.0, 4.0]);
     spot_params.add_float("float coneangle", 40.0);
@@ -644,7 +640,7 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
     assert!((cos_end - 40.0_f32.to_radians().cos()).abs() < 1e-6);
     let scale = scene.scalar_attributes[scene.lights[0].attributes[1].index as usize];
     let intensity = Spectrum::from(1.0);
-    let k_e = 2.0 * std::f32::consts::PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
+    let k_e = 2.0 * PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
     let expected_scale = 10.0 / (spectrum_to_photometric(&intensity) * k_e);
     assert!((scale - expected_scale).abs() < 1e-6);
 }
@@ -664,7 +660,7 @@ fn flatten_node_classifies_infinite_light_variants() {
         ),
         (
             {
-                let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+                let mut params = ParameterDictionary::default();
                 params.add_string("string filename", image_path.to_str().unwrap());
                 params.add_string("string encoding", "linear");
                 params
@@ -694,7 +690,7 @@ fn flatten_node_accepts_portal_infinite_image() {
         .unwrap()
         .save(&image_path)
         .unwrap();
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_string("string filename", image_path.to_str().unwrap());
     params.add_point(
         "point portal",
@@ -713,6 +709,189 @@ fn flatten_node_accepts_portal_infinite_image() {
         scene.light_sampling_models[0].geometry_kind,
         pbrt_r4::gpu::flat::LightGeometryKind::Portal
     );
+    assert_eq!(scene.light_sampling_models[0].distribution_offset, 0);
+    assert_eq!(scene.light_sampling_models[0].distribution_count, 0);
+    assert_eq!(scene.light_sampling_models[0].total_area, 0.0);
+}
+
+fn one_pixel_portal_scene() -> FlatScene {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+    flatten_node(Arc::new(RwLock::new(root))).unwrap()
+}
+
+#[test]
+fn portal_static_view_validation_rejects_inconsistent_flat_data() {
+    let scene = one_pixel_portal_scene();
+
+    let mut missing_record = scene.clone();
+    missing_record.portal_infinite_lights.clear();
+    assert!(missing_record
+        .validate_static_views()
+        .unwrap_err()
+        .to_string()
+        .contains("not one-to-one"));
+
+    let mut legacy_fields = scene.clone();
+    legacy_fields.light_sampling_models[0].distribution_count = 1;
+    assert!(legacy_fields
+        .validate_static_views()
+        .unwrap_err()
+        .to_string()
+        .contains("invalid legacy geometry fields"));
+
+    let mut non_finite_geometry = scene.clone();
+    non_finite_geometry.portal_infinite_lights[0].portal[0][0] = f32::NAN;
+    assert!(non_finite_geometry
+        .validate_static_views()
+        .unwrap_err()
+        .to_string()
+        .contains("non-finite geometry"));
+
+    let mut non_finite_distribution = scene.clone();
+    non_finite_distribution.portal_distribution[0].summed_area = f32::INFINITY;
+    assert!(non_finite_distribution
+        .validate_static_views()
+        .unwrap_err()
+        .to_string()
+        .contains("non-finite value"));
+
+    let mut image_mismatch = scene.clone();
+    let image = image_mismatch.infinite_lights[0].image_index as usize;
+    image_mismatch.texture_library.mipmaps[image] = Arc::new({
+        let mut mipmap = (*image_mismatch.texture_library.mipmaps[image]).clone();
+        mipmap.levels[0].resolution = [2, 1];
+        mipmap
+    });
+    assert!(image_mismatch
+        .validate_static_views()
+        .unwrap_err()
+        .to_string()
+        .contains("resolutions differ"));
+
+    let mut orphan_texel = scene;
+    orphan_texel
+        .portal_distribution
+        .push(orphan_texel.portal_distribution[0]);
+    assert!(orphan_texel
+        .validate_static_views()
+        .unwrap_err()
+        .to_string()
+        .contains("not owned"));
+}
+
+#[test]
+fn flatten_node_rejects_portal_without_an_image_source() {
+    let mut params = ParameterDictionary::default();
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    assert!(flatten_node(Arc::new(RwLock::new(root))).is_err());
+}
+
+#[test]
+fn flatten_node_builds_portal_jacobian_weighted_sat() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("white.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([255, 255, 255]))
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let center = scene.portal_distribution[4];
+    assert!((center.function - PI.powi(2)).abs() < 1e-4);
+    let total: f32 = scene
+        .portal_distribution
+        .iter()
+        .map(|texel| texel.function)
+        .sum();
+    assert!((scene.portal_distribution[8].summed_area - total).abs() < 1e-4);
+}
+
+#[test]
+fn flatten_node_rejects_l_and_filename_without_portal() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("white.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(1, 1, Rgb([255, 255, 255]))
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_string("string filename", image_path.to_str().unwrap());
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    assert!(flatten_node(Arc::new(RwLock::new(root))).is_err());
+}
+
+#[test]
+fn flatten_node_keeps_portal_points_in_world_space() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 2.0, 1.0, 0.0, 2.0, 1.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+    );
+    let light = light_node("portal", "infinite", params);
+    light.write().unwrap().transform.matrix[3] = 10.0;
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.portal_infinite_lights[0].portal[0], [0.0, 0.0, 2.0]);
+    assert_eq!(
+        scene.light_sampling_models[0].world_to_light,
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    );
+}
+
+#[test]
+fn portal_distribution_preserves_negative_v4_weights() {
+    let source =
+        build_linear_rgb_mipmap([3, 3], &[[-1.0, -1.0, -1.0]; 9], ColorSpace::Srgb).unwrap();
+    let prepared = prepare_portal_image(
+        &source,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+    )
+    .unwrap();
+    assert!((prepared.distribution[4].function + PI.powi(2)).abs() < 1e-4);
 }
 
 #[test]
@@ -723,7 +902,7 @@ fn flatten_node_prepares_equal_area_infinite_image_and_transform() {
         .unwrap()
         .save(&image_path)
         .unwrap();
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_string("string filename", image_path.to_str().unwrap());
     params.add_string("string encoding", "linear");
     let light = light_node("environment", "infinite", params);
@@ -759,7 +938,7 @@ fn flatten_node_rejects_non_square_infinite_image() {
         .unwrap()
         .save(&image_path)
         .unwrap();
-    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut params = ParameterDictionary::default();
     params.add_string("string filename", image_path.to_str().unwrap());
     params.add_string("string encoding", "linear");
     let mut root = Node::new("root");
@@ -790,11 +969,11 @@ fn flatten_node_uses_color_space_illuminant_for_default_light_spectra() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
 
-    let mut spot_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut spot_params = ParameterDictionary::default();
     spot_params.set_color_space(&ACES2065_1);
     root.add_child(light_node("spot", "spot", spot_params));
 
-    let mut distant_params = pbrt_r4::paramdict::ParameterDictionary::default();
+    let mut distant_params = ParameterDictionary::default();
     distant_params.set_color_space(&ACES2065_1);
     root.add_child(light_node("distant", "distant", distant_params));
 

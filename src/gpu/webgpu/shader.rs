@@ -7,15 +7,17 @@ const MEASURED_SHADER: &str = include_str!("shaders/measured.wgsl");
 const SAMPLER_SHADER: &str = include_str!("shaders/sampler.wgsl");
 const PORTAL_SHADER: &str = include_str!("shaders/portal_image_infinite.wgsl");
 
-use std::collections::{HashMap, HashSet};
+use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::shader_composer::{compose, ShaderModuleSpec};
 use super::stages::{BindingSpec, RequiredLimits};
+use crate::util::error::PbrtError;
 
 pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> wgpu::ShaderModule {
     let descriptor = wgpu::ShaderModuleDescriptor {
         label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(compose_source(stage_source))),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(compose_source(stage_source))),
     };
     device.create_shader_module(descriptor)
 }
@@ -92,7 +94,7 @@ fn remove_marked_section(source: &str, begin: &str, end: &str) -> String {
 /// parser intentionally operates on the generated declarations rather than
 /// duplicating a stage-to-resource table in Rust.
 pub fn resource_bindings(source: &str) -> Vec<(u32, u32)> {
-    let mut bindings = std::collections::BTreeSet::new();
+    let mut bindings = BTreeSet::new();
     let marker = "@group(";
     let mut cursor = 0;
     while let Some(relative) = source[cursor..].find(marker) {
@@ -135,7 +137,7 @@ pub fn resource_binding_numbers(source: &str) -> Vec<u32> {
 pub fn required_limits_for_sources(
     canonical_bindings: &[BindingSpec],
     stage_sources: &[&str],
-) -> Result<RequiredLimits, crate::util::error::PbrtError> {
+) -> Result<RequiredLimits, PbrtError> {
     let mut required = RequiredLimits::default();
     for stage_source in stage_sources {
         let source = compose_source(stage_source);
@@ -148,7 +150,7 @@ pub fn required_limits_for_sources(
                     .find(|candidate| candidate.group == *group && candidate.binding == *binding)
                     .copied()
                     .ok_or_else(|| {
-                        crate::util::error::PbrtError::error(&format!(
+                        PbrtError::error(&format!(
                             "Shader uses unregistered group {group} binding {binding}."
                         ))
                     })
@@ -161,6 +163,9 @@ pub fn required_limits_for_sources(
         required.uniform_buffers_per_shader_stage = required
             .uniform_buffers_per_shader_stage
             .max(stage.uniform_buffers_per_shader_stage);
+        required.buffers_and_acceleration_structures_per_shader_stage = required
+            .buffers_and_acceleration_structures_per_shader_stage
+            .max(stage.buffers_and_acceleration_structures_per_shader_stage);
         required.bind_groups = required.bind_groups.max(stage.bind_groups);
     }
     Ok(required)

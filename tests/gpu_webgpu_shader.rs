@@ -1,3 +1,8 @@
+use std::mem::{offset_of, size_of};
+
+use pbrt_r4::gpu::webgpu::abi::{
+    PortalDistributionTexel, PortalImageInfiniteRecord, PortalLightCandidate,
+};
 use pbrt_r4::gpu::webgpu::shader::{
     compose_source, compose_source_with_noise, required_limits_for_sources,
 };
@@ -42,6 +47,28 @@ const SPECTRUM_TEST_SHADER: &str = r#"
         }
     }
 "#;
+
+#[test]
+fn portal_gpu_records_match_wgsl_storage_layout() {
+    assert_eq!(size_of::<PortalImageInfiniteRecord>(), 128);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, portal), 0);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, world_to_portal), 64);
+    assert_eq!(
+        offset_of!(PortalImageInfiniteRecord, distribution_offset),
+        112
+    );
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, width), 116);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, height), 120);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, reserved), 124);
+    assert_eq!(size_of::<PortalDistributionTexel>(), 8);
+    assert_eq!(offset_of!(PortalDistributionTexel, function), 0);
+    assert_eq!(offset_of!(PortalDistributionTexel, summed_area), 4);
+    assert_eq!(size_of::<PortalLightCandidate>(), 48);
+    assert_eq!(offset_of!(PortalLightCandidate, position_uv), 0);
+    assert_eq!(offset_of!(PortalLightCandidate, sample_direction_pdf), 16);
+    assert_eq!(offset_of!(PortalLightCandidate, state), 32);
+    assert_eq!(offset_of!(PortalLightCandidate, light_index), 36);
+}
 
 #[test]
 fn dense_spectrum_module_declares_one_structured_table() {

@@ -12,6 +12,9 @@ const MATERIAL_KIND_MIX: u32 = 7u;
 const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
 const MATERIAL_KIND_MEASURED: u32 = 10u;
+const PORTAL_CANDIDATE_INVALID: u32 = 0u;
+const PORTAL_CANDIDATE_SAMPLED: u32 = 1u;
+const PORTAL_CANDIDATE_SELECTED: u32 = 2u;
 struct AttributesEvalWorkItem {
     material_node: u32,
     child_work_item0: u32,
@@ -326,6 +329,15 @@ struct PortalImageInfiniteRecord {
 struct PortalDistributionTexel {
     function: f32,
     summed_area: f32,
+};
+
+struct PortalLightCandidate {
+    position_uv: vec4<f32>,
+    sample_direction_pdf: vec4<f32>,
+    state: u32,
+    light_index: u32,
+    _padding0: u32,
+    _padding1: u32,
 };
 
 struct TriangleDistributionEntry {
