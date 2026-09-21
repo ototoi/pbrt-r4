@@ -85,6 +85,7 @@ fn measured_shader_matches_cpu_f_pdf_and_sample_f() {
         RequiredLimits {
             storage_buffers_per_shader_stage: 3,
             uniform_buffers_per_shader_stage: 1,
+            buffers_and_acceleration_structures_per_shader_stage: 4,
             bind_groups: 2,
         },
         1,

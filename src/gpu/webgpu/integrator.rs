@@ -18,8 +18,9 @@ use super::material::MaterialKind;
 use super::noise::NoiseRuntimeResources;
 use super::pipeline::{Pipeline, StagePipeline};
 use super::queue::Queues;
-use super::scene::Scene;
-use super::stages::{canonical_wavefront_bindings, ResourceId};
+use super::scene::{texture_binding_counts, Scene};
+use super::shader::{compose_source_with_noise, required_limits_for_sources, resource_bindings};
+use super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -34,6 +35,8 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/handle_emissive.wgsl"),
     include_str!("shaders/evaluate_textures.wgsl"),
     include_str!("shaders/evaluate_attributes.wgsl"),
+    include_str!("shaders/select_portal_direct.wgsl"),
+    include_str!("shaders/sample_portal_direct.wgsl"),
     include_str!("shaders/evaluate_materials.wgsl"),
     include_str!("shaders/intersect_shadow.wgsl"),
     include_str!("shaders/sample_diffuse_bounce.wgsl"),
@@ -77,15 +80,12 @@ impl WavefrontPathIntegrator {
         let texture_eval_stride =
             u64::from(flat::max_texture_eval_results_per_surface(&flat_scene)?).max(1);
         let canonical_bindings = canonical_wavefront_bindings();
-        let mut required_limits = super::shader::required_limits_for_sources(
-            &canonical_bindings,
-            DEPLOYED_STAGE_SOURCES,
-        )?;
+        let mut required_limits =
+            required_limits_for_sources(&canonical_bindings, DEPLOYED_STAGE_SOURCES)?;
         // Every deployed pipeline has a second group reserved for texture
         // binding arrays, even when an individual stage does not sample one.
         required_limits.bind_groups = required_limits.bind_groups.max(2);
-        let (mut texture_image_count, texture_sampler_count) =
-            super::scene::texture_binding_counts(&flat_scene)?;
+        let (mut texture_image_count, texture_sampler_count) = texture_binding_counts(&flat_scene)?;
         texture_image_count = texture_image_count
             .checked_add(
                 u32::try_from(flat_scene.measured_bsdfs.atlas_pages.len())
@@ -191,7 +191,7 @@ impl WavefrontPathIntegrator {
         let texture_image_views: Vec<&wgpu::TextureView> =
             scene.texture_image_views.iter().collect();
         let texture_samplers: Vec<&wgpu::Sampler> = scene.texture_samplers.iter().collect();
-        let make_entry = |binding: super::stages::BindingSpec| wgpu::BindGroupEntry {
+        let make_entry = |binding: BindingSpec| wgpu::BindGroupEntry {
             binding: binding.binding,
             resource: match binding.resource {
                 ResourceId::CameraParams => camera_buffer.as_entire_binding(),
@@ -252,6 +252,13 @@ impl WavefrontPathIntegrator {
                 }
                 ResourceId::LightPosition => scene.light_position_buffer.as_entire_binding(),
                 ResourceId::TriangleDistribution => scene.distribution_buffer.as_entire_binding(),
+                ResourceId::PortalInfiniteLight => scene.portal_image_buffer.as_entire_binding(),
+                ResourceId::PortalDistribution => {
+                    scene.portal_distribution_buffer.as_entire_binding()
+                }
+                ResourceId::PortalLightCandidate => {
+                    queues.portal_light_candidates.as_entire_binding()
+                }
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
                 ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
@@ -264,9 +271,8 @@ impl WavefrontPathIntegrator {
                                stage: &StagePipeline,
                                stage_source: &'static str|
          -> [wgpu::BindGroup; 2] {
-            let source =
-                super::shader::compose_source_with_noise(stage_source, texture_noise_enabled);
-            let used_bindings = super::shader::resource_bindings(&source);
+            let source = compose_source_with_noise(stage_source, texture_noise_enabled);
+            let used_bindings = resource_bindings(&source);
             std::array::from_fn(|group| {
                 let entries = canonical_wavefront_bindings()
                     .into_iter()
@@ -333,6 +339,16 @@ impl WavefrontPathIntegrator {
                 "evaluate_attributes",
                 &pipeline.evaluate_attributes,
                 include_str!("shaders/evaluate_attributes.wgsl"),
+            ),
+            (
+                "sample_portal_direct",
+                &pipeline.sample_portal_direct,
+                include_str!("shaders/sample_portal_direct.wgsl"),
+            ),
+            (
+                "select_portal_direct",
+                &pipeline.select_portal_direct,
+                include_str!("shaders/select_portal_direct.wgsl"),
             ),
             (
                 "evaluate_materials",
@@ -532,6 +548,20 @@ impl WavefrontPathIntegrator {
                 );
                 dispatch(
                     &mut encoder,
+                    &self.pipeline.select_portal_direct.pipeline,
+                    self.bind_groups("select_portal_direct"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.sample_portal_direct.pipeline,
+                    self.bind_groups("sample_portal_direct"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
                     &self.pipeline.evaluate_materials.pipeline,
                     self.bind_groups("evaluate_materials"),
                     workgroups_x,
@@ -667,7 +697,7 @@ impl WavefrontPathIntegrator {
         Ok(())
     }
 
-    pub fn replace_material_kind(&mut self, kind: super::material::MaterialKind) {
+    pub fn replace_material_kind(&mut self, kind: MaterialKind) {
         self.scene.replace_material_kind(&self.context.queue, kind);
         self.context.queue.write_buffer(
             &self.material_table_buffer,

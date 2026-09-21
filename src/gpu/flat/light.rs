@@ -26,6 +26,7 @@ pub enum LightGeometryKind {
     Position,
     Instance,
     Direction,
+    Portal,
 }
 
 #[derive(Clone, Debug, PartialEq)]
