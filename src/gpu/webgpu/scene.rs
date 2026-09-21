@@ -359,7 +359,7 @@ fn lower_texture_instruction(
                 0.0,
                 0.0,
             ],
-            color_space: 0,
+            color_space: value_type(&slot_type).1,
             image_view: empty_image,
             mapping: (0, identity),
         }),

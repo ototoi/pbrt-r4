@@ -14,7 +14,7 @@ fn webgpu_scale_lowering_uses_one_or_two_children() {
                     TextureInstruction::ConstantRgb {
                         dst: 0,
                         value: [0.2, 0.4, 0.6],
-                        color_space: ColorSpace::Srgb,
+                        color_space: ColorSpace::Rec2020,
                     },
                     TextureInstruction::ConstantFloat { dst: 1, value: 0.5 },
                     TextureInstruction::Scale {
@@ -25,9 +25,9 @@ fn webgpu_scale_lowering_uses_one_or_two_children() {
                     },
                 ],
                 slot_types: vec![
-                    TextureValueType::LinearRgb(ColorSpace::Srgb),
+                    TextureValueType::LinearRgb(ColorSpace::Rec2020),
                     TextureValueType::Float,
-                    TextureValueType::LinearRgb(ColorSpace::Srgb),
+                    TextureValueType::LinearRgb(ColorSpace::Rec2020),
                 ],
                 slot_last_use: vec![2, 2, 2],
                 result: 2,
@@ -67,6 +67,7 @@ fn webgpu_scale_lowering_uses_one_or_two_children() {
     assert_eq!(scale_nodes.len(), 2);
     assert_eq!(scale_nodes[0].child_count, 2);
     assert_eq!(scale_nodes[0].constant_value[0], 0.0);
+    assert_eq!(scale_nodes[0].color_space, 3);
     assert_eq!(scale_nodes[1].child_count, 1);
     assert_eq!(scale_nodes[1].constant_value[0], 0.5);
     assert_eq!(children, vec![0, 1, 0]);
