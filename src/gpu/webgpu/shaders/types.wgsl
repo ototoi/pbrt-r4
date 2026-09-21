@@ -309,6 +309,25 @@ struct LightSamplingModel {
     world_to_light2: vec4<f32>,
 };
 
+struct PortalImageInfiniteRecord {
+    portal0: vec4<f32>,
+    portal1: vec4<f32>,
+    portal2: vec4<f32>,
+    portal3: vec4<f32>,
+    world_to_portal0: vec4<f32>,
+    world_to_portal1: vec4<f32>,
+    world_to_portal2: vec4<f32>,
+    distribution_offset: u32,
+    width: u32,
+    height: u32,
+    reserved: u32,
+};
+
+struct PortalDistributionTexel {
+    function: f32,
+    summed_area: f32,
+};
+
 struct TriangleDistributionEntry {
     primitive: u32,
     cdf: f32,

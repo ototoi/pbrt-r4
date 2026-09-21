@@ -687,8 +687,15 @@ fn flatten_node_classifies_infinite_light_variants() {
 }
 
 #[test]
-fn flatten_node_rejects_portal_infinite_image_until_portal_mapping_is_supported() {
+fn flatten_node_accepts_portal_infinite_image() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
     let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
     params.add_point(
         "point portal",
         &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
@@ -697,10 +704,15 @@ fn flatten_node_rejects_portal_infinite_image_until_portal_mapping_is_supported(
     add_camera_and_film(&mut root, Default::default());
     root.add_child(light_node("portal", "infinite", params));
 
-    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("GPU PortalImageInfiniteLight is not implemented"));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(
+        scene.infinite_lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::PortalImageInfinite
+    );
+    assert_eq!(
+        scene.light_sampling_models[0].geometry_kind,
+        pbrt_r4::gpu::flat::LightGeometryKind::Portal
+    );
 }
 
 #[test]

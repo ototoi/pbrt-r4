@@ -10,7 +10,8 @@ use crate::util::error::PbrtError;
 use crate::util::spectrum::rgb_to_spectrum::{ACES2065_1, DCI_P3, REC2020, SRGB};
 use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 
-use super::super::texture::{project_linear_rgb_mipmap, ColorSpace, MipmapLevelData};
+use super::super::portal::prepare_portal_image;
+use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, MipmapLevelData};
 
 fn image_illuminant(color_space: ColorSpace) -> Spectrum {
     let color_space = match color_space {
@@ -322,11 +323,6 @@ pub fn flatten_light(
         });
     } else if light.name == "infinite" {
         let (kind, intensity, scale) = infinite_light(&light, &name)?;
-        if kind == LightKind::PortalImageInfinite {
-            return Err(PbrtError::error(
-                "GPU PortalImageInfiniteLight is not implemented.",
-            ));
-        }
         let light_transform = multiply_transform(world_transform, &light.transform.matrix);
         let world_to_light = inverse_linear_transform(&light_transform).map_err(|message| {
             PbrtError::error(&format!(
@@ -339,15 +335,24 @@ pub fn flatten_light(
             LightKind::ImageInfinite | LightKind::PortalImageInfinite
         ) {
             let filename = light.params.get_one_string("filename", "");
-            if filename.is_empty() {
+            if filename.is_empty() && kind == LightKind::ImageInfinite {
                 return Err(PbrtError::error(
                     "Image infinite light is missing filename.",
                 ));
             }
             let encoding = light.params.get_one_string("encoding", "srgb");
-            let mipmap = builder
-                .infinite_light_image_decoder
-                .decode(std::path::Path::new(&filename), &encoding)?;
+            let mipmap = if filename.is_empty() {
+                let rgb = intensity.to_rgb();
+                build_linear_rgb_mipmap(
+                    [1, 1],
+                    &[[rgb[0] as f32, rgb[1] as f32, rgb[2] as f32]],
+                    ColorSpace::Srgb,
+                )?
+            } else {
+                builder
+                    .infinite_light_image_decoder
+                    .decode_linear_rgb(std::path::Path::new(&filename), &encoding)?
+            };
             let base_level = mipmap.levels.first().ok_or_else(|| {
                 PbrtError::error("Image infinite light image has no mipmap levels.")
             })?;
@@ -376,7 +381,6 @@ pub fn flatten_light(
                     filename
                 )));
             }
-            let mipmap = project_linear_rgb_mipmap(&mipmap)?;
             let illuminant = image_illuminant(mipmap.color_space);
             let index = u32::try_from(builder.infinite_light_mipmaps.len())
                 .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
@@ -403,13 +407,89 @@ pub fn flatten_light(
         let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
             PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
         })?;
+        let (geometry_kind, geometry_index) = if kind == LightKind::PortalImageInfinite {
+            let points = light.params.get_points("portal");
+            if points.len() != 12 {
+                return Err(PbrtError::error(
+                    "Portal image infinite light requires four portal points.",
+                ));
+            }
+            let portal = std::array::from_fn(|i| {
+                transform_point(
+                    &light_transform,
+                    [
+                        points[3 * i] as f32,
+                        points[3 * i + 1] as f32,
+                        points[3 * i + 2] as f32,
+                    ],
+                )
+            });
+            let edge_x = [
+                portal[1][0] - portal[0][0],
+                portal[1][1] - portal[0][1],
+                portal[1][2] - portal[0][2],
+            ];
+            let edge_y = [
+                portal[3][0] - portal[0][0],
+                portal[3][1] - portal[0][1],
+                portal[3][2] - portal[0][2],
+            ];
+            let norm = |v: [f32; 3]| {
+                let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                [v[0] / length, v[1] / length, v[2] / length]
+            };
+            let axis_x = norm(edge_x);
+            let axis_y = norm(edge_y);
+            let axis_z = [
+                axis_x[1] * axis_y[2] - axis_x[2] * axis_y[1],
+                axis_x[2] * axis_y[0] - axis_x[0] * axis_y[2],
+                axis_x[0] * axis_y[1] - axis_x[1] * axis_y[0],
+            ];
+            let world_to_portal = [
+                [axis_x[0], axis_x[1], axis_x[2], 0.0],
+                [axis_y[0], axis_y[1], axis_y[2], 0.0],
+                [axis_z[0], axis_z[1], axis_z[2], 0.0],
+            ];
+            let prepared = prepare_portal_image(
+                builder
+                    .infinite_light_mipmaps
+                    .last()
+                    .ok_or_else(|| PbrtError::error("Portal image was not decoded."))?,
+                portal,
+                world_to_portal,
+            )?;
+            let geometry_index = u32::try_from(builder.portal_images.len())
+                .map_err(|_| PbrtError::error("Portal image table exceeds u32."))?;
+            builder
+                .portal_distribution
+                .extend_from_slice(&prepared.distribution);
+            builder.portal_images.push(prepared);
+            (LightGeometryKind::Portal, geometry_index)
+        } else {
+            (LightGeometryKind::Direction, INVALID_INDEX)
+        };
+        let (distribution_offset, distribution_count) = if kind == LightKind::PortalImageInfinite {
+            let image = builder
+                .portal_images
+                .last()
+                .ok_or_else(|| PbrtError::error("Portal image was not prepared."))?;
+            let count = u32::try_from(image.distribution.len())
+                .map_err(|_| PbrtError::error("Portal distribution size exceeds u32."))?;
+            let offset = u32::try_from(builder.portal_distribution.len())
+                .ok()
+                .and_then(|end| end.checked_sub(count))
+                .ok_or_else(|| PbrtError::error("Portal distribution offset overflowed."))?;
+            (offset, count)
+        } else {
+            (0, 0)
+        };
         builder.light_sampling_models.push(LightSamplingModel {
             kind,
-            geometry_kind: LightGeometryKind::Direction,
-            geometry_index: INVALID_INDEX,
+            geometry_kind,
+            geometry_index,
             direction_index: INVALID_INDEX,
-            distribution_offset: 0,
-            distribution_count: 0,
+            distribution_offset,
+            distribution_count,
             total_area: 0.0,
             flags: 0,
             world_to_light,

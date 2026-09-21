@@ -5,6 +5,7 @@ const SPECTRUM_SHADER: &str = include_str!("shaders/spectrum.wgsl");
 const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
 const MEASURED_SHADER: &str = include_str!("shaders/measured.wgsl");
 const SAMPLER_SHADER: &str = include_str!("shaders/sampler.wgsl");
+const PORTAL_SHADER: &str = include_str!("shaders/portal_image_infinite.wgsl");
 
 use std::collections::{HashMap, HashSet};
 
@@ -36,7 +37,7 @@ pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> Str
         )
     };
     let common_input = format!(
-        "{TYPES_SHADER}\n{wavefront}\n{SPECTRUM_SHADER}\n{MEASURED_SHADER}\n{SAMPLER_SHADER}"
+        "{TYPES_SHADER}\n{wavefront}\n{SPECTRUM_SHADER}\n{MEASURED_SHADER}\n{SAMPLER_SHADER}\n{PORTAL_SHADER}"
     );
     let common_source = prune_common_source(&common_input, &roots);
     let references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");

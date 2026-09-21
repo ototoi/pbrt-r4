@@ -112,12 +112,25 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         wi = normalize(load_light_direction(light_index));
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
     } else if (is_infinite_light_kind(light_kind)) {
-        wi = sample_uniform_infinite_direction(samples.direct.yz);
-        sampled_light_pdf = sampled_light_pdf / (4.0 * PI);
-        if (light_kind == LIGHT_KIND_IMAGE_INFINITE || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
-            light_radiance = load_light_image_spectrum(light_index, wi, lambda) * load_light_scale(light_index);
+        if (light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
+            let model = light_sampling_models[load_light_payload(light_index)];
+            let portal = portal_infinite_lights[model.geometry_index];
+            let bounds = portal_image_bounds(portal, light_sample_origin);
+            let sample = sample_portal_distribution(portal, samples.direct.yz, bounds);
+            if (sample.valid == 0u) { return; }
+            let direction = portal_render_from_image(portal, sample.uv);
+            if (direction.valid == 0u || direction.duv_dw <= 0.0) { return; }
+            wi = direction.wi;
+            sampled_light_pdf = sampled_light_pdf * sample.pdf / direction.duv_dw;
+            light_radiance = load_portal_image_spectrum(light_index, sample.uv, lambda) * load_light_scale(light_index);
         } else {
-            light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+            wi = sample_uniform_infinite_direction(samples.direct.yz);
+            sampled_light_pdf = sampled_light_pdf / (4.0 * PI);
+            if (light_kind == LIGHT_KIND_IMAGE_INFINITE) {
+            light_radiance = load_light_image_spectrum(light_index, wi, lambda) * load_light_scale(light_index);
+            } else {
+                light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+            }
         }
     } else if (light_kind == LIGHT_KIND_AREA) {
         let total_area = load_area_total(light_payload);
