@@ -202,6 +202,19 @@ fn portal_distribution_pdf(portal: PortalImageInfiniteRecord, uv: vec2<f32>, bou
     return pdf;
 }
 
+fn portal_pdf_li(
+    portal: PortalImageInfiniteRecord,
+    mapping: PortalUvResult,
+    point: vec3<f32>,
+) -> f32 {
+    if (mapping.valid == 0u || mapping.duv_dw <= 0.0) { return 0.0; }
+    let bounds = portal_image_bounds(portal, point);
+    if (bounds.valid == 0u) { return 0.0; }
+    let pdf = portal_distribution_pdf(portal, mapping.uv, bounds) / mapping.duv_dw;
+    if (!portal_finite(pdf)) { return 0.0; }
+    return pdf;
+}
+
 fn load_portal_image_spectrum(light_index: u32, uv: vec2<f32>, lambda: vec4<f32>) -> vec4<f32> {
     let record = light_records[light_index];
     let payload = record.sampling_model;

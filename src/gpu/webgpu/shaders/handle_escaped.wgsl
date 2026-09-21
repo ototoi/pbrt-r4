@@ -28,12 +28,9 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 if (uv.valid != 0u && bounds.valid != 0u && all(uv.uv >= bounds.min) && all(uv.uv <= bounds.max)) {
                     radiance += load_portal_image_spectrum(light_index, uv.uv, lambda) * load_light_scale(light_index);
                 }
-                let pdf_bounds = portal_image_bounds(portal, ray.prev_position.xyz);
-                if (uv.valid != 0u && uv.duv_dw > 0.0 && pdf_bounds.valid != 0u) {
-                    light_pdf += light_pmf_for_handle(
-                        light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
-                    ) * portal_distribution_pdf(portal, uv.uv, pdf_bounds) / uv.duv_dw;
-                }
+                light_pdf += light_pmf_for_handle(
+                    light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
+                ) * portal_pdf_li(portal, uv, ray.prev_position.xyz);
             } else if (light_kind == LIGHT_KIND_IMAGE_INFINITE) {
                 radiance += load_light_image_spectrum(light_index, ray.direction.xyz, lambda)
                     * load_light_scale(light_index);

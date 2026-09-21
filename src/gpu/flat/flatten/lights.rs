@@ -538,6 +538,11 @@ pub fn flatten_light(
             }
             scale *= illuminance / k_e;
         }
+        if kind == LightKind::PortalImageInfinite && !scale.is_finite() {
+            return Err(PbrtError::error(&format!(
+                "Portal image infinite light on node \"{name}\" has a non-finite scale."
+            )));
+        }
         let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
         let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
         let mut attributes = vec![i_attr, scale_attr];
