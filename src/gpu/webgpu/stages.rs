@@ -41,7 +41,7 @@ pub enum ResourceId {
     LightLeaf,
     PrimitiveDistributionMap,
     TriangleDistribution,
-    LightCandidate,
+    PortalLightCandidate,
     ConstantBxdf,
     Film,
     MaterialTable,
@@ -62,6 +62,8 @@ pub enum ResourceId {
     MeasuredTable,
     SamplerParams,
     SamplerTable,
+    PortalInfiniteLight,
+    PortalDistribution,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,7 +109,9 @@ pub enum StageId {
     HandleEscaped,
     HandleEmission,
     BuildShadingContext,
-    SampleDirectLight,
+    SelectPortalDirect,
+    SamplePortalDirect,
+    EvaluateMaterials,
     ScatterDiffuse,
     ScatterDielectric,
     ScatterThinDielectric,
@@ -127,6 +131,7 @@ pub struct StageSpec {
 pub struct RequiredLimits {
     pub storage_buffers_per_shader_stage: u32,
     pub uniform_buffers_per_shader_stage: u32,
+    pub buffers_and_acceleration_structures_per_shader_stage: u32,
     pub bind_groups: u32,
 }
 
@@ -285,6 +290,24 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::IntegerTexture,
         Access::Read,
     );
+    push(
+        24,
+        ResourceId::PortalInfiniteLight,
+        BindingClass::Storage,
+        Access::Read,
+    );
+    push(
+        25,
+        ResourceId::PortalDistribution,
+        BindingClass::Storage,
+        Access::Read,
+    );
+    push(
+        50,
+        ResourceId::PortalLightCandidate,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
     for (binding, resource) in [
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),
@@ -347,6 +370,12 @@ impl RequiredLimits {
                 | BindingClass::IntegerTexture
                 | BindingClass::Sampler => {}
             }
+            if matches!(
+                left.class,
+                BindingClass::Storage | BindingClass::Uniform | BindingClass::AccelerationStructure
+            ) {
+                required.buffers_and_acceleration_structures_per_shader_stage += 1;
+            }
         }
         Ok(required)
     }
@@ -356,6 +385,7 @@ impl RequiredLimits {
         for stage in stages {
             let mut storage = 0;
             let mut uniform = 0;
+            let mut buffers_and_acceleration_structures = 0;
             let mut max_group = 0;
             for binding in stage.bindings {
                 max_group = max_group.max(binding.group);
@@ -367,11 +397,22 @@ impl RequiredLimits {
                     | BindingClass::IntegerTexture
                     | BindingClass::Sampler => {}
                 }
+                if matches!(
+                    binding.class,
+                    BindingClass::Storage
+                        | BindingClass::Uniform
+                        | BindingClass::AccelerationStructure
+                ) {
+                    buffers_and_acceleration_structures += 1;
+                }
             }
             required.storage_buffers_per_shader_stage =
                 required.storage_buffers_per_shader_stage.max(storage);
             required.uniform_buffers_per_shader_stage =
                 required.uniform_buffers_per_shader_stage.max(uniform);
+            required.buffers_and_acceleration_structures_per_shader_stage = required
+                .buffers_and_acceleration_structures_per_shader_stage
+                .max(buffers_and_acceleration_structures);
             required.bind_groups = required.bind_groups.max(max_group + 1);
             validate_stage(stage)?;
         }
@@ -399,7 +440,7 @@ fn validate_stage(stage: &StageSpec) -> Result<(), PbrtError> {
     Ok(())
 }
 
-const SAMPLE_DIRECT_LIGHT_BINDINGS: &[BindingSpec] = &[
+const EVALUATE_MATERIALS_BINDINGS: &[BindingSpec] = &[
     BindingSpec {
         group: 0,
         binding: 0,
@@ -501,9 +542,113 @@ const SAMPLE_DIRECT_LIGHT_BINDINGS: &[BindingSpec] = &[
     BindingSpec {
         group: 2,
         binding: 0,
-        resource: ResourceId::LightCandidate,
+        resource: ResourceId::PortalLightCandidate,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+];
+
+const SELECT_PORTAL_DIRECT_BINDINGS: &[BindingSpec] = &[
+    BindingSpec {
+        group: 0,
+        binding: 0,
+        resource: ResourceId::LightSamplingParams,
+        class: BindingClass::Uniform,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 0,
+        resource: ResourceId::CurrentRay,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 1,
+        resource: ResourceId::Surface,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 2,
+        resource: ResourceId::PixelSampleState,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 3,
+        resource: ResourceId::LightRecord,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 4,
+        resource: ResourceId::LightSamplingModel,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 5,
+        resource: ResourceId::PortalLightCandidate,
         class: BindingClass::Storage,
         access: Access::Write,
+    },
+];
+
+const SAMPLE_PORTAL_DIRECT_BINDINGS: &[BindingSpec] = &[
+    BindingSpec {
+        group: 0,
+        binding: 0,
+        resource: ResourceId::DepthParams,
+        class: BindingClass::Uniform,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 0,
+        resource: ResourceId::LightRecord,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 1,
+        resource: ResourceId::LightSamplingModel,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 2,
+        resource: ResourceId::PortalInfiniteLight,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 3,
+        resource: ResourceId::PortalDistribution,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 4,
+        resource: ResourceId::PortalLightCandidate,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 5,
+        resource: ResourceId::RenderError,
+        class: BindingClass::Storage,
+        access: Access::ReadWrite,
     },
 ];
 
@@ -667,7 +812,7 @@ const SCATTER_BINDINGS: &[BindingSpec] = &[
     BindingSpec {
         group: 1,
         binding: 4,
-        resource: ResourceId::LightCandidate,
+        resource: ResourceId::PortalLightCandidate,
         class: BindingClass::Storage,
         access: Access::Read,
     },
@@ -701,6 +846,34 @@ const SCATTER_BINDINGS: &[BindingSpec] = &[
     },
 ];
 
+const HANDLE_ESCAPED_BINDINGS: &[BindingSpec] = &[
+    SCATTER_BINDINGS[0],
+    SCATTER_BINDINGS[1],
+    SCATTER_BINDINGS[2],
+    SCATTER_BINDINGS[3],
+    SCATTER_BINDINGS[4],
+    SCATTER_BINDINGS[5],
+    SCATTER_BINDINGS[6],
+    SCATTER_BINDINGS[7],
+    SCATTER_BINDINGS[8],
+    SCATTER_BINDINGS[9],
+    SCATTER_BINDINGS[10],
+    BindingSpec {
+        group: 1,
+        binding: 6,
+        resource: ResourceId::PortalInfiniteLight,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+    BindingSpec {
+        group: 1,
+        binding: 7,
+        resource: ResourceId::PortalDistribution,
+        class: BindingClass::Storage,
+        access: Access::Read,
+    },
+];
+
 pub fn initial_stage_specs() -> Vec<StageSpec> {
     vec![
         StageSpec {
@@ -719,9 +892,9 @@ pub fn initial_stage_specs() -> Vec<StageSpec> {
             bindings: BUILD_SURFACE_BINDINGS,
         },
         StageSpec {
-            id: StageId::SampleDirectLight,
-            entry_point: "sample_direct_light",
-            bindings: SAMPLE_DIRECT_LIGHT_BINDINGS,
+            id: StageId::EvaluateMaterials,
+            entry_point: "evaluate_materials",
+            bindings: EVALUATE_MATERIALS_BINDINGS,
         },
         StageSpec {
             id: StageId::ScatterDiffuse,
@@ -769,7 +942,7 @@ pub fn all_stage_specs() -> Vec<StageSpec> {
         StageSpec {
             id: StageId::HandleEscaped,
             entry_point: "handle_escaped",
-            bindings: SCATTER_BINDINGS,
+            bindings: HANDLE_ESCAPED_BINDINGS,
         },
         StageSpec {
             id: StageId::HandleEmission,
@@ -782,9 +955,19 @@ pub fn all_stage_specs() -> Vec<StageSpec> {
             bindings: BUILD_SURFACE_BINDINGS,
         },
         StageSpec {
-            id: StageId::SampleDirectLight,
-            entry_point: "sample_direct_light",
-            bindings: SAMPLE_DIRECT_LIGHT_BINDINGS,
+            id: StageId::SelectPortalDirect,
+            entry_point: "select_portal_direct",
+            bindings: SELECT_PORTAL_DIRECT_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::SamplePortalDirect,
+            entry_point: "sample_portal_direct",
+            bindings: SAMPLE_PORTAL_DIRECT_BINDINGS,
+        },
+        StageSpec {
+            id: StageId::EvaluateMaterials,
+            entry_point: "evaluate_materials",
+            bindings: EVALUATE_MATERIALS_BINDINGS,
         },
         StageSpec {
             id: StageId::ScatterDiffuse,

@@ -15,15 +15,34 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (light_kind == LIGHT_KIND_UNIFORM_INFINITE
             || light_kind == LIGHT_KIND_IMAGE_INFINITE
             || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
-            if (light_kind == LIGHT_KIND_IMAGE_INFINITE || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
+            if (light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
+                let model = light_sampling_models[load_light_payload(light_index)];
+                if (model.geometry_kind != 3u
+                    || model.geometry_index >= arrayLength(&portal_infinite_lights)) {
+                    set_render_error();
+                    continue;
+                }
+                let portal = portal_infinite_lights[model.geometry_index];
+                let uv = portal_image_from_render(portal, normalize(ray.direction.xyz));
+                let bounds = portal_image_bounds(portal, ray.origin.xyz);
+                if (uv.valid != 0u && bounds.valid != 0u && all(uv.uv >= bounds.min) && all(uv.uv <= bounds.max)) {
+                    radiance += load_portal_image_spectrum(light_index, uv.uv, lambda) * load_light_scale(light_index);
+                }
+                light_pdf += light_pmf_for_handle(
+                    light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
+                ) * portal_pdf_li(portal, uv, ray.prev_position.xyz);
+            } else if (light_kind == LIGHT_KIND_IMAGE_INFINITE) {
                 radiance += load_light_image_spectrum(light_index, ray.direction.xyz, lambda)
                     * load_light_scale(light_index);
+                light_pdf += light_pmf_for_handle(
+                    light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
+                ) / (4.0 * PI);
             } else {
                 radiance += load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
+                light_pdf += light_pmf_for_handle(
+                    light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
+                ) / (4.0 * PI);
             }
-            light_pdf += light_pmf_for_handle(
-                light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
-            ) / (4.0 * PI);
         }
     }
     var mis_weight = 1.0;

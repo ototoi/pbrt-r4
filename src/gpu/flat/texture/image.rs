@@ -149,6 +149,79 @@ impl ImageDecoder {
         self.decoded.insert(key, mipmap.clone());
         Ok(mipmap)
     }
+
+    /// Decode an image for an RGB light, selecting channels by their semantic
+    /// names rather than relying on their storage order.
+    pub fn decode_linear_rgb(
+        &mut self,
+        path: &Path,
+        encoding_name: &str,
+    ) -> Result<Arc<Mipmap>, PbrtError> {
+        let path = path.canonicalize().map_err(|error| {
+            PbrtError::error(&format!(
+                "Unable to resolve texture image \"{}\": {error}",
+                path.display()
+            ))
+        })?;
+        let key = DecodedImageKey {
+            path: path.clone(),
+            encoding: format!("{encoding_name}:linear-rgb"),
+        };
+        if let Some(mipmap) = self.decoded.get(&key) {
+            return Ok(mipmap.clone());
+        }
+        let (raw, names, color_space) = if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exr"))
+        {
+            let (raw, names, metadata) = crate::util::imageio::read_image_exr::read_raw_image_exr_with_channels_and_metadata(&path)?;
+            let color_space = metadata
+                .color_space
+                .map(|space| match space.name {
+                    "ACES2065-1" => ColorSpace::Aces2065,
+                    "DCI-P3" => ColorSpace::DciP3,
+                    "Rec2020" => ColorSpace::Rec2020,
+                    _ => ColorSpace::Srgb,
+                })
+                .unwrap_or(ColorSpace::Srgb);
+            (raw, names, color_space)
+        } else {
+            let encoding = ColorEncoding::parse(encoding_name)?;
+            let raw = read_raw_image_with_encoding(&path.to_string_lossy(), encoding)?;
+            let names = raw.channel_names().to_vec();
+            (raw, names, ColorSpace::Srgb)
+        };
+        let indices = ["R", "G", "B"].map(|name| {
+            names
+                .iter()
+                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+        });
+        let [Some(r), Some(g), Some(b)] = indices else {
+            return Err(PbrtError::error(&format!(
+                "Image \"{}\" does not contain named R, G, and B channels.",
+                path.display()
+            )));
+        };
+        let values = raw.data_f32();
+        let channels = raw.channels;
+        let pixels = (raw.resolution.x as usize)
+            .checked_mul(raw.resolution.y as usize)
+            .ok_or_else(|| PbrtError::error("Texture resolution overflowed."))?;
+        let mut rgb = Vec::with_capacity(pixels * 3);
+        for pixel in 0..pixels {
+            let offset = pixel * channels;
+            rgb.extend_from_slice(&[values[offset + r], values[offset + g], values[offset + b]]);
+        }
+        let mipmap = build_linear_rgb_mipmap(
+            [raw.resolution.x as u32, raw.resolution.y as u32],
+            &rgb.chunks_exact(3)
+                .map(|v| [v[0], v[1], v[2]])
+                .collect::<Vec<_>>(),
+            color_space,
+        )?;
+        self.decoded.insert(key, mipmap.clone());
+        Ok(mipmap)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -482,6 +555,76 @@ pub fn project_linear_rgb_mipmap(mipmap: &Arc<Mipmap>) -> Result<Arc<Mipmap>, Pb
     Ok(Arc::new(Mipmap {
         levels,
         color_space: mipmap.color_space,
+        encoding: MipmapEncoding::Linear,
+    }))
+}
+
+pub fn build_linear_rgb_mipmap(
+    resolution: [u32; 2],
+    pixels: &[[f32; 3]],
+    color_space: ColorSpace,
+) -> Result<Arc<Mipmap>, PbrtError> {
+    if resolution.contains(&0) {
+        return Err(PbrtError::error("RGB mipmap resolution must be non-zero."));
+    }
+    let expected = usize::try_from(resolution[0])
+        .ok()
+        .and_then(|w| {
+            usize::try_from(resolution[1])
+                .ok()
+                .and_then(|h| w.checked_mul(h))
+        })
+        .ok_or_else(|| PbrtError::error("RGB mipmap resolution overflowed."))?;
+    if pixels.len() != expected {
+        return Err(PbrtError::error("RGB mipmap pixel count is inconsistent."));
+    }
+    if pixels.iter().flatten().any(|value| !value.is_finite()) {
+        return Err(PbrtError::error("RGB mipmap contains a non-finite value."));
+    }
+    let mut levels = Vec::new();
+    let mut current_resolution = resolution;
+    let mut data = pixels.iter().flatten().copied().collect::<Vec<_>>();
+    loop {
+        levels.push(MipmapLevel {
+            resolution: current_resolution,
+            channels: 3,
+            data: MipmapLevelData::F32(data.clone()),
+        });
+        if current_resolution == [1, 1] {
+            break;
+        }
+        let next_resolution = [
+            (current_resolution[0] / 2).max(1),
+            (current_resolution[1] / 2).max(1),
+        ];
+        let mut next = vec![0.0; next_resolution[0] as usize * next_resolution[1] as usize * 3];
+        for y in 0..next_resolution[1] {
+            for x in 0..next_resolution[0] {
+                let mut count = 0.0;
+                for oy in 0..2 {
+                    for ox in 0..2 {
+                        let sx = (2 * x + ox).min(current_resolution[0] - 1);
+                        let sy = (2 * y + oy).min(current_resolution[1] - 1);
+                        let source = (sy * current_resolution[0] + sx) as usize * 3;
+                        let target = (y * next_resolution[0] + x) as usize * 3;
+                        for channel in 0..3 {
+                            next[target + channel] += data[source + channel];
+                        }
+                        count += 1.0;
+                    }
+                }
+                let target = (y * next_resolution[0] + x) as usize * 3;
+                for channel in 0..3 {
+                    next[target + channel] /= count;
+                }
+            }
+        }
+        current_resolution = next_resolution;
+        data = next;
+    }
+    Ok(Arc::new(Mipmap {
+        levels,
+        color_space,
         encoding: MipmapEncoding::Linear,
     }))
 }

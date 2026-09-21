@@ -5,12 +5,13 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
 use crate::gpu::flat::texture::{
-    ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
+    ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap, MipmapEncoding,
     MipmapLevel, MipmapLevelData, ProceduralOperation, TextureInstruction, TextureLibrary,
     TextureRoot, TextureValueType,
 };
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
+use crate::util::spectrum::SpectrumType;
 
 use super::abi::{
     camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
@@ -20,12 +21,13 @@ use super::abi::{
     MeasuredTableRecord, TextureNodeRecord, TextureRootRecord, TriangleDistributionEntry, Vertex,
     ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE,
     LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
-    LIGHT_KIND_UNIFORM_INFINITE, TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD,
-    TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS,
-    TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE,
-    TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY,
-    TEXTURE_OPERATION_WRINKLED,
+    LIGHT_KIND_UNIFORM_INFINITE, LIGHT_SAMPLER_KIND_BVH, TEXTURE_OPERATION_BILERP,
+    TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX,
+    TEXTURE_OPERATION_DOTS, TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE,
+    TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE,
+    TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
 };
+use super::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
 use super::acceleration::{self, Acceleration};
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
@@ -221,9 +223,9 @@ fn lower_texture_library(
                     .map_err(|_| PbrtError::error("Texture program length exceeds u32."))?,
                     result: library.programs[*program as usize].result,
                     spectrum_type: match spectrum_type {
-                        crate::util::spectrum::SpectrumType::Albedo => 0,
-                        crate::util::spectrum::SpectrumType::Unbounded => 1,
-                        crate::util::spectrum::SpectrumType::Illuminant => 2,
+                        SpectrumType::Albedo => 0,
+                        SpectrumType::Unbounded => 1,
+                        SpectrumType::Illuminant => 2,
                     },
                 }),
             })
@@ -506,7 +508,7 @@ fn mip_level_rgba(
 fn upload_texture_images(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    mipmaps: &[Arc<crate::gpu::flat::texture::Mipmap>],
+    mipmaps: &[Arc<Mipmap>],
     views: &[ImageView],
     image_views: &[usize],
 ) -> Result<Vec<wgpu::Texture>, PbrtError> {
@@ -673,6 +675,8 @@ pub struct Scene {
     pub light_sampling_model_buffer: wgpu::Buffer,
     pub light_position_buffer: wgpu::Buffer,
     pub distribution_buffer: wgpu::Buffer,
+    pub portal_image_buffer: wgpu::Buffer,
+    pub portal_distribution_buffer: wgpu::Buffer,
     pub light_bvh_header_buffer: wgpu::Buffer,
     pub light_bvh_node_buffer: wgpu::Buffer,
     pub light_leaf_buffer: wgpu::Buffer,
@@ -853,6 +857,7 @@ impl Scene {
                     flat::LightGeometryKind::Position => 0,
                     flat::LightGeometryKind::Instance => 1,
                     flat::LightGeometryKind::Direction => 2,
+                    flat::LightGeometryKind::Portal => 3,
                 },
                 geometry_index: model.geometry_index,
                 direction_index: model.direction_index,
@@ -1122,6 +1127,37 @@ impl Scene {
             contents: buffer_contents(&distribution_entries),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let portal_image_records = flat
+            .portal_infinite_lights
+            .iter()
+            .map(|image| PortalImageInfiniteRecord {
+                portal: image.portal.map(|p| [p[0], p[1], p[2], 1.0]),
+                world_to_portal: image.world_to_portal,
+                distribution_offset: image.distribution_offset,
+                width: image.resolution[0],
+                height: image.resolution[1],
+                reserved: 0,
+            })
+            .collect::<Vec<_>>();
+        let portal_image_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 portal image infinite records SBO"),
+            contents: buffer_contents(&portal_image_records),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let portal_distribution = flat
+            .portal_distribution
+            .iter()
+            .map(|value| PortalDistributionTexel {
+                function: value.function,
+                summed_area: value.summed_area,
+            })
+            .collect::<Vec<_>>();
+        let portal_distribution_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 portal distribution SBO"),
+                contents: buffer_contents(&portal_distribution),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
@@ -1137,7 +1173,7 @@ impl Scene {
         material_table.debug_material_kind = INVALID_INDEX;
         if let Some(packed) = &packed_light_bvh {
             if light_sampler_kind == LightSamplerKind::Bvh {
-                light_table.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_BVH;
+                light_table.light_sampler_kind = LIGHT_SAMPLER_KIND_BVH;
             }
             light_table.light_sampler_data_offset = 0;
             light_table.light_bvh_node_offset = 0;
@@ -1223,6 +1259,8 @@ impl Scene {
             light_sampling_model_buffer,
             light_position_buffer,
             distribution_buffer,
+            portal_image_buffer,
+            portal_distribution_buffer,
             light_bvh_header_buffer,
             light_bvh_node_buffer,
             light_leaf_buffer,

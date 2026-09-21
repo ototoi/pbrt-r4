@@ -51,6 +51,12 @@ var<uniform> sampler_params: SamplerUniform;
 var<storage, read> attribute_refs: array<AttributeRef>;
 @group(0) @binding(23)
 var<storage, read> scalar_attributes: array<f32>;
+@group(0) @binding(24)
+var<storage, read> portal_infinite_lights: array<PortalImageInfiniteRecord>;
+@group(0) @binding(25)
+var<storage, read> portal_distribution: array<PortalDistributionTexel>;
+@group(0) @binding(50)
+var<storage, read_write> portal_light_candidates: array<PortalLightCandidate>;
 @group(0) @binding(28)
 var<storage, read> light_records: array<LightRecord>;
 @group(0) @binding(29)

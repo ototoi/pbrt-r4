@@ -10,6 +10,7 @@ pub mod light_bvh;
 pub mod material;
 pub mod measured;
 pub mod output;
+pub mod portal;
 pub mod render_settings;
 pub mod scene;
 pub mod spectrum;

@@ -37,15 +37,19 @@ impl Context {
             > adapter_limits.max_storage_buffers_per_shader_stage
             || required.uniform_buffers_per_shader_stage
                 > adapter_limits.max_uniform_buffers_per_shader_stage
+            || required.buffers_and_acceleration_structures_per_shader_stage
+                > adapter_limits.max_buffers_and_acceleration_structures_per_shader_stage
             || required.bind_groups > adapter_limits.max_bind_groups
         {
             return Err(PbrtError::error(&format!(
-                "WebGPU adapter limits are insufficient: requested storage={}, uniform={}, bind_groups={}; available storage={}, uniform={}, bind_groups={}",
+                "WebGPU adapter limits are insufficient: requested storage={}, uniform={}, buffers_and_acceleration_structures={}, bind_groups={}; available storage={}, uniform={}, buffers_and_acceleration_structures={}, bind_groups={}",
                 required.storage_buffers_per_shader_stage,
                 required.uniform_buffers_per_shader_stage,
+                required.buffers_and_acceleration_structures_per_shader_stage,
                 required.bind_groups,
                 adapter_limits.max_storage_buffers_per_shader_stage,
                 adapter_limits.max_uniform_buffers_per_shader_stage,
+                adapter_limits.max_buffers_and_acceleration_structures_per_shader_stage,
                 adapter_limits.max_bind_groups,
             )));
         }
@@ -82,6 +86,8 @@ impl Context {
             required.storage_buffers_per_shader_stage;
         required_limits.max_uniform_buffers_per_shader_stage =
             required.uniform_buffers_per_shader_stage;
+        required_limits.max_buffers_and_acceleration_structures_per_shader_stage =
+            required.buffers_and_acceleration_structures_per_shader_stage;
         required_limits.max_bind_groups = required.bind_groups;
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("pbrt-r4 primary-ray device"),
