@@ -547,17 +547,26 @@ fn expand_flat_mesh(
         let normal = normalize(normal);
         let generated_tangent = triangle_tangent(p, uv, normal);
         for corner in 0..3 {
+            let source_tangent = source_tangents
+                .as_ref()
+                .map(|tangents| tangents[triangle[corner] as usize]);
             expanded_positions.push(p[corner]);
             expanded_normals.push(Vec3f(normal));
-            expanded_tangents.push(
-                source_tangents
-                    .as_ref()
-                    .map(|tangents| tangents[triangle[corner] as usize])
-                    .unwrap_or(Vec3f(generated_tangent)),
-            );
+            expanded_tangents.push(match source_tangent {
+                Some(tangent) if length_squared(tangent.0) > 0.0 => tangent,
+                _ => Vec3f(generated_tangent),
+            });
             expanded_uvs.push(uv[corner]);
             expanded_indices.push((expanded_indices.len()) as u32);
         }
+    }
+    if !expanded_tangents.iter().all(|tangent| {
+        tangent.0.iter().all(|value| value.is_finite()) && length_squared(tangent.0) > 0.0
+    }) {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" contains an invalid tangent.",
+            node_name
+        )));
     }
     Ok(TriangleMeshShape {
         positions: expanded_positions,
