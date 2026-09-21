@@ -228,11 +228,16 @@ pub fn flatten_node_ref(
         }
     }
     if let Some(film) = film {
-        if film.name != "rgb" {
-            return Err(PbrtError::error(&format!(
-                "WebGPU four-way rendering supports only RGB film, got \"{}\".",
-                film.name
-            )));
+        match film.name.as_str() {
+            "rgb" => {}
+            "gbuffer" => log::warn!(
+                "WebGPU does not produce GBuffer AOVs; treating the gbuffer film as RGB."
+            ),
+            name => {
+                return Err(PbrtError::error(&format!(
+                    "WebGPU rendering does not support film \"{name}\"."
+                )))
+            }
         }
         let resolution = viewport_resolution(&film.params)?;
         if builder.viewport.is_some() {
