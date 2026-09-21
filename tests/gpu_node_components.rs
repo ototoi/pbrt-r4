@@ -884,6 +884,41 @@ fn zero_normals_and_tangents_are_repaired_from_mesh_geometry() {
 }
 
 #[test]
+fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2],
+        normals: None,
+        tangents: Some(vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ]),
+        uvs: Some(vec![
+            Vec2f([0.0, 0.0]),
+            Vec2f([1.0, 0.0]),
+            Vec2f([0.0, 1.0]),
+        ]),
+    };
+
+    let completed = complete_triangle_attributes(shape, "flat-repairable").unwrap();
+
+    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, 1.0]); 3]);
+    assert_eq!(
+        completed.tangents.unwrap(),
+        vec![
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ]
+    );
+}
+
+#[test]
 fn isolated_zero_normal_remains_an_error() {
     let shape = TriangleMeshShape {
         positions: vec![
