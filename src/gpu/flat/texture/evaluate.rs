@@ -87,13 +87,38 @@ fn evaluate_program_at(
         let value = match instruction {
             Instruction::ConstantFloat { value, .. } => TextureValue::Float(*value),
             Instruction::ConstantRgb { value, .. } => TextureValue::LinearRgb(*value),
-            Instruction::Scale { input, factor, .. } => match values.get(*input as usize) {
-                Some(TextureValue::Float(value)) => TextureValue::Float(value * factor),
-                Some(TextureValue::LinearRgb(value)) => {
-                    TextureValue::LinearRgb(value.map(|value| value * factor))
+            Instruction::Scale {
+                input,
+                scale,
+                constant_scale,
+                ..
+            } => {
+                let factor = match scale {
+                    Some(slot) => match values.get(*slot as usize) {
+                        Some(TextureValue::Float(value)) => *value,
+                        Some(TextureValue::LinearRgb(_)) => {
+                            return Err(PbrtError::error(
+                                "Texture scale factor must be a float value.",
+                            ));
+                        }
+                        None => return Err(invalid_slot(*slot)),
+                    },
+                    None => *constant_scale,
+                };
+                match values.get(*input as usize) {
+                    Some(TextureValue::Float(value)) => {
+                        TextureValue::Float(if factor == 0.0 { 0.0 } else { value * factor })
+                    }
+                    Some(TextureValue::LinearRgb(value)) => {
+                        if factor == 0.0 {
+                            TextureValue::LinearRgb([0.0; 3])
+                        } else {
+                            TextureValue::LinearRgb(value.map(|value| value * factor))
+                        }
+                    }
+                    None => return Err(invalid_slot(*input)),
                 }
-                None => return Err(invalid_slot(*input)),
-            },
+            }
             Instruction::Mix {
                 first,
                 second,
