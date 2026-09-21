@@ -233,7 +233,9 @@ fn lower_texture_library(
 
 fn texture_instruction_operands(instruction: &TextureInstruction) -> Vec<u32> {
     match instruction {
-        TextureInstruction::Scale { input, .. } => vec![*input],
+        TextureInstruction::Scale { input, scale, .. } => std::iter::once(*input)
+            .chain(scale.iter().copied())
+            .collect(),
         TextureInstruction::Mix {
             first,
             second,
@@ -329,11 +331,24 @@ fn lower_texture_instruction(
                 mapping: lower_mapping(mapping.as_ref(), identity),
             })
         }
-        TextureInstruction::Scale { factor, .. } => Ok(LoweredTextureInstruction {
+        TextureInstruction::Scale {
+            scale,
+            constant_scale,
+            ..
+        } => Ok(LoweredTextureInstruction {
             kind: value_type(&slot_type).0,
             implementation_hash: stable_texture_hash("scale"),
             operation: TEXTURE_OPERATION_SCALE,
-            constant_value: [*factor, 0.0, 0.0, 0.0],
+            constant_value: [
+                if scale.is_some() {
+                    0.0
+                } else {
+                    *constant_scale
+                },
+                0.0,
+                0.0,
+                0.0,
+            ],
             color_space: 0,
             image_view: empty_image,
             mapping: (0, identity),
@@ -1441,7 +1456,10 @@ fn convert_geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::{lower_texture_instruction, mip_level_rgba, texture_binding_plan};
+    use super::{
+        lower_texture_instruction, mip_level_rgba, texture_binding_plan,
+        texture_instruction_operands,
+    };
     use crate::gpu::flat::texture::{
         ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
         MipmapLevel, MipmapLevelData, TextureInstruction, TextureValueType,
@@ -1543,5 +1561,46 @@ mod tests {
 
         assert_eq!(lowered.image_view.0, 1);
         assert_eq!(lowered.image_view.1, 1);
+    }
+
+    #[test]
+    fn dynamic_scale_lowers_its_float_slot_as_a_second_child() {
+        let instruction = TextureInstruction::Scale {
+            dst: 3,
+            input: 1,
+            scale: Some(2),
+            constant_scale: 7.0,
+        };
+        let plan = texture_binding_plan(&[]).unwrap();
+
+        assert_eq!(texture_instruction_operands(&instruction), vec![1, 2]);
+        let lowered = lower_texture_instruction(
+            &instruction,
+            TextureValueType::LinearRgb(ColorSpace::Srgb),
+            &[],
+            &plan,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(lowered.constant_value[0], 0.0);
+    }
+
+    #[test]
+    fn constant_scale_keeps_the_existing_single_child_lowering() {
+        let instruction = TextureInstruction::Scale {
+            dst: 2,
+            input: 1,
+            scale: None,
+            constant_scale: 0.5,
+        };
+        let plan = texture_binding_plan(&[]).unwrap();
+
+        assert_eq!(texture_instruction_operands(&instruction), vec![1]);
+        let lowered =
+            lower_texture_instruction(&instruction, TextureValueType::Float, &[], &plan, 0)
+                .unwrap();
+
+        assert_eq!(lowered.constant_value[0], 0.5);
     }
 }

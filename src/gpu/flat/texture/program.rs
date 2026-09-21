@@ -80,7 +80,8 @@ pub enum Instruction {
     Scale {
         dst: u32,
         input: u32,
-        factor: f32,
+        scale: Option<u32>,
+        constant_scale: f32,
     },
     Mix {
         dst: u32,
@@ -185,7 +186,34 @@ impl<'a> Compiler<'a> {
             operands.push(self.emit(child)?);
         }
         let texture = texture_component(node)?;
-        let value_type = value_type(texture.kind, &texture.params);
+        let value_type = if texture.name == "scale" {
+            let input = operands.first().copied().ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Texture node \"{}\" scale expects at least one child.",
+                    node.name
+                ))
+            })?;
+            let input_type = self
+                .slot_types
+                .get(input as usize)
+                .copied()
+                .ok_or_else(|| PbrtError::error("Texture scale has an invalid input slot."))?;
+            match (texture.kind, input_type) {
+                (TextureKind::Float, ValueType::Float)
+                | (TextureKind::Spectrum, ValueType::LinearRgb(_)) => input_type,
+                _ => {
+                    let result_kind = match texture.kind {
+                        TextureKind::Float => "float",
+                        TextureKind::Spectrum => "spectrum",
+                    };
+                    return Err(PbrtError::error(&format!(
+                        "Texture scale has incompatible value types: result kind {result_kind}, input {input_type:?}."
+                    )));
+                }
+            }
+        } else {
+            value_type(texture.kind, &texture.params)
+        };
         let dst = u32::try_from(self.slot_types.len())
             .map_err(|_| PbrtError::error("Texture program slot table exceeds u32."))?;
         let image_view = if texture.name == "imagemap" {
@@ -320,16 +348,17 @@ fn instruction(
             value_type,
         }),
         "scale" => {
-            if operands.len() != 1 {
+            if !(1..=2).contains(&operands.len()) {
                 return Err(PbrtError::error(&format!(
-                    "Texture node \"{}\" scale expects one child.",
+                    "Texture node \"{}\" scale expects one or two children.",
                     node.name
                 )));
             }
             Ok(Instruction::Scale {
                 dst,
                 input: operands[0],
-                factor: texture
+                scale: operands.get(1).copied(),
+                constant_scale: texture
                     .params
                     .get_one_float("scale", texture.params.get_one_float("value", 1.0))
                     as f32,

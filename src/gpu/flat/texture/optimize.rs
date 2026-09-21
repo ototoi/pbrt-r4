@@ -86,22 +86,56 @@ impl Optimizer {
                     value_type,
                 )?
             }
-            Instruction::Scale { input, factor, .. } => {
+            Instruction::Scale {
+                input,
+                scale,
+                constant_scale,
+                ..
+            } => {
                 let input = self.resolve(input)?;
                 require_type("scale", value_type, self.type_of(input)?)?;
-                if factor == 1.0 {
-                    input
-                } else if let Some(constant) = self.scaled_constant(input, factor, value_type) {
-                    self.append(constant, value_type)?
-                } else {
-                    self.append(
+                let (scale, constant_scale) = match scale {
+                    Some(scale) => {
+                        let scale = self.resolve(scale)?;
+                        require_type("scale factor", ValueType::Float, self.type_of(scale)?)?;
+                        match self.constant_float(scale) {
+                            Some(value) => (None, value),
+                            None => (Some(scale), constant_scale),
+                        }
+                    }
+                    None => (None, constant_scale),
+                };
+                match scale {
+                    None if constant_scale == 1.0 => input,
+                    None if constant_scale == 0.0 => {
+                        self.append(zero_constant(value_type), value_type)?
+                    }
+                    None => {
+                        if let Some(constant) =
+                            self.scaled_constant(input, constant_scale, value_type)
+                        {
+                            self.append(constant, value_type)?
+                        } else {
+                            self.append(
+                                Instruction::Scale {
+                                    dst: 0,
+                                    input,
+                                    scale: None,
+                                    constant_scale,
+                                },
+                                value_type,
+                            )?
+                        }
+                    }
+                    Some(scale) => self.append(
                         Instruction::Scale {
                             dst: 0,
                             input,
-                            factor,
+                            scale: Some(scale),
+                            constant_scale,
                         },
                         value_type,
-                    )?
+                    )?,
                 }
             }
             Instruction::Mix {
@@ -307,6 +341,17 @@ impl Optimizer {
     }
 }
 
+fn zero_constant(value_type: ValueType) -> Instruction {
+    match value_type {
+        ValueType::Float => Instruction::ConstantFloat { dst: 0, value: 0.0 },
+        ValueType::LinearRgb(color_space) => Instruction::ConstantRgb {
+            dst: 0,
+            value: [0.0; 3],
+            color_space,
+        },
+    }
+}
+
 fn equivalent_instruction(first: &Instruction, second: &Instruction) -> bool {
     match (first, second) {
         (
@@ -346,15 +391,21 @@ fn equivalent_instruction(first: &Instruction, second: &Instruction) -> bool {
         (
             Instruction::Scale {
                 input: first_input,
-                factor: first_factor,
+                scale: first_scale,
+                constant_scale: first_constant,
                 ..
             },
             Instruction::Scale {
                 input: second_input,
-                factor: second_factor,
+                scale: second_scale,
+                constant_scale: second_constant,
                 ..
             },
-        ) => first_input == second_input && first_factor.to_bits() == second_factor.to_bits(),
+        ) => {
+            first_input == second_input
+                && first_scale == second_scale
+                && first_constant.to_bits() == second_constant.to_bits()
+        }
         (
             Instruction::Mix {
                 first: first_a,
@@ -598,7 +649,9 @@ fn set_instruction_dst(instruction: &mut Instruction, dst: u32) {
 
 fn instruction_operands(instruction: &Instruction) -> Vec<u32> {
     match instruction {
-        Instruction::Scale { input, .. } => vec![*input],
+        Instruction::Scale { input, scale, .. } => std::iter::once(*input)
+            .chain(scale.iter().copied())
+            .collect(),
         Instruction::Mix {
             first,
             second,
@@ -621,7 +674,12 @@ fn remap_operands(instruction: &mut Instruction, remap: &[u32]) -> Result<(), Pb
         Ok(())
     };
     match instruction {
-        Instruction::Scale { input, .. } => remap_slot(input)?,
+        Instruction::Scale { input, scale, .. } => {
+            remap_slot(input)?;
+            if let Some(scale) = scale {
+                remap_slot(scale)?;
+            }
+        }
         Instruction::Mix {
             first,
             second,
