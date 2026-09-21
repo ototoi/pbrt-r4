@@ -145,7 +145,7 @@ fn evaluate_program_at(
                     .mipmaps
                     .get(view.mipmap as usize)
                     .ok_or_else(|| PbrtError::error("Image view has an invalid mipmap."))?;
-                sample_image(view, mipmap, mapping.as_ref(), context.uv)?
+                sample_image(view, mipmap, mapping.as_ref(), context)?
             }
             Instruction::Procedural {
                 operation,
@@ -251,8 +251,29 @@ fn mapped_uv(
             let p = transform_point(transform.matrix, context.position);
             Ok([p[0], p[1]])
         }
-        Some(_) => Err(PbrtError::error(
-            "Reference procedural evaluator does not support this 2D mapping.",
+        Some(TextureMapping::Spherical(transform)) => {
+            let p = transform_point(transform.matrix, context.position);
+            let length = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            let q = [p[0] / length, p[1] / length, p[2] / length];
+            let phi = q[1].atan2(q[0]);
+            Ok([
+                q[2].clamp(-1.0, 1.0).acos() / std::f32::consts::PI,
+                if phi < 0.0 {
+                    phi / std::f32::consts::TAU + 1.0
+                } else {
+                    phi / std::f32::consts::TAU
+                },
+            ])
+        }
+        Some(TextureMapping::Cylindrical(transform)) => {
+            let p = transform_point(transform.matrix, context.position);
+            Ok([
+                (std::f32::consts::PI + p[1].atan2(p[0])) / std::f32::consts::TAU,
+                p[2],
+            ])
+        }
+        Some(TextureMapping::PointTransform(_)) => Err(PbrtError::error(
+            "Reference texture evaluator cannot use a 3D mapping as a 2D mapping.",
         )),
     }
 }
@@ -269,22 +290,9 @@ fn sample_image(
     view: &ImageView,
     mipmap: &super::image::Mipmap,
     mapping: Option<&TextureMapping>,
-    uv: [f32; 2],
+    context: TextureEvaluationContext,
 ) -> Result<TextureValue, PbrtError> {
-    let uv = match mapping {
-        None => uv,
-        Some(TextureMapping::Uv(UvMapping {
-            uscale,
-            vscale,
-            udelta,
-            vdelta,
-        })) => [uv[0] * *uscale + *udelta, uv[1] * *vscale + *vdelta],
-        Some(_) => {
-            return Err(PbrtError::error(
-                "Reference texture evaluator only supports UV image mapping.",
-            ))
-        }
-    };
+    let uv = mapped_uv(mapping, context)?;
     let level = mipmap
         .levels
         .first()
@@ -294,15 +302,17 @@ fn sample_image(
     if width == 0 || height == 0 || !(1..=4).contains(&level.channels) {
         return Err(PbrtError::error("Image texture has invalid dimensions."));
     }
+    let Some(u) = wrap_coordinate(uv[0], view.swrap) else {
+        return Ok(black_image_value(view.value_type));
+    };
+    let Some(v) = wrap_coordinate(1.0 - uv[1], view.twrap) else {
+        return Ok(black_image_value(view.value_type));
+    };
     let value = match view.filter {
         ImageFilterMode::Nearest | ImageFilterMode::Trilinear => {
-            let u = wrap_coordinate(uv[0], view.swrap)?;
-            let v = wrap_coordinate(uv[1], view.twrap)?;
             sample_texel(level, &mipmap.encoding, u, v, view)?
         }
         ImageFilterMode::Bilinear => {
-            let u = wrap_coordinate(uv[0], view.swrap)?;
-            let v = wrap_coordinate(uv[1], view.twrap)?;
             let x = u * width as f32 - 0.5;
             let y = v * height as f32 - 0.5;
             let x0 = x.floor();
@@ -319,12 +329,19 @@ fn sample_image(
     Ok(apply_image_transform(value, view.scale, view.invert))
 }
 
-fn wrap_coordinate(value: f32, mode: ImageWrapMode) -> Result<f32, PbrtError> {
+fn wrap_coordinate(value: f32, mode: ImageWrapMode) -> Option<f32> {
     match mode {
-        ImageWrapMode::Repeat => Ok(value - value.floor()),
-        ImageWrapMode::Clamp => Ok(value.clamp(0.0, 1.0)),
-        ImageWrapMode::Black if !(0.0..=1.0).contains(&value) => Ok(0.0),
-        ImageWrapMode::Black => Ok(value),
+        ImageWrapMode::Repeat => Some(value - value.floor()),
+        ImageWrapMode::Clamp => Some(value.clamp(0.0, 1.0)),
+        ImageWrapMode::Black if !(0.0..=1.0).contains(&value) => None,
+        ImageWrapMode::Black => Some(value),
+    }
+}
+
+fn black_image_value(value_type: ImageValueType) -> TextureValue {
+    match value_type {
+        ImageValueType::Float => TextureValue::Float(0.0),
+        ImageValueType::LinearRgb => TextureValue::LinearRgb([0.0; 3]),
     }
 }
 
