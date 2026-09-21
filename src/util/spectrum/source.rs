@@ -5,7 +5,7 @@ use crate::util::misc::read_float_file;
 
 use super::blackbody::BlackbodySpectrum;
 use super::composite::Spectrum;
-use super::named::{lookup_named_spectrum, lookup_named_spectrum_curve};
+use super::named::lookup_named_spectrum;
 
 pub const SPECTRUM_CLASS_REFLECTANCE: &str = "reflectance";
 pub const SPECTRUM_CLASS_ALBEDO: &str = "albedo";
@@ -61,9 +61,6 @@ pub fn spectrum_from_file(path: &str) -> Option<Spectrum> {
 }
 
 pub fn spectrum_from_named(name: &str) -> Option<Spectrum> {
-    if let Some((lambda, values)) = lookup_named_spectrum_curve(name) {
-        return Some(Spectrum::from_sampled(&lambda, &values));
-    }
     lookup_named_spectrum(name)
 }
 
