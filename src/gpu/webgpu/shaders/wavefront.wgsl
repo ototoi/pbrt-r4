@@ -403,14 +403,12 @@ fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
     let p = (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
     if (node.mapping_kind == 2u) {
         let q = normalize(p);
-        var s = atan2(q.y, q.x) / (2.0 * 3.14159265359);
-        if (s < 0.0) { s = s + 1.0; }
-        // pbrt-v4 uses (SphericalPhi, SphericalTheta) for (s, t).
-        return vec2<f32>(s, acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359);
+        var phi = atan2(q.y, q.x) / (2.0 * 3.14159265359);
+        if (phi < 0.0) { phi = phi + 1.0; }
+        return vec2<f32>(acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359, phi);
     }
     if (node.mapping_kind == 3u) {
-        var s = atan2(p.y, p.x) / (2.0 * 3.14159265359);
-        if (s < 0.0) { s = s + 1.0; }
+        let s = (3.14159265359 + atan2(p.y, p.x)) / (2.0 * 3.14159265359);
         return vec2<f32>(s, p.z);
     }
     return (node.mapping * vec4<f32>(uv, 0.0, 1.0)).xy;

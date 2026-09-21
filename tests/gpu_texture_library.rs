@@ -9,7 +9,9 @@ use pbrt_r4::gpu::flat::texture::{
     TextureValue, TextureValueType,
 };
 use pbrt_r4::gpu::node::TextureNode;
-use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureMapping, UvMapping};
+use pbrt_r4::gpu::node::{
+    Texture, TextureComponent, TextureKind, TextureMapping, Transform, UvMapping,
+};
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::util::base::inverse_gamma_correct;
 use pbrt_r4::util::spectrum::{Spectrum, SpectrumType};
@@ -508,6 +510,141 @@ fn reference_vm_evaluates_bilerp_in_post_order() {
     )
     .unwrap();
     assert_eq!(value, TextureValue::Float(1.25));
+}
+
+#[test]
+fn reference_vm_uses_v4_spherical_mapping_coordinates() {
+    let value = evaluate_mapped_bilerp(
+        TextureMapping::Spherical(Transform::default()),
+        [0.0, 1.0, 0.0],
+    );
+
+    // v4 maps +Y to (theta / pi, phi / 2pi) = (0.5, 0.25).
+    assert!((value - 1.25).abs() < 1e-6);
+}
+
+#[test]
+fn reference_vm_uses_v4_cylindrical_mapping_coordinates() {
+    let value = evaluate_mapped_bilerp(
+        TextureMapping::Cylindrical(Transform::default()),
+        [1.0, 0.0, 0.25],
+    );
+
+    // v4 maps +X to s=0.5 and preserves z as t.
+    assert!((value - 1.25).abs() < 1e-6);
+}
+
+#[test]
+fn reference_vm_applies_non_uv_mapping_to_image_textures() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("mapped.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 2, vec![0, 255])
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", &path.to_string_lossy());
+    params.add_string("string filter", "nearest");
+    let mut node = TextureNode::new("mapped-image");
+    node.components.push(TextureComponent::Texture(Texture {
+        name: "imagemap".to_string(),
+        kind: TextureKind::Float,
+        params,
+    }));
+    node.components
+        .push(TextureComponent::Mapping(TextureMapping::Cylindrical(
+            Transform::default(),
+        )));
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(node),
+    }])
+    .unwrap();
+
+    let value = evaluate_texture_root_with_context(
+        &library,
+        0,
+        TextureEvaluationContext {
+            position: [1.0, 0.0, 0.25],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let TextureValue::Float(value) = value else {
+        panic!("expected float texture value");
+    };
+    assert_eq!(value, 1.0);
+}
+
+#[test]
+fn reference_vm_returns_black_outside_non_uv_image_mapping() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("black-wrap.png");
+    ImageBuffer::<Luma<u8>, _>::from_raw(1, 1, vec![255])
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", &path.to_string_lossy());
+    params.add_string("string filter", "nearest");
+    params.add_string("string wrap", "black");
+    let mut node = TextureNode::new("black-wrap-image");
+    node.components.push(TextureComponent::Texture(Texture {
+        name: "imagemap".to_string(),
+        kind: TextureKind::Float,
+        params,
+    }));
+    node.components
+        .push(TextureComponent::Mapping(TextureMapping::Planar(
+            Transform::default(),
+        )));
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(node),
+    }])
+    .unwrap();
+
+    let value = evaluate_texture_root_with_context(
+        &library,
+        0,
+        TextureEvaluationContext {
+            position: [-0.25, 0.5, 0.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(value, TextureValue::Float(0.0));
+}
+
+fn evaluate_mapped_bilerp(mapping: TextureMapping, position: [f32; 3]) -> f32 {
+    let mut root = TextureNode::new("mapped-bilerp");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "bilerp".to_string(),
+        kind: TextureKind::Float,
+        params: ParameterDictionary::default(),
+    }));
+    root.components.push(TextureComponent::Mapping(mapping));
+    root.children.push(float_constant("v00", 0.0));
+    root.children.push(float_constant("v01", 1.0));
+    root.children.push(float_constant("v10", 2.0));
+    root.children.push(float_constant("v11", 3.0));
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+    let value = evaluate_texture_root_with_context(
+        &library,
+        0,
+        TextureEvaluationContext {
+            position,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let TextureValue::Float(value) = value else {
+        panic!("expected float texture value");
+    };
+    value
 }
 
 fn float_constant(name: &str, value: f32) -> Arc<TextureNode> {

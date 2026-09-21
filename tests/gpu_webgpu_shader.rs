@@ -91,6 +91,14 @@ fn attribute_shader_evaluates_procedural_texture_programs() {
 }
 
 #[test]
+fn texture_shader_uses_v4_non_uv_mapping_conventions() {
+    assert!(COMMON_SHADER
+        .contains("return vec2<f32>(acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359, phi);"));
+    assert!(COMMON_SHADER
+        .contains("let s = (3.14159265359 + atan2(p.y, p.x)) / (2.0 * 3.14159265359);"));
+}
+
+#[test]
 fn attribute_shader_omits_noise_call_graph_when_disabled() {
     let source = compose_source_with_noise(EVALUATE_TEXTURES_SHADER, false);
     assert!(!source.contains("fn texture_noise"));
