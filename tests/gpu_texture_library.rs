@@ -286,6 +286,19 @@ fn texture_program_evaluates_a_dynamic_float_scale_for_spectrum() {
         instruction,
         TextureInstruction::Scale { scale: Some(_), .. }
     )));
+    let (scale_dst, factor_slot) = program
+        .instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            TextureInstruction::Scale {
+                dst,
+                scale: Some(scale),
+                ..
+            } => Some((*dst, *scale)),
+            _ => None,
+        })
+        .expect("dynamic scale instruction should remain in the program");
+    assert_eq!(program.slot_last_use[factor_slot as usize], scale_dst);
     let base = program
         .instructions
         .iter()
@@ -298,6 +311,173 @@ fn texture_program_evaluates_a_dynamic_float_scale_for_spectrum() {
         evaluate_texture_root_at(&library, 0, [0.25, 0.75]).unwrap(),
         TextureValue::LinearRgb(base.map(|value| value * 0.5))
     );
+}
+
+#[test]
+fn texture_program_evaluates_a_dynamic_float_scale_for_float() {
+    let mut root = TextureNode::new("dynamic-float-scale");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "scale".to_string(),
+        kind: TextureKind::Float,
+        params: ParameterDictionary::default(),
+    }));
+    root.children.push(float_constant("base", 0.25));
+    root.children.push(float_bilerp("factor", 0.5));
+
+    let library = compile_texture_library(&[TextureRootSpec::Float {
+        node: Arc::new(root),
+    }])
+    .unwrap();
+
+    assert_eq!(
+        evaluate_texture_root_at(&library, 0, [0.25, 0.75]).unwrap(),
+        TextureValue::Float(0.125)
+    );
+}
+
+#[test]
+fn spectrum_scale_inherits_its_input_color_space() {
+    let mut input_params = ParameterDictionary::default();
+    input_params.add_spectrum("rgb value", &Spectrum::from([0.2, 0.4, 0.6]));
+    input_params.add_string("string colorspace", "Rec2020");
+    let mut input = TextureNode::new("rec2020-input");
+    input.components.push(TextureComponent::Texture(Texture {
+        name: "constant".to_string(),
+        kind: TextureKind::Spectrum,
+        params: input_params,
+    }));
+
+    let mut root = TextureNode::new("scaled-rec2020");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "scale".to_string(),
+        kind: TextureKind::Spectrum,
+        params: ParameterDictionary::default(),
+    }));
+    root.children.push(Arc::new(input));
+    root.children.push(float_bilerp("factor", 0.5));
+
+    let library = compile_texture_library(&[TextureRootSpec::Spectrum {
+        node: Arc::new(root),
+        spectrum_type: SpectrumType::Albedo,
+    }])
+    .unwrap();
+    let program = &library.programs[0];
+
+    assert_eq!(
+        program.slot_types[program.result as usize],
+        TextureValueType::LinearRgb(ColorSpace::Rec2020)
+    );
+}
+
+#[test]
+fn constant_texture_factor_is_compacted_into_scale_instruction() {
+    let mut root = TextureNode::new("constant-texture-scale");
+    root.components.push(TextureComponent::Texture(Texture {
+        name: "scale".to_string(),
+        kind: TextureKind::Spectrum,
+        params: ParameterDictionary::default(),
+    }));
+    root.children
+        .push(spectrum_bilerp("varying-input", [0.2, 0.4, 0.6]));
+    root.children.push(float_constant("constant-factor", 0.5));
+
+    let library = compile_texture_library(&[TextureRootSpec::Spectrum {
+        node: Arc::new(root),
+        spectrum_type: SpectrumType::Albedo,
+    }])
+    .unwrap();
+    let program = &library.programs[0];
+
+    assert!(program.instructions.iter().any(|instruction| matches!(
+        instruction,
+        TextureInstruction::Scale {
+            scale: None,
+            constant_scale: 0.5,
+            ..
+        }
+    )));
+    assert!(!program.instructions.iter().any(|instruction| matches!(
+        instruction,
+        TextureInstruction::ConstantFloat { value: 0.5, .. }
+    )));
+}
+
+#[test]
+fn texture_library_rejects_a_non_float_dynamic_scale_slot() {
+    let rgb_type = TextureValueType::LinearRgb(ColorSpace::Srgb);
+    let library = pbrt_r4::gpu::flat::texture::TextureLibrary {
+        programs: vec![pbrt_r4::gpu::flat::texture::TypedTextureProgram {
+            instructions: vec![
+                TextureInstruction::ConstantRgb {
+                    dst: 0,
+                    value: [0.2; 3],
+                    color_space: ColorSpace::Srgb,
+                },
+                TextureInstruction::ConstantRgb {
+                    dst: 1,
+                    value: [0.5; 3],
+                    color_space: ColorSpace::Srgb,
+                },
+                TextureInstruction::Scale {
+                    dst: 2,
+                    input: 0,
+                    scale: Some(1),
+                    constant_scale: 1.0,
+                },
+            ],
+            slot_types: vec![rgb_type; 3],
+            slot_last_use: vec![2; 3],
+            result: 2,
+        }],
+        roots: vec![TextureRoot::Spectrum {
+            program: 0,
+            spectrum_type: SpectrumType::Albedo,
+        }],
+        mipmaps: Vec::new(),
+        image_views: Vec::new(),
+    };
+
+    let error = library.validate().unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("Texture scale factor must be a float value"));
+}
+
+#[test]
+fn scale_optimizer_folds_zero_and_one_factors() {
+    let compile = |factor| {
+        let mut params = ParameterDictionary::default();
+        params.add_float("float scale", factor);
+        let mut root = TextureNode::new(format!("scale-{factor}"));
+        root.components.push(TextureComponent::Texture(Texture {
+            name: "scale".to_string(),
+            kind: TextureKind::Spectrum,
+            params,
+        }));
+        root.children
+            .push(spectrum_bilerp("varying-input", [0.2, 0.4, 0.6]));
+        compile_texture_library(&[TextureRootSpec::Spectrum {
+            node: Arc::new(root),
+            spectrum_type: SpectrumType::Albedo,
+        }])
+        .unwrap()
+    };
+
+    let zero = compile(0.0);
+    assert_eq!(zero.programs[0].instructions.len(), 1);
+    assert!(matches!(
+        zero.programs[0].instructions[0],
+        TextureInstruction::ConstantRgb {
+            value: [0.0, 0.0, 0.0],
+            ..
+        }
+    ));
+
+    let one = compile(1.0);
+    assert!(!one.programs[0]
+        .instructions
+        .iter()
+        .any(|instruction| matches!(instruction, TextureInstruction::Scale { .. })));
 }
 
 #[test]
@@ -742,6 +922,20 @@ fn float_bilerp(name: &str, value: f32) -> Arc<TextureNode> {
     for slot in ["v00", "v01", "v10", "v11"] {
         node.children
             .push(float_constant(&format!("{name}:{slot}"), value));
+    }
+    Arc::new(node)
+}
+
+fn spectrum_bilerp(name: &str, value: [f32; 3]) -> Arc<TextureNode> {
+    let mut node = TextureNode::new(name);
+    node.components.push(TextureComponent::Texture(Texture {
+        name: "bilerp".to_string(),
+        kind: TextureKind::Spectrum,
+        params: ParameterDictionary::default(),
+    }));
+    for slot in ["v00", "v01", "v10", "v11"] {
+        node.children
+            .push(spectrum_constant(&format!("{name}:{slot}"), value));
     }
     Arc::new(node)
 }
