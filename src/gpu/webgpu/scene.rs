@@ -231,9 +231,21 @@ fn lower_texture_library(
     Ok((nodes, children, roots))
 }
 
+/// Lower a backend-independent texture library into the records consumed by
+/// the WebGPU texture VM. This entry point is also useful to validate the
+/// host-side ABI without creating a WebGPU device.
+pub fn lower_texture_library_records(
+    library: &TextureLibrary,
+) -> Result<(Vec<TextureNodeRecord>, Vec<u32>, Vec<TextureRootRecord>), PbrtError> {
+    let binding_plan = texture_binding_plan(&library.image_views)?;
+    lower_texture_library(library, &binding_plan, 0)
+}
+
 fn texture_instruction_operands(instruction: &TextureInstruction) -> Vec<u32> {
     match instruction {
-        TextureInstruction::Scale { input, .. } => vec![*input],
+        TextureInstruction::Scale { input, scale, .. } => std::iter::once(*input)
+            .chain(scale.iter().copied())
+            .collect(),
         TextureInstruction::Mix {
             first,
             second,
@@ -329,12 +341,25 @@ fn lower_texture_instruction(
                 mapping: lower_mapping(mapping.as_ref(), identity),
             })
         }
-        TextureInstruction::Scale { factor, .. } => Ok(LoweredTextureInstruction {
+        TextureInstruction::Scale {
+            scale,
+            constant_scale,
+            ..
+        } => Ok(LoweredTextureInstruction {
             kind: value_type(&slot_type).0,
             implementation_hash: stable_texture_hash("scale"),
             operation: TEXTURE_OPERATION_SCALE,
-            constant_value: [*factor, 0.0, 0.0, 0.0],
-            color_space: 0,
+            constant_value: [
+                if scale.is_some() {
+                    0.0
+                } else {
+                    *constant_scale
+                },
+                0.0,
+                0.0,
+                0.0,
+            ],
+            color_space: value_type(&slot_type).1,
             image_view: empty_image,
             mapping: (0, identity),
         }),

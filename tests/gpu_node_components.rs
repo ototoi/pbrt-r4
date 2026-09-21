@@ -312,6 +312,171 @@ Texture "scaled" "spectrum" "scale"
 }
 
 #[test]
+fn gpu_spectrum_scale_accepts_a_float_texture_factor() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+Texture "base" "spectrum" "constant"
+    "rgb value" [ 0.2 0.3 0.4 ]
+Texture "mask" "float" "constant"
+    "float value" [ 0.5 ]
+Texture "scaled" "spectrum" "scale"
+    "texture tex" [ "base" ]
+    "texture scale" [ "mask" ]
+"#,
+        &mut builder,
+    )
+    .expect("texture definitions should parse");
+
+    let root = builder
+        .build_gpu_ir_node()
+        .expect("GPU node IR should resolve a float scale texture");
+    let root = root.read().unwrap();
+    let scaled = root
+        .components
+        .iter()
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "scaled"),
+            _ => None,
+        })
+        .expect("scaled texture node should be present");
+
+    assert_eq!(scaled.children.len(), 2);
+    assert_eq!(scaled.children[0].name, "base");
+    assert_eq!(scaled.children[1].name, "mask");
+    assert!(matches!(
+        scaled.children[1].components.first(),
+        Some(TextureComponent::Texture(Texture {
+            kind: TextureKind::Float,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn gpu_float_scale_accepts_a_float_texture_factor() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+Texture "base-value" "float" "constant"
+    "float value" [ 0.25 ]
+Texture "factor-value" "float" "bilerp"
+    "float v00" [ 0.5 ]
+    "float v01" [ 0.5 ]
+    "float v10" [ 0.5 ]
+    "float v11" [ 0.5 ]
+Texture "scaled-value" "float" "scale"
+    "texture tex" [ "base-value" ]
+    "texture scale" [ "factor-value" ]
+"#,
+        &mut builder,
+    )
+    .expect("texture definitions should parse");
+
+    let root = builder
+        .build_gpu_ir_node()
+        .expect("GPU node IR should resolve both float operands");
+    let root = root.read().unwrap();
+    let scaled = root
+        .components
+        .iter()
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "scaled-value"),
+            _ => None,
+        })
+        .expect("scaled float texture node should be present");
+
+    assert_eq!(scaled.children.len(), 2);
+    assert_eq!(scaled.children[0].name, "base-value");
+    assert_eq!(scaled.children[1].name, "factor-value");
+    assert!(scaled.children.iter().all(|child| matches!(
+        child.components.first(),
+        Some(TextureComponent::Texture(Texture {
+            kind: TextureKind::Float,
+            ..
+        }))
+    )));
+}
+
+#[test]
+fn gpu_spectrum_scale_materializes_a_literal_texture_operand() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+Texture "mask" "float" "constant"
+    "float value" [ 0.5 ]
+Texture "scaled" "spectrum" "scale"
+    "rgb tex" [ 0.2 0.3 0.4 ]
+    "texture scale" [ "mask" ]
+"#,
+        &mut builder,
+    )
+    .expect("texture definitions should parse");
+
+    let root = builder
+        .build_gpu_ir_node()
+        .expect("GPU node IR should materialize the literal tex operand");
+    let root = root.read().unwrap();
+    let scaled = root
+        .components
+        .iter()
+        .find_map(|component| match component {
+            Component::Scene(component) => component
+                .scene
+                .texture_nodes
+                .iter()
+                .find(|node| node.name == "scaled"),
+            _ => None,
+        })
+        .expect("scaled texture node should be present");
+
+    assert_eq!(scaled.children.len(), 2);
+    assert!(matches!(
+        scaled.children[0].components.first(),
+        Some(TextureComponent::Texture(Texture {
+            name,
+            kind: TextureKind::Spectrum,
+            ..
+        })) if name == "constant"
+    ));
+    assert_eq!(scaled.children[1].name, "mask");
+}
+
+#[test]
+fn gpu_spectrum_scale_rejects_a_spectrum_factor() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+Texture "base" "spectrum" "constant"
+    "rgb value" [ 0.2 0.3 0.4 ]
+Texture "wrong-mask" "spectrum" "constant"
+    "rgb value" [ 0.5 0.5 0.5 ]
+Texture "scaled" "spectrum" "scale"
+    "texture tex" [ "base" ]
+    "texture scale" [ "wrong-mask" ]
+"#,
+        &mut builder,
+    )
+    .expect("texture definitions should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("a spectrum scale factor should be rejected"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+    assert!(message.contains("scale slot \"scale\" expects a float texture"));
+    assert!(message.contains("wrong-mask"));
+}
+
+#[test]
 fn gpu_texture_3d_noise_nodes_use_point_transform_mapping() {
     let mut builder = SceneBuilder::new();
     parse_string(

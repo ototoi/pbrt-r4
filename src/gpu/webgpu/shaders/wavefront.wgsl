@@ -462,7 +462,10 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
         } else if (node.operation == TEXTURE_OPERATION_CONSTANT) {
             values[local] = node.constant_value.rgb;
         } else if (node.operation == TEXTURE_OPERATION_SCALE) {
-            if (node.child_count < 1u || node.first_child >= arrayLength(&texture_child_indices)) {
+            if ((node.child_count != 1u && node.child_count != 2u)
+                || node.first_child >= arrayLength(&texture_child_indices)
+                || (node.child_count == 2u
+                    && node.first_child + 1u >= arrayLength(&texture_child_indices))) {
                 set_render_error();
                 return vec3<f32>(0.0);
             }
@@ -471,7 +474,20 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
                 set_render_error();
                 return vec3<f32>(0.0);
             }
-            values[local] = values[child] * node.constant_value.x;
+            var factor = node.constant_value.x;
+            if (node.child_count == 2u) {
+                let scale = texture_child_indices[node.first_child + 1u];
+                if (scale >= local) {
+                    set_render_error();
+                    return vec3<f32>(0.0);
+                }
+                factor = values[scale].x;
+            }
+            if (factor == 0.0) {
+                values[local] = vec3<f32>(0.0);
+            } else {
+                values[local] = values[child] * factor;
+            }
         } else if (node.operation == TEXTURE_OPERATION_MIX) {
             if (node.child_count < 2u
                 || node.first_child + 1u >= arrayLength(&texture_child_indices)) {
@@ -644,8 +660,12 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
                 || (node.operation == 0u && node.child_count == 0u)) {
                 stack_value[depth] = sample_texture_leaf(index, uv);
                 stack_state[depth] = 3u;
-            } else if (node.operation == 2u && node.child_count >= 1u) {
-                if (node.first_child >= arrayLength(&texture_child_indices) || depth + 1u >= 32u) {
+            } else if (node.operation == 2u
+                && (node.child_count == 1u || node.child_count == 2u)) {
+                if (node.first_child >= arrayLength(&texture_child_indices)
+                    || (node.child_count == 2u
+                        && node.first_child + 1u >= arrayLength(&texture_child_indices))
+                    || depth + 1u >= 32u) {
                     set_render_error(); return vec3<f32>(0.0);
                 }
                 stack_state[depth] = 1u;
@@ -675,12 +695,22 @@ fn deferred_sample_texture_graph(texture_index: u32, uv: vec2<f32>) -> vec3<f32>
                     stack_index[depth] = texture_child_indices[parent.first_child + 1u];
                     stack_state[depth] = 0u;
                 } else {
-                    stack_value[parent_depth] = stack_value[depth] * parent.constant_value.x;
+                    if (parent.constant_value.x == 0.0) {
+                        stack_value[parent_depth] = vec3<f32>(0.0);
+                    } else {
+                        stack_value[parent_depth] =
+                            stack_value[depth] * parent.constant_value.x;
+                    }
                     stack_state[parent_depth] = 3u;
                     depth = parent_depth;
                 }
             } else if (parent.operation == 2u && stack_state[parent_depth] == 2u) {
-                stack_value[parent_depth] = stack_value[parent_depth] * stack_value[depth];
+                let factor = stack_value[depth].x;
+                if (factor == 0.0) {
+                    stack_value[parent_depth] = vec3<f32>(0.0);
+                } else {
+                    stack_value[parent_depth] = stack_value[parent_depth] * factor;
+                }
                 stack_state[parent_depth] = 3u;
                 depth = parent_depth;
             } else if (parent.operation == 3u && stack_state[parent_depth] == 1u) {
