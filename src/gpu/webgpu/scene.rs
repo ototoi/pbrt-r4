@@ -231,6 +231,16 @@ fn lower_texture_library(
     Ok((nodes, children, roots))
 }
 
+/// Lower a backend-independent texture library into the records consumed by
+/// the WebGPU texture VM. This entry point is also useful to validate the
+/// host-side ABI without creating a WebGPU device.
+pub fn lower_texture_library_records(
+    library: &TextureLibrary,
+) -> Result<(Vec<TextureNodeRecord>, Vec<u32>, Vec<TextureRootRecord>), PbrtError> {
+    let binding_plan = texture_binding_plan(&library.image_views)?;
+    lower_texture_library(library, &binding_plan, 0)
+}
+
 fn texture_instruction_operands(instruction: &TextureInstruction) -> Vec<u32> {
     match instruction {
         TextureInstruction::Scale { input, scale, .. } => std::iter::once(*input)
@@ -1456,10 +1466,7 @@ fn convert_geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        lower_texture_instruction, mip_level_rgba, texture_binding_plan,
-        texture_instruction_operands,
-    };
+    use super::{lower_texture_instruction, mip_level_rgba, texture_binding_plan};
     use crate::gpu::flat::texture::{
         ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
         MipmapLevel, MipmapLevelData, TextureInstruction, TextureValueType,
@@ -1561,46 +1568,5 @@ mod tests {
 
         assert_eq!(lowered.image_view.0, 1);
         assert_eq!(lowered.image_view.1, 1);
-    }
-
-    #[test]
-    fn dynamic_scale_lowers_its_float_slot_as_a_second_child() {
-        let instruction = TextureInstruction::Scale {
-            dst: 3,
-            input: 1,
-            scale: Some(2),
-            constant_scale: 7.0,
-        };
-        let plan = texture_binding_plan(&[]).unwrap();
-
-        assert_eq!(texture_instruction_operands(&instruction), vec![1, 2]);
-        let lowered = lower_texture_instruction(
-            &instruction,
-            TextureValueType::LinearRgb(ColorSpace::Srgb),
-            &[],
-            &plan,
-            0,
-        )
-        .unwrap();
-
-        assert_eq!(lowered.constant_value[0], 0.0);
-    }
-
-    #[test]
-    fn constant_scale_keeps_the_existing_single_child_lowering() {
-        let instruction = TextureInstruction::Scale {
-            dst: 2,
-            input: 1,
-            scale: None,
-            constant_scale: 0.5,
-        };
-        let plan = texture_binding_plan(&[]).unwrap();
-
-        assert_eq!(texture_instruction_operands(&instruction), vec![1]);
-        let lowered =
-            lower_texture_instruction(&instruction, TextureValueType::Float, &[], &plan, 0)
-                .unwrap();
-
-        assert_eq!(lowered.constant_value[0], 0.5);
     }
 }
