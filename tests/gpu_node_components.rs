@@ -3,10 +3,10 @@ use std::sync::RwLock;
 
 use pbrt_r4::gpu::flat::flatten_node;
 use pbrt_r4::gpu::node::{
-    node_ref_to_json, remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params,
-    Camera, CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
-    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
-    TextureNode, Transform, TriangleMeshShape, Vec3f,
+    complete_triangle_attributes, node_ref_to_json, remove_invalid_triangles, tessellate_shapes,
+    triangle_mesh_from_params, Camera, CameraComponent, Component, DiskShape, Material,
+    MaterialComponent, Node, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    TextureKind, TextureMapping, TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
 };
 use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
@@ -812,6 +812,135 @@ fn invalid_triangles_are_removed_before_attribute_completion() {
 
     let filtered = remove_invalid_triangles(shape).unwrap();
     assert_eq!(filtered.indices, vec![0, 1, 2]);
+}
+
+#[test]
+fn vertices_only_used_by_invalid_triangles_are_removed_with_their_attributes() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+            Vec3f([2.0, 2.0, 2.0]),
+        ],
+        indices: vec![0, 1, 2, 3, 3, 3],
+        normals: Some(vec![
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 0.0]),
+        ]),
+        tangents: None,
+        uvs: None,
+    };
+
+    let filtered = remove_invalid_triangles(shape).unwrap();
+    let completed = complete_triangle_attributes(filtered, "compacted").unwrap();
+
+    assert_eq!(completed.positions.len(), 3);
+    assert_eq!(completed.indices, vec![0, 1, 2]);
+    assert_eq!(completed.normals.unwrap().len(), 3);
+}
+
+#[test]
+fn zero_normals_and_tangents_are_repaired_from_mesh_geometry() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2],
+        normals: Some(vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 1.0]),
+        ]),
+        tangents: Some(vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+        ]),
+        uvs: Some(vec![
+            Vec2f([0.0, 0.0]),
+            Vec2f([1.0, 0.0]),
+            Vec2f([0.0, 1.0]),
+        ]),
+    };
+
+    let completed = complete_triangle_attributes(shape, "repairable").unwrap();
+
+    assert_eq!(completed.normals.unwrap()[0], Vec3f([0.0, 0.0, 1.0]));
+    let tangents = completed.tangents.unwrap();
+    assert!(tangents
+        .iter()
+        .all(|tangent| tangent.0.iter().all(|value| value.is_finite())));
+    assert!(tangents.iter().all(|tangent| tangent
+        .0
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        > 0.0));
+}
+
+#[test]
+fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2],
+        normals: None,
+        tangents: Some(vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ]),
+        uvs: Some(vec![
+            Vec2f([0.0, 0.0]),
+            Vec2f([1.0, 0.0]),
+            Vec2f([0.0, 1.0]),
+        ]),
+    };
+
+    let completed = complete_triangle_attributes(shape, "flat-repairable").unwrap();
+
+    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, 1.0]); 3]);
+    assert_eq!(
+        completed.tangents.unwrap(),
+        vec![
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ]
+    );
+}
+
+#[test]
+fn isolated_zero_normal_remains_an_error() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+            Vec3f([2.0, 2.0, 2.0]),
+        ],
+        indices: vec![0, 1, 2],
+        normals: Some(vec![
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 0.0]),
+        ]),
+        tangents: None,
+        uvs: None,
+    };
+
+    let error = complete_triangle_attributes(shape, "irreparable").unwrap_err();
+
+    assert!(error.to_string().contains("irreparable zero normal"));
 }
 
 #[test]

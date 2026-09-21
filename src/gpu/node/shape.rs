@@ -237,9 +237,10 @@ pub fn complete_triangle_attributes(
 
     let source_tangents = shape.tangents;
     if let Some(tangents) = source_tangents.as_deref() {
-        if !tangents.iter().all(|tangent| {
-            tangent.0.iter().all(|value| value.is_finite()) && length_squared(tangent.0) > 0.0
-        }) {
+        if !tangents
+            .iter()
+            .all(|tangent| tangent.0.iter().all(|value| value.is_finite()))
+        {
             return Err(PbrtError::error(&format!(
                 "Shape node \"{}\" contains an invalid tangent.",
                 node_name
@@ -257,17 +258,34 @@ pub fn complete_triangle_attributes(
     }
 
     let mut normals = shape.normals.unwrap();
-    if !normals.iter().all(|normal| {
-        normal.0.iter().all(|value| value.is_finite()) && length_squared(normal.0) > 0.0
-    }) {
+    if !normals
+        .iter()
+        .all(|normal| normal.0.iter().all(|value| value.is_finite()))
+    {
         return Err(PbrtError::error(&format!(
             "Shape node \"{}\" contains an invalid normal.",
             node_name
         )));
     }
+    repair_zero_normals(&shape.positions, &shape.indices, &mut normals);
+    if normals.iter().any(|normal| length_squared(normal.0) == 0.0) {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" contains an irreparable zero normal.",
+            node_name
+        )));
+    }
     align_normals_to_winding(&shape.positions, &shape.indices, &mut normals);
-    let tangents = source_tangents
-        .unwrap_or_else(|| generate_tangents(&shape.positions, &shape.indices, &normals, &uvs));
+    let generated_tangents = generate_tangents(&shape.positions, &shape.indices, &normals, &uvs);
+    let tangents = if let Some(mut tangents) = source_tangents {
+        for (tangent, generated) in tangents.iter_mut().zip(&generated_tangents) {
+            if length_squared(tangent.0) == 0.0 {
+                *tangent = *generated;
+            }
+        }
+        tangents
+    } else {
+        generated_tangents
+    };
     if !tangents.iter().all(|tangent| {
         tangent.0.iter().all(|value| value.is_finite()) && length_squared(tangent.0) > 0.0
     }) {
@@ -283,6 +301,37 @@ pub fn complete_triangle_attributes(
         tangents: Some(tangents),
         uvs: Some(uvs),
     })
+}
+
+/// Reconstructs zero shading normals from the unit normals of adjacent faces.
+///
+/// This follows pbrt-v4's `TriQuadMesh::ComputeNormals()` weighting while
+/// preserving every nonzero authored normal.
+fn repair_zero_normals(positions: &[Vec3f], indices: &[u32], normals: &mut [Vec3f]) {
+    if normals.iter().all(|normal| length_squared(normal.0) > 0.0) {
+        return;
+    }
+    let mut reconstructed = vec![[0.0; 3]; normals.len()];
+    for triangle in indices.chunks_exact(3) {
+        let p0 = positions[triangle[0] as usize].0;
+        let p1 = positions[triangle[1] as usize].0;
+        let p2 = positions[triangle[2] as usize].0;
+        let face_normal = cross(sub(p1, p0), sub(p2, p0));
+        if !face_normal.iter().all(|value| value.is_finite()) || length_squared(face_normal) == 0.0
+        {
+            continue;
+        }
+        let face_normal = normalize(face_normal);
+        for &corner in triangle {
+            let accumulated = &mut reconstructed[corner as usize];
+            *accumulated = add(*accumulated, face_normal);
+        }
+    }
+    for (normal, reconstructed) in normals.iter_mut().zip(reconstructed) {
+        if length_squared(normal.0) == 0.0 && length_squared(reconstructed) > 0.0 {
+            normal.0 = normalize(reconstructed);
+        }
+    }
 }
 
 /// Removes triangles whose geometric normal is zero or non-finite.
@@ -328,7 +377,71 @@ pub fn remove_invalid_triangles(
         .flatten()
         .copied()
         .collect();
+    remove_unreferenced_vertices(&mut shape);
     Ok(shape)
+}
+
+/// Compacts vertex attributes after invalid triangles have been removed.
+fn remove_unreferenced_vertices(shape: &mut TriangleMeshShape) {
+    if shape.indices.is_empty() {
+        shape.positions.clear();
+        if let Some(normals) = shape.normals.as_mut() {
+            normals.clear();
+        }
+        if let Some(tangents) = shape.tangents.as_mut() {
+            tangents.clear();
+        }
+        if let Some(uvs) = shape.uvs.as_mut() {
+            uvs.clear();
+        }
+        return;
+    }
+
+    let old_vertex_count = shape.positions.len();
+    let mut referenced = vec![false; old_vertex_count];
+    for &index in &shape.indices {
+        referenced[index as usize] = true;
+    }
+    if referenced.iter().all(|referenced| *referenced) {
+        return;
+    }
+
+    let mut remap = vec![u32::MAX; old_vertex_count];
+    let mut next_index = 0u32;
+    for (index, referenced) in referenced.iter().copied().enumerate() {
+        if referenced {
+            remap[index] = next_index;
+            next_index += 1;
+        }
+    }
+    for index in &mut shape.indices {
+        *index = remap[*index as usize];
+    }
+    shape.positions = compact_attribute(&shape.positions, &referenced);
+    compact_optional_attribute(&mut shape.normals, &referenced, old_vertex_count);
+    compact_optional_attribute(&mut shape.tangents, &referenced, old_vertex_count);
+    compact_optional_attribute(&mut shape.uvs, &referenced, old_vertex_count);
+}
+
+fn compact_attribute<T: Copy>(values: &[T], referenced: &[bool]) -> Vec<T> {
+    values
+        .iter()
+        .copied()
+        .zip(referenced.iter().copied())
+        .filter_map(|(value, referenced)| referenced.then_some(value))
+        .collect()
+}
+
+fn compact_optional_attribute<T: Copy>(
+    values: &mut Option<Vec<T>>,
+    referenced: &[bool],
+    old_vertex_count: usize,
+) {
+    if let Some(values) = values {
+        if values.len() == old_vertex_count {
+            *values = compact_attribute(values, referenced);
+        }
+    }
 }
 
 /// Flips per-vertex shading normals that disagree with the mesh winding.
@@ -434,17 +547,26 @@ fn expand_flat_mesh(
         let normal = normalize(normal);
         let generated_tangent = triangle_tangent(p, uv, normal);
         for corner in 0..3 {
+            let source_tangent = source_tangents
+                .as_ref()
+                .map(|tangents| tangents[triangle[corner] as usize]);
             expanded_positions.push(p[corner]);
             expanded_normals.push(Vec3f(normal));
-            expanded_tangents.push(
-                source_tangents
-                    .as_ref()
-                    .map(|tangents| tangents[triangle[corner] as usize])
-                    .unwrap_or(Vec3f(generated_tangent)),
-            );
+            expanded_tangents.push(match source_tangent {
+                Some(tangent) if length_squared(tangent.0) > 0.0 => tangent,
+                _ => Vec3f(generated_tangent),
+            });
             expanded_uvs.push(uv[corner]);
             expanded_indices.push((expanded_indices.len()) as u32);
         }
+    }
+    if !expanded_tangents.iter().all(|tangent| {
+        tangent.0.iter().all(|value| value.is_finite()) && length_squared(tangent.0) > 0.0
+    }) {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" contains an invalid tangent.",
+            node_name
+        )));
     }
     Ok(TriangleMeshShape {
         positions: expanded_positions,
