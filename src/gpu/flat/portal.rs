@@ -78,7 +78,9 @@ fn portal_frame(portal: [[f32; 3]; 4]) -> Result<[[f32; 3]; 3], PbrtError> {
         ));
     }
     // pbrt-v4 Frame::FromXY(p03, p01).
-    Ok([p03, p01, normalize(cross(p03, p01)).unwrap()])
+    let normal = normalize(cross(p03, p01))
+        .ok_or_else(|| PbrtError::error("Portal quadrilateral is degenerate."))?;
+    Ok([p03, p01, normal])
 }
 
 fn from_portal(frame: [[f32; 3]; 3], local: [f32; 3]) -> [f32; 3] {
@@ -95,13 +97,19 @@ fn transform_vector(matrix: [[f32; 4]; 3], vector: [f32; 3]) -> [f32; 3] {
     })
 }
 
-fn render_from_image(frame: [[f32; 3]; 3], uv: [f32; 2]) -> ([f32; 3], f32) {
+fn render_from_image(frame: [[f32; 3]; 3], uv: [f32; 2]) -> Result<([f32; 3], f32), PbrtError> {
     let alpha = -FRAC_PI_2 + uv[0] * PI;
     let beta = -FRAC_PI_2 + uv[1] * PI;
-    let local = normalize([alpha.tan(), beta.tan(), 1.0]).unwrap();
+    let local = normalize([alpha.tan(), beta.tan(), 1.0])
+        .ok_or_else(|| PbrtError::error("Portal image mapping produced an invalid direction."))?;
     let jacobian =
         PI.powi(2) * (1.0 - local[0] * local[0]) * (1.0 - local[1] * local[1]) / local[2];
-    (from_portal(frame, local), jacobian)
+    if !jacobian.is_finite() {
+        return Err(PbrtError::error(
+            "Portal image mapping produced a non-finite Jacobian.",
+        ));
+    }
+    Ok((from_portal(frame, local), jacobian))
 }
 
 fn remap_octahedral(mut x: i32, mut y: i32, resolution: [u32; 2]) -> [u32; 2] {
@@ -195,7 +203,7 @@ pub fn prepare_portal_image(
                 (x as f32 + 0.5) / level.resolution[0] as f32,
                 (y as f32 + 0.5) / level.resolution[1] as f32,
             ];
-            let (world_direction, jacobian) = render_from_image(frame, uv);
+            let (world_direction, jacobian) = render_from_image(frame, uv)?;
             let light_direction = normalize(transform_vector(world_to_light, world_direction))
                 .ok_or_else(|| PbrtError::error("Portal light transform is degenerate."))?;
             let source_uv = equal_area_sphere_to_square(&Vector3f::new(

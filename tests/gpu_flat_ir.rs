@@ -802,6 +802,40 @@ fn flatten_node_rejects_portal_without_an_image_source() {
 }
 
 #[test]
+fn flatten_node_rejects_non_finite_final_portal_scale() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_float("float scale", f32::MAX);
+    params.add_float("float illuminance", f32::MAX);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-finite scale"));
+}
+
+#[test]
+fn flatten_node_reports_degenerate_portal_geometry() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("degenerate"));
+}
+
+#[test]
 fn flatten_node_builds_portal_jacobian_weighted_sat() {
     let directory = tempfile::tempdir().unwrap();
     let image_path = directory.path().join("white.png");
