@@ -1369,13 +1369,13 @@ fn flatten_node_rejects_invalid_dielectric_eta() {
 
 #[test]
 fn flatten_node_extracts_conductor_attributes() {
-    let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
+    let shape = triangle_node("triangle", "conductor_eta_k", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.material_nodes[0].kind, "conductor");
+    assert_eq!(scene.material_nodes[0].kind, "conductor_eta_k");
     assert_eq!(scene.material_nodes[0].attributes.len(), 3);
     for attribute in &scene.material_nodes[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;

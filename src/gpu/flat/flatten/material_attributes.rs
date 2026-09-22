@@ -362,7 +362,7 @@ pub fn build_material_attributes(
                 push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
             ])
         }
-        "conductor" | "conductor_eta_k" => {
+        "conductor_eta_k" => {
             reject_scalar_textures(source_material, &["uroughness", "vroughness"])?;
             let eta_attribute = if let Some(attribute) =
                 texture_attribute_ref_unbounded(source_material, "eta", builder)?
@@ -372,7 +372,9 @@ pub fn build_material_attributes(
                 let eta = spectrum_attribute(
                     source_material,
                     "eta",
-                    &Spectrum::from(0.2),
+                    &lookup_named_spectrum("metal-Cu-eta").ok_or_else(|| {
+                        PbrtError::error("Named spectrum metal-Cu-eta should exist.")
+                    })?,
                     SpectrumType::Unbounded,
                 )?;
                 let dense_eta = eta.to_dense();
@@ -394,7 +396,9 @@ pub fn build_material_attributes(
                 let k = spectrum_attribute(
                     source_material,
                     "k",
-                    &Spectrum::from(3.0),
+                    &lookup_named_spectrum("metal-Cu-k").ok_or_else(|| {
+                        PbrtError::error("Named spectrum metal-Cu-k should exist.")
+                    })?,
                     SpectrumType::Unbounded,
                 )?;
                 push_spectrum_attribute(builder, "k", &k)?

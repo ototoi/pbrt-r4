@@ -145,7 +145,6 @@ pub fn register_material_source(
         "diffuse"
             | "dielectric"
             | "thindielectric"
-            | "conductor"
             | "conductor_eta_k"
             | "conductor_reflectance"
             | "mix"
