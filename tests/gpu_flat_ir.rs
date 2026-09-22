@@ -715,6 +715,59 @@ fn flatten_node_accepts_portal_infinite_image() {
     assert_eq!(scene.light_sampling_models[0].total_area, 0.0);
 }
 
+#[test]
+fn flatten_node_keeps_multiple_portal_images_and_distributions_separate() {
+    let directory = tempfile::tempdir().unwrap();
+    let red_path = directory.path().join("red.png");
+    let blue_path = directory.path().join("blue.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([255, 0, 0]))
+        .save(&red_path)
+        .unwrap();
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([0, 0, 255]))
+        .save(&blue_path)
+        .unwrap();
+
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for (name, image_path, x) in [("red", red_path, 0.0), ("blue", blue_path, 2.0)] {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", image_path.to_str().unwrap());
+        params.add_string("string encoding", "linear");
+        params.add_point(
+            "point portal",
+            &[
+                x,
+                0.0,
+                1.0,
+                x,
+                1.0,
+                1.0,
+                x + 1.0,
+                1.0,
+                1.0,
+                x + 1.0,
+                0.0,
+                1.0,
+            ],
+        );
+        root.add_child(light_node(name, "infinite", params));
+    }
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.infinite_lights.len(), 2);
+    assert_eq!(scene.portal_infinite_lights.len(), 2);
+    assert_eq!(scene.light_sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.light_sampling_models[1].geometry_index, 1);
+    assert_eq!(scene.portal_infinite_lights[0].distribution_offset, 0);
+    assert_eq!(scene.portal_infinite_lights[1].distribution_offset, 9);
+    assert_eq!(scene.portal_distribution.len(), 18);
+    assert_ne!(
+        scene.infinite_lights[0].image_index,
+        scene.infinite_lights[1].image_index
+    );
+    scene.validate_static_views().unwrap();
+}
+
 fn one_pixel_portal_scene() -> FlatScene {
     let mut params = ParameterDictionary::default();
     params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
@@ -1019,7 +1072,7 @@ fn flatten_node_rejects_non_square_infinite_image() {
 }
 
 #[test]
-fn flatten_node_allows_multiple_distant_but_only_one_other_infinite_light() {
+fn flatten_node_allows_multiple_infinite_lights() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(light_node("distant-a", "distant", Default::default()));
@@ -1027,10 +1080,10 @@ fn flatten_node_allows_multiple_distant_but_only_one_other_infinite_light() {
     root.add_child(light_node("uniform", "infinite", Default::default()));
     root.add_child(light_node("duplicate", "infinite", Default::default()));
 
-    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("at most one non-distant infinite light"));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.infinite_lights.len(), 4);
+    assert_eq!(scene.light_sampling_models.len(), 4);
+    scene.validate_static_views().unwrap();
 }
 
 #[test]
