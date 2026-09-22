@@ -1289,6 +1289,16 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
         scene.scalar_attributes[material.attributes[14].index as usize],
         1.0,
     );
+    assert_eq!(
+        scene.material_nodes[material.child1 as usize].kind,
+        "conductor_reflectance"
+    );
+    assert_eq!(
+        scene.material_nodes[material.child1 as usize]
+            .attributes
+            .len(),
+        2
+    );
 }
 
 #[test]

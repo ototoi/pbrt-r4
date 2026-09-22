@@ -267,6 +267,10 @@ pub fn register_material_source(
                         .get_keys()
                         .iter()
                         .any(|key| source_material.params.get_key_name(key) == "reflectance")
+                        || source_material
+                            .texture_attributes
+                            .iter()
+                            .any(|(name, _)| name == "reflectance")
                     {
                         "conductor_reflectance".to_string()
                     } else {
