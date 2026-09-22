@@ -1289,6 +1289,16 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
         scene.scalar_attributes[material.attributes[14].index as usize],
         1.0,
     );
+    assert_eq!(
+        scene.material_nodes[material.child1 as usize].kind,
+        "conductor_reflectance"
+    );
+    assert_eq!(
+        scene.material_nodes[material.child1 as usize]
+            .attributes
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -1369,13 +1379,13 @@ fn flatten_node_rejects_invalid_dielectric_eta() {
 
 #[test]
 fn flatten_node_extracts_conductor_attributes() {
-    let shape = triangle_node("triangle", "conductor", [0.0, 0.0, 0.0]);
+    let shape = triangle_node("triangle", "conductor_eta_k", [0.0, 0.0, 0.0]);
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.material_nodes[0].kind, "conductor");
+    assert_eq!(scene.material_nodes[0].kind, "conductor_eta_k");
     assert_eq!(scene.material_nodes[0].attributes.len(), 3);
     for attribute in &scene.material_nodes[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
@@ -1386,6 +1396,30 @@ fn flatten_node_extracts_conductor_attributes() {
         );
     }
     assert_eq!(scene.scalar_attributes[0], 0.0);
+}
+
+#[test]
+fn flatten_node_keeps_conductor_reflectance_layout_separate() {
+    let shape = triangle_node("triangle", "conductor_reflectance", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let Component::Material(material) = &mut node.components[1] else {
+            panic!("expected material component");
+        };
+        Arc::get_mut(&mut material.material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_rgb("rgb reflectance", &[0.5, 0.5, 0.5]);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.material_nodes[0].kind, "conductor_reflectance");
+    assert_eq!(scene.material_nodes[0].attributes.len(), 2);
+    assert_eq!(scene.material_nodes[0].attributes[0].name, "reflectance");
+    assert_eq!(scene.material_nodes[0].attributes[1].name, "roughness");
 }
 
 #[test]

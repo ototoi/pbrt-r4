@@ -55,10 +55,14 @@ fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), Pbr
             (3, flat::AttributeKind::Scalar),
         ][..],
         "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
-        "conductor" => &[
+        "conductor_eta_k" => &[
             (0, flat::AttributeKind::Spectrum),
             (1, flat::AttributeKind::Spectrum),
             (2, flat::AttributeKind::Scalar),
+        ][..],
+        "conductor_reflectance" => &[
+            (0, flat::AttributeKind::Spectrum),
+            (1, flat::AttributeKind::Scalar),
         ][..],
         "mix" => &[(0, flat::AttributeKind::Scalar)][..],
         "coateddiffuse" => &[
@@ -147,7 +151,10 @@ pub enum MaterialKind {
     Lambert,
     Dielectric,
     ThinDielectric,
-    Conductor,
+    // Reserved ABI tag retained for numeric stability; never emitted by Flat IR.
+    UnusedConductor,
+    ConductorEtaK,
+    ConductorReflectance,
     Mix,
     CoatedDiffuse,
     CoatedConductor,
@@ -162,7 +169,9 @@ impl MaterialKind {
             Self::Diffuse | Self::Lambert => 2,
             Self::Dielectric => 3,
             Self::ThinDielectric => 5,
-            Self::Conductor => 6,
+            Self::UnusedConductor => 6,
+            Self::ConductorEtaK => 11,
+            Self::ConductorReflectance => 12,
             Self::Mix => 7,
             Self::CoatedDiffuse => 8,
             Self::CoatedConductor => 9,
@@ -178,7 +187,8 @@ impl MaterialKind {
             "lambert" => Ok(Self::Lambert),
             "dielectric" => Ok(Self::Dielectric),
             "thindielectric" => Ok(Self::ThinDielectric),
-            "conductor" => Ok(Self::Conductor),
+            "conductor_eta_k" => Ok(Self::ConductorEtaK),
+            "conductor_reflectance" => Ok(Self::ConductorReflectance),
             "mix" => Ok(Self::Mix),
             "coateddiffuse" => Ok(Self::CoatedDiffuse),
             "coatedconductor" => Ok(Self::CoatedConductor),
