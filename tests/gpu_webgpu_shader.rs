@@ -220,6 +220,8 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     ));
     assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
     assert!(escaped.contains("ray.throughput * radiance"));
+    assert!(escaped.contains("radiance += light_radiance * mis_weight"));
+    assert!(!escaped.contains("ray.throughput * radiance * mis_weight"));
     assert!(evaluate.contains("fn equal_area_sphere_to_square("));
     assert!(evaluate.contains("dot(model.world_to_light0.xyz, direction)"));
     assert!(evaluate.contains("model.flags >> 28u"));

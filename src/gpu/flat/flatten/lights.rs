@@ -488,21 +488,6 @@ pub fn flatten_light(
                 INVALID_INDEX,
             )
         };
-        if matches!(
-            kind,
-            LightKind::UniformInfinite | LightKind::ImageInfinite | LightKind::PortalImageInfinite
-        ) && builder.infinite_lights.iter().any(|existing| {
-            matches!(
-                existing.kind,
-                LightKind::UniformInfinite
-                    | LightKind::ImageInfinite
-                    | LightKind::PortalImageInfinite
-            )
-        }) {
-            return Err(PbrtError::error(
-                "The GPU scene supports at most one non-distant infinite light.",
-            ));
-        }
         let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
             PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
         })?;
