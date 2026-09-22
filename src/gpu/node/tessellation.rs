@@ -1,8 +1,9 @@
 use super::component::Component;
 use super::node::Node;
 use super::shape::{
-    BilinearMeshShape, ConeShape, CylinderShape, DiskShape, HeightFieldShape, HyperboloidShape,
-    NurbsShape, ParaboloidShape, Shape, SphereShape, TriangleMeshShape,
+    prepare_triangle_mesh, BilinearMeshShape, ConeShape, CylinderShape, DiskShape,
+    HeightFieldShape, HyperboloidShape, NurbsShape, ParaboloidShape, Shape, SphereShape,
+    TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
 use crate::util::error::PbrtError;
@@ -49,6 +50,35 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         tessellate_shapes(&mut child)?;
+    }
+    Ok(())
+}
+
+/// Establishes the renderable triangle-mesh invariant within GPU Node IR.
+pub fn prepare_triangle_meshes(node: &mut Node) -> Result<(), PbrtError> {
+    let node_name = node.name.clone();
+    for component in &mut node.components {
+        if let Component::Shape(shape_component) = component {
+            if let Shape::TriangleMesh(mesh) = &mut shape_component.shape {
+                **mesh = prepare_triangle_mesh(mesh.as_ref().clone(), &node_name)?;
+            }
+        }
+    }
+    for component in &node.components {
+        if let Component::Instance(instance) = component {
+            let mut target = instance
+                .instance
+                .target
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            prepare_triangle_meshes(&mut target)?;
+        }
+    }
+    for child in &node.children {
+        let mut child = child
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        prepare_triangle_meshes(&mut child)?;
     }
     Ok(())
 }
