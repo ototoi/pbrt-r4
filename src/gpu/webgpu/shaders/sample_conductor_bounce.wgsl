@@ -12,7 +12,9 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let material_node = leaf_evaluated.material_node;
     if (leaf_evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) { return; }
     if (surface.hit == 0u || surface.flags != 0u
-        || load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR) { return; }
+        || (load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR
+            && load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR_ETA_K
+            && load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR_REFLECTANCE)) { return; }
     let lambda = load_sample_lambda(pixel_index);
     let roughness = leaf_evaluated.values[2].x;
     let normal = normalize(surface.normal.xyz);

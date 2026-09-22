@@ -1389,6 +1389,30 @@ fn flatten_node_extracts_conductor_attributes() {
 }
 
 #[test]
+fn flatten_node_keeps_conductor_reflectance_layout_separate() {
+    let shape = triangle_node("triangle", "conductor_reflectance", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let Component::Material(material) = &mut node.components[1] else {
+            panic!("expected material component");
+        };
+        Arc::get_mut(&mut material.material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_rgb("rgb reflectance", &[0.5, 0.5, 0.5]);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.material_nodes[0].kind, "conductor_reflectance");
+    assert_eq!(scene.material_nodes[0].attributes.len(), 2);
+    assert_eq!(scene.material_nodes[0].attributes[0].name, "reflectance");
+    assert_eq!(scene.material_nodes[0].attributes[1].name, "roughness");
+}
+
+#[test]
 fn node_ir_preparation_completes_missing_mesh_attributes_before_flattening() {
     let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
     {
