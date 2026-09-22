@@ -1397,6 +1397,7 @@ fn dielectric_eta_is_constant(material_node: u32) -> bool { return spectrum_is_c
 fn load_conductor_eta(material_node: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_node, 0u, lambda); }
 fn load_conductor_k(material_node: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_node, 1u, lambda); }
 fn load_conductor_roughness(material_node: u32) -> f32 { return load_material_scalar(material_node, 2u); }
+fn load_conductor_reflectance_roughness(material_node: u32) -> f32 { return load_material_scalar(material_node, 1u); }
 fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f32> {
     let c = clamp(abs(cosine_input), 0.0, 1.0);
     let c2 = c * c;

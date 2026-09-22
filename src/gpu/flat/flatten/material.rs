@@ -145,7 +145,8 @@ pub fn register_material_source(
         "diffuse"
             | "dielectric"
             | "thindielectric"
-            | "conductor"
+            | "conductor_eta_k"
+            | "conductor_reflectance"
             | "mix"
             | "coateddiffuse"
             | "coatedconductor"
@@ -260,12 +261,29 @@ pub fn register_material_source(
             }
             let child = Arc::new(NodeMaterial {
                 name: format!("{}:{}", source_material.name, child_kind),
-                kind: (*child_kind).to_string(),
+                kind: if *child_kind == "conductor" {
+                    if source_material
+                        .params
+                        .get_keys()
+                        .iter()
+                        .any(|key| source_material.params.get_key_name(key) == "reflectance")
+                        || source_material
+                            .texture_attributes
+                            .iter()
+                            .any(|(name, _)| name == "reflectance")
+                    {
+                        "conductor_reflectance".to_string()
+                    } else {
+                        "conductor_eta_k".to_string()
+                    }
+                } else {
+                    (*child_kind).to_string()
+                },
                 params: child_params,
                 material_attributes: Vec::new(),
                 texture_attributes: Vec::new(),
             });
-            material_children.push(register_material_source(&child, builder, Some(child_kind))?);
+            material_children.push(register_material_source(&child, builder, None)?);
         }
     } else if kind == "mix" {
         for (_, child) in &source_material.material_attributes {

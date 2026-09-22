@@ -364,7 +364,7 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
 #[test]
 fn conductor_shader_uses_complex_fresnel_attributes() {
     let source = compose_source(SAMPLE_CONDUCTOR_BOUNCE_SHADER);
-    assert!(source.contains("MATERIAL_KIND_CONDUCTOR"));
+    assert!(source.contains("MATERIAL_KIND_CONDUCTOR_ETA_K"));
     assert!(source.contains("evaluated.values[0]"));
     assert!(source.contains("evaluated.values[1]"));
     assert!(source.contains("conductor_fresnel"));

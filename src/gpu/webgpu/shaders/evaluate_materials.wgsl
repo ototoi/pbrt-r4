@@ -64,11 +64,12 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (root_surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
         material_kind = MATERIAL_KIND_DIFFUSE;
     } else if (root_surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
-        material_kind = MATERIAL_KIND_CONDUCTOR;
+        material_kind = MATERIAL_KIND_CONDUCTOR_ETA_K;
     }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
-            && material_kind != MATERIAL_KIND_CONDUCTOR
+            && material_kind != MATERIAL_KIND_CONDUCTOR_ETA_K
+            && material_kind != MATERIAL_KIND_CONDUCTOR_REFLECTANCE
             && material_kind != MATERIAL_KIND_MEASURED)) {
         return;
     }
@@ -194,7 +195,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
-    if (material_kind == MATERIAL_KIND_CONDUCTOR) {
+    if (material_kind == MATERIAL_KIND_CONDUCTOR_ETA_K || material_kind == MATERIAL_KIND_CONDUCTOR_REFLECTANCE) {
         let eta = selected_evaluated.values[0];
         let k = selected_evaluated.values[1];
         let h = scattering_local(normalize(wo + wi), shading_n);
