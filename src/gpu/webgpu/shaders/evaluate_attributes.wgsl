@@ -9,7 +9,7 @@ fn evaluate_material_attributes(material_node: u32, lambda: vec4<f32>) -> Attrib
         e.values[0] = load_diffuse_reflectance(material_node, lambda);
     } else if (e.bxdf_kind == MATERIAL_KIND_MIX) {
         e.values[0].x = load_material_scalar(material_node, 0u);
-    } else if (e.bxdf_kind == MATERIAL_KIND_CONDUCTOR || e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_ETA_K) {
+    } else if (e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_ETA_K) {
         e.values[0] = load_conductor_eta(material_node, lambda); e.values[1] = load_conductor_k(material_node, lambda); e.values[2].x = load_conductor_roughness(material_node);
     } else if (e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_REFLECTANCE) {
         let r = clamp(load_material_spectrum(material_node, 0u, lambda), vec4<f32>(0.0), vec4<f32>(0.9999));
@@ -36,8 +36,7 @@ fn evaluate_coated_child(parent: u32, parent_kind: u32, slot: u32, input: Attrib
     } else if (slot == 1u && parent_kind == MATERIAL_KIND_COATED_DIFFUSE && e.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
         e.values[0] = clamp(load_material_spectrum(parent, 1u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
     } else if (slot == 1u && parent_kind == MATERIAL_KIND_COATED_CONDUCTOR
-        && (e.bxdf_kind == MATERIAL_KIND_CONDUCTOR
-            || e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_ETA_K
+        && (e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_ETA_K
             || e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_REFLECTANCE)) {
         var eta_scalar = load_material_spectrum(parent, 5u, lambda).x; if (eta_scalar == 0.0) { eta_scalar = 1.0; } let eta = vec4<f32>(eta_scalar);
         if (load_material_scalar(parent, 14u) != 0.0) { let r = clamp(load_material_spectrum(parent, 13u, lambda), vec4<f32>(0.0), vec4<f32>(0.9999)); e.values[0] = vec4<f32>(1.0) / eta; e.values[1] = 2.0 * sqrt(r) / sqrt(max(vec4<f32>(1.0) - r, vec4<f32>(1e-7))) / eta; }
