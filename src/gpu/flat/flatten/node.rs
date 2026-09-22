@@ -1,7 +1,6 @@
 use super::{
-    append_area_light, complete_triangle_attributes, flatten_light, geometry_index,
-    multiply_transform, register_material_source, register_root_component,
-    remove_invalid_triangles, screen_window, viewport_resolution, Camera, Component, Film,
+    append_area_light, flatten_light, geometry_index, multiply_transform, register_material_source,
+    register_root_component, screen_window, viewport_resolution, Camera, Component, Film,
     FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
@@ -152,12 +151,9 @@ pub fn flatten_node_ref(
                             ))
                         }
                     };
-                    let shape = remove_invalid_triangles(shape)?;
                     if shape.indices.is_empty() {
                         continue;
                     }
-                    let input_normals = shape.normals.clone();
-                    let shape = complete_triangle_attributes(shape, &node.name)?;
                     let material = material.clone().ok_or_else(|| {
                         PbrtError::error(&format!(
                             "Shape node \"{}\" has no Material component.",
@@ -170,7 +166,6 @@ pub fn flatten_node_ref(
                         material,
                         area_light.clone(),
                         component.reverse_orientation,
-                        input_normals,
                     ));
                 }
                 Component::Instance(component) => {
@@ -283,9 +278,7 @@ pub fn flatten_node_ref(
     if let Some(light) = light {
         flatten_light(light, &world_transform, &name, builder)?;
     }
-    for (component_index, shape, material, area_light, reverse_orientation, _input_normals) in
-        shapes
-    {
+    for (component_index, shape, material, area_light, reverse_orientation) in shapes {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
         let material = register_material_source(&material, builder, material_kind)?;
         let instance_index = u32::try_from(builder.instances.len())

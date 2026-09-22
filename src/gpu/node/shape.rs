@@ -179,13 +179,13 @@ pub fn loop_subdiv_mesh_from_params(
     }))
 }
 
-/// Completes the attributes required by the flattened GPU mesh contract.
+/// Completes the attributes required by the renderable GPU Node IR mesh contract.
 ///
 /// This intentionally runs before Flat IR construction.  In particular, a
 /// mesh without normals is expanded to triangle corners so that a shared
 /// vertex cannot accidentally turn flat shading into smooth shading.
 pub fn complete_triangle_attributes(
-    shape: TriangleMeshShape,
+    mut shape: TriangleMeshShape,
     node_name: &str,
 ) -> Result<TriangleMeshShape, PbrtError> {
     let vertex_count = shape.positions.len();
@@ -222,10 +222,10 @@ pub fn complete_triangle_attributes(
     )?;
     validate_node_attribute_len(node_name, shape.uvs.as_deref(), vertex_count, "UV")?;
 
-    let uvs = shape
+    if !shape
         .uvs
-        .unwrap_or_else(|| generate_planar_uvs(&shape.positions));
-    if !uvs
+        .as_deref()
+        .unwrap_or(&[])
         .iter()
         .all(|uv| uv.0.iter().all(|value| value.is_finite()))
     {
@@ -235,8 +235,7 @@ pub fn complete_triangle_attributes(
         )));
     }
 
-    let source_tangents = shape.tangents;
-    if let Some(tangents) = source_tangents.as_deref() {
+    if let Some(tangents) = shape.tangents.as_deref() {
         if !tangents
             .iter()
             .all(|tangent| tangent.0.iter().all(|value| value.is_finite()))
@@ -248,16 +247,19 @@ pub fn complete_triangle_attributes(
         }
     }
     if shape.normals.is_none() {
+        let uvs = shape
+            .uvs
+            .unwrap_or_else(|| generate_planar_uvs(&shape.positions));
         return expand_flat_mesh(
             shape.positions,
             shape.indices,
             uvs,
-            source_tangents,
+            shape.tangents,
             node_name,
         );
     }
 
-    let mut normals = shape.normals.unwrap();
+    let mut normals = shape.normals.take().unwrap();
     if !normals
         .iter()
         .all(|normal| normal.0.iter().all(|value| value.is_finite()))
@@ -269,11 +271,29 @@ pub fn complete_triangle_attributes(
     }
     repair_zero_normals(&shape.positions, &shape.indices, &mut normals);
     if normals.iter().any(|normal| length_squared(normal.0) == 0.0) {
-        return Err(PbrtError::error(&format!(
-            "Shape node \"{}\" contains an irreparable zero normal.",
-            node_name
-        )));
+        shape.indices = shape
+            .indices
+            .chunks_exact(3)
+            .filter(|triangle| {
+                triangle
+                    .iter()
+                    .all(|&index| length_squared(normals[index as usize].0) > 0.0)
+            })
+            .flatten()
+            .copied()
+            .collect();
+        shape.normals = Some(normals);
+        remove_unreferenced_vertices(&mut shape);
+        if shape.indices.is_empty() {
+            return Ok(shape);
+        }
+        normals = shape.normals.take().unwrap();
     }
+    let uvs = shape
+        .uvs
+        .take()
+        .unwrap_or_else(|| generate_planar_uvs(&shape.positions));
+    let source_tangents = shape.tangents.take();
     align_normals_to_winding(&shape.positions, &shape.indices, &mut normals);
     let generated_tangents = generate_tangents(&shape.positions, &shape.indices, &normals, &uvs);
     let tangents = if let Some(mut tangents) = source_tangents {
@@ -301,6 +321,18 @@ pub fn complete_triangle_attributes(
         tangents: Some(tangents),
         uvs: Some(uvs),
     })
+}
+
+/// Produces the renderable triangle-mesh invariant stored in GPU Node IR.
+pub fn prepare_triangle_mesh(
+    shape: TriangleMeshShape,
+    node_name: &str,
+) -> Result<TriangleMeshShape, PbrtError> {
+    let shape = remove_invalid_triangles(shape)?;
+    if shape.indices.is_empty() {
+        return Ok(shape);
+    }
+    complete_triangle_attributes(shape, node_name)
 }
 
 /// Reconstructs zero shading normals from the unit normals of adjacent faces.

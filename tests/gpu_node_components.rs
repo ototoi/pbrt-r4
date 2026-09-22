@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use pbrt_r4::gpu::flat::flatten_node;
 use pbrt_r4::gpu::node::{
-    complete_triangle_attributes, node_ref_to_json, remove_invalid_triangles, tessellate_shapes,
-    triangle_mesh_from_params, Camera, CameraComponent, Component, DiskShape, Material,
-    MaterialComponent, Node, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
-    TextureKind, TextureMapping, TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
+    complete_triangle_attributes, node_ref_to_json, prepare_triangle_meshes,
+    remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params, Camera,
+    CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
+    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
+    TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
 };
 use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
@@ -797,8 +797,8 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
 }
 
 #[test]
-fn invalid_triangles_are_removed_before_attribute_completion() {
-    let shape = TriangleMeshShape {
+fn node_ir_preparation_removes_invalid_triangles_before_attribute_completion() {
+    let mesh = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -809,9 +809,21 @@ fn invalid_triangles_are_removed_before_attribute_completion() {
         tangents: None,
         uvs: None,
     };
+    let mut node = Node::new("mixed-triangles");
+    node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(mesh)),
+        reverse_orientation: false,
+    }));
 
-    let filtered = remove_invalid_triangles(shape).unwrap();
-    assert_eq!(filtered.indices, vec![0, 1, 2]);
+    prepare_triangle_meshes(&mut node).unwrap();
+
+    let Component::Shape(shape) = &node.components[0] else {
+        panic!("expected shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &shape.shape else {
+        panic!("expected triangle mesh");
+    };
+    assert_eq!(mesh.indices, vec![0, 1, 2]);
 }
 
 #[test]
@@ -919,28 +931,40 @@ fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
 }
 
 #[test]
-fn isolated_zero_normal_remains_an_error() {
-    let shape = TriangleMeshShape {
+fn triangles_with_irreparable_zero_normals_are_removed() {
+    let mesh = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([1.0, 1.0, 0.0]),
             Vec3f([0.0, 1.0, 0.0]),
-            Vec3f([2.0, 2.0, 2.0]),
         ],
-        indices: vec![0, 1, 2],
+        indices: vec![0, 1, 2, 0, 3, 2],
         normals: Some(vec![
-            Vec3f([0.0, 0.0, 1.0]),
-            Vec3f([0.0, 0.0, 1.0]),
+            Vec3f([0.0, 0.0, 0.0]),
             Vec3f([0.0, 0.0, 1.0]),
             Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([0.0, 0.0, -1.0]),
         ]),
         tangents: None,
         uvs: None,
     };
+    let mut node = Node::new("opposite-winding");
+    node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(mesh)),
+        reverse_orientation: false,
+    }));
 
-    let error = complete_triangle_attributes(shape, "irreparable").unwrap_err();
+    prepare_triangle_meshes(&mut node).unwrap();
 
-    assert!(error.to_string().contains("irreparable zero normal"));
+    let Component::Shape(shape) = &node.components[0] else {
+        panic!("expected shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &shape.shape else {
+        panic!("expected triangle mesh");
+    };
+    assert!(mesh.positions.is_empty());
+    assert!(mesh.indices.is_empty());
 }
 
 #[test]

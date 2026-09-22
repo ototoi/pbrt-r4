@@ -2,15 +2,15 @@ use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
 use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
-    loop_subdiv_mesh_from_params, tessellate_shapes, triangle_mesh_from_params, Accelerator,
-    AcceleratorComponent, AreaLight as NodeAreaLight, AreaLightComponent, BilinearMeshShape,
-    Camera, CameraComponent, Component, ConeShape, CylinderShape, DiskShape, Film, FilmComponent,
-    Filter, FilterComponent, HeightFieldShape, HyperboloidShape, Instance, InstanceComponent,
-    Integrator, IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
-    MediumComponent, Node, NodeRef, NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler,
-    SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture,
-    TextureComponent, TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform,
-    UvMapping,
+    loop_subdiv_mesh_from_params, prepare_triangle_meshes, tessellate_shapes,
+    triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
+    AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
+    CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
+    HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef,
+    NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene,
+    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
 };
 // Uncomment together with the diagnostic blocks below when Node IR JSON output is needed.
 // use crate::gpu::node::node_ref_to_json_string;
@@ -58,6 +58,8 @@ impl SceneBuilder {
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             tessellate_shapes(&mut ir_node)?;
+            log::info!("GPU build: preparing triangle meshes in Node IR");
+            prepare_triangle_meshes(&mut ir_node)?;
         }
         // Keep this diagnostic available when inspecting the post-tessellation Node IR.
         // log::info!("GPU build: tessellation complete; serializing after tessellation");

@@ -9,11 +9,12 @@ use pbrt_r4::gpu::flat::{
     SamplerRandomization, Scene as FlatScene,
 };
 use pbrt_r4::gpu::node::{
-    complete_triangle_attributes, AreaLight as NodeAreaLight, AreaLightComponent, Camera,
-    CameraComponent, Component, Film, FilmComponent, Instance as NodeInstance, InstanceComponent,
-    Integrator as NodeIntegrator, IntegratorComponent, Light as NodeLight, LightComponent,
-    Material, MaterialComponent, Node, Output, OutputComponent, Sampler as NodeSampler,
-    SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
+    complete_triangle_attributes, prepare_triangle_meshes, tessellate_shapes,
+    AreaLight as NodeAreaLight, AreaLightComponent, Camera, CameraComponent, Component, Film,
+    FilmComponent, Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator,
+    IntegratorComponent, Light as NodeLight, LightComponent, Material, MaterialComponent, Node,
+    Output, OutputComponent, Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent,
+    Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::paramdict::ParameterDictionary;
@@ -1335,7 +1336,7 @@ fn flatten_node_extracts_conductor_attributes() {
 }
 
 #[test]
-fn flatten_node_completes_missing_mesh_attributes() {
+fn node_ir_preparation_completes_missing_mesh_attributes_before_flattening() {
     let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
     {
         let mut node = shape.write().unwrap();
@@ -1352,6 +1353,8 @@ fn flatten_node_completes_missing_mesh_attributes() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     root.add_child(shape);
+    tessellate_shapes(&mut root).unwrap();
+    prepare_triangle_meshes(&mut root).unwrap();
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.vertices.len(), 3);
