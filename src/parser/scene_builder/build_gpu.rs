@@ -249,8 +249,11 @@ impl SceneBuilder {
             .map(|material| {
                 let texture_attributes = texture_attributes_for_material(material, texture_lookup)?;
                 let params = make_absolute_path(&material.base.params, &self.seen_work_dirs);
-                let kind =
-                    specialize_gpu_material_kind(&material.base.name, &params, &texture_attributes);
+                let kind = specialize_gpu_material_kind(
+                    &material.base.name,
+                    &params,
+                    &texture_attributes,
+                )?;
                 Ok(Arc::new(Material {
                     name: material.base.name.clone(),
                     kind,
@@ -491,9 +494,9 @@ fn specialize_gpu_material_kind(
     source_kind: &str,
     params: &ParameterDictionary,
     texture_attributes: &[(String, Arc<TextureNode>)],
-) -> String {
+) -> Result<String, PbrtError> {
     if source_kind != "conductor" {
-        return source_kind.to_string();
+        return Ok(source_kind.to_string());
     }
     let has_reflectance = params
         .get_keys()
@@ -502,10 +505,23 @@ fn specialize_gpu_material_kind(
         || texture_attributes
             .iter()
             .any(|(name, _)| name == "reflectance");
+    let has_eta = params
+        .get_keys()
+        .iter()
+        .any(|key| params.get_key_name(key) == "eta");
+    let has_k = params
+        .get_keys()
+        .iter()
+        .any(|key| params.get_key_name(key) == "k");
+    if has_reflectance && (has_eta || has_k) {
+        return Err(PbrtError::error(
+            "For the conductor material, both \"reflectance\" and \"eta\" and \"k\" can't be provided.",
+        ));
+    }
     if has_reflectance {
-        "conductor_reflectance".to_string()
+        Ok("conductor_reflectance".to_string())
     } else {
-        "conductor_eta_k".to_string()
+        Ok("conductor_eta_k".to_string())
     }
 }
 
