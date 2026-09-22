@@ -362,7 +362,7 @@ pub fn build_material_attributes(
                 push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
             ])
         }
-        "conductor" => {
+        "conductor" | "conductor_eta_k" => {
             reject_scalar_textures(source_material, &["uroughness", "vroughness"])?;
             let eta_attribute = if let Some(attribute) =
                 texture_attribute_ref_unbounded(source_material, "eta", builder)?
@@ -414,6 +414,37 @@ pub fn build_material_attributes(
                 push_scalar_attribute(builder, "roughness", roughness)?
             };
             Ok(vec![eta_attribute, k_attribute, roughness_attribute])
+        }
+        "conductor_reflectance" => {
+            reject_scalar_textures(source_material, &["uroughness", "vroughness"])?;
+            let reflectance = if let Some(attribute) =
+                texture_attribute_ref(source_material, "reflectance", builder)?
+            {
+                attribute
+            } else {
+                let value = spectrum_attribute(
+                    source_material,
+                    "reflectance",
+                    &Spectrum::from(0.5),
+                    SpectrumType::Albedo,
+                )?;
+                push_spectrum_attribute(builder, "reflectance", &value)?
+            };
+            let roughness = if let Some(attribute) =
+                texture_attribute_ref(source_material, "roughness", builder)?
+            {
+                attribute
+            } else {
+                let value = source_material.params.get_one_float("roughness", 0.0) as f32;
+                if !value.is_finite() || value < 0.0 {
+                    return Err(PbrtError::error(&format!(
+                        "Material \"{}\" has invalid conductor roughness.",
+                        source_material.name
+                    )));
+                }
+                push_scalar_attribute(builder, "roughness", value)?
+            };
+            Ok(vec![reflectance, roughness])
         }
         _ => Err(PbrtError::error(&format!(
             "unsupported GPU material kind: {kind}"

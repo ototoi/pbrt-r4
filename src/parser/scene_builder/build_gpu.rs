@@ -249,9 +249,11 @@ impl SceneBuilder {
             .map(|material| {
                 let texture_attributes = texture_attributes_for_material(material, texture_lookup)?;
                 let params = make_absolute_path(&material.base.params, &self.seen_work_dirs);
+                let kind =
+                    specialize_gpu_material_kind(&material.base.name, &params, &texture_attributes);
                 Ok(Arc::new(Material {
                     name: material.base.name.clone(),
-                    kind: material.base.name.clone(),
+                    kind,
                     params,
                     material_attributes: Vec::new(),
                     texture_attributes,
@@ -482,6 +484,28 @@ impl SceneBuilder {
             },
         }));
         Ok(Arc::new(RwLock::new(node)))
+    }
+}
+
+fn specialize_gpu_material_kind(
+    source_kind: &str,
+    params: &ParameterDictionary,
+    texture_attributes: &[(String, Arc<TextureNode>)],
+) -> String {
+    if source_kind != "conductor" {
+        return source_kind.to_string();
+    }
+    let has_reflectance = params
+        .get_keys()
+        .iter()
+        .any(|key| params.get_key_name(key) == "reflectance")
+        || texture_attributes
+            .iter()
+            .any(|(name, _)| name == "reflectance");
+    if has_reflectance {
+        "conductor_reflectance".to_string()
+    } else {
+        "conductor_eta_k".to_string()
     }
 }
 
