@@ -151,9 +151,8 @@ pub enum MaterialKind {
     Lambert,
     Dielectric,
     ThinDielectric,
-    // Legacy ABI tag retained for diagnostics and compatibility documentation.
-    // Flat IR must use `ConductorEtaK` or `ConductorReflectance` instead.
-    Conductor,
+    // Reserved ABI tag retained for numeric stability; never emitted by Flat IR.
+    UnusedConductor,
     ConductorEtaK,
     ConductorReflectance,
     Mix,
@@ -170,7 +169,7 @@ impl MaterialKind {
             Self::Diffuse | Self::Lambert => 2,
             Self::Dielectric => 3,
             Self::ThinDielectric => 5,
-            Self::Conductor => 6,
+            Self::UnusedConductor => 6,
             Self::ConductorEtaK => 11,
             Self::ConductorReflectance => 12,
             Self::Mix => 7,
