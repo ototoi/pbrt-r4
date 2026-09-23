@@ -450,8 +450,55 @@ pub fn build_material_attributes(
             };
             Ok(vec![reflectance, roughness])
         }
+        "diffusetransmission" => {
+            let reflectance = spectrum_or_texture_alias(
+                source_material,
+                &["reflectance", "Kd"],
+                "reflectance",
+                &Spectrum::from(0.25),
+                builder,
+            )?;
+            let transmittance = spectrum_or_texture_alias(
+                source_material,
+                &["transmittance", "Kt"],
+                "transmittance",
+                &Spectrum::from(0.25),
+                builder,
+            )?;
+            let scale = source_material.params.get_one_float("scale", 1.0) as f32;
+            Ok(vec![
+                reflectance,
+                transmittance,
+                push_scalar_attribute(builder, "scale", scale)?,
+            ])
+        }
         _ => Err(PbrtError::error(&format!(
             "unsupported GPU material kind: {kind}"
         ))),
     }
+}
+
+fn spectrum_or_texture_alias(
+    source_material: &NodeMaterial,
+    keys: &[&str],
+    canonical_name: &str,
+    default: &Spectrum,
+    builder: &mut FlatBuilder,
+) -> Result<AttributeRef, PbrtError> {
+    for key in keys {
+        if let Some(mut attribute) = texture_attribute_ref(source_material, key, builder)? {
+            attribute.name = canonical_name.to_string();
+            return Ok(attribute);
+        }
+        if source_material
+            .params
+            .get_keys()
+            .iter()
+            .any(|stored_key| source_material.params.get_key_name(stored_key) == *key)
+        {
+            let value = spectrum_attribute(source_material, key, default, SpectrumType::Albedo)?;
+            return push_spectrum_attribute(builder, canonical_name, &value);
+        }
+    }
+    push_spectrum_attribute(builder, canonical_name, default)
 }

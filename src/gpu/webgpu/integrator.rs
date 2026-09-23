@@ -40,6 +40,7 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/evaluate_materials.wgsl"),
     include_str!("shaders/intersect_shadow.wgsl"),
     include_str!("shaders/sample_diffuse_bounce.wgsl"),
+    include_str!("shaders/sample_diffuse_transmission_bounce.wgsl"),
     include_str!("shaders/sample_dielectric_bounce.wgsl"),
     include_str!("shaders/sample_conductor_bounce.wgsl"),
     include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
@@ -366,6 +367,11 @@ impl WavefrontPathIntegrator {
                 include_str!("shaders/sample_diffuse_bounce.wgsl"),
             ),
             (
+                "sample_diffuse_transmission_bounce",
+                &pipeline.sample_diffuse_transmission_bounce,
+                include_str!("shaders/sample_diffuse_transmission_bounce.wgsl"),
+            ),
+            (
                 "sample_dielectric_bounce",
                 &pipeline.sample_dielectric_bounce,
                 include_str!("shaders/sample_dielectric_bounce.wgsl"),
@@ -579,6 +585,13 @@ impl WavefrontPathIntegrator {
                         &mut encoder,
                         &self.pipeline.sample_diffuse_bounce.pipeline,
                         self.bind_groups("sample_diffuse_bounce"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_diffuse_transmission_bounce.pipeline,
+                        self.bind_groups("sample_diffuse_transmission_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );

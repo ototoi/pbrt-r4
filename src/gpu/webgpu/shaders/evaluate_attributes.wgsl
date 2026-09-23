@@ -7,6 +7,11 @@ fn evaluate_material_attributes(material_node: u32, lambda: vec4<f32>) -> Attrib
     for (var i = 0u; i < 10u; i++) { e.values[i] = vec4<f32>(0.0); }
     if (e.bxdf_kind == MATERIAL_KIND_DIFFUSE) {
         e.values[0] = load_diffuse_reflectance(material_node, lambda);
+    } else if (e.bxdf_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION) {
+        let scale = load_diffuse_transmission_scale(material_node);
+        e.values[0] = clamp(load_diffuse_transmission_reflectance(material_node, lambda) * scale, vec4<f32>(0.0), vec4<f32>(1.0));
+        e.values[1] = clamp(load_diffuse_transmission_transmittance(material_node, lambda) * scale, vec4<f32>(0.0), vec4<f32>(1.0));
+        e.values[2].x = scale;
     } else if (e.bxdf_kind == MATERIAL_KIND_MIX) {
         e.values[0].x = load_material_scalar(material_node, 0u);
     } else if (e.bxdf_kind == MATERIAL_KIND_CONDUCTOR_ETA_K) {
