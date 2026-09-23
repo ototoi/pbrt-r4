@@ -859,6 +859,15 @@ fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> 
     if (material_table.debug_material_kind == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
     return load_material_spectrum(material_node, 0u, lambda);
 }
+fn load_diffuse_transmission_reflectance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> {
+    return load_material_spectrum(material_node, 0u, lambda);
+}
+fn load_diffuse_transmission_transmittance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> {
+    return load_material_spectrum(material_node, 1u, lambda);
+}
+fn load_diffuse_transmission_scale(material_node: u32) -> f32 {
+    return load_material_scalar(material_node, 2u);
+}
 fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     if (root >= arrayLength(&attributes_eval_work_items)) {
         set_render_error();

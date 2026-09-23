@@ -23,6 +23,8 @@ const ESCAPED_TEST_SHADER: &str =
 const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
 const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
+const SAMPLE_DIFFUSE_TRANSMISSION_BOUNCE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_diffuse_transmission_bounce.wgsl");
 const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
 const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
@@ -349,6 +351,17 @@ fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = selected_evaluated.values[0]"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
     assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * reflectance"));
+}
+
+#[test]
+fn diffuse_transmission_shader_uses_reflection_and_transmission_paths() {
+    let source = compose_source(SAMPLE_DIFFUSE_TRANSMISSION_BOUNCE_SHADER);
+    assert!(source.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
+    assert!(source.contains("pr / total"));
+    assert!(source.contains("pt / total"));
+    assert!(source.contains("next_throughput = ray.throughput * f * cosine / pdf"));
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
+    assert!(EVALUATE_MATERIALS_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
 }
 
 #[test]

@@ -68,14 +68,19 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     if (surface.hit == 0u
         || (material_kind != MATERIAL_KIND_DIFFUSE
+            && material_kind != MATERIAL_KIND_DIFFUSE_TRANSMISSION
             && material_kind != MATERIAL_KIND_CONDUCTOR_ETA_K
             && material_kind != MATERIAL_KIND_CONDUCTOR_REFLECTANCE
             && material_kind != MATERIAL_KIND_MEASURED)) {
         return;
     }
     var reflectance = vec4<f32>(0.0);
+    var transmittance = vec4<f32>(0.0);
     if (material_kind == MATERIAL_KIND_DIFFUSE) {
         reflectance = selected_evaluated.values[0];
+    } else if (material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION) {
+        reflectance = selected_evaluated.values[0];
+        transmittance = selected_evaluated.values[1];
     }
     if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
         return;
@@ -183,7 +188,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let shading_n = surface.normal.xyz;
     let cos_wo = dot(shading_n, wo);
     let cos_wi = dot(shading_n, wi);
-    if (cos_wo * cos_wi <= 0.0) {
+    if (material_kind != MATERIAL_KIND_DIFFUSE_TRANSMISSION && cos_wo * cos_wi <= 0.0) {
         return;
     }
     let cosine = abs(cos_wi);
@@ -195,7 +200,16 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var bsdf_pdf = cosine / PI;
     var f = reflectance / PI;
-    if (material_kind == MATERIAL_KIND_CONDUCTOR_ETA_K || material_kind == MATERIAL_KIND_CONDUCTOR_REFLECTANCE) {
+    if (material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION) {
+        let pr = max_spectrum(reflectance);
+        let pt = max_spectrum(transmittance);
+        let total = pr + pt;
+        if (total <= 0.0) { return; }
+        let same_side = cos_wo * cos_wi > 0.0;
+        let branch_probability = select(pt / total, pr / total, same_side);
+        f = select(transmittance, reflectance, same_side) / PI;
+        bsdf_pdf = cosine / PI * branch_probability;
+    } else if (material_kind == MATERIAL_KIND_CONDUCTOR_ETA_K || material_kind == MATERIAL_KIND_CONDUCTOR_REFLECTANCE) {
         let eta = selected_evaluated.values[0];
         let k = selected_evaluated.values[1];
         let h = scattering_local(normalize(wo + wi), shading_n);
