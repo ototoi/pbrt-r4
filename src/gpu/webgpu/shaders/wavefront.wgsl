@@ -859,6 +859,15 @@ fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> 
     if (material_table.debug_material_kind == MATERIAL_KIND_LAMBERT) { return vec4<f32>(0.5); }
     return load_material_spectrum(material_node, 0u, lambda);
 }
+fn load_diffuse_transmission_reflectance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> {
+    return load_material_spectrum(material_node, 0u, lambda);
+}
+fn load_diffuse_transmission_transmittance(material_node: u32, lambda: vec4<f32>) -> vec4<f32> {
+    return load_material_spectrum(material_node, 1u, lambda);
+}
+fn load_diffuse_transmission_scale(material_node: u32) -> f32 {
+    return load_material_scalar(material_node, 2u);
+}
 fn load_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     if (root >= arrayLength(&attributes_eval_work_items)) {
         set_render_error();
@@ -1582,17 +1591,17 @@ fn sample_layered_exponential(u: f32, rate: f32) -> f32 {
 }
 
 fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
-    let first_dimension = 6u + 7u * depth;
+    let first_dimension = 6u + 8u * depth;
     return RaySamples(
         vec4<f32>(
             sampler_get_1d(pixel_index, first_dimension),
             sampler_get_2d(pixel_index, first_dimension + 1u),
-            0.0,
+            sampler_get_1d(pixel_index, first_dimension + 3u),
         ),
         vec4<f32>(
-            sampler_get_1d(pixel_index, first_dimension + 3u),
-            sampler_get_2d(pixel_index, first_dimension + 4u),
-            sampler_get_1d(pixel_index, first_dimension + 6u),
+            sampler_get_1d(pixel_index, first_dimension + 4u),
+            sampler_get_2d(pixel_index, first_dimension + 5u),
+            sampler_get_1d(pixel_index, first_dimension + 7u),
         ),
     );
 }

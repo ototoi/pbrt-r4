@@ -1166,6 +1166,26 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
 }
 
 #[test]
+fn flatten_node_extracts_diffuse_transmission_attributes() {
+    let shape = triangle_node("triangle", "diffusetransmission", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let material = &scene.material_nodes[0];
+    assert_eq!(material.kind, "diffusetransmission");
+    assert_eq!(material.attributes.len(), 3);
+    assert_eq!(material.attributes[0].name, "reflectance");
+    assert_eq!(material.attributes[1].name, "transmittance");
+    assert_eq!(material.attributes[2].name, "scale");
+    assert_eq!(
+        scene.scalar_attributes[material.attributes[2].index as usize],
+        1.0
+    );
+}
+
+#[test]
 fn flatten_node_extracts_dielectric_eta() {
     let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
     {
