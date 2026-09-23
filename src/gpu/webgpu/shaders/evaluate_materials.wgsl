@@ -86,11 +86,18 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let wo = -ray.direction.xyz;
+    // Flat IR represents the currently supported non-specular
+    // `is_diffuse && is_transmission` combination as DiffuseTransmission.
+    let light_sample_offset_direction = select(
+        wo,
+        -wo,
+        material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION,
+    );
     let light_sample_origin = offset_ray_origin(
         surface.position.xyz,
         surface.position_error.xyz,
         surface.geometric_normal.xyz,
-        wo,
+        light_sample_offset_direction,
     );
     let light_selection = sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz);
     if (light_selection.pmf <= 0.0 || light_selection.index == 0xffffffffu) {
@@ -263,17 +270,13 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let direct = light_radiance * f * cosine
         / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
         * mis_weight;
-    var shadow_origin = light_sample_origin;
-    // For diffuse transmission the light may be on the opposite side of the
-    // surface from wo, so offset the shadow ray toward the sampled light.
-    if (material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION) {
-        shadow_origin = offset_ray_origin(
-            surface.position.xyz,
-            surface.position_error.xyz,
-            surface.geometric_normal.xyz,
-            wi,
-        );
-    }
+    // Spawn the shadow ray from the side containing the sampled light.
+    let shadow_origin = offset_ray_origin(
+        surface.position.xyz,
+        surface.position_error.xyz,
+        surface.geometric_normal.xyz,
+        wi,
+    );
     var shadow_direction = wi;
     var shadow_distance = RAY_T_MAX;
     if (light_kind == LIGHT_KIND_AREA) {
