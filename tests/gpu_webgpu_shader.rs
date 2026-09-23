@@ -152,7 +152,7 @@ fn primary_and_path_samples_use_the_sampler_module() {
     assert!(primary.contains("var sampler_table: texture_2d<u32>;"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
-    assert!(COMMON_SHADER.contains("let first_dimension = 6u + 7u * depth;"));
+    assert!(COMMON_SHADER.contains("let first_dimension = 6u + 8u * depth;"));
     assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
 }
 
