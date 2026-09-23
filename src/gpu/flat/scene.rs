@@ -39,6 +39,52 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Validate lengths of tables whose indices are represented by `u32` in
+    /// Flat IR.
+    pub fn validate_u32_layout(&self) -> Result<(), PbrtError> {
+        let tables = [
+            ("vertices", self.vertices.len()),
+            ("indices", self.indices.len()),
+            ("geometries", self.geometries.len()),
+            ("instances", self.instances.len()),
+            ("material roots", self.material_roots.len()),
+            ("material nodes", self.material_nodes.len()),
+            ("scalar attributes", self.scalar_attributes.len()),
+            ("spectrum attributes", self.spectrum_attributes.len()),
+            ("measured BSDFs", self.measured_bsdfs.bsdfs.len()),
+            ("measured tables", self.measured_bsdfs.tables.len()),
+            ("lights", self.lights.len()),
+            ("infinite lights", self.infinite_lights.len()),
+            ("light sampling models", self.light_sampling_models.len()),
+            ("light positions", self.light_positions.len()),
+            ("triangle distributions", self.triangle_distributions.len()),
+            ("texture programs", self.texture_library.programs.len()),
+            ("texture roots", self.texture_library.roots.len()),
+            ("texture mipmaps", self.texture_library.mipmaps.len()),
+            (
+                "texture image views",
+                self.texture_library.image_views.len(),
+            ),
+            ("portal lights", self.portal_infinite_lights.len()),
+            ("portal distribution", self.portal_distribution.len()),
+            (
+                "primitive distribution offsets",
+                self.primitive_distribution_map.offsets.len(),
+            ),
+            (
+                "primitive distribution entries",
+                self.primitive_distribution_map.entries.len(),
+            ),
+            ("light BVH nodes", self.light_bvh.nodes.len()),
+            ("light BVH leaves", self.light_bvh.handle_to_leaf.len()),
+            (
+                "light BVH bounded handles",
+                self.light_bvh.bounded_handles.len(),
+            ),
+        ];
+        validate_u32_table_lengths(&tables)
+    }
+
     pub fn validate_static_views(&self) -> Result<(), PbrtError> {
         let area_count = self
             .lights
@@ -202,4 +248,15 @@ impl Scene {
         }
         Ok(())
     }
+}
+
+pub fn validate_u32_table_lengths(tables: &[(&str, usize)]) -> Result<(), PbrtError> {
+    for (label, length) in tables {
+        if *length > u32::MAX as usize {
+            return Err(PbrtError::error(&format!(
+                "Flat {label} table has {length} entries; its u32 index representation is exhausted."
+            )));
+        }
+    }
+    Ok(())
 }

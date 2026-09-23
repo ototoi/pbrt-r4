@@ -5,8 +5,8 @@ use image::{ImageBuffer, Rgb};
 use pbrt_r4::gpu::flat::portal::prepare_portal_image;
 use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
 use pbrt_r4::gpu::flat::{
-    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, SamplerKind,
-    SamplerRandomization, Scene as FlatScene,
+    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, validate_u32_table_lengths,
+    AttributeKind, SamplerKind, SamplerRandomization, Scene as FlatScene,
 };
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, prepare_triangle_meshes, tessellate_shapes,
@@ -1496,4 +1496,12 @@ fn missing_normals_expand_shared_vertices_per_triangle() {
         completed.normals.as_ref().unwrap()[0],
         completed.normals.as_ref().unwrap()[3]
     );
+}
+
+#[test]
+fn flat_u32_table_length_validation_rejects_exhausted_index_space() {
+    let error = validate_u32_table_lengths(&[("vertices", u32::MAX as usize + 1)])
+        .expect_err("u32-exhausted table should be rejected");
+    assert!(error.to_string().contains("vertices"));
+    assert!(error.to_string().contains("u32"));
 }

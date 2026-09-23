@@ -3,6 +3,7 @@ use std::mem::{offset_of, size_of};
 use pbrt_r4::gpu::webgpu::abi::{
     PortalDistributionTexel, PortalImageInfiniteRecord, PortalLightCandidate,
 };
+use pbrt_r4::gpu::webgpu::scene::validate_storage_buffer_byte_size;
 use pbrt_r4::gpu::webgpu::shader::{
     compose_source, compose_source_with_noise, required_limits_for_sources,
 };
@@ -154,6 +155,16 @@ fn primary_and_path_samples_use_the_sampler_module() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
     assert!(COMMON_SHADER.contains("let first_dimension = 6u + 8u * depth;"));
     assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
+}
+
+#[test]
+fn webgpu_storage_buffer_limit_validation_reports_overflow() {
+    let error = validate_storage_buffer_byte_size("vertex", 129, 128)
+        .expect_err("buffer larger than the device limit should be rejected");
+    assert!(error.to_string().contains("vertex"));
+    assert!(error
+        .to_string()
+        .contains("max_storage_buffer_binding_size"));
 }
 
 #[test]

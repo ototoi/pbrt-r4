@@ -1,5 +1,6 @@
 use bytemuck::cast_slice;
 use std::collections::HashMap;
+use std::mem::size_of;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -29,7 +30,7 @@ use super::abi::{
 };
 use super::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
 use super::acceleration::{self, Acceleration};
-use super::light_bvh::pack_light_bvh;
+use super::light_bvh::{pack_light_bvh, LIGHT_BVH_HEADER_WORDS, LIGHT_BVH_NODE_WORDS};
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
 use super::material::MaterialTable;
@@ -701,6 +702,7 @@ impl Scene {
                 "WebGPU output filename must not be empty.",
             ));
         }
+        validate_storage_buffer_limits(device, &flat)?;
         let (vertices, geometries, indices) = convert_geometry(&flat)?;
         let instances = flat
             .instances
@@ -1286,6 +1288,209 @@ impl Scene {
             bytemuck::cast_slice(&self.material_nodes),
         );
     }
+}
+
+pub fn validate_storage_buffer_limits(
+    device: &wgpu::Device,
+    flat: &flat::Scene,
+) -> Result<(), PbrtError> {
+    validate_storage_buffer_size(device, "vertex", flat.vertices.len(), size_of::<Vertex>())?;
+    validate_storage_buffer_size(device, "index", flat.indices.len(), size_of::<u32>())?;
+    validate_storage_buffer_size(
+        device,
+        "geometry",
+        flat.geometries.len(),
+        size_of::<Geometry>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "instance",
+        flat.instances.len(),
+        size_of::<Instance>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "material root",
+        flat.material_roots.len(),
+        size_of::<MaterialRoot>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "material node",
+        flat.material_nodes.len(),
+        size_of::<MaterialNode>(),
+    )?;
+    let material_table = MaterialTable::from_flat(flat)?;
+    let light_attribute_count = flat
+        .lights
+        .iter()
+        .chain(flat.infinite_lights.iter())
+        .try_fold(0usize, |count, light| {
+            count.checked_add(light.attributes.len())
+        })
+        .ok_or_else(|| PbrtError::error("GPU attribute reference count overflowed."))?;
+    let attribute_ref_count = material_table
+        .attributes
+        .len()
+        .checked_add(light_attribute_count)
+        .ok_or_else(|| PbrtError::error("GPU attribute reference count overflowed."))?;
+    validate_storage_buffer_size(
+        device,
+        "attribute ref",
+        attribute_ref_count,
+        size_of::<AttributeRef>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "scalar attribute",
+        flat.scalar_attributes.len(),
+        size_of::<f32>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "spectrum attribute",
+        flat.spectrum_attributes.len(),
+        size_of::<DenseSpectrum>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "measured BSDF",
+        flat.measured_bsdfs.bsdfs.len(),
+        size_of::<MeasuredBsdfRecord>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "measured table",
+        flat.measured_bsdfs.tables.len(),
+        size_of::<MeasuredTableRecord>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "light sampling model",
+        flat.light_sampling_models.len(),
+        size_of::<LightSamplingModel>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "light position",
+        flat.light_positions.len(),
+        size_of::<[f32; 4]>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "triangle distribution",
+        flat.triangle_distributions.len(),
+        size_of::<TriangleDistributionEntry>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "portal image record",
+        flat.portal_infinite_lights.len(),
+        size_of::<PortalImageInfiniteRecord>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "portal distribution",
+        flat.portal_distribution.len(),
+        size_of::<PortalDistributionTexel>(),
+    )?;
+    let rgb_spectrum_table_byte_count = [
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_srgb.bin")),
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_aces.bin")),
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_dci_p3.bin")),
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_rec2020.bin")),
+    ]
+    .iter()
+    .map(|table| table.len())
+    .sum();
+    validate_storage_buffer_size(
+        device,
+        "RGB spectrum table",
+        rgb_spectrum_table_byte_count,
+        1,
+    )?;
+    let (texture_nodes, texture_children, texture_roots) =
+        lower_texture_library_records(&flat.texture_library)?;
+    validate_storage_buffer_size(
+        device,
+        "texture node",
+        texture_nodes.len(),
+        size_of::<TextureNodeRecord>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "texture root",
+        texture_roots.len(),
+        size_of::<TextureRootRecord>(),
+    )?;
+    validate_storage_buffer_size(
+        device,
+        "texture child",
+        texture_children.len(),
+        size_of::<u32>(),
+    )?;
+    let light_record_count = flat
+        .lights
+        .len()
+        .checked_add(flat.infinite_lights.len())
+        .ok_or_else(|| PbrtError::error("GPU light record count overflowed."))?;
+    validate_storage_buffer_size(
+        device,
+        "light record",
+        light_record_count,
+        size_of::<LightRecord>(),
+    )?;
+    if let Some(packed) = pack_light_bvh(&flat.light_bvh)? {
+        validate_storage_buffer_size(
+            device,
+            "light BVH header",
+            LIGHT_BVH_HEADER_WORDS,
+            size_of::<u32>(),
+        )?;
+        let node_word_count = packed
+            .node_words
+            .len()
+            .checked_mul(LIGHT_BVH_NODE_WORDS)
+            .ok_or_else(|| PbrtError::error("GPU light BVH node word count overflowed."))?;
+        validate_storage_buffer_size(device, "light BVH node", node_word_count, size_of::<u32>())?;
+        validate_storage_buffer_size(
+            device,
+            "light BVH leaf",
+            packed.handle_to_leaf.len(),
+            size_of::<u32>(),
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_storage_buffer_size(
+    device: &wgpu::Device,
+    label: &str,
+    element_count: usize,
+    element_size: usize,
+) -> Result<(), PbrtError> {
+    let byte_count = element_count
+        .max(1)
+        .checked_mul(element_size)
+        .ok_or_else(|| PbrtError::error(&format!("GPU {label} buffer byte size overflowed.")))?;
+    let byte_count = u64::try_from(byte_count)
+        .map_err(|_| PbrtError::error(&format!("GPU {label} buffer byte size exceeds u64.")))?;
+    validate_storage_buffer_byte_size(
+        label,
+        byte_count,
+        device.limits().max_storage_buffer_binding_size,
+    )
+}
+
+pub fn validate_storage_buffer_byte_size(
+    label: &str,
+    byte_count: u64,
+    limit: u64,
+) -> Result<(), PbrtError> {
+    if byte_count > limit {
+        return Err(PbrtError::error(&format!("GPU {label} storage buffer requires {byte_count} bytes, exceeding max_storage_buffer_binding_size {limit}.")));
+    }
+    Ok(())
 }
 
 fn buffer_contents<T: bytemuck::Pod>(values: &[T]) -> &[u8] {

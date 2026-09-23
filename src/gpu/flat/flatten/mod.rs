@@ -139,6 +139,7 @@ pub fn flatten_node_with_material_override(
     };
     let mut scene = scene;
     scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
+    scene.validate_u32_layout()?;
     scene.validate_static_views()?;
     Ok(scene)
 }
