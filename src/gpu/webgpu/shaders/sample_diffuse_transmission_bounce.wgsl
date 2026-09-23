@@ -17,7 +17,7 @@ fn sample_diffuse_transmission_bounce(@builtin(global_invocation_id) global_id: 
     if (total <= 0.0) { return; }
 
     let samples = load_ray_samples(pixel_index);
-    let reflect = samples.indirect.x < pr / total;
+    let reflect = samples.direct.w < pr / total;
     let normal = surface.normal.xyz;
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);

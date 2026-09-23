@@ -1591,17 +1591,17 @@ fn sample_layered_exponential(u: f32, rate: f32) -> f32 {
 }
 
 fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
-    let first_dimension = 6u + 7u * depth;
+    let first_dimension = 6u + 8u * depth;
     return RaySamples(
         vec4<f32>(
             sampler_get_1d(pixel_index, first_dimension),
             sampler_get_2d(pixel_index, first_dimension + 1u),
-            0.0,
+            sampler_get_1d(pixel_index, first_dimension + 3u),
         ),
         vec4<f32>(
-            sampler_get_1d(pixel_index, first_dimension + 3u),
-            sampler_get_2d(pixel_index, first_dimension + 4u),
-            sampler_get_1d(pixel_index, first_dimension + 6u),
+            sampler_get_1d(pixel_index, first_dimension + 4u),
+            sampler_get_2d(pixel_index, first_dimension + 5u),
+            sampler_get_1d(pixel_index, first_dimension + 7u),
         ),
     );
 }

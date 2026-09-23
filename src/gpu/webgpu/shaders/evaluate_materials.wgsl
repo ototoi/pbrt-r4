@@ -263,7 +263,17 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let direct = light_radiance * f * cosine
         / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
         * mis_weight;
-    let shadow_origin = light_sample_origin;
+    var shadow_origin = light_sample_origin;
+    // For diffuse transmission the light may be on the opposite side of the
+    // surface from wo, so offset the shadow ray toward the sampled light.
+    if (material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION) {
+        shadow_origin = offset_ray_origin(
+            surface.position.xyz,
+            surface.position_error.xyz,
+            surface.geometric_normal.xyz,
+            wi,
+        );
+    }
     var shadow_direction = wi;
     var shadow_distance = RAY_T_MAX;
     if (light_kind == LIGHT_KIND_AREA) {
