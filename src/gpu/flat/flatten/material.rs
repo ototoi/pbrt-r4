@@ -147,12 +147,16 @@ pub fn register_material_source(
             | "thindielectric"
             | "conductor_eta_k"
             | "conductor_reflectance"
+            | "diffusetransmission"
             | "mix"
             | "coateddiffuse"
             | "coatedconductor"
             | "measured"
     );
-    let texture_fallback = if supported && has_texture_attribute(source_material) {
+    let texture_fallback = if requested_kind != "diffusetransmission"
+        && supported
+        && has_texture_attribute(source_material)
+    {
         match UnsupportedTexturePolicy::from_environment()? {
             UnsupportedTexturePolicy::Error => false,
             UnsupportedTexturePolicy::DiagnosticMagenta => {
@@ -223,6 +227,15 @@ pub fn register_material_source(
         // material-evaluation attribute in the WebGPU backend.
         if name == "displacement" {
             continue;
+        }
+        if kind == "diffusetransmission" {
+            if matches!(name.as_str(), "reflectance" | "Kd" | "transmittance" | "Kt") {
+                continue;
+            }
+            return Err(PbrtError::error(&format!(
+                "Material \"{}\" has unsupported diffusetransmission texture attribute \"{name}\".",
+                source_material.name
+            )));
         }
         let texture = texture_node
             .components

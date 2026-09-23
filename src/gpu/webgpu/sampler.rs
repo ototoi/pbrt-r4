@@ -17,7 +17,7 @@ use crate::util::lowdiscrepancy::DigitPermutation;
 use super::stages::ResourceId;
 
 const TABLE_WIDTH: u32 = 256;
-const HALTON_DIMENSION_COUNT: u32 = 6 + 7 * (MAX_GPU_RENDER_DEPTH + 1);
+const HALTON_DIMENSION_COUNT: u32 = 6 + 8 * (MAX_GPU_RENDER_DEPTH + 1);
 const WORDS_PER_TEXEL: usize = 4;
 const HEADER_WORDS_PER_DIMENSION: usize = 4;
 const INVALID_OFFSET: u32 = u32::MAX;
