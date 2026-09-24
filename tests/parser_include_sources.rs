@@ -5,6 +5,7 @@ use pbrt_r4::parser::{parse_file, parse_string, DebugTarget, PrintTarget, SceneB
 use std::cell::RefCell;
 use std::fs;
 use std::io::{Result as IoResult, Write};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tar::Builder;
 
@@ -29,6 +30,26 @@ fn operation_names(target: &DebugTarget) -> Vec<String> {
         .iter()
         .map(|operation| operation.name.clone())
         .collect()
+}
+
+fn write_tar_gz_archive(path: &Path, files: &[(&str, &[u8])]) {
+    let archive_file = fs::File::create(path).expect("archive should be created");
+    let encoder = GzEncoder::new(archive_file, Compression::default());
+    let mut archive = Builder::new(encoder);
+    for (path, contents) in files {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, path, *contents)
+            .expect("scene should be added to archive");
+    }
+    archive
+        .into_inner()
+        .expect("tar should finish")
+        .finish()
+        .expect("gzip should finish");
 }
 
 #[test]
@@ -119,29 +140,15 @@ fn pbrt_file_can_include_gzipped_source() {
 fn tar_gz_scene_uses_streaming_include_parser() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let archive_path = directory.path().join("scene.tar.gz");
-    let archive_file = fs::File::create(&archive_path).expect("archive should be created");
-    let encoder = GzEncoder::new(archive_file, Compression::default());
-    let mut archive = Builder::new(encoder);
     let root = b"Identity\nInclude \"child.pbrt\"\nScale 2 2 2\n";
     let child = b"Translate 1 2 3\n";
-
-    let mut root_header = tar::Header::new_gnu();
-    root_header.set_size(root.len() as u64);
-    root_header.set_mode(0o644);
-    root_header.set_cksum();
-    archive
-        .append_data(&mut root_header, "scene/root.pbrt", &root[..])
-        .expect("root should be added to archive");
-
-    let mut child_header = tar::Header::new_gnu();
-    child_header.set_size(child.len() as u64);
-    child_header.set_mode(0o644);
-    child_header.set_cksum();
-    archive
-        .append_data(&mut child_header, "scene/child.pbrt", &child[..])
-        .expect("child should be added to archive");
-    let encoder = archive.into_inner().expect("tar should finish");
-    encoder.finish().expect("gzip should finish");
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/child.pbrt", &child[..]),
+        ],
+    );
 
     let mut target = DebugTarget::new();
     parse_file(archive_path.to_str().unwrap(), &mut target).expect("archive scene should parse");
@@ -154,28 +161,17 @@ fn tar_gz_scene_uses_streaming_include_parser() {
 fn tar_gz_scene_rejects_multiple_root_scenes() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let archive_path = directory.path().join("multiple-scenes.tar.gz");
-    let archive_file = fs::File::create(&archive_path).expect("archive should be created");
-    let encoder = GzEncoder::new(archive_file, Compression::default());
-    let mut archive = Builder::new(encoder);
     let root = b"Identity\nInclude \"child.pbrt\"\n";
     let child = b"Translate 1 2 3\n";
     let other_root = b"Scale 2 2 2\n";
-
-    for (path, contents) in [
-        ("scene/root.pbrt", &root[..]),
-        ("scene/child.pbrt", &child[..]),
-        ("scene/other.pbrt", &other_root[..]),
-    ] {
-        let mut header = tar::Header::new_gnu();
-        header.set_size(contents.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        archive
-            .append_data(&mut header, path, contents)
-            .expect("scene should be added to archive");
-    }
-    let encoder = archive.into_inner().expect("tar should finish");
-    encoder.finish().expect("gzip should finish");
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/child.pbrt", &child[..]),
+            ("scene/other.pbrt", &other_root[..]),
+        ],
+    );
 
     let mut target = DebugTarget::new();
     let error = parse_file(archive_path.to_str().unwrap(), &mut target)
@@ -184,6 +180,56 @@ fn tar_gz_scene_rejects_multiple_root_scenes() {
         error.to_string().contains("multiple root scene files"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn tar_gz_root_discovery_follows_gzipped_include_with_ancestor_lookup() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("nested-include.tar.gz");
+    let mut child_encoder = GzEncoder::new(Vec::new(), Compression::default());
+    child_encoder
+        .write_all(b"Include \"common.pbrt\"\nTranslate 1 2 3\n")
+        .expect("gzipped child should be written");
+    let child = child_encoder.finish().expect("gzip should finish");
+    let root = b"Identity\nInclude \"sub/child.pbrt.gz\"\nScale 2 2 2\n";
+    let common = b"Rotate 90 0 1 0\n";
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/sub/child.pbrt.gz", &child),
+            ("scene/common.pbrt", &common[..]),
+        ],
+    );
+
+    let mut target = DebugTarget::new();
+    parse_file(archive_path.to_str().unwrap(), &mut target)
+        .expect("root scene should be identified through nested includes");
+    let names = operation_names(&target);
+    assert!(names.contains(&"Rotate".to_string()));
+    assert!(names.contains(&"Scale".to_string()));
+}
+
+#[test]
+fn tar_gz_scene_excludes_imported_pbrt_from_root_candidates() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("imported-scene.tar.gz");
+    let root = b"Identity\nImport \"objects.pbrt\"\nScale 2 2 2\n";
+    let imported = b"Translate 1 2 3\n";
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/objects.pbrt", &imported[..]),
+        ],
+    );
+
+    let mut target = DebugTarget::new();
+    parse_file(archive_path.to_str().unwrap(), &mut target)
+        .expect("imported scene should not be mistaken for another archive root");
+    let names = operation_names(&target);
+    assert!(names.contains(&"Import".to_string()));
+    assert!(names.contains(&"Scale".to_string()));
 }
 
 #[test]

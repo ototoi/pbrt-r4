@@ -163,15 +163,7 @@ impl<'a> ParserSession<'a> {
     }
 
     fn resolve_path(&self, filename: &str) -> Option<PathBuf> {
-        let filename = Path::new(filename);
-        if filename.is_absolute() && filename.exists() {
-            return Some(filename.to_path_buf());
-        }
-        self.frames.iter().rev().find_map(|frame| {
-            let parent = frame.path.parent()?;
-            let path = parent.join(filename);
-            path.exists().then_some(path)
-        })
+        resolve_include_path(filename, self.frames.iter().map(|frame| &frame.path))
     }
 
     fn pop_frame(&mut self) {
@@ -204,4 +196,19 @@ impl<'a> ParserSession<'a> {
     fn stack_empty_error() -> PbrtError {
         PbrtError::error("parser input stack unexpectedly empty")
     }
+}
+
+pub fn resolve_include_path<'a>(
+    filename: &str,
+    frame_paths: impl DoubleEndedIterator<Item = &'a PathBuf>,
+) -> Option<PathBuf> {
+    let filename = Path::new(filename);
+    if filename.is_absolute() && filename.exists() {
+        return Some(filename.to_path_buf());
+    }
+    frame_paths.rev().find_map(|frame_path| {
+        let parent = frame_path.parent()?;
+        let path = parent.join(filename);
+        path.exists().then_some(path)
+    })
 }

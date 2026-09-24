@@ -1,12 +1,13 @@
 pub mod common;
 pub mod debug_target;
+pub mod find_file;
 pub mod parse_target;
 pub mod parsed_parameter;
 pub mod print_target;
 pub mod read_file;
 pub mod remove_comment;
 pub mod scene_builder;
-mod session;
+pub mod session;
 pub mod to_ply_target;
 pub mod upgrade;
 
@@ -21,7 +22,8 @@ pub use scene_builder::SceneBuilder;
 pub use to_ply_target::ToPlyTarget;
 
 use self::common::*;
-use self::read_file::{read_file_source, read_file_with_include, read_file_without_include};
+use self::find_file::find_root_scene;
+use self::read_file::{read_file_with_include, read_file_without_include};
 use self::remove_comment::remove_comment;
 use self::session::ParserSession;
 use crate::paramdict::ParameterDictionary;
@@ -34,114 +36,12 @@ use nom::multi;
 use nom::number;
 use nom::sequence;
 use nom::IResult;
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-
-fn collect_pbrt_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), PbrtError> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let path = entry.path();
-        if file_type.is_dir() {
-            collect_pbrt_files(&path, files)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "pbrt") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn include_filenames(source: &str) -> Result<Vec<String>, PbrtError> {
-    let mut filenames = Vec::new();
-    let mut input = source;
-    while let Some((remaining, _, operation)) = parse_next_operation(source, input)? {
-        if operation.name == "Include" {
-            let args = operation
-                .args
-                .as_ref()
-                .ok_or_else(|| PbrtError::error("Include requires parameters."))?;
-            let filename = args
-                .get_strings("arg1")
-                .into_iter()
-                .next()
-                .ok_or_else(|| PbrtError::error("Include requires a filename."))?;
-            filenames.push(filename);
-        }
-        input = remaining;
-    }
-    Ok(filenames)
-}
-
-fn root_pbrt_file(dir: &Path) -> Result<PathBuf, PbrtError> {
-    let mut scene_files = Vec::new();
-    collect_pbrt_files(dir, &mut scene_files)?;
-    scene_files.sort();
-
-    if scene_files.is_empty() {
-        return Err(PbrtError::from("Archive contains no .pbrt scene files."));
-    }
-
-    let mut included_files = HashSet::new();
-    for scene_file in &scene_files {
-        let source = read_file_source(scene_file)?;
-        for include in include_filenames(&source)? {
-            let include = Path::new(&include);
-            let resolved = if include.is_absolute() {
-                include.to_path_buf()
-            } else {
-                scene_file
-                    .parent()
-                    .ok_or_else(|| PbrtError::from("scene file has no parent directory"))?
-                    .join(include)
-            };
-            if let Ok(resolved) = resolved.canonicalize() {
-                included_files.insert(resolved);
-            }
-        }
-    }
-
-    let mut root_files = Vec::new();
-    for path in scene_files {
-        if !included_files.contains(&path.canonicalize()?) {
-            root_files.push(path);
-        }
-    }
-    root_files.sort();
-
-    match root_files.as_slice() {
-        [root] => Ok(root.clone()),
-        [] => Err(PbrtError::from(
-            "Archive contains no root .pbrt scene file; every scene file is included by another scene.",
-        )),
-        roots => Err(PbrtError::from(format!(
-            "Archive contains multiple root scene files: {}",
-            roots
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
-    }
-}
-
-fn parse_targz(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let tmp_dir = tempfile::tempdir()?;
-    let tmp_dir_path = tmp_dir.path();
-
-    let tar_gz = std::fs::File::open(filename)?;
-    let tar = flate2::read::GzDecoder::new(tar_gz);
-    let mut archive = tar::Archive::new(tar);
-    archive.unpack(tmp_dir_path)?;
-
-    let root = root_pbrt_file(tmp_dir_path)?;
-    ParserSession::new(&root.to_string_lossy(), context)?.parse()
-}
 
 pub fn parse_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
     if filename.ends_with(".tar.gz") {
-        return parse_targz(filename, context);
+        return parse_tar_gz(filename, context);
     } else {
-        return ParserSession::new(filename, context)?.parse();
+        return parse_scene_file(filename, context);
     }
 }
 
@@ -171,6 +71,20 @@ pub fn parse_file_upgraded(filename: &str, context: &mut dyn ParseTarget) -> Res
     parse_string_upgraded(&s, context)
 }
 //-----------------------------------
+
+fn parse_scene_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    ParserSession::new(filename, context)?.parse()
+}
+
+fn parse_tar_gz(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    let temporary_dir = tempfile::tempdir()?;
+    let archive_file = std::fs::File::open(filename)?;
+    let decoder = flate2::read::GzDecoder::new(archive_file);
+    tar::Archive::new(decoder).unpack(temporary_dir.path())?;
+
+    let root = find_root_scene(temporary_dir.path())?;
+    parse_scene_file(&root.to_string_lossy(), context)
+}
 
 fn parser_error(source: &str, input: &str, operation: &str, message: &str) -> PbrtError {
     let offset = source.len().saturating_sub(input.len());
