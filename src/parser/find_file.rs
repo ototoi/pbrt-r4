@@ -11,6 +11,12 @@ enum DependencyKind {
     Import,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DependencyScanMode {
+    DiscoverRoots,
+    ValidateRoot,
+}
+
 #[derive(Clone)]
 struct Dependency {
     kind: DependencyKind,
@@ -23,6 +29,7 @@ struct DependencyScanner<'a> {
     active_files: HashSet<PathBuf>,
     parsed_dependencies: HashMap<PathBuf, Vec<Dependency>>,
     dependencies: HashSet<PathBuf>,
+    mode: DependencyScanMode,
 }
 
 pub fn find_root_scene(archive_dir: &Path) -> Result<PathBuf, PbrtError> {
@@ -35,23 +42,21 @@ pub fn find_root_scene(archive_dir: &Path) -> Result<PathBuf, PbrtError> {
     }
 
     let candidates: HashSet<PathBuf> = scenes.iter().cloned().collect();
-    let mut scanner = DependencyScanner {
-        archive_dir: &archive_dir,
-        candidates: &candidates,
-        active_files: HashSet::new(),
-        parsed_dependencies: HashMap::new(),
-        dependencies: HashSet::new(),
-    };
+    let mut scanner =
+        DependencyScanner::new(&archive_dir, &candidates, DependencyScanMode::DiscoverRoots);
     for root in &scenes {
-        let mut include_frames = vec![root.clone()];
-        let mut work_dirs = vec![parent_dir(root)?];
-        scanner.scan(root, &mut include_frames, &mut work_dirs)?;
+        scanner.scan_root(root)?;
     }
 
     let roots: Vec<PathBuf> = scenes
         .into_iter()
         .filter(|scene| !scanner.dependencies.contains(scene))
         .collect();
+    scanner.mode = DependencyScanMode::ValidateRoot;
+    for root in &roots {
+        scanner.scan_root(root)?;
+    }
+
     match roots.as_slice() {
         [root] => Ok(root.clone()),
         [] => Err(PbrtError::from(
@@ -82,7 +87,28 @@ fn collect_scene_files(dir: &Path, scenes: &mut Vec<PathBuf>) -> Result<(), Pbrt
     Ok(())
 }
 
-impl DependencyScanner<'_> {
+impl<'a> DependencyScanner<'a> {
+    fn new(
+        archive_dir: &'a Path,
+        candidates: &'a HashSet<PathBuf>,
+        mode: DependencyScanMode,
+    ) -> DependencyScanner<'a> {
+        DependencyScanner {
+            archive_dir,
+            candidates,
+            active_files: HashSet::new(),
+            parsed_dependencies: HashMap::new(),
+            dependencies: HashSet::new(),
+            mode,
+        }
+    }
+
+    fn scan_root(&mut self, root: &Path) -> Result<(), PbrtError> {
+        let mut include_frames = vec![root.to_path_buf()];
+        let mut work_dirs = vec![parent_dir(root)?];
+        self.scan(root, &mut include_frames, &mut work_dirs)
+    }
+
     fn scan(
         &mut self,
         path: &Path,
@@ -101,18 +127,28 @@ impl DependencyScanner<'_> {
                     resolve_include_path(&dependency.filename, include_frames.iter())
                 }
                 DependencyKind::Import => resolve_import_path(&dependency.filename, work_dirs),
-            }
-            .ok_or_else(|| {
+            };
+            let Some(resolved) = resolved else {
+                if self.mode == DependencyScanMode::DiscoverRoots {
+                    continue;
+                }
                 let kind = match dependency.kind {
                     DependencyKind::Include => "Include",
                     DependencyKind::Import => "Import",
                 };
-                PbrtError::from(format!("{kind} file not found: {}", dependency.filename))
-                    .with_file(&path)
-            })?;
-            let resolved = resolved
-                .canonicalize()
-                .map_err(|error| PbrtError::from(error).with_file(&resolved))?;
+                return Err(PbrtError::from(format!(
+                    "{kind} file not found: {}",
+                    dependency.filename
+                ))
+                .with_file(&path));
+            };
+            let resolved = match resolved.canonicalize() {
+                Ok(resolved) => resolved,
+                Err(_) if self.mode == DependencyScanMode::DiscoverRoots => continue,
+                Err(error) => {
+                    return Err(PbrtError::from(error).with_file(&resolved));
+                }
+            };
             if !resolved.starts_with(self.archive_dir) {
                 continue;
             }
