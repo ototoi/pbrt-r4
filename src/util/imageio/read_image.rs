@@ -204,32 +204,35 @@ fn convert_raw_from_rgba8(img: &image::RgbaImage, encoding: ColorEncoding) -> Ra
     }
 }
 
-fn convert_from_rgb16(img: &Rgb16Image) -> (Vec<RGBSpectrum>, Point2i) {
+fn convert_from_rgb16(img: &Rgb16Image, encoding: ColorEncoding) -> (Vec<RGBSpectrum>, Point2i) {
     let (width, height) = img.dimensions();
     let mut spcs = vec![RGBSpectrum::zero(); (width * height) as usize];
     for y in 0..height {
         for x in 0..width {
             let index = (y * width + x) as usize;
             let pixel = img.get_pixel(x, y);
-            let r = pixel[0] as Float / 65535.0;
-            let g = pixel[1] as Float / 65535.0;
-            let b = pixel[2] as Float / 65535.0;
+            let r = encoding.to_linear(pixel[0] as Float / 65535.0);
+            let g = encoding.to_linear(pixel[1] as Float / 65535.0);
+            let b = encoding.to_linear(pixel[2] as Float / 65535.0);
             spcs[index] = RGBSpectrum::new(r, g, b);
         }
     }
     return (spcs, Point2i::from((width as i32, height as i32)));
 }
 
-fn convert_raw_from_rgb16(img: &Rgb16Image) -> RawImage {
+fn convert_raw_from_rgb16(img: &Rgb16Image, encoding: ColorEncoding) -> RawImage {
     let (width, height) = img.dimensions();
     let mut data = vec![half::f16::ZERO; (3 * width * height) as usize];
     for y in 0..height {
         for x in 0..width {
             let index = (y * width + x) as usize;
             let pixel = img.get_pixel(x, y);
-            data[3 * index] = half::f16::from_f32(pixel[0] as f32 / 65535.0);
-            data[3 * index + 1] = half::f16::from_f32(pixel[1] as f32 / 65535.0);
-            data[3 * index + 2] = half::f16::from_f32(pixel[2] as f32 / 65535.0);
+            data[3 * index] =
+                half::f16::from_f32(encoding.to_linear(pixel[0] as Float / 65535.0) as f32);
+            data[3 * index + 1] =
+                half::f16::from_f32(encoding.to_linear(pixel[1] as Float / 65535.0) as f32);
+            data[3 * index + 2] =
+                half::f16::from_f32(encoding.to_linear(pixel[2] as Float / 65535.0) as f32);
         }
     }
     RawImage {
@@ -336,7 +339,7 @@ pub fn read_image_common(
                 return Ok(convert_from_rgba8(&img, encoding));
             }
             DynamicImage::ImageRgb16(img) => {
-                return Ok(convert_from_rgb16(&img));
+                return Ok(convert_from_rgb16(&img, encoding));
             }
             DynamicImage::ImageRgb32F(img) => {
                 return Ok(convert_from_rgb32f(&img));
@@ -407,7 +410,7 @@ pub fn read_raw_image_with_encoding(
         DynamicImage::ImageLumaA8(img) => convert_raw_from_lumaa8(&img, encoding),
         DynamicImage::ImageRgb8(img) => convert_raw_from_rgb8(&img, encoding),
         DynamicImage::ImageRgba8(img) => convert_raw_from_rgba8(&img, encoding),
-        DynamicImage::ImageRgb16(img) => convert_raw_from_rgb16(&img),
+        DynamicImage::ImageRgb16(img) => convert_raw_from_rgb16(&img, encoding),
         DynamicImage::ImageRgb32F(img) => convert_raw_from_rgb32f(&img),
         DynamicImage::ImageRgba32F(img) => convert_raw_from_rgba32f(&img),
         _ => {
