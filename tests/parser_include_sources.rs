@@ -261,6 +261,31 @@ fn tar_gz_root_discovery_follows_gzipped_include_with_ancestor_lookup() {
 }
 
 #[test]
+fn tar_gz_root_discovery_follows_plain_include_with_ancestor_lookup() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("plain-nested-include.tar.gz");
+    let root = b"Identity\nInclude \"sub/child.pbrt\"\nScale 2 2 2\n";
+    let child = b"Include \"common.pbrt\"\nTranslate 1 2 3\n";
+    let common = b"Rotate 90 0 1 0\n";
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/sub/child.pbrt", &child[..]),
+            ("scene/common.pbrt", &common[..]),
+        ],
+    );
+
+    let mut target = DebugTarget::new();
+    parse_file(archive_path.to_str().unwrap(), &mut target)
+        .expect("included scene should retain its ancestor include frame");
+    let names = operation_names(&target);
+    assert!(names.contains(&"Rotate".to_string()));
+    assert!(names.contains(&"Translate".to_string()));
+    assert!(names.contains(&"Scale".to_string()));
+}
+
+#[test]
 fn tar_gz_scene_excludes_imported_pbrt_from_root_candidates() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let archive_path = directory.path().join("imported-scene.tar.gz");
