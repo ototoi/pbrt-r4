@@ -1,12 +1,13 @@
 pub mod common;
 pub mod debug_target;
+pub mod find_file;
 pub mod parse_target;
 pub mod parsed_parameter;
 pub mod print_target;
 pub mod read_file;
 pub mod remove_comment;
 pub mod scene_builder;
-mod session;
+pub mod session;
 pub mod to_ply_target;
 pub mod upgrade;
 
@@ -21,6 +22,7 @@ pub use scene_builder::SceneBuilder;
 pub use to_ply_target::ToPlyTarget;
 
 use self::common::*;
+use self::find_file::find_root_scene;
 use self::read_file::{read_file_with_include, read_file_without_include};
 use self::remove_comment::remove_comment;
 use self::session::ParserSession;
@@ -35,57 +37,11 @@ use nom::number;
 use nom::sequence;
 use nom::IResult;
 
-fn search_pbrt_file(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return None,
-    }
-    .filter_map(|f| f.ok())
-    .collect();
-    for entry in entries {
-        let path = entry.path();
-        if path.is_file() {
-            let Some(filename) = path.file_name() else {
-                continue;
-            };
-            if filename.to_string_lossy().ends_with(".pbrt") {
-                return Some(path);
-            }
-        }
-    }
-    return None;
-}
-
-fn parse_targz(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
-    let tmp_dir = tempfile::tempdir()?;
-    let tmp_dir_path = tmp_dir.path();
-
-    let tar_gz = std::fs::File::open(filename)?;
-    let tar = flate2::read::GzDecoder::new(tar_gz);
-    let mut archive = tar::Archive::new(tar);
-    archive.unpack(tmp_dir_path)?;
-
-    let entries: Vec<std::fs::DirEntry> = std::fs::read_dir(tmp_dir_path)
-        .map_err(|e| PbrtError::from(format!("failed to inspect extracted archive: {}", e)))?
-        .filter_map(|f| f.ok())
-        .collect();
-    for entry in entries {
-        let path = entry.path();
-        if let Some(path) = search_pbrt_file(&path) {
-            let path = path.to_string_lossy();
-            return ParserSession::new(&path, context)?.parse();
-        }
-    }
-    return Err(PbrtError::from(std::io::Error::from(
-        std::io::ErrorKind::NotFound,
-    )));
-}
-
 pub fn parse_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
     if filename.ends_with(".tar.gz") {
-        return parse_targz(filename, context);
+        return parse_tar_gz(filename, context);
     } else {
-        return ParserSession::new(filename, context)?.parse();
+        return parse_scene_file(filename, context);
     }
 }
 
@@ -115,6 +71,20 @@ pub fn parse_file_upgraded(filename: &str, context: &mut dyn ParseTarget) -> Res
     parse_string_upgraded(&s, context)
 }
 //-----------------------------------
+
+fn parse_scene_file(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    ParserSession::new(filename, context)?.parse()
+}
+
+fn parse_tar_gz(filename: &str, context: &mut dyn ParseTarget) -> Result<(), PbrtError> {
+    let temporary_dir = tempfile::tempdir()?;
+    let archive_file = std::fs::File::open(filename)?;
+    let decoder = flate2::read::GzDecoder::new(archive_file);
+    tar::Archive::new(decoder).unpack(temporary_dir.path())?;
+
+    let root = find_root_scene(temporary_dir.path())?;
+    parse_scene_file(&root.to_string_lossy(), context)
+}
 
 fn parser_error(source: &str, input: &str, operation: &str, message: &str) -> PbrtError {
     let offset = source.len().saturating_sub(input.len());
