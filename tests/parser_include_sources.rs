@@ -183,6 +183,56 @@ fn tar_gz_scene_rejects_multiple_root_scenes() {
 }
 
 #[test]
+fn tar_gz_scene_reports_missing_include_instead_of_ambiguous_roots() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("missing-include.tar.gz");
+    let root = b"Identity\nInclude \"missing.pbrt\"\n";
+    let other_scene = b"Scale 2 2 2\n";
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/other.pbrt", &other_scene[..]),
+        ],
+    );
+
+    let mut target = DebugTarget::new();
+    let error = parse_file(archive_path.to_str().unwrap(), &mut target)
+        .expect_err("missing include should be reported");
+    assert!(
+        error
+            .to_string()
+            .contains("Include file not found: missing.pbrt"),
+        "missing include should not be masked by root ambiguity: {error}"
+    );
+}
+
+#[test]
+fn tar_gz_scene_reports_missing_import_instead_of_ambiguous_roots() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("missing-import.tar.gz");
+    let root = b"Identity\nImport \"missing.pbrt\"\n";
+    let other_scene = b"Scale 2 2 2\n";
+    write_tar_gz_archive(
+        &archive_path,
+        &[
+            ("scene/root.pbrt", &root[..]),
+            ("scene/other.pbrt", &other_scene[..]),
+        ],
+    );
+
+    let mut target = DebugTarget::new();
+    let error = parse_file(archive_path.to_str().unwrap(), &mut target)
+        .expect_err("missing import should be reported");
+    assert!(
+        error
+            .to_string()
+            .contains("Import file not found: missing.pbrt"),
+        "missing import should not be masked by root ambiguity: {error}"
+    );
+}
+
+#[test]
 fn tar_gz_root_discovery_follows_gzipped_include_with_ancestor_lookup() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let archive_path = directory.path().join("nested-include.tar.gz");
