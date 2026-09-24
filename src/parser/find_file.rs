@@ -101,13 +101,18 @@ impl DependencyScanner<'_> {
                     resolve_include_path(&dependency.filename, include_frames.iter())
                 }
                 DependencyKind::Import => resolve_import_path(&dependency.filename, work_dirs),
-            };
-            let Some(resolved) = resolved else {
-                continue;
-            };
-            let Ok(resolved) = resolved.canonicalize() else {
-                continue;
-            };
+            }
+            .ok_or_else(|| {
+                let kind = match dependency.kind {
+                    DependencyKind::Include => "Include",
+                    DependencyKind::Import => "Import",
+                };
+                PbrtError::from(format!("{kind} file not found: {}", dependency.filename))
+                    .with_file(&path)
+            })?;
+            let resolved = resolved
+                .canonicalize()
+                .map_err(|error| PbrtError::from(error).with_file(&resolved))?;
             if !resolved.starts_with(self.archive_dir) {
                 continue;
             }
