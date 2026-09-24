@@ -151,6 +151,42 @@ fn tar_gz_scene_uses_streaming_include_parser() {
 }
 
 #[test]
+fn tar_gz_scene_rejects_multiple_root_scenes() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let archive_path = directory.path().join("multiple-scenes.tar.gz");
+    let archive_file = fs::File::create(&archive_path).expect("archive should be created");
+    let encoder = GzEncoder::new(archive_file, Compression::default());
+    let mut archive = Builder::new(encoder);
+    let root = b"Identity\nInclude \"child.pbrt\"\n";
+    let child = b"Translate 1 2 3\n";
+    let other_root = b"Scale 2 2 2\n";
+
+    for (path, contents) in [
+        ("scene/root.pbrt", &root[..]),
+        ("scene/child.pbrt", &child[..]),
+        ("scene/other.pbrt", &other_root[..]),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, path, contents)
+            .expect("scene should be added to archive");
+    }
+    let encoder = archive.into_inner().expect("tar should finish");
+    encoder.finish().expect("gzip should finish");
+
+    let mut target = DebugTarget::new();
+    let error = parse_file(archive_path.to_str().unwrap(), &mut target)
+        .expect_err("multiple root scenes should be rejected as ambiguous");
+    assert!(
+        error.to_string().contains("multiple root scene files"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn include_cycle_is_reported_as_an_error() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let first = directory.path().join("first.pbrt");
