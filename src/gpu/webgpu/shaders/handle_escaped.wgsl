@@ -1,6 +1,6 @@
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(64, 1, 1)
 fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let index = global_id.y * viewport.width + global_id.x;
+    let index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
     if (index >= escaped_ray_count()) {
         return;
     }
