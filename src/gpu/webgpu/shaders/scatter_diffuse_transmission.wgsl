@@ -1,14 +1,40 @@
 @compute @workgroup_size(8, 8, 1)
-fn sample_diffuse_transmission_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn scatter_diffuse_transmission(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) { return; }
-    let ray_index = global_id.y * viewport.width + global_id.x;
-    if (ray_index >= current_ray_count()) { return; }
+    let queue_index = global_id.y * viewport.width + global_id.x;
+    if (queue_index >= scatter_diffuse_transmission_count()) { return; }
+    let ray_index = load_scatter_diffuse_transmission_ray(queue_index);
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    if (surface.hit == 0u || surface.flags != 0u) { return; }
     let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
-    if (evaluated.bxdf_kind != MATERIAL_KIND_DIFFUSE_TRANSMISSION) { return; }
+
+    // Direct lighting.
+    let light_sample = direct_light_samples[pixel_index];
+    if (light_sample.valid != 0u) {
+        let reflectance = evaluated.values[0];
+        let transmittance = evaluated.values[1];
+        let wo = -ray.direction.xyz;
+        let wi = light_sample.direction_pdf.xyz;
+        let shading_n = surface.normal.xyz;
+        let cos_wo = dot(shading_n, wo);
+        let cos_wi = dot(shading_n, wi);
+        let cosine = abs(cos_wi);
+        if (cosine > 0.0) {
+            let pr = max_spectrum(reflectance);
+            let pt = max_spectrum(transmittance);
+            let total = pr + pt;
+            if (total > 0.0) {
+                let same_side = cos_wo * cos_wi > 0.0;
+                let branch_probability = select(pt / total, pr / total, same_side);
+                let f = select(transmittance, reflectance, same_side) / PI;
+                let bsdf_pdf = cosine / PI * branch_probability;
+                add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, cosine);
+            }
+        }
+    }
+
+    // Indirect bounce.
     let r = evaluated.values[0];
     let t = evaluated.values[1];
     let pr = max_spectrum(r);

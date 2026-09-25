@@ -10,8 +10,8 @@ use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 
 const INTERSECT_SHADOW_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/intersect_shadow.wgsl");
-const EVALUATE_MATERIALS_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/evaluate_materials.wgsl");
+const CLASSIFY_SURFACE_SCATTER_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/classify_surface_scatter.wgsl");
 const SAMPLE_DIRECT_LIGHT_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_direct_light.wgsl");
 const EVALUATE_ATTRIBUTES_SHADER: &str =
@@ -23,18 +23,18 @@ const GENERATE_PRIMARY_RAYS_SHADER: &str =
 const ESCAPED_TEST_SHADER: &str =
     r#"@compute @workgroup_size(1) fn test_stage() { append_escaped_ray(0u); }"#;
 const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
-const SAMPLE_DIFFUSE_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_diffuse_bounce.wgsl");
-const SAMPLE_DIFFUSE_TRANSMISSION_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_diffuse_transmission_bounce.wgsl");
-const SAMPLE_DIELECTRIC_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_dielectric_bounce.wgsl");
-const SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_thin_dielectric_bounce.wgsl");
-const SAMPLE_CONDUCTOR_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_conductor_bounce.wgsl");
-const SAMPLE_COMPOSITE_BOUNCE_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_composite_bounce.wgsl");
+const SCATTER_DIFFUSE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/scatter_diffuse.wgsl");
+const SCATTER_DIFFUSE_TRANSMISSION_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_diffuse_transmission.wgsl");
+const SCATTER_DIELECTRIC_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_dielectric.wgsl");
+const SCATTER_THIN_DIELECTRIC_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_thin_dielectric.wgsl");
+const SCATTER_CONDUCTOR_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_conductor.wgsl");
+const SCATTER_MEASURED_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_measured.wgsl");
+const SCATTER_COATED_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/scatter_coated.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
 const TYPES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/types.wgsl");
 const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
@@ -82,16 +82,15 @@ fn dense_spectrum_module_declares_one_structured_table() {
 
 #[test]
 fn measured_material_shader_uses_packed_texture_tables() {
-    let direct = compose_source(EVALUATE_MATERIALS_SHADER);
+    let direct = compose_source(SCATTER_MEASURED_SHADER);
     assert!(direct.contains("fn measured_f("));
     assert!(direct.contains("fn measured_pdf("));
     assert!(direct.contains("textureLoad("));
     assert!(direct.contains("var<storage, read> measured_bsdfs"));
     assert!(direct.contains("var<storage, read> measured_tables"));
 
-    let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
+    let bounce = compose_source(SCATTER_MEASURED_SHADER);
     assert!(bounce.contains("fn measured_sample_f("));
-    assert!(bounce.contains("material_kind != MATERIAL_KIND_MEASURED"));
     assert!(bounce.contains("scattering_local_frame(wo, tangent, normal)"));
 
     assert!(SHADE_SURFACE_SHADER.contains("surfaces[pixel_index].tangent"));
@@ -228,9 +227,11 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     ));
     assert!(!sample.contains("atan2(d.y, d.x)"));
 
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("if (light_sample.use_mis != 0u) {"));
-    assert!(evaluate.contains("is_infinite_light_kind(light_kind)"));
+    // MIS weighting and the infinite-light shadow-direction check are shared
+    // by every non-specular scatter kind through add_direct_lighting.
+    let common = common_shader();
+    assert!(common.contains("if (light_sample.use_mis != 0u) {"));
+    assert!(common.contains("is_infinite_light_kind(light_kind)"));
 
     let escaped = compose_source(include_str!(
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
@@ -283,10 +284,10 @@ fn escaped_queue_is_a_typed_ray_index_queue() {
 
 #[test]
 fn classification_queues_resolve_current_rays_in_constant_time() {
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("let ray_index = load_material_eval_ray(queue_index);"));
-    assert!(evaluate.contains("let ray = load_current_ray(ray_index);"));
-    assert!(!evaluate.contains("find_current_ray_for_pixel"));
+    let classify = compose_source(CLASSIFY_SURFACE_SCATTER_SHADER);
+    assert!(classify.contains("let ray_index = load_material_eval_ray(queue_index);"));
+    assert!(classify.contains("let ray = load_current_ray(ray_index);"));
+    assert!(!classify.contains("find_current_ray_for_pixel"));
 
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
     assert!(emissive.contains("let ray_index = load_hit_area_ray(queue_index);"));
@@ -295,8 +296,9 @@ fn classification_queues_resolve_current_rays_in_constant_time() {
 
 #[test]
 fn shadow_queue_carries_the_complete_rgb_contribution() {
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("ray.throughput * direct"));
+    // add_direct_lighting is the single shared place every scatter kind
+    // enqueues its shadow ray from.
+    assert!(common_shader().contains("ray.throughput * direct"));
 
     let shadow = compose_source(INTERSECT_SHADOW_SHADER);
     assert!(shadow.contains("load_sample_radiance(pixel_index) + shadow_direct"));
@@ -322,16 +324,15 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(!sample.contains("MAX_SPHERICAL_SAMPLE_AREA"));
     assert!(!SAMPLE_DIRECT_LIGHT_SHADER.contains("random01("));
 
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
-    assert!(!evaluate.contains("let samples = load_ray_samples(pixel_index);"));
-    assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
+    // The direct-lighting pdf/MIS denominator is shared by every scatter
+    // kind through add_direct_lighting.
+    assert!(common_shader().contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
 
-    let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
+    let bounce = compose_source(SCATTER_DIFFUSE_SHADER);
     assert!(bounce.contains("let u = vec2<f32>(samples.indirect.y, samples.indirect.z);"));
     assert!(bounce.contains("if (samples.indirect.w < q)"));
     assert!(bounce.contains("generate_ray_samples(pixel_index, ray.depth + 1u)"));
-    assert!(!SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("random01("));
+    assert!(!SCATTER_DIFFUSE_SHADER.contains("random01("));
 }
 
 #[test]
@@ -360,20 +361,21 @@ fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(common_shader()
         .contains("fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>)"));
     assert!(EVALUATE_ATTRIBUTES_SHADER.contains("load_diffuse_reflectance"));
-    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = selected_evaluated.values[0]"));
-    assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance / PI"));
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("ray.throughput * reflectance"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("let reflectance = evaluated.values[0];"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("reflectance / PI"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("ray.throughput * reflectance"));
 }
 
 #[test]
 fn diffuse_transmission_shader_uses_reflection_and_transmission_paths() {
-    let source = compose_source(SAMPLE_DIFFUSE_TRANSMISSION_BOUNCE_SHADER);
-    assert!(source.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
+    let source = compose_source(SCATTER_DIFFUSE_TRANSMISSION_SHADER);
     assert!(source.contains("pr / total"));
     assert!(source.contains("pt / total"));
     assert!(source.contains("next_throughput = ray.throughput * f * cosine / pdf"));
     assert!(EVALUATE_ATTRIBUTES_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
-    assert!(EVALUATE_MATERIALS_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
+    // classify_surface_scatter is the only place that still checks the kind
+    // by name; scatter_diffuse_transmission's queue membership is proof enough.
+    assert!(CLASSIFY_SURFACE_SCATTER_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
 }
 
 #[test]
@@ -382,27 +384,25 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(
         common_shader().contains("fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>)")
     );
-    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("evaluated.values[0]"));
-    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
-    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
-    assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("reflect(-wo, normal)"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("evaluated.values[0]"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("fresnel"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("refract(-wo, normal, eta_ratio)"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("reflect(-wo, normal)"));
 }
 
 #[test]
 fn conductor_shader_uses_complex_fresnel_attributes() {
-    let source = compose_source(SAMPLE_CONDUCTOR_BOUNCE_SHADER);
-    assert!(source.contains("MATERIAL_KIND_CONDUCTOR_ETA_K"));
+    let source = compose_source(SCATTER_CONDUCTOR_SHADER);
     assert!(source.contains("evaluated.values[0]"));
     assert!(source.contains("evaluated.values[1]"));
     assert!(source.contains("conductor_fresnel"));
-    assert!(source.contains("fn sample_conductor_bounce"));
+    assert!(source.contains("fn scatter_conductor"));
 }
 
 #[test]
 fn composite_shader_uses_evaluated_material_nodes() {
-    let source = compose_source(SAMPLE_COMPOSITE_BOUNCE_SHADER);
+    let source = compose_source(SCATTER_COATED_SHADER);
     assert!(source.contains("MATERIAL_KIND_COATED_DIFFUSE"));
-    assert!(source.contains("MATERIAL_KIND_COATED_CONDUCTOR"));
     assert!(source.contains("load_attributes_eval_work_item"));
     assert!(source.contains("sample_dielectric_interface"));
     assert!(source.contains("sample_conductor_interface"));
@@ -413,7 +413,7 @@ fn composite_shader_uses_evaluated_material_nodes() {
 
 #[test]
 fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
-    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    let source = compose_source(SCATTER_COATED_SHADER);
     let attributes_source = compose_source(EVALUATE_ATTRIBUTES_SHADER);
     assert!(source.contains("evaluate_layered_f"));
     assert!(source.contains("evaluate_layered_pdf"));
@@ -440,9 +440,8 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
 #[test]
 fn thin_dielectric_shader_uses_thin_interface_transport() {
     assert!(common_shader().contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
-    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("MATERIAL_KIND_THIN_DIELECTRIC"));
-    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("direction = select(-wo"));
-    assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("r0 + (1.0 - r0)"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("direction = select(-wo"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("r0 + (1.0 - r0)"));
 }
 
 #[test]
@@ -451,7 +450,7 @@ fn primary_rays_initialize_depth_zero_sample_state() {
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
     assert!(
-        SAMPLE_DIFFUSE_BOUNCE_SHADER.contains(
+        SCATTER_DIFFUSE_SHADER.contains(
             "surface.position,\n        surface.position_error,\n        surface.geometric_normal,\n        vec4<f32>(normal, 0.0),"
         )
     );
@@ -467,15 +466,17 @@ fn emissive_mis_uses_the_unoffset_previous_interaction_context() {
 
 #[test]
 fn bounce_rays_preserve_the_complete_previous_interaction_context() {
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.position,"));
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.position_error,"));
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("surface.geometric_normal,"));
-    assert!(SAMPLE_DIFFUSE_BOUNCE_SHADER.contains("vec4<f32>(normal, 0.0),"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("surface.position,"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("surface.position_error,"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("surface.geometric_normal,"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("vec4<f32>(normal, 0.0),"));
 }
 
 #[test]
 fn triangle_area_fallback_uses_the_v4_folding_map() {
-    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    // triangle_sampling.wgsl is attached to every composed stage
+    // unconditionally, so any stage source demonstrates this.
+    let source = compose_source(SCATTER_DIFFUSE_SHADER);
     assert!(source.contains("fn sample_uniform_triangle(u: vec2<f32>)"));
     assert!(source.contains("if (u.x < u.y)"));
     assert!(!source.contains("let su = sqrt(u.x)"));

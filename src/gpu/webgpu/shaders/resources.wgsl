@@ -59,6 +59,22 @@ var<storage, read> portal_distribution: array<PortalDistributionTexel>;
 var<storage, read_write> portal_light_candidates: array<PortalLightCandidate>;
 @group(0) @binding(51)
 var<storage, read_write> direct_light_samples: array<DirectLightSample>;
+@group(0) @binding(52)
+var<storage, read_write> direct_eval_ray_indices: array<u32>;
+@group(0) @binding(53)
+var<storage, read_write> scatter_diffuse_ray_indices: array<u32>;
+@group(0) @binding(54)
+var<storage, read_write> scatter_diffuse_transmission_ray_indices: array<u32>;
+@group(0) @binding(55)
+var<storage, read_write> scatter_conductor_ray_indices: array<u32>;
+@group(0) @binding(56)
+var<storage, read_write> scatter_dielectric_ray_indices: array<u32>;
+@group(0) @binding(57)
+var<storage, read_write> scatter_thin_dielectric_ray_indices: array<u32>;
+@group(0) @binding(58)
+var<storage, read_write> scatter_measured_ray_indices: array<u32>;
+@group(0) @binding(59)
+var<storage, read_write> scatter_coated_ray_indices: array<u32>;
 @group(0) @binding(28)
 var<storage, read> light_records: array<LightRecord>;
 @group(0) @binding(29)

@@ -1,21 +1,47 @@
 @compute @workgroup_size(8, 8, 1)
-fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) { return; }
-    let ray_index = global_id.y * viewport.width + global_id.x;
-    if (ray_index >= current_ray_count()) { return; }
+    let queue_index = global_id.y * viewport.width + global_id.x;
+    if (queue_index >= scatter_conductor_count()) { return; }
+    let ray_index = load_scatter_conductor_ray(queue_index);
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
-    material_texture_eval_base = (surface.attributes_eval_work_item / material_table.attributes_eval_stride)
-        * material_table.texture_eval_stride;
-    let leaf_evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
-    let material_node = leaf_evaluated.material_node;
-    if (leaf_evaluated.bxdf_kind == MATERIAL_KIND_COATED_CONDUCTOR) { return; }
-    if (surface.hit == 0u || surface.flags != 0u
-        || (load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR_ETA_K
-            && load_material_kind(material_node) != MATERIAL_KIND_CONDUCTOR_REFLECTANCE)) { return; }
+    let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
+
+    // Direct lighting.
+    let light_sample = direct_light_samples[pixel_index];
+    if (light_sample.valid != 0u) {
+        let wo = -ray.direction.xyz;
+        let wi = light_sample.direction_pdf.xyz;
+        let shading_n = surface.normal.xyz;
+        let cos_wo = dot(shading_n, wo);
+        let cos_wi = dot(shading_n, wi);
+        if (cos_wo * cos_wi > 0.0) {
+            let cosine = abs(cos_wi);
+            if (cosine > 0.0) {
+                let eta = evaluated.values[0];
+                let k = evaluated.values[1];
+                let h = scattering_local(normalize(wo + wi), shading_n);
+                let fresnel = conductor_fresnel(dot(scattering_local(wo, shading_n), h), eta, k);
+                let alpha = max(evaluated.values[2].x, 1e-3);
+                let cos_h = max(abs(h.z), 1e-5);
+                let alpha2 = alpha * alpha;
+                let d = alpha2 / (PI * pow(cos_h * cos_h * (alpha2 - 1.0) + 1.0, 2.0));
+                let cos_o = max(abs(cos_wo), 1e-5);
+                let cos_i = max(abs(cos_wi), 1e-5);
+                let g_o = 2.0 * cos_o / (cos_o + sqrt(cos_o * cos_o + alpha2 * (1.0 - cos_o * cos_o)));
+                let g_i = 2.0 * cos_i / (cos_i + sqrt(cos_i * cos_i + alpha2 * (1.0 - cos_i * cos_i)));
+                let f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
+                let bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local(wo, shading_n), h)), 1e-5);
+                add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, cosine);
+            }
+        }
+    }
+
+    // Indirect bounce.
     let lambda = load_sample_lambda(pixel_index);
-    let roughness = leaf_evaluated.values[2].x;
+    let roughness = evaluated.values[2].x;
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
     let tangent = make_tangent(normal);
@@ -39,7 +65,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let direction = normalize(reflect(-wo, half_world));
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
-    var f = conductor_fresnel(cos_i, leaf_evaluated.values[0], leaf_evaluated.values[1]) / cos_i;
+    var f = conductor_fresnel(cos_i, evaluated.values[0], evaluated.values[1]) / cos_i;
     if (roughness > 1e-3) {
         let wi_local = scattering_local(direction, normal);
         let wo_local = scattering_local(wo, normal);
@@ -49,7 +75,7 @@ fn sample_conductor_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) 
         let d = a2 / (PI * pow(h_local.z * h_local.z * (a2 - 1.0) + 1.0, 2.0));
         let g = 2.0 * abs(wo_local.z) / (abs(wo_local.z) + sqrt(wo_local.z * wo_local.z + a2 * (1.0 - wo_local.z * wo_local.z)))
             * 2.0 * abs(wi_local.z) / (abs(wi_local.z) + sqrt(wi_local.z * wi_local.z + a2 * (1.0 - wi_local.z * wi_local.z)));
-        f = conductor_fresnel(abs(dot(wo_local, h_local)), leaf_evaluated.values[0], leaf_evaluated.values[1]) * d * g
+        f = conductor_fresnel(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
     var next_throughput = ray.throughput * f * cos_i / pdf;

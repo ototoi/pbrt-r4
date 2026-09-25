@@ -1,25 +1,18 @@
 @compute @workgroup_size(8, 8, 1)
-fn sample_dielectric_bounce(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
         return;
     }
-    let ray_index = global_id.y * viewport.width + global_id.x;
-    if (ray_index >= current_ray_count()) {
+    let queue_index = global_id.y * viewport.width + global_id.x;
+    if (queue_index >= scatter_dielectric_count()) {
         return;
     }
+    let ray_index = load_scatter_dielectric_ray(queue_index);
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let samples = load_ray_samples(pixel_index);
     let surface = surfaces[pixel_index];
-    material_texture_eval_base = (surface.attributes_eval_work_item / material_table.attributes_eval_stride)
-        * material_table.texture_eval_stride;
-    if (surface.hit == 0u || surface.flags != 0u) {
-        return;
-    }
     let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
-    if (evaluated.bxdf_kind != MATERIAL_KIND_DIELECTRIC) {
-        return;
-    }
     let eta_attribute = load_material_attribute(evaluated.material_node, 0u);
     if (eta_attribute.kind != 1u) { terminate_secondary_wavelengths(pixel_index); }
     var eta = evaluated.values[0].x;
