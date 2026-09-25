@@ -1,10 +1,7 @@
 use crate::util::error::PbrtError;
 
 use super::shader;
-use super::stages::{
-    all_stage_specs, canonical_wavefront_bindings, BindingClass, BindingSpec, RequiredLimits,
-    ResourceId,
-};
+use super::stages::{canonical_wavefront_bindings, BindingClass, BindingSpec, ResourceId};
 
 pub struct StagePipeline {
     pub pipeline: wgpu::ComputePipeline,
@@ -48,9 +45,6 @@ impl Pipeline {
         texture_program_capacity: u32,
         texture_noise_enabled: bool,
     ) -> Result<Self, PbrtError> {
-        // Validate the complete stage contract before creating the deployed
-        // layout. The canonical registry supplies the current ABI entries.
-        RequiredLimits::from_stages(&all_stage_specs())?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let canonical_bindings = canonical_wavefront_bindings();
         let compute = |label: &'static str,
