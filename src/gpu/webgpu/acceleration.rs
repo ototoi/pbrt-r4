@@ -16,6 +16,10 @@ pub fn build(
     geometries: &[Geometry],
     instances: &[Instance],
     flat_instances: &[flat::Instance],
+    material_roots: &[flat::MaterialRoot],
+    material_nodes: &[flat::MaterialNode],
+    lights: &[flat::Light],
+    light_sampling_models: &[flat::LightSamplingModel],
 ) -> Result<Acceleration, PbrtError> {
     if geometries.is_empty() || instances.is_empty() {
         return Err(PbrtError::error(
@@ -27,15 +31,45 @@ pub fn build(
             "WebGPU instance count exceeds the TLAS custom-data range.",
         ));
     }
+    let mut geometry_has_alpha_mask = vec![false; geometries.len()];
+    for (index, instance) in flat_instances.iter().enumerate() {
+        let layout = material_roots
+            .get(instance.material_root as usize)
+            .ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "Flat instance {index} references an invalid material layout."
+                ))
+            })?;
+        let root = material_nodes
+            .get(layout.node_offset as usize)
+            .ok_or_else(|| PbrtError::error("Flat material root node is missing."))?;
+        if root.kind == "alphamask" {
+            let has_mask = geometry_has_alpha_mask
+                .get_mut(instance.geometry as usize)
+                .ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "Flat instance {index} references an invalid geometry."
+                    ))
+                })?;
+            *has_mask = true;
+        }
+    }
     let sizes: Vec<_> = geometries
         .iter()
-        .map(|geometry| wgpu::BlasTriangleGeometrySizeDescriptor {
-            vertex_format: wgpu::VertexFormat::Float32x3,
-            vertex_count: geometry.vertex_count,
-            index_format: Some(wgpu::IndexFormat::Uint32),
-            index_count: Some(geometry.index_count),
-            flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
-        })
+        .enumerate()
+        .map(
+            |(index, geometry)| wgpu::BlasTriangleGeometrySizeDescriptor {
+                vertex_format: wgpu::VertexFormat::Float32x3,
+                vertex_count: geometry.vertex_count,
+                index_format: Some(wgpu::IndexFormat::Uint32),
+                index_count: Some(geometry.index_count),
+                flags: if geometry_has_alpha_mask[index] {
+                    wgpu::AccelerationStructureGeometryFlags::empty()
+                } else {
+                    wgpu::AccelerationStructureGeometryFlags::OPAQUE
+                },
+            },
+        )
         .collect();
     let blases: Vec<_> = sizes
         .iter()
@@ -73,11 +107,16 @@ pub fn build(
     for (index, (instance, flat_instance)) in instances.iter().zip(flat_instances).enumerate() {
         validate_affine(flat_instance.transform, &format!("Flat instance {index}"))?;
         let transform = row_major_to_tlas_transform(flat_instance.transform);
+        let area_alpha_zero = flat_instance.area_light != flat::INVALID_INDEX
+            && lights
+                .get(flat_instance.area_light as usize)
+                .and_then(|light| light_sampling_models.get(light.sampling_model as usize))
+                .is_some_and(|model| flat::area_light_is_zero_alpha_sample_only(model.flags));
         tlas[index] = Some(wgpu::TlasInstance::new(
             &blases[instance.geometry as usize],
             transform,
             index as u32,
-            0xff,
+            if area_alpha_zero { 0 } else { 0xff },
         ));
     }
 

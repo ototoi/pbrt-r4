@@ -14,18 +14,19 @@ use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
 use super::abi::{
-    camera_uniform, film_uniform, inverse_transpose_linear, light_table_uniform,
-    material_table_uniform, row_major_to_columns, viewport_uniform, AttributeRef, CameraUniform,
-    DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, MeasuredBsdfRecord,
-    MeasuredTableRecord, TextureNodeRecord, TextureRootRecord, TriangleDistributionEntry, Vertex,
-    ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE,
-    LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
-    LIGHT_KIND_UNIFORM_INFINITE, LIGHT_SAMPLER_KIND_BVH, TEXTURE_OPERATION_BILERP,
-    TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX,
-    TEXTURE_OPERATION_DOTS, TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE,
-    TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE,
-    TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
+    camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
+    light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
+    AttributeRef, CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord,
+    LightSamplingModel, LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform,
+    MeasuredBsdfRecord, MeasuredTableRecord, TextureNodeRecord, TextureRootRecord,
+    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
+    LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
+    LIGHT_SAMPLER_KIND_BVH, TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD,
+    TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS,
+    TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE,
+    TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY,
+    TEXTURE_OPERATION_WRINKLED,
 };
 use super::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
 use super::acceleration::{self, Acceleration};
@@ -723,8 +724,10 @@ impl Scene {
                     geometry: instance.geometry,
                     material_root: instance.material_root,
                     area_light: instance.area_light,
-                    orientation_flags: u32::from(instance.reverse_orientation)
-                        | (u32::from(flat::transform_swaps_handedness(instance.transform)) << 1),
+                    orientation_flags: instance_orientation_flags(
+                        instance.reverse_orientation,
+                        flat::transform_swaps_handedness(instance.transform),
+                    ),
                     world_from_object: row_major_to_columns(instance.transform),
                     normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
                 })
@@ -1225,6 +1228,10 @@ impl Scene {
             &geometries,
             &instances,
             &flat.instances,
+            &flat.material_roots,
+            &flat.material_nodes,
+            &flat.lights,
+            &flat.light_sampling_models,
         )?;
         Ok(Self {
             camera,
@@ -1275,16 +1282,8 @@ impl Scene {
         })
     }
 
-    pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
+    pub fn replace_material_kind(&mut self, kind: MaterialKind) {
         self.material_table.debug_material_kind = kind.tag();
-        for material in &mut self.material_nodes {
-            material.kind = kind.tag();
-        }
-        queue.write_buffer(
-            &self.material_node_buffer,
-            0,
-            bytemuck::cast_slice(&self.material_nodes),
-        );
     }
 }
 

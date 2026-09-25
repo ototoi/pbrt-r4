@@ -15,9 +15,22 @@ const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
 const MATERIAL_KIND_MEASURED: u32 = 10u;
 const MATERIAL_KIND_DIFFUSE_TRANSMISSION: u32 = 13u;
+const MATERIAL_KIND_ALPHA_MASK: u32 = 14u;
+const AREA_LIGHT_FLAG_TWO_SIDED: u32 = 1u;
+const AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY: u32 = 2u;
+const INSTANCE_ORIENTATION_FLAG_REVERSED: u32 = 1u;
+const INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS: u32 = 2u;
 const PORTAL_CANDIDATE_INVALID: u32 = 0u;
 const PORTAL_CANDIDATE_SAMPLED: u32 = 1u;
 const PORTAL_CANDIDATE_SELECTED: u32 = 2u;
+
+struct TriangleSurfaceData {
+    position: vec3<f32>,
+    uv: vec2<f32>,
+    geometric_normal: vec3<f32>,
+    valid: u32,
+};
+
 struct AttributesEvalWorkItem {
     material_node: u32,
     child_work_item0: u32,

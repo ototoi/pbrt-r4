@@ -5,6 +5,7 @@ use image::{ImageBuffer, Rgb};
 use pbrt_r4::gpu::flat::portal::prepare_portal_image;
 use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
 use pbrt_r4::gpu::flat::{
+    area_light_flags, area_light_is_two_sided, area_light_is_zero_alpha_sample_only,
     evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, SamplerKind,
     SamplerRandomization, Scene as FlatScene,
 };
@@ -20,6 +21,17 @@ use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+
+#[test]
+fn area_light_flags_use_named_encoders_and_decoders() {
+    let flags = area_light_flags(true, true);
+    assert!(area_light_is_two_sided(flags));
+    assert!(area_light_is_zero_alpha_sample_only(flags));
+
+    let flags = area_light_flags(false, false);
+    assert!(!area_light_is_two_sided(flags));
+    assert!(!area_light_is_zero_alpha_sample_only(flags));
+}
 
 fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
     let mut node = Node::new(name);

@@ -45,11 +45,12 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);
     }
-    if ((instance.orientation_flags & 1u) != 0u) {
+    if (instance_orientation_is_reversed(instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
         normal = -normal;
     }
-    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
+    if (instance_orientation_swaps_handedness(instance.orientation_flags)
+        && dot(object_normal, object_normal) > 0.0) {
         normal = -normal;
     }
     let duv02 = uv0 - uv2;
@@ -85,7 +86,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     tangent = normalize(tangent);
     let material_root = material_roots[instance.material_root];
-    let material_kind = load_material_kind(material_root.node_offset);
+    let material_kind = load_surface_material_kind(material_root);
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
     surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);

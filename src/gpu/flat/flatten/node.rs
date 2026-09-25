@@ -290,6 +290,7 @@ pub fn flatten_node_ref(
                 &name,
                 &world_transform,
                 instance_index,
+                material,
                 reverse_orientation,
                 builder,
             )?

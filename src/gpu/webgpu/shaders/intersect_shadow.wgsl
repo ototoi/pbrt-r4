@@ -29,6 +29,11 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ),
     );
     while (rayQueryProceed(&query)) {
+        let candidate = rayQueryGetCandidateIntersection(&query);
+        if (candidate.kind == RAY_QUERY_INTERSECTION_TRIANGLE
+            && alpha_mask_candidate_accept(shadow_origin, shadow_direction, candidate)) {
+            rayQueryConfirmIntersection(&query);
+        }
     }
     let intersection = rayQueryGetCommittedIntersection(&query);
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {

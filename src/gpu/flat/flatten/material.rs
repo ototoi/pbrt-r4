@@ -1,7 +1,8 @@
 use super::super::texture::TextureRootSpec;
 use super::material_attributes::build_material_attributes;
 use super::{
-    push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, UnsupportedTexturePolicy,
+    push_scalar_attribute, push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder,
+    UnsupportedTexturePolicy,
 };
 use crate::gpu::flat::{MaterialNode, MaterialRoot, INVALID_INDEX};
 use crate::gpu::node::{Material as NodeMaterial, TextureComponent, TextureKind, TextureNode};
@@ -138,11 +139,16 @@ pub fn register_material_source(
             )
         });
     }
-    let requested_kind = material_kind.unwrap_or(&source_material.kind);
     let source_kind = source_material.kind.as_str();
+    let requested_kind = if source_kind == "alphamask" {
+        source_kind
+    } else {
+        material_kind.unwrap_or(source_kind)
+    };
     let supported = matches!(
         requested_kind,
-        "diffuse"
+        "alphamask"
+            | "diffuse"
             | "dielectric"
             | "thindielectric"
             | "conductor_eta_k"
@@ -154,6 +160,7 @@ pub fn register_material_source(
             | "measured"
     );
     let texture_fallback = if requested_kind != "diffusetransmission"
+        && requested_kind != "alphamask"
         && supported
         && has_texture_attribute(source_material)
     {
@@ -190,7 +197,50 @@ pub fn register_material_source(
             vec![push_spectrum_attribute(builder, "reflectance", &yellow)?]
         })
     } else {
-        if requested_kind == "measured" {
+        if requested_kind == "alphamask" {
+            if source_material.material_attributes.len() != 1 {
+                return Err(PbrtError::error(&format!(
+                    "AlphaMask material \"{}\" must have exactly one child material.",
+                    source_material.name
+                )));
+            }
+            if source_material.texture_attributes.len() > 1
+                || source_material
+                    .texture_attributes
+                    .iter()
+                    .any(|(name, texture)| {
+                        name != "alpha"
+                            || texture.components.iter().any(|component| match component {
+                                TextureComponent::Texture(texture) => {
+                                    texture.kind != TextureKind::Float
+                                }
+                                TextureComponent::Mapping(_) => false,
+                            })
+                    })
+            {
+                return Err(PbrtError::error(&format!(
+                    "AlphaMask material \"{}\" must have one float alpha texture at most.",
+                    source_material.name
+                )));
+            }
+            let attribute = if let Some((_, texture)) = source_material.texture_attributes.first() {
+                AttributeRef {
+                    kind: AttributeKind::Texture,
+                    index: intern_texture_root(builder, Arc::clone(texture), 0)?,
+                    name: "alpha".to_string(),
+                }
+            } else {
+                let alpha = source_material.params.get_one_float("alpha", 1.0) as f32;
+                if !alpha.is_finite() {
+                    return Err(PbrtError::error(&format!(
+                        "AlphaMask material \"{}\" has a non-finite alpha value.",
+                        source_material.name
+                    )));
+                }
+                push_scalar_attribute(builder, "alpha", alpha)?
+            };
+            (requested_kind, vec![attribute])
+        } else if requested_kind == "measured" {
             let filename = source_material.params.get_one_string("filename", "");
             if filename.is_empty() {
                 return Err(PbrtError::error(&format!(
@@ -307,6 +357,9 @@ pub fn register_material_source(
                 "GPU mix material must contain exactly two material references.",
             ));
         }
+    } else if kind == "alphamask" {
+        let child = &source_material.material_attributes[0].1;
+        material_children.push(register_material_source(child, builder, material_kind)?);
     }
     let index = u32::try_from(builder.material_source_nodes.len()).map_err(|_| {
         PbrtError::error("The flattened material source-node table exceeds the u32 index range.")
