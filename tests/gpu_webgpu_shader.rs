@@ -211,9 +211,10 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     assert!(evaluate.contains("fn sample_uniform_infinite_direction("));
     assert!(evaluate.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
     assert!(evaluate.contains("is_infinite_light_kind(light_kind)"));
-    assert!(
-        evaluate.contains("light_kind == LIGHT_KIND_AREA || is_infinite_light_kind(light_kind)")
-    );
+    assert!(evaluate.contains(
+        "light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload)"
+    ));
+    assert!(evaluate.contains("|| is_infinite_light_kind(light_kind)"));
 
     let escaped = compose_source(include_str!(
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
@@ -336,7 +337,7 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
         "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
     ));
     assert!(source.contains("sample_uniform_triangle_for_context"));
-    assert!(source.contains("triangle.orientation_flags & 1u"));
+    assert!(source.contains("instance_orientation_is_reversed(triangle.orientation_flags)"));
     assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
     assert!(source.contains("load_area_distribution_count(light_payload)"));
 }
@@ -405,8 +406,18 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
     assert!(source.contains("evaluate_layered_pdf"));
     assert!(source.contains("sample_layered_bottom"));
     assert!(attributes_source.contains("load_material_spectrum(material_node, 1u, lambda)"));
-    assert!(!source.contains("fn sample_texture_program"));
     assert!(!source.contains("Phase 1 of layered evaluation"));
+    // Material textures are resolved by evaluate_textures; the layered
+    // estimators must not re-evaluate texture programs.
+    let layered = compose_source(
+        "@compute @workgroup_size(1) fn test_stage() { evaluate_layered_f(); evaluate_layered_pdf(); }",
+    );
+    assert!(layered.contains("fn evaluate_layered_f("));
+    assert!(!layered.contains("fn sample_texture_program"));
+    // The direct stage evaluates texture programs for area-light alpha
+    // masking, as pbrt-v4 DiffuseAreaLight::SampleLi does.
+    assert!(source.contains("alpha_area_sample_accept("));
+    assert!(source.contains("fn sample_texture_program"));
 }
 
 #[test]
