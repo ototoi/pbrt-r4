@@ -8,7 +8,7 @@ use super::abi::{
 };
 use crate::util::error::PbrtError;
 
-const QUEUE_COUNT: u64 = 6;
+const QUEUE_COUNT: u64 = 14;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
 const RENDER_ERROR_BYTES: u64 = std::mem::size_of::<RenderError>() as u64;
 const STATE_READBACK_BYTES: u64 = QUEUE_COUNTER_BYTES + RENDER_ERROR_BYTES;
@@ -27,6 +27,14 @@ pub struct TypedQueueSizes {
     pub escaped_ray_indices: u64,
     pub portal_light_candidates: u64,
     pub direct_light_samples: u64,
+    pub direct_eval_ray_indices: u64,
+    pub scatter_diffuse_ray_indices: u64,
+    pub scatter_diffuse_transmission_ray_indices: u64,
+    pub scatter_conductor_ray_indices: u64,
+    pub scatter_dielectric_ray_indices: u64,
+    pub scatter_thin_dielectric_ray_indices: u64,
+    pub scatter_measured_ray_indices: u64,
+    pub scatter_coated_ray_indices: u64,
 }
 
 impl TypedQueueSizes {
@@ -87,6 +95,32 @@ impl TypedQueueSizes {
                 std::mem::size_of::<DirectLightSample>(),
                 "direct light samples",
             )?,
+            direct_eval_ray_indices: bytes(std::mem::size_of::<u32>(), "direct-eval queue")?,
+            scatter_diffuse_ray_indices: bytes(
+                std::mem::size_of::<u32>(),
+                "scatter diffuse queue",
+            )?,
+            scatter_diffuse_transmission_ray_indices: bytes(
+                std::mem::size_of::<u32>(),
+                "scatter diffuse transmission queue",
+            )?,
+            scatter_conductor_ray_indices: bytes(
+                std::mem::size_of::<u32>(),
+                "scatter conductor queue",
+            )?,
+            scatter_dielectric_ray_indices: bytes(
+                std::mem::size_of::<u32>(),
+                "scatter dielectric queue",
+            )?,
+            scatter_thin_dielectric_ray_indices: bytes(
+                std::mem::size_of::<u32>(),
+                "scatter thin dielectric queue",
+            )?,
+            scatter_measured_ray_indices: bytes(
+                std::mem::size_of::<u32>(),
+                "scatter measured queue",
+            )?,
+            scatter_coated_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter coated queue")?,
         })
     }
 }
@@ -106,6 +140,14 @@ pub struct Queues {
     pub escaped_ray_indices: wgpu::Buffer,
     pub portal_light_candidates: wgpu::Buffer,
     pub direct_light_samples: wgpu::Buffer,
+    pub direct_eval_ray_indices: wgpu::Buffer,
+    pub scatter_diffuse_ray_indices: wgpu::Buffer,
+    pub scatter_diffuse_transmission_ray_indices: wgpu::Buffer,
+    pub scatter_conductor_ray_indices: wgpu::Buffer,
+    pub scatter_dielectric_ray_indices: wgpu::Buffer,
+    pub scatter_thin_dielectric_ray_indices: wgpu::Buffer,
+    pub scatter_measured_ray_indices: wgpu::Buffer,
+    pub scatter_coated_ray_indices: wgpu::Buffer,
     state_readback: wgpu::Buffer,
 }
 
@@ -132,6 +174,14 @@ impl Queues {
             material: state,
             hit_area: state,
             escaped: state,
+            direct: state,
+            scatter_diffuse: state,
+            scatter_diffuse_transmission: state,
+            scatter_conductor: state,
+            scatter_dielectric: state,
+            scatter_thin_dielectric: state,
+            scatter_measured: state,
+            scatter_coated: state,
         };
         let storage = |label: &'static str, size: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -185,6 +235,38 @@ impl Queues {
                 "pbrt-r4 direct light samples",
                 sizes.direct_light_samples,
             ),
+            direct_eval_ray_indices: storage(
+                "pbrt-r4 direct-eval ray index queue",
+                sizes.direct_eval_ray_indices,
+            ),
+            scatter_diffuse_ray_indices: storage(
+                "pbrt-r4 scatter diffuse ray index queue",
+                sizes.scatter_diffuse_ray_indices,
+            ),
+            scatter_diffuse_transmission_ray_indices: storage(
+                "pbrt-r4 scatter diffuse transmission ray index queue",
+                sizes.scatter_diffuse_transmission_ray_indices,
+            ),
+            scatter_conductor_ray_indices: storage(
+                "pbrt-r4 scatter conductor ray index queue",
+                sizes.scatter_conductor_ray_indices,
+            ),
+            scatter_dielectric_ray_indices: storage(
+                "pbrt-r4 scatter dielectric ray index queue",
+                sizes.scatter_dielectric_ray_indices,
+            ),
+            scatter_thin_dielectric_ray_indices: storage(
+                "pbrt-r4 scatter thin dielectric ray index queue",
+                sizes.scatter_thin_dielectric_ray_indices,
+            ),
+            scatter_measured_ray_indices: storage(
+                "pbrt-r4 scatter measured ray index queue",
+                sizes.scatter_measured_ray_indices,
+            ),
+            scatter_coated_ray_indices: storage(
+                "pbrt-r4 scatter coated ray index queue",
+                sizes.scatter_coated_ray_indices,
+            ),
             state_readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 wavefront state readback"),
                 size: STATE_READBACK_BYTES,
@@ -235,8 +317,10 @@ impl Queues {
         })?;
         let words = bytemuck::try_cast_slice::<u8, u32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU queue-state readback was not u32-aligned."))?;
-        let overflowed = [2usize, 6, 10, 14, 18, 22]
-            .into_iter()
+        // Each QueueState is 4 u32 words (count, capacity, overflow, padding);
+        // the overflow flag is the third word of every queue in QueueCounters.
+        let overflowed = (0..QUEUE_COUNT)
+            .map(|index| index as usize * 4 + 2)
             .any(|index| words.get(index).copied().unwrap_or(0) != 0);
         let render_error = words
             .get(QUEUE_COUNTER_BYTES as usize / std::mem::size_of::<u32>())

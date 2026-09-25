@@ -395,6 +395,14 @@ struct QueueCounters {
     material: QueueState,
     hit_area: QueueState,
     escaped: QueueState,
+    direct: QueueState,
+    scatter_diffuse: QueueState,
+    scatter_diffuse_transmission: QueueState,
+    scatter_conductor: QueueState,
+    scatter_dielectric: QueueState,
+    scatter_thin_dielectric: QueueState,
+    scatter_measured: QueueState,
+    scatter_coated: QueueState,
 };
 
 struct RenderError {
