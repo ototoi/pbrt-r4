@@ -383,7 +383,8 @@ impl Paraboloid {
             return None;
         }
 
-        let it = Interaction::from_surface_sample(&p, &p_error, &n);
+        let uv = Point2f::new(u_phi, (z - z_min) / (z_max - z_min));
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n, &uv);
         Some((it, pdf))
     }
 

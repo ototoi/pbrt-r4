@@ -228,7 +228,16 @@ impl Disk {
             .object_to_world
             .transform_point_with_abs_error(&p_obj, &Point3f::new(0.0, 0.0, 0.0));
         let pdf = 1.0 / self.area();
-        let it = Interaction::from_surface_sample(&p, &p_error, &n);
+        let mut phi = Float::atan2(pd.y, pd.x);
+        if phi < 0.0 {
+            phi += 2.0 * PI;
+        }
+        let radius_sample = Float::sqrt(p_obj.x * p_obj.x + p_obj.y * p_obj.y);
+        let uv = Point2f::new(
+            phi / self.phi_max,
+            (radius - radius_sample) / (radius - self.inner_radius),
+        );
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n, &uv);
         return Some((it, pdf));
     }
 

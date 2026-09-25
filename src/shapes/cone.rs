@@ -341,7 +341,8 @@ impl Cone {
         if !pdf.is_finite() || pdf <= 0.0 {
             return None;
         }
-        let it = Interaction::from_surface_sample(&p, &p_error, &n);
+        let uv = Point2f::new(u_phi, v);
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n, &uv);
         Some((it, pdf))
     }
 

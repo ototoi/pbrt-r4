@@ -3,9 +3,9 @@ use std::process::Command;
 use std::sync::Arc;
 
 use pbrt_r4::base::light::Light;
-use pbrt_r4::base::shape::Shape;
+use pbrt_r4::base::shape::{Shape, ShapeSampleContext};
 use pbrt_r4::media::MediumInterface;
-use pbrt_r4::paramdict::ParameterDictionary;
+use pbrt_r4::paramdict::{ParameterDictionary, TextureParameterDictionary};
 use pbrt_r4::prelude::*;
 use pbrt_r4::util::imageio::read_image::read_image;
 use pbrt_r4::util::spectrum::SampledWavelengths;
@@ -199,4 +199,125 @@ fn create_triangle_area_light(alpha: Option<Float>) -> Arc<Light> {
         &Arc::new(shape),
     )
     .expect("diffuse area light")
+}
+
+#[test]
+fn sampled_area_light_shapes_preserve_uv_for_alpha_textures() {
+    let identity = Transform::identity();
+    let reference = ShapeSampleContext {
+        p: Point3f::new(3.0, 0.0, 3.0),
+        ..Default::default()
+    };
+    let u = Point2f::new(0.25, 0.75);
+
+    for kind in ["disk", "cylinder"] {
+        let shape = Shape::create(
+            kind,
+            &identity,
+            &identity,
+            false,
+            &ParameterDictionary::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .remove(0);
+        for sampled in [shape.sample(&u), shape.sample_from(&reference, &u)] {
+            let (intr, _) = sampled.expect("sampled area-light point");
+            let uv = intr.get_uv();
+            assert_ne!(uv, Point2f::zero(), "{kind} sample lost its UV");
+        }
+    }
+
+    for kind in ["cone", "paraboloid", "hyperboloid", "curve"] {
+        let mut params = ParameterDictionary::new();
+        if kind == "hyperboloid" {
+            params.add_point("p1", &[0.5, 0.0, 0.0]);
+            params.add_point("p2", &[1.0, 0.0, 1.0]);
+        } else if kind == "curve" {
+            params.add_point(
+                "P",
+                &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 2.0],
+            );
+        }
+        let shape = Shape::create(kind, &identity, &identity, false, &params, &HashMap::new())
+            .unwrap()
+            .remove(0);
+        let (intr, _) = shape.sample(&u).expect("sampled area-light point");
+        assert_ne!(intr.get_uv(), Point2f::zero(), "{kind} sample lost its UV");
+    }
+
+    let sphere = Shape::create(
+        "sphere",
+        &identity,
+        &identity,
+        false,
+        &ParameterDictionary::new(),
+        &HashMap::new(),
+    )
+    .unwrap()
+    .remove(0);
+    let (intr, _) = sphere
+        .sample_from(&reference, &u)
+        .expect("sphere sampled from an outside reference point");
+    assert_ne!(intr.get_uv(), Point2f::zero(), "sphere sample lost its UV");
+}
+
+#[test]
+fn disk_and_cylinder_sample_alpha_at_their_own_uv() {
+    let identity = Transform::identity();
+    let mut texture_params = ParameterDictionary::new();
+    texture_params.add_float("uscale", 4.0);
+    texture_params.add_float("vscale", 4.0);
+    texture_params.add_string("aamode", "none");
+    let float_textures = HashMap::new();
+    let spectrum_textures = HashMap::new();
+    let texture_params =
+        TextureParameterDictionary::new(&texture_params, &float_textures, &spectrum_textures);
+    let mask = FloatTexture::create("checkerboard", &identity, &texture_params).unwrap();
+    let mut float_textures = HashMap::new();
+    float_textures.insert("mask".to_string(), Arc::new(mask));
+
+    let mut shape_params = ParameterDictionary::new();
+    shape_params.add_string("alpha", "mask");
+    let reference = ShapeSampleContext {
+        p: Point3f::new(3.0, 0.0, 3.0),
+        ..Default::default()
+    };
+    for kind in ["disk", "cylinder"] {
+        let shape = Shape::create(
+            kind,
+            &identity,
+            &identity,
+            false,
+            &shape_params,
+            &float_textures,
+        )
+        .unwrap()
+        .remove(0);
+        for from_reference in [false, true] {
+            let mut masked = 0;
+            let mut visible = 0;
+            for i in 0..128 {
+                let u = Point2f::new(
+                    (i as Float + 0.5) / 128.0,
+                    ((i * 37) % 128) as Float / 128.0,
+                );
+                let sampled = if from_reference {
+                    shape.sample_from(&reference, &u)
+                } else {
+                    shape.sample(&u)
+                };
+                let Some((intr, _)) = sampled else { continue };
+                match shape.alpha(&intr) {
+                    Some(0.0) => masked += 1,
+                    Some(1.0) => visible += 1,
+                    other => panic!("unexpected {kind} alpha: {other:?}"),
+                }
+            }
+            assert!(
+                masked > 0 && visible > 0,
+                "{kind} samples all used one alpha texel"
+            );
+        }
+    }
 }

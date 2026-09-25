@@ -709,7 +709,8 @@ impl Curve {
         if !pdf.is_finite() || pdf <= 0.0 {
             return None;
         }
-        let it = Interaction::from_surface_sample(&p, &p_error, &n_world);
+        let uv = Point2f::new(u_global, v_curve);
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n_world, &uv);
         Some((it, pdf))
     }
 

@@ -199,6 +199,8 @@ impl DiffuseAreaLight {
         interaction.p = p;
         interaction.n = n;
         interaction.uv = uv;
+        // v4 DiffuseAreaLight::L applies the point-hash test even after a
+        // primitive's ray-hash alpha test has accepted an intersection.
         if self.is_alpha_masked_at_sample(&interaction.into()) {
             return SampledSpectrum::zero();
         }
