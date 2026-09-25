@@ -40,7 +40,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
         80
     );
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
-    assert_eq!(std::mem::size_of::<QueueCounters>(), 96);
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 224);
     assert_eq!(std::mem::size_of::<RenderError>(), 16);
     assert_eq!(std::mem::offset_of!(RenderError, value), 0);
     assert_eq!(std::mem::offset_of!(RenderError, padding), 4);

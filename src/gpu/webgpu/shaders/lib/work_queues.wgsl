@@ -114,3 +114,193 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
 fn pixel_count() -> u32 {
     return viewport.width * viewport.height;
 }
+
+fn append_direct_eval(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.direct.count, 1u);
+    if (index < queue_counters.direct.capacity) {
+        direct_eval_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.direct.overflow, 1u);
+    }
+}
+
+fn direct_eval_count() -> u32 {
+    return atomicLoad(&queue_counters.direct.count);
+}
+
+fn load_direct_eval_ray(index: u32) -> u32 {
+    return direct_eval_ray_indices[index];
+}
+
+fn append_scatter_diffuse(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_diffuse.count, 1u);
+    if (index < queue_counters.scatter_diffuse.capacity) {
+        scatter_diffuse_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_diffuse.overflow, 1u);
+    }
+}
+
+fn scatter_diffuse_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_diffuse.count);
+}
+
+fn load_scatter_diffuse_ray(index: u32) -> u32 {
+    return scatter_diffuse_ray_indices[index];
+}
+
+fn append_scatter_diffuse_transmission(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_diffuse_transmission.count, 1u);
+    if (index < queue_counters.scatter_diffuse_transmission.capacity) {
+        scatter_diffuse_transmission_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_diffuse_transmission.overflow, 1u);
+    }
+}
+
+fn scatter_diffuse_transmission_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_diffuse_transmission.count);
+}
+
+fn load_scatter_diffuse_transmission_ray(index: u32) -> u32 {
+    return scatter_diffuse_transmission_ray_indices[index];
+}
+
+fn append_scatter_conductor(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_conductor.count, 1u);
+    if (index < queue_counters.scatter_conductor.capacity) {
+        scatter_conductor_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_conductor.overflow, 1u);
+    }
+}
+
+fn scatter_conductor_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_conductor.count);
+}
+
+fn load_scatter_conductor_ray(index: u32) -> u32 {
+    return scatter_conductor_ray_indices[index];
+}
+
+fn append_scatter_dielectric(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_dielectric.count, 1u);
+    if (index < queue_counters.scatter_dielectric.capacity) {
+        scatter_dielectric_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_dielectric.overflow, 1u);
+    }
+}
+
+fn scatter_dielectric_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_dielectric.count);
+}
+
+fn load_scatter_dielectric_ray(index: u32) -> u32 {
+    return scatter_dielectric_ray_indices[index];
+}
+
+fn append_scatter_thin_dielectric(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_thin_dielectric.count, 1u);
+    if (index < queue_counters.scatter_thin_dielectric.capacity) {
+        scatter_thin_dielectric_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_thin_dielectric.overflow, 1u);
+    }
+}
+
+fn scatter_thin_dielectric_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_thin_dielectric.count);
+}
+
+fn load_scatter_thin_dielectric_ray(index: u32) -> u32 {
+    return scatter_thin_dielectric_ray_indices[index];
+}
+
+fn append_scatter_measured(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_measured.count, 1u);
+    if (index < queue_counters.scatter_measured.capacity) {
+        scatter_measured_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_measured.overflow, 1u);
+    }
+}
+
+fn scatter_measured_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_measured.count);
+}
+
+fn load_scatter_measured_ray(index: u32) -> u32 {
+    return scatter_measured_ray_indices[index];
+}
+
+fn append_scatter_coated(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_coated.count, 1u);
+    if (index < queue_counters.scatter_coated.capacity) {
+        scatter_coated_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_coated.overflow, 1u);
+    }
+}
+
+fn scatter_coated_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_coated.count);
+}
+
+fn load_scatter_coated_ray(index: u32) -> u32 {
+    return scatter_coated_ray_indices[index];
+}
+
+// Shared tail of every non-specular scatter kind's direct-lighting
+// evaluation: MIS weight against the light sample's own pdf, the direct
+// contribution, and the shadow ray. `f`, `bsdf_pdf`, and `cosine` are the
+// BSDF's own f/pdf/AbsCosTheta at the sampled light direction.
+fn add_direct_lighting(
+    ray: RayWorkItem,
+    surface: SurfaceWorkItem,
+    light_sample: DirectLightSample,
+    f: vec4<f32>,
+    bsdf_pdf: f32,
+    cosine: f32,
+) {
+    let wi = light_sample.direction_pdf.xyz;
+    let sampled_light_pdf = light_sample.direction_pdf.w;
+    let light_kind = light_sample.light_kind;
+    var mis_weight = 1.0;
+    if (light_sample.use_mis != 0u) {
+        let light_pdf2 = sampled_light_pdf * sampled_light_pdf;
+        let bsdf_pdf2 = bsdf_pdf * bsdf_pdf;
+        mis_weight = light_pdf2 / max(light_pdf2 + bsdf_pdf2, 1e-7);
+    }
+    let direct = light_sample.radiance * f * cosine
+        / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
+        * mis_weight;
+    // Spawn the shadow ray from the side containing the sampled light.
+    let shadow_origin = offset_ray_origin(
+        surface.position.xyz,
+        surface.position_error.xyz,
+        surface.geometric_normal.xyz,
+        wi,
+    );
+    var shadow_direction = wi;
+    var shadow_distance = RAY_T_MAX;
+    if (light_kind == LIGHT_KIND_AREA) {
+        let shadow_target = offset_ray_origin(
+            light_sample.position, light_sample.position_error, light_sample.normal, -wi,
+        );
+        let shadow_vector = shadow_target - shadow_origin;
+        shadow_distance = length(shadow_vector);
+        shadow_direction = shadow_vector / shadow_distance;
+    } else if (light_kind != LIGHT_KIND_DISTANT && !is_infinite_light_kind(light_kind)) {
+        let shadow_vector = light_sample.position - shadow_origin;
+        shadow_distance = length(shadow_vector);
+        shadow_direction = shadow_vector / shadow_distance;
+    }
+    append_shadow_ray(
+        ray.pixel_index,
+        shadow_origin,
+        shadow_direction,
+        shadow_distance,
+        (ray.throughput * direct),
+    );
+}
