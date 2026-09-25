@@ -55,8 +55,6 @@ var<storage, read> scalar_attributes: array<f32>;
 var<storage, read> portal_infinite_lights: array<PortalImageInfiniteRecord>;
 @group(0) @binding(25)
 var<storage, read> portal_distribution: array<PortalDistributionTexel>;
-@group(0) @binding(50)
-var<storage, read_write> portal_light_candidates: array<PortalLightCandidate>;
 @group(0) @binding(51)
 var<storage, read_write> direct_light_samples: array<DirectLightSample>;
 @group(0) @binding(52)

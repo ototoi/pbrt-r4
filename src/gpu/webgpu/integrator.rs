@@ -45,8 +45,6 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/evaluate_textures.wgsl"),
     include_str!("shaders/evaluate_attributes.wgsl"),
     include_str!("shaders/classify_surface_scatter.wgsl"),
-    include_str!("shaders/select_portal_direct.wgsl"),
-    include_str!("shaders/sample_portal_direct.wgsl"),
     include_str!("shaders/sample_direct_light.wgsl"),
     include_str!("shaders/scatter_diffuse.wgsl"),
     include_str!("shaders/scatter_diffuse_transmission.wgsl"),
@@ -268,9 +266,6 @@ impl WavefrontPathIntegrator {
                 ResourceId::PortalDistribution => {
                     scene.portal_distribution_buffer.as_entire_binding()
                 }
-                ResourceId::PortalLightCandidate => {
-                    queues.portal_light_candidates.as_entire_binding()
-                }
                 ResourceId::DirectLightSample => queues.direct_light_samples.as_entire_binding(),
                 ResourceId::DirectEvalQueue => queues.direct_eval_ray_indices.as_entire_binding(),
                 ResourceId::ScatterDiffuseQueue => {
@@ -385,16 +380,6 @@ impl WavefrontPathIntegrator {
                 "classify_surface_scatter",
                 &pipeline.classify_surface_scatter,
                 include_str!("shaders/classify_surface_scatter.wgsl"),
-            ),
-            (
-                "sample_portal_direct",
-                &pipeline.sample_portal_direct,
-                include_str!("shaders/sample_portal_direct.wgsl"),
-            ),
-            (
-                "select_portal_direct",
-                &pipeline.select_portal_direct,
-                include_str!("shaders/select_portal_direct.wgsl"),
             ),
             (
                 "sample_direct_light",
@@ -655,20 +640,6 @@ impl WavefrontPathIntegrator {
                         self.bind_groups("prepare_queue_dispatch"),
                         1,
                         1,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.select_portal_direct.pipeline,
-                        self.bind_groups("select_portal_direct"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_portal_direct.pipeline,
-                        self.bind_groups("sample_portal_direct"),
-                        workgroups_x,
-                        workgroups_y,
                     );
                     dispatch_indirect(
                         &mut encoder,
