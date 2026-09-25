@@ -1282,16 +1282,8 @@ impl Scene {
         })
     }
 
-    pub fn replace_material_kind(&mut self, queue: &wgpu::Queue, kind: MaterialKind) {
+    pub fn replace_material_kind(&mut self, kind: MaterialKind) {
         self.material_table.debug_material_kind = kind.tag();
-        for material in &mut self.material_nodes {
-            material.kind = kind.tag();
-        }
-        queue.write_buffer(
-            &self.material_node_buffer,
-            0,
-            bytemuck::cast_slice(&self.material_nodes),
-        );
     }
 }
 

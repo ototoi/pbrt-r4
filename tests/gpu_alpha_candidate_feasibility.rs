@@ -491,6 +491,61 @@ Shape "trianglemesh"
 
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn debug_material_preserves_alpha_mask() {
+    let directory = tempfile::tempdir().unwrap();
+    let scene = directory.path().join("debug-alpha-mask.pbrt");
+    std::fs::write(
+        &scene,
+        r#"LookAt 0 0 3  0 0 0  0 1 0
+Camera "perspective" "float fov" [35]
+Film "rgb" "integer xresolution" [1] "integer yresolution" [1]
+Sampler "independent" "integer pixelsamples" [16]
+Integrator "path" "integer maxdepth" [1]
+WorldBegin
+LightSource "infinite" "rgb L" [1 1 1]
+Texture "mask" "float" "constant" "float value" [0]
+Material "diffuse" "rgb reflectance" [0 0 0]
+Shape "trianglemesh"
+    "point3 P" [-2 -2 0  2 -2 0  0 2 0]
+    "integer indices" [0 1 2]
+    "texture alpha" ["mask"]
+"#,
+    )
+    .unwrap();
+    let render = |input: &std::path::Path, name: &str| {
+        let output = directory.path().join(name);
+        let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
+            .env("PBRT_R4_GPU_DEBUG_MATERIAL", "uv")
+            .args([
+                "--use-gpu",
+                "--outfile",
+                output.to_str().unwrap(),
+                input.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "debug material render failed");
+        let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+        assert_eq!([resolution.x, resolution.y], [1, 1]);
+        pixels[0].to_rgb().into_iter().sum::<f32>()
+    };
+    let masked = render(&scene, "masked.exr");
+    let opaque_scene = directory.path().join("debug-opaque.pbrt");
+    let scene_text = std::fs::read_to_string(&scene).unwrap();
+    std::fs::write(
+        &opaque_scene,
+        scene_text.replace("    \"texture alpha\" [\"mask\"]", ""),
+    )
+    .unwrap();
+    let opaque = render(&opaque_scene, "opaque.exr");
+    assert!(
+        masked < opaque * 0.5,
+        "debug material made the alpha-masked triangle opaque: masked={masked}, opaque={opaque}"
+    );
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn fractional_scalar_alpha_matches_cpu_coverage() {
     let directory = tempfile::tempdir().unwrap();
     let scene = directory.path().join("alpha-half.pbrt");

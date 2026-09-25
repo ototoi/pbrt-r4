@@ -327,7 +327,7 @@ fn instruction(
         "constant" => match texture.kind {
             TextureKind::Float => Ok(Instruction::ConstantFloat {
                 dst,
-                value: texture.params.get_one_float("value", 0.0) as f32,
+                value: texture.params.get_one_float("value", 1.0) as f32,
             }),
             TextureKind::Spectrum => Ok(Instruction::ConstantRgb {
                 dst,
