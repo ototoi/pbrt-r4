@@ -11,7 +11,13 @@ use crate::gpu::flat::texture::{ProceduralOperation, TextureInstruction};
 use crate::util::error::PbrtError;
 use crate::util::misc::ProgressReporter;
 
-use super::abi::WORKGROUP_SIZE;
+use super::abi::{
+    DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_DIRECT_EVAL, QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
+    QUEUE_DISPATCH_SLOT_SCATTER_COATED, QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
+    QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
+    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION, QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
+    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, WORKGROUP_SIZE,
+};
 use super::context::Context;
 use super::film::Film;
 use super::material::MaterialKind;
@@ -33,6 +39,7 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/handle_escaped.wgsl"),
     include_str!("shaders/shade_surface.wgsl"),
     include_str!("shaders/handle_emissive.wgsl"),
+    include_str!("shaders/prepare_queue_dispatch.wgsl"),
     include_str!("shaders/evaluate_textures.wgsl"),
     include_str!("shaders/evaluate_attributes.wgsl"),
     include_str!("shaders/classify_surface_scatter.wgsl"),
@@ -285,6 +292,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::ScatterCoatedQueue => {
                     queues.scatter_coated_ray_indices.as_entire_binding()
                 }
+                ResourceId::QueueDispatchArgs => queues.queue_dispatch_args.as_entire_binding(),
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
                 ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
@@ -355,6 +363,11 @@ impl WavefrontPathIntegrator {
                 "handle_emissive",
                 &pipeline.handle_emissive,
                 include_str!("shaders/handle_emissive.wgsl"),
+            ),
+            (
+                "prepare_queue_dispatch",
+                &pipeline.prepare_queue_dispatch,
+                include_str!("shaders/prepare_queue_dispatch.wgsl"),
             ),
             (
                 "evaluate_textures",
@@ -573,19 +586,31 @@ impl WavefrontPathIntegrator {
                     workgroups_x,
                     workgroups_y,
                 );
+                // prepare_queue_dispatch rewrites every indirect-dispatch
+                // slot from the current queue counts. The material-eval
+                // queue's count is final now that shade_surface has run, so
+                // evaluate_textures/evaluate_attributes/classify_surface_scatter
+                // can dispatch only as many workgroups as there are hits.
                 dispatch(
+                    &mut encoder,
+                    &self.pipeline.prepare_queue_dispatch.pipeline,
+                    self.bind_groups("prepare_queue_dispatch"),
+                    1,
+                    1,
+                );
+                dispatch_indirect(
                     &mut encoder,
                     &self.pipeline.evaluate_textures.pipeline,
                     self.bind_groups("evaluate_textures"),
-                    workgroups_x,
-                    workgroups_y,
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
                 );
-                dispatch(
+                dispatch_indirect(
                     &mut encoder,
                     &self.pipeline.evaluate_attributes.pipeline,
                     self.bind_groups("evaluate_attributes"),
-                    workgroups_x,
-                    workgroups_y,
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
                 );
                 // classify_surface_scatter routes each hit surface into the
                 // scatter queue for its resolved leaf kind, and (for the
@@ -595,19 +620,28 @@ impl WavefrontPathIntegrator {
                 // max_depth; the queues classify_surface_scatter would fill
                 // are never read at that point either way.
                 if depth < self.scene.render_settings.max_depth {
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.classify_surface_scatter.pipeline,
                         self.bind_groups("classify_surface_scatter"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
                     );
+                    // The direct-eval and scatter queues' counts are final
+                    // now that classify_surface_scatter has run.
                     dispatch(
+                        &mut encoder,
+                        &self.pipeline.prepare_queue_dispatch.pipeline,
+                        self.bind_groups("prepare_queue_dispatch"),
+                        1,
+                        1,
+                    );
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.select_portal_direct.pipeline,
                         self.bind_groups("select_portal_direct"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
                     );
                     dispatch(
                         &mut encoder,
@@ -616,61 +650,61 @@ impl WavefrontPathIntegrator {
                         workgroups_x,
                         workgroups_y,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.sample_direct_light.pipeline,
                         self.bind_groups("sample_direct_light"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_diffuse.pipeline,
                         self.bind_groups("scatter_diffuse"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_diffuse_transmission.pipeline,
                         self.bind_groups("scatter_diffuse_transmission"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_conductor.pipeline,
                         self.bind_groups("scatter_conductor"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_dielectric.pipeline,
                         self.bind_groups("scatter_dielectric"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_thin_dielectric.pipeline,
                         self.bind_groups("scatter_thin_dielectric"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_measured.pipeline,
                         self.bind_groups("scatter_measured"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.scatter_coated.pipeline,
                         self.bind_groups("scatter_coated"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SCATTER_COATED,
                     );
                     dispatch(
                         &mut encoder,
@@ -791,4 +825,22 @@ fn dispatch(
     pass.set_bind_group(0, &bind_groups[0], &[]);
     pass.set_bind_group(1, &bind_groups[1], &[]);
     pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+}
+
+fn dispatch_indirect(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::ComputePipeline,
+    bind_groups: &[wgpu::BindGroup; 2],
+    indirect_buffer: &wgpu::Buffer,
+    slot: u64,
+) {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None,
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, &bind_groups[0], &[]);
+    pass.set_bind_group(1, &bind_groups[1], &[]);
+    let offset = slot * std::mem::size_of::<DispatchIndirectArgs>() as u64;
+    pass.dispatch_workgroups_indirect(indirect_buffer, offset);
 }
