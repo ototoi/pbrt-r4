@@ -3,8 +3,8 @@ use wgpu::util::DeviceExt;
 
 use super::abi::{
     AttributesEvalWorkItem, DirectLightSample, DispatchIndirectArgs, PixelSampleState,
-    PortalLightCandidate, QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem,
-    SurfaceWorkItem, TextureEvalResult, QUEUE_DISPATCH_SLOT_COUNT,
+    QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem,
+    TextureEvalResult, QUEUE_DISPATCH_SLOT_COUNT,
 };
 use crate::util::error::PbrtError;
 
@@ -27,7 +27,6 @@ pub struct TypedQueueSizes {
     pub texture_eval_results: u64,
     pub hit_area_ray_indices: u64,
     pub escaped_ray_indices: u64,
-    pub portal_light_candidates: u64,
     pub direct_light_samples: u64,
     pub direct_eval_ray_indices: u64,
     pub scatter_diffuse_ray_indices: u64,
@@ -89,10 +88,6 @@ impl TypedQueueSizes {
             .ok_or_else(|| PbrtError::error("WebGPU texture results size overflowed."))?,
             hit_area_ray_indices: bytes(std::mem::size_of::<u32>(), "hit-area queue")?,
             escaped_ray_indices: bytes(std::mem::size_of::<u32>(), "escaped queue")?,
-            portal_light_candidates: bytes(
-                std::mem::size_of::<PortalLightCandidate>(),
-                "portal light candidates",
-            )?,
             direct_light_samples: bytes(
                 std::mem::size_of::<DirectLightSample>(),
                 "direct light samples",
@@ -140,7 +135,6 @@ pub struct Queues {
     pub texture_eval_results: wgpu::Buffer,
     pub hit_area_ray_indices: wgpu::Buffer,
     pub escaped_ray_indices: wgpu::Buffer,
-    pub portal_light_candidates: wgpu::Buffer,
     pub direct_light_samples: wgpu::Buffer,
     pub direct_eval_ray_indices: wgpu::Buffer,
     pub scatter_diffuse_ray_indices: wgpu::Buffer,
@@ -229,10 +223,6 @@ impl Queues {
             escaped_ray_indices: storage(
                 "pbrt-r4 escaped ray index queue",
                 sizes.escaped_ray_indices,
-            ),
-            portal_light_candidates: storage(
-                "pbrt-r4 portal light candidates",
-                sizes.portal_light_candidates,
             ),
             direct_light_samples: storage(
                 "pbrt-r4 direct light samples",
