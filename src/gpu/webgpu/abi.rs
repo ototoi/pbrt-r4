@@ -335,16 +335,6 @@ pub struct PortalDistributionTexel {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct PortalLightCandidate {
-    pub position_uv: [f32; 4],
-    pub sample_direction_pdf: [f32; 4],
-    pub state: u32,
-    pub light_index: u32,
-    pub padding: [u32; 2],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct DirectLightSample {
     pub direction_pdf: [f32; 4],
     pub radiance: [f32; 4],
