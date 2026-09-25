@@ -7,7 +7,6 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray_index = load_scatter_dielectric_ray(queue_index);
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
-    let samples = load_ray_samples(pixel_index);
     let surface = surfaces[pixel_index];
     let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
     let eta_attribute = load_material_attribute(evaluated.material_node, 0u);
@@ -18,37 +17,33 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         set_render_error();
         return;
     }
-    let wo = normalize(-ray.direction.xyz);
-    var normal = normalize(surface.normal.xyz);
-    var eta_i = 1.0;
-    var eta_t = eta;
-    if (dot(wo, normal) < 0.0) {
-        normal = -normal;
-        eta_i = eta;
-        eta_t = 1.0;
-    }
-    let cos_i = clamp(dot(wo, normal), 0.0, 1.0);
-    let eta_ratio = eta_i / eta_t;
-    let sin2_t = eta_ratio * eta_ratio * max(0.0, 1.0 - cos_i * cos_i);
-    var fresnel = 1.0;
-    if (sin2_t < 1.0) {
-        let cos_t = sqrt(max(0.0, 1.0 - sin2_t));
-        let r_parallel = (eta_t * cos_i - eta_i * cos_t)
-            / (eta_t * cos_i + eta_i * cos_t);
-        let r_perpendicular = (eta_i * cos_i - eta_t * cos_t)
-            / (eta_i * cos_i + eta_t * cos_t);
-        fresnel = 0.5 * (r_parallel * r_parallel + r_perpendicular * r_perpendicular);
+    let normal = normalize(surface.normal.xyz);
+    let tangent = make_tangent(normal);
+    let bitangent = cross(normal, tangent);
+    let wo = scattering_local(normalize(-ray.direction.xyz), normal);
+    if (wo.z == 0.0) { return; }
+
+    // Direct lighting. pbrt-v4 DielectricBxDF::f/PDF are non-zero only for a
+    // rough interface (classify_surface_scatter only enqueues rough
+    // dielectrics into the direct-lighting queue).
+    let light_sample = direct_light_samples[pixel_index];
+    if (light_sample.valid != 0u) {
+        let wi = scattering_local(light_sample.direction_pdf.xyz, normal);
+        let bsdf_pdf = dielectric_interface_pdf(evaluated, wo, wi, true, true);
+        if (bsdf_pdf > 0.0) {
+            let f = dielectric_interface_f(evaluated, wo, wi);
+            add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, abs(wi.z));
+        }
     }
 
-    var direction = reflect(-wo, normal);
-    var next_throughput = ray.throughput;
-    if (samples.indirect.x >= fresnel && sin2_t < 1.0) {
-        direction = refract(-wo, normal, eta_ratio);
-        next_throughput = next_throughput / max(eta_ratio * eta_ratio, 1e-7);
-    }
-    direction = normalize(direction);
-    let next_pdf = select(max(1.0 - fresnel, 1e-7), max(fresnel, 1e-7),
-        samples.indirect.x < fresnel || sin2_t >= 1.0);
+    // Indirect bounce.
+    let samples = load_ray_samples(pixel_index);
+    let bs = sample_dielectric_interface(
+        evaluated, wo, samples.indirect.x, samples.indirect.yz, true, true,
+    );
+    if (bs.valid == 0u || bs.pdf <= 0.0 || bs.wi.z == 0.0) { return; }
+    let direction = normalize(tangent * bs.wi.x + bitangent * bs.wi.y + normal * bs.wi.z);
+    let next_throughput = ray.throughput * bs.f * abs(bs.wi.z) / bs.pdf;
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
@@ -60,9 +55,9 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         pixel_index,
         ray.depth + 1u,
         ray.inv_w_u,
-        ray.inv_w_u / next_pdf,
-        next_pdf,
-        1u, 0u, 0u,
+        ray.inv_w_u / bs.pdf,
+        bs.pdf,
+        bs.specular, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
