@@ -4,7 +4,7 @@ use pbrt_r4::gpu::webgpu::abi::{
     PortalDistributionTexel, PortalImageInfiniteRecord, PortalLightCandidate,
 };
 use pbrt_r4::gpu::webgpu::shader::{
-    compose_source, compose_source_with_noise, required_limits_for_sources,
+    common_library_source, compose_source, compose_source_with_noise, required_limits_for_sources,
 };
 use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 
@@ -34,10 +34,7 @@ const SAMPLE_CONDUCTOR_BOUNCE_SHADER: &str =
 const SAMPLE_COMPOSITE_BOUNCE_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/sample_composite_bounce.wgsl");
 const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
-const COMMON_SHADER: &str = concat!(
-    include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
-    include_str!("../src/gpu/webgpu/shaders/wavefront.wgsl")
-);
+const TYPES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/types.wgsl");
 const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
 const SAMPLER_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sampler.wgsl");
 const SPECTRUM_TEST_SHADER: &str = r#"
@@ -97,8 +94,8 @@ fn measured_material_shader_uses_packed_texture_tables() {
 
     assert!(SHADE_SURFACE_SHADER.contains("surfaces[pixel_index].tangent"));
     assert!(SHADE_SURFACE_SHADER.contains("object_dpdu"));
-    assert!(COMMON_SHADER.contains("fn scattering_local_frame("));
-    assert!(COMMON_SHADER.contains("fn scattering_world_frame("));
+    assert!(common_shader().contains("fn scattering_local_frame("));
+    assert!(common_shader().contains("fn scattering_world_frame("));
     assert!(!direct.contains("max(p1 - p0"));
     assert!(!direct.contains("max(abs(r0 + r1)"));
 }
@@ -121,9 +118,9 @@ fn attribute_shader_evaluates_procedural_texture_programs() {
 
 #[test]
 fn texture_shader_uses_v4_non_uv_mapping_conventions() {
-    assert!(COMMON_SHADER
+    assert!(common_shader()
         .contains("return vec2<f32>(acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359, phi);"));
-    assert!(COMMON_SHADER
+    assert!(common_shader()
         .contains("let s = (3.14159265359 + atan2(p.y, p.x)) / (2.0 * 3.14159265359);"));
 }
 
@@ -152,7 +149,7 @@ fn primary_and_path_samples_use_the_sampler_module() {
     assert!(primary.contains("var sampler_table: texture_2d<u32>;"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
-    assert!(COMMON_SHADER.contains("let first_dimension = 6u + 8u * depth;"));
+    assert!(common_shader().contains("let first_dimension = 6u + 8u * depth;"));
     assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
 }
 
@@ -174,37 +171,38 @@ fn required_limits_reject_unregistered_group_zero_bindings() {
 
 #[test]
 fn immutable_scene_metadata_is_separate_from_viewport_state() {
-    let viewport = COMMON_SHADER
+    let common = common_shader();
+    let viewport = common
         .split("struct ViewportUniform {")
         .nth(1)
         .and_then(|tail| tail.split("};").next())
         .unwrap();
     assert!(!viewport.contains("light_count"));
-    assert!(COMMON_SHADER.contains("struct MaterialTableUniform {"));
-    assert!(COMMON_SHADER.contains("struct LightTableUniform {"));
-    assert!(COMMON_SHADER.contains("finite_light_count: u32"));
-    assert!(COMMON_SHADER.contains("infinite_light_count: u32"));
+    assert!(common.contains("struct MaterialTableUniform {"));
+    assert!(common.contains("struct LightTableUniform {"));
+    assert!(common.contains("finite_light_count: u32"));
+    assert!(common.contains("infinite_light_count: u32"));
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(19)"));
     assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
     assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
-    assert!(COMMON_SHADER.contains("struct MaterialNode {"));
-    assert!(!COMMON_SHADER.contains("tree_size"));
-    assert!(!COMMON_SHADER.contains("tree_base"));
+    assert!(common.contains("struct MaterialNode {"));
+    assert!(!common.contains("tree_size"));
+    assert!(!common.contains("tree_base"));
     assert!(RESOURCES_SHADER.contains("@group(0) @binding(46)"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> material_nodes: array<MaterialNode>;"));
-    assert!(COMMON_SHADER.contains("struct AttributeRef {"));
+    assert!(common.contains("struct AttributeRef {"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> attribute_refs: array<AttributeRef>;"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
-    assert!(!COMMON_SHADER.contains("scene_data"));
+    assert!(!common.contains("scene_data"));
     assert!(RESOURCES_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
-    assert!(!COMMON_SHADER.contains("material_light_data"));
+    assert!(!common.contains("material_light_data"));
 }
 
 #[test]
 fn light_sampling_uses_record_models_and_separate_infinite_probability() {
-    assert!(COMMON_SHADER.contains("light_records[index].sampling_model"));
-    assert!(COMMON_SHADER.contains("light_table.infinite_light_count + finite_group_count"));
-    assert!(COMMON_SHADER.contains("light_table.finite_light_count + offset"));
+    assert!(common_shader().contains("light_records[index].sampling_model"));
+    assert!(common_shader().contains("light_table.infinite_light_count + finite_group_count"));
+    assert!(common_shader().contains("light_table.finite_light_count + offset"));
 }
 
 #[test]
@@ -328,7 +326,7 @@ fn emissive_hit_resolves_the_triangle_light_handle() {
     assert!(HANDLE_EMISSIVE_SHADER.contains("triangle_selection.pmf * triangle_pdf"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("load_light_payload(light_handle)"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("light_pmf_for_handle(light_handle"));
-    assert!(!COMMON_SHADER.contains("fn light_pmf_for_area"));
+    assert!(!common_shader().contains("fn light_pmf_for_area"));
 }
 
 #[test]
@@ -345,7 +343,7 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
 
 #[test]
 fn diffuse_shaders_load_type_specific_reflectance() {
-    assert!(COMMON_SHADER
+    assert!(common_shader()
         .contains("fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>)"));
     assert!(EVALUATE_ATTRIBUTES_SHADER.contains("load_diffuse_reflectance"));
     assert!(EVALUATE_MATERIALS_SHADER.contains("reflectance = selected_evaluated.values[0]"));
@@ -366,8 +364,10 @@ fn diffuse_transmission_shader_uses_reflection_and_transmission_paths() {
 
 #[test]
 fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
-    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
-    assert!(COMMON_SHADER.contains("fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>)"));
+    assert!(common_shader().contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
+    assert!(
+        common_shader().contains("fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>)")
+    );
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("evaluated.values[0]"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("fresnel"));
     assert!(SAMPLE_DIELECTRIC_BOUNCE_SHADER.contains("refract(-wo, normal, eta_ratio)"));
@@ -411,7 +411,7 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
 
 #[test]
 fn thin_dielectric_shader_uses_thin_interface_transport() {
-    assert!(COMMON_SHADER.contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
+    assert!(common_shader().contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
     assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("MATERIAL_KIND_THIN_DIELECTRIC"));
     assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("direction = select(-wo"));
     assert!(SAMPLE_THIN_DIELECTRIC_BOUNCE_SHADER.contains("r0 + (1.0 - r0)"));
@@ -462,13 +462,18 @@ fn triangle_hit_position_is_reconstructed_from_barycentrics() {
 
 #[test]
 fn random_samples_are_independent_across_pixel_sample_and_depth() {
-    let random01 = COMMON_SHADER
+    let common = common_shader();
+    let random01 = common
         .split("fn random01(")
         .nth(1)
-        .and_then(|tail| tail.split("fn generate_ray_samples").next())
-        .expect("random01 must be defined before generate_ray_samples");
+        .and_then(|tail| tail.split("\nfn ").next())
+        .expect("random01 must be defined in the shared library");
 
     assert!(random01.contains("pixel_index"));
     assert!(random01.contains("viewport.sample_index"));
     assert!(random01.contains("dimension + depth * 8u"));
+}
+
+fn common_shader() -> String {
+    format!("{TYPES_SHADER}\n{}", common_library_source(true))
 }

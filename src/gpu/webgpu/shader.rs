@@ -1,18 +1,55 @@
-const RESOURCES_SHADER: &str = include_str!("shaders/resources.wgsl");
-const TYPES_SHADER: &str = include_str!("shaders/types.wgsl");
-const WAVEFRONT_SHADER: &str = include_str!("shaders/wavefront.wgsl");
-const SPECTRUM_SHADER: &str = include_str!("shaders/spectrum.wgsl");
-const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
-const MEASURED_SHADER: &str = include_str!("shaders/measured.wgsl");
-const SAMPLER_SHADER: &str = include_str!("shaders/sampler.wgsl");
-const PORTAL_SHADER: &str = include_str!("shaders/portal_image_infinite.wgsl");
-
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::shader_composer::{compose, ShaderModuleSpec};
 use super::stages::{BindingSpec, RequiredLimits};
 use crate::util::error::PbrtError;
+
+const RESOURCES_SHADER: &str = include_str!("shaders/resources.wgsl");
+const TYPES_SHADER: &str = include_str!("shaders/types.wgsl");
+const SPECTRUM_SHADER: &str = include_str!("shaders/spectrum.wgsl");
+const TRIANGLE_SAMPLING_SHADER: &str = include_str!("shaders/triangle_sampling.wgsl");
+const MEASURED_SHADER: &str = include_str!("shaders/measured.wgsl");
+const SAMPLER_SHADER: &str = include_str!("shaders/sampler.wgsl");
+const PORTAL_SHADER: &str = include_str!("shaders/portal_image_infinite.wgsl");
+
+const TEXTURE_NOISE_BRANCH_BEGIN: &str = "// TEXTURE_NOISE_BRANCH_BEGIN";
+const TEXTURE_NOISE_BRANCH_END: &str = "// TEXTURE_NOISE_BRANCH_END";
+
+/// Shared WGSL function library, one file per pbrt-v4 source area.
+///
+/// Stages only receive the functions they transitively call, so the file
+/// boundaries are for readers and do not affect the composed modules.
+pub const COMMON_LIBRARY: &[(&str, &str)] = &[
+    ("float", include_str!("shaders/lib/float.wgsl")),
+    ("vecmath", include_str!("shaders/lib/vecmath.wgsl")),
+    ("hash", include_str!("shaders/lib/hash.wgsl")),
+    ("color", include_str!("shaders/lib/color.wgsl")),
+    ("path_state", include_str!("shaders/lib/path_state.wgsl")),
+    ("work_queues", include_str!("shaders/lib/work_queues.wgsl")),
+    ("interaction", include_str!("shaders/lib/interaction.wgsl")),
+    ("alpha_mask", include_str!("shaders/lib/alpha_mask.wgsl")),
+    ("materials", include_str!("shaders/lib/materials.wgsl")),
+    ("textures", include_str!("shaders/lib/textures.wgsl")),
+    ("scattering", include_str!("shaders/lib/scattering.wgsl")),
+    (
+        "bxdfs/dielectric",
+        include_str!("shaders/lib/bxdfs/dielectric.wgsl"),
+    ),
+    (
+        "bxdfs/conductor",
+        include_str!("shaders/lib/bxdfs/conductor.wgsl"),
+    ),
+    (
+        "bxdfs/layered",
+        include_str!("shaders/lib/bxdfs/layered.wgsl"),
+    ),
+    ("lights", include_str!("shaders/lib/lights.wgsl")),
+    (
+        "light_samplers",
+        include_str!("shaders/lib/light_samplers.wgsl"),
+    ),
+];
 
 pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> wgpu::ShaderModule {
     let descriptor = wgpu::ShaderModuleDescriptor {
@@ -29,19 +66,7 @@ pub fn compose_source(stage_source: &str) -> String {
 
 pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> String {
     let roots = vec![stage_source, TRIANGLE_SAMPLING_SHADER];
-    let wavefront = if noise_enabled {
-        WAVEFRONT_SHADER.to_string()
-    } else {
-        remove_marked_section(
-            WAVEFRONT_SHADER,
-            "// TEXTURE_NOISE_BRANCH_BEGIN",
-            "// TEXTURE_NOISE_BRANCH_END",
-        )
-    };
-    let common_input = format!(
-        "{TYPES_SHADER}\n{wavefront}\n{SPECTRUM_SHADER}\n{MEASURED_SHADER}\n{SAMPLER_SHADER}\n{PORTAL_SHADER}"
-    );
-    let common_source = prune_common_source(&common_input, &roots);
+    let common_source = prune_common_source(&common_input(noise_enabled), &roots);
     let references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     let resource_source = select_resources(RESOURCES_SHADER, &references);
     // The module graph is built entirely from the literals above. A missing
@@ -75,6 +100,29 @@ pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> Str
         Ok(composed) => composed.source,
         Err(error) => unreachable!("built-in WebGPU shader module graph is invalid: {error}"),
     }
+}
+
+/// Concatenates [`COMMON_LIBRARY`]; without noise support the texture noise
+/// branch is removed so stages do not require the noise tables.
+pub fn common_library_source(noise_enabled: bool) -> String {
+    COMMON_LIBRARY
+        .iter()
+        .map(|(name, source)| {
+            if !noise_enabled && *name == "textures" {
+                remove_marked_section(source, TEXTURE_NOISE_BRANCH_BEGIN, TEXTURE_NOISE_BRANCH_END)
+            } else {
+                source.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn common_input(noise_enabled: bool) -> String {
+    let library = common_library_source(noise_enabled);
+    format!(
+        "{TYPES_SHADER}\n{library}\n{SPECTRUM_SHADER}\n{MEASURED_SHADER}\n{SAMPLER_SHADER}\n{PORTAL_SHADER}"
+    )
 }
 
 fn remove_marked_section(source: &str, begin: &str, end: &str) -> String {
@@ -312,4 +360,36 @@ fn function_calls(source: &str) -> Vec<String> {
         }
     }
     calls
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // prune_common_source resolves calls by name, so a second definition in
+    // another library file would silently shadow the first one.
+    #[test]
+    fn shared_function_names_are_unique() {
+        let source = format!("{}\n{TRIANGLE_SAMPLING_SHADER}", common_input(true));
+        let mut seen = HashSet::new();
+        let duplicates = split_functions(&source)
+            .1
+            .into_iter()
+            .filter(|function| !seen.insert(function.name.clone()))
+            .map(|function| function.name)
+            .collect::<Vec<_>>();
+        assert!(
+            duplicates.is_empty(),
+            "duplicate WGSL functions: {duplicates:?}"
+        );
+    }
+
+    #[test]
+    fn noise_branch_is_removed_only_from_textures() {
+        let with_noise = common_library_source(true);
+        let without_noise = common_library_source(false);
+        assert!(with_noise.contains(TEXTURE_NOISE_BRANCH_BEGIN));
+        assert!(!without_noise.contains(TEXTURE_NOISE_BRANCH_BEGIN));
+        assert!(!without_noise.contains(TEXTURE_NOISE_BRANCH_END));
+    }
 }
