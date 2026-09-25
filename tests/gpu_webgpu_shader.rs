@@ -12,6 +12,8 @@ const INTERSECT_SHADOW_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/intersect_shadow.wgsl");
 const EVALUATE_MATERIALS_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_materials.wgsl");
+const SAMPLE_DIRECT_LIGHT_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_direct_light.wgsl");
 const EVALUATE_ATTRIBUTES_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_attributes.wgsl");
 const EVALUATE_TEXTURES_SHADER: &str =
@@ -207,14 +209,28 @@ fn light_sampling_uses_record_models_and_separate_infinite_probability() {
 
 #[test]
 fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("fn sample_uniform_infinite_direction("));
-    assert!(evaluate.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
-    assert!(evaluate.contains("is_infinite_light_kind(light_kind)"));
-    assert!(evaluate.contains(
-        "light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload)"
+    // Light selection and its MIS weight are computed once in
+    // sample_direct_light and handed to evaluate_materials as
+    // DirectLightSample.use_mis.
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("fn sample_uniform_infinite_direction("));
+    assert!(sample.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
+    assert!(sample.contains("is_infinite_light_kind(light_kind)"));
+    assert!(sample.contains(
+        "let use_mis = (light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))"
     ));
-    assert!(evaluate.contains("|| is_infinite_light_kind(light_kind)"));
+    assert!(sample.contains("|| is_infinite_light_kind(light_kind);"));
+    assert!(sample.contains("fn equal_area_sphere_to_square("));
+    assert!(sample.contains("dot(model.world_to_light0.xyz, direction)"));
+    assert!(sample.contains("model.flags >> 28u"));
+    assert!(sample.contains(
+        "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
+    ));
+    assert!(!sample.contains("atan2(d.y, d.x)"));
+
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
+    assert!(evaluate.contains("if (light_sample.use_mis != 0u) {"));
+    assert!(evaluate.contains("is_infinite_light_kind(light_kind)"));
 
     let escaped = compose_source(include_str!(
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
@@ -223,22 +239,15 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
     assert!(escaped.contains("ray.throughput * radiance"));
     assert!(escaped.contains("radiance += light_radiance * mis_weight"));
     assert!(!escaped.contains("ray.throughput * radiance * mis_weight"));
-    assert!(evaluate.contains("fn equal_area_sphere_to_square("));
-    assert!(evaluate.contains("dot(model.world_to_light0.xyz, direction)"));
-    assert!(evaluate.contains("model.flags >> 28u"));
-    assert!(evaluate.contains(
-        "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
-    ));
-    assert!(!evaluate.contains("atan2(d.y, d.x)"));
 }
 
 #[test]
 fn hard_edged_spot_light_uses_a_defined_step() {
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("fn spot_falloff("));
-    assert!(evaluate.contains("if (falloff_start == falloff_end)"));
-    assert!(evaluate.contains("dot(model.world_to_light0.xyz, world_direction)"));
-    assert!(evaluate.contains("spot_falloff(light_index, spot_w)"));
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("fn spot_falloff("));
+    assert!(sample.contains("if (falloff_start == falloff_end)"));
+    assert!(sample.contains("dot(model.world_to_light0.xyz, world_direction)"));
+    assert!(sample.contains("spot_falloff(light_index, spot_w)"));
 }
 
 #[test]
@@ -296,22 +305,26 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
 
 #[test]
 fn wavefront_stages_use_persisted_sample_dimensions() {
-    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
-    assert!(evaluate.contains("let samples = load_ray_samples(pixel_index);"));
-    assert!(evaluate.contains(
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("let samples = load_ray_samples(pixel_index);"));
+    assert!(sample.contains(
         "sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz)"
     ));
-    assert!(evaluate.contains("let finite_selection = sample_light_bvh("));
-    assert!(evaluate.contains("cos_sub_clamped("));
+    assert!(sample.contains("let finite_selection = sample_light_bvh("));
+    assert!(sample.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
     assert!(emissive.contains("light_pmf_for_handle("));
-    assert!(evaluate.contains("select_area_triangle(light_payload, samples.direct.y)"));
-    assert!(evaluate.contains("vec2<f32>(triangle_selection.u_remapped, samples.direct.z)"));
-    assert!(evaluate.contains("sample_uniform_triangle_for_context("));
-    assert!(!evaluate.contains("sample_spherical_triangle("));
-    assert!(!evaluate.contains("MIN_SPHERICAL_SAMPLE_AREA"));
-    assert!(!evaluate.contains("MAX_SPHERICAL_SAMPLE_AREA"));
+    assert!(sample.contains("select_area_triangle(light_payload, samples.direct.y)"));
+    assert!(sample.contains("vec2<f32>(triangle_selection.u_remapped, samples.direct.z)"));
+    assert!(sample.contains("sample_uniform_triangle_for_context("));
+    assert!(!sample.contains("sample_spherical_triangle("));
+    assert!(!sample.contains("MIN_SPHERICAL_SAMPLE_AREA"));
+    assert!(!sample.contains("MAX_SPHERICAL_SAMPLE_AREA"));
+    assert!(!SAMPLE_DIRECT_LIGHT_SHADER.contains("random01("));
+
+    let evaluate = compose_source(EVALUATE_MATERIALS_SHADER);
     assert!(evaluate.contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
+    assert!(!evaluate.contains("let samples = load_ray_samples(pixel_index);"));
     assert!(!EVALUATE_MATERIALS_SHADER.contains("random01("));
 
     let bounce = compose_source(SAMPLE_DIFFUSE_BOUNCE_SHADER);
@@ -332,7 +345,7 @@ fn emissive_hit_resolves_the_triangle_light_handle() {
 
 #[test]
 fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
-    let source = compose_source(EVALUATE_MATERIALS_SHADER);
+    let source = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
     assert!(source.contains(
         "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
     ));
@@ -414,10 +427,14 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
     );
     assert!(layered.contains("fn evaluate_layered_f("));
     assert!(!layered.contains("fn sample_texture_program"));
-    // The direct stage evaluates texture programs for area-light alpha
-    // masking, as pbrt-v4 DiffuseAreaLight::SampleLi does.
-    assert!(source.contains("alpha_area_sample_accept("));
-    assert!(source.contains("fn sample_texture_program"));
+    // Area-light alpha masking happens during light selection in
+    // sample_direct_light, as pbrt-v4 DiffuseAreaLight::SampleLi does; the
+    // BSDF evaluation stage does not need the texture VM.
+    assert!(!source.contains("alpha_area_sample_accept("));
+    assert!(!source.contains("fn sample_texture_program"));
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("alpha_area_sample_accept("));
+    assert!(sample.contains("fn sample_texture_program"));
 }
 
 #[test]

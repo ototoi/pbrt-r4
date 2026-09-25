@@ -2,8 +2,9 @@ use bytemuck::{bytes_of, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::abi::{
-    AttributesEvalWorkItem, PixelSampleState, PortalLightCandidate, QueueCounters, QueueState,
-    RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
+    AttributesEvalWorkItem, DirectLightSample, PixelSampleState, PortalLightCandidate,
+    QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem,
+    TextureEvalResult,
 };
 use crate::util::error::PbrtError;
 
@@ -25,6 +26,7 @@ pub struct TypedQueueSizes {
     pub hit_area_ray_indices: u64,
     pub escaped_ray_indices: u64,
     pub portal_light_candidates: u64,
+    pub direct_light_samples: u64,
 }
 
 impl TypedQueueSizes {
@@ -81,6 +83,10 @@ impl TypedQueueSizes {
                 std::mem::size_of::<PortalLightCandidate>(),
                 "portal light candidates",
             )?,
+            direct_light_samples: bytes(
+                std::mem::size_of::<DirectLightSample>(),
+                "direct light samples",
+            )?,
         })
     }
 }
@@ -99,6 +105,7 @@ pub struct Queues {
     pub hit_area_ray_indices: wgpu::Buffer,
     pub escaped_ray_indices: wgpu::Buffer,
     pub portal_light_candidates: wgpu::Buffer,
+    pub direct_light_samples: wgpu::Buffer,
     state_readback: wgpu::Buffer,
 }
 
@@ -173,6 +180,10 @@ impl Queues {
             portal_light_candidates: storage(
                 "pbrt-r4 portal light candidates",
                 sizes.portal_light_candidates,
+            ),
+            direct_light_samples: storage(
+                "pbrt-r4 direct light samples",
+                sizes.direct_light_samples,
             ),
             state_readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 wavefront state readback"),

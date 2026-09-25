@@ -57,6 +57,8 @@ var<storage, read> portal_infinite_lights: array<PortalImageInfiniteRecord>;
 var<storage, read> portal_distribution: array<PortalDistributionTexel>;
 @group(0) @binding(50)
 var<storage, read_write> portal_light_candidates: array<PortalLightCandidate>;
+@group(0) @binding(51)
+var<storage, read_write> direct_light_samples: array<DirectLightSample>;
 @group(0) @binding(28)
 var<storage, read> light_records: array<LightRecord>;
 @group(0) @binding(29)

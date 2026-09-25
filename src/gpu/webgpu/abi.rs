@@ -345,6 +345,19 @@ pub struct PortalLightCandidate {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DirectLightSample {
+    pub direction_pdf: [f32; 4],
+    pub radiance: [f32; 4],
+    pub position: [f32; 3],
+    pub light_kind: u32,
+    pub position_error: [f32; 3],
+    pub use_mis: u32,
+    pub normal: [f32; 3],
+    pub valid: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TriangleDistributionEntry {
     pub primitive: u32,
     pub cdf: f32,
