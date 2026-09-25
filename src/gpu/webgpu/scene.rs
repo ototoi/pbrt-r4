@@ -1225,6 +1225,10 @@ impl Scene {
             &geometries,
             &instances,
             &flat.instances,
+            &flat.material_roots,
+            &flat.material_nodes,
+            &flat.lights,
+            &flat.light_sampling_models,
         )?;
         Ok(Self {
             camera,

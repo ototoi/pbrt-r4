@@ -85,7 +85,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     tangent = normalize(tangent);
     let material_root = material_roots[instance.material_root];
-    let material_kind = load_material_kind(material_root.node_offset);
+    let material_kind = load_surface_material_kind(material_root);
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
     surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);

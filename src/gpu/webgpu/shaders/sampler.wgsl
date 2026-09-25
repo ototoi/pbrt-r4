@@ -122,6 +122,14 @@ fn murmur_hash_16(first: vec2<u32>, second: vec2<u32>) -> vec2<u32> {
     return murmur_finish(hash);
 }
 
+fn murmur_hash_24(first: vec2<u32>, second: vec2<u32>, third: vec2<u32>) -> vec2<u32> {
+    let multiplier = vec2<u32>(0x5bd1e995u, 0xc6a4a793u);
+    var hash = murmur_mix_block(u64_mul(vec2<u32>(24u, 0u), multiplier), first);
+    hash = murmur_mix_block(hash, second);
+    hash = murmur_mix_block(hash, third);
+    return murmur_finish(hash);
+}
+
 fn sampler_table_word(address: u32) -> u32 {
     let texel = address / 4u;
     let channel = address % 4u;
