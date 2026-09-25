@@ -100,8 +100,16 @@ impl AlphaMaskShape {
     }
 
     pub fn alpha(&self, inter: &Interaction) -> Option<Float> {
-        let si = inter.as_surface_interaction()?;
-        let ctx = TextureEvalContext::from(si);
+        let ctx = if let Some(si) = inter.as_surface_interaction() {
+            TextureEvalContext::from(si)
+        } else {
+            TextureEvalContext {
+                p: inter.get_p(),
+                n: inter.get_n(),
+                uv: inter.get_uv(),
+                ..TextureEvalContext::default()
+            }
+        };
         self.alpha_mask
             .as_ref()
             .map(|source| match source {
@@ -109,6 +117,19 @@ impl AlphaMaskShape {
                 AlphaMaskSource::Value(value) => *value,
             })
             .or_else(|| self.constant_zero_alpha.then_some(0.0))
+    }
+
+    pub fn is_alpha_masked_at_sample(&self, inter: &Interaction) -> bool {
+        let Some(alpha) = self.alpha(inter) else {
+            return false;
+        };
+        if alpha >= 1.0 {
+            return false;
+        }
+        if alpha <= 0.0 {
+            return true;
+        }
+        hash_float_point(&inter.get_p()) > alpha
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
@@ -241,6 +262,14 @@ impl AlphaMaskShape {
 fn hash_float_ray(ray: &Ray) -> Float {
     let mut bytes = Vec::with_capacity(6 * std::mem::size_of::<Float>());
     for value in [ray.o.x, ray.o.y, ray.o.z, ray.d.x, ray.d.y, ray.d.z] {
+        bytes.extend_from_slice(&value.to_ne_bytes());
+    }
+    (murmur_hash_64a(&bytes, 0) as u32) as Float * (1.0 / 4_294_967_296.0)
+}
+
+fn hash_float_point(point: &Point3f) -> Float {
+    let mut bytes = Vec::with_capacity(3 * std::mem::size_of::<Float>());
+    for value in [point.x, point.y, point.z] {
         bytes.extend_from_slice(&value.to_ne_bytes());
     }
     (murmur_hash_64a(&bytes, 0) as u32) as Float * (1.0 / 4_294_967_296.0)

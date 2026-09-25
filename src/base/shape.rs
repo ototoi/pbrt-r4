@@ -372,6 +372,13 @@ impl Shape {
         }
     }
 
+    pub fn is_alpha_masked_at_sample(&self, inter: &Interaction) -> bool {
+        match self {
+            Shape::AlphaMask(s) => s.is_alpha_masked_at_sample(inter),
+            _ => false,
+        }
+    }
+
     /// Test for intersection with a ray
     ///
     /// # Arguments

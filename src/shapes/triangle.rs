@@ -458,6 +458,18 @@ impl Triangle {
     }
 }
 
+fn triangle_uvs(mesh: &TriangleMesh, i0: usize, i1: usize, i2: usize) -> [Point2f; 3] {
+    if mesh.uv.is_empty() {
+        [
+            Point2f::new(0.0, 0.0),
+            Point2f::new(1.0, 0.0),
+            Point2f::new(1.0, 1.0),
+        ]
+    } else {
+        [mesh.uv[i0], mesh.uv[i1], mesh.uv[i2]]
+    }
+}
+
 fn union3(p0: Point3f, p1: Point3f, p2: Point3f) -> Bounds3f {
     let a = [[p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]];
     let mut min: [Float; 3] = [p0.x, p0.y, p0.z];
@@ -572,10 +584,12 @@ impl Triangle {
         let i0 = self.mesh.vertex_indices[3 * self.tri_index as usize + 0] as usize;
         let i1 = self.mesh.vertex_indices[3 * self.tri_index as usize + 1] as usize;
         let i2 = self.mesh.vertex_indices[3 * self.tri_index as usize + 2] as usize;
+        let uv = triangle_uvs(mesh, i0, i1, i2);
         let p0 = mesh.p[i0];
         let p1 = mesh.p[i1];
         let p2 = mesh.p[i2];
         let p = b[0] * p0 + b[1] * p1 + (1.0 - b[0] - b[1]) * p2;
+        let uv_hit = b[0] * uv[0] + b[1] * uv[1] + (1.0 - b[0] - b[1]) * uv[2];
         // Compute surface normal for sampled point on triangle
         let mut n = Vector3f::cross(&(p1 - p0), &(p2 - p0)).normalize();
         // Ensure correct orientation of the geometric normal; follow the same
@@ -592,7 +606,7 @@ impl Triangle {
             + Vector3f::abs(&((1.0 - b[0] - b[1]) * p2));
         let p_error = GAMMA6 * Vector3f::new(p_abs_sum.x, p_abs_sum.y, p_abs_sum.z);
         let pdf = 1.0 / self.area();
-        let it = Interaction::from_surface_sample(&p, &p_error, &n);
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n, &uv_hit);
         return Some((it, pdf));
     }
 
@@ -607,6 +621,7 @@ impl Triangle {
         let i0 = self.mesh.vertex_indices[3 * self.tri_index as usize + 0] as usize;
         let i1 = self.mesh.vertex_indices[3 * self.tri_index as usize + 1] as usize;
         let i2 = self.mesh.vertex_indices[3 * self.tri_index as usize + 2] as usize;
+        let uv = triangle_uvs(mesh, i0, i1, i2);
         let p0 = mesh.p[i0];
         let p1 = mesh.p[i1];
         let p2 = mesh.p[i2];
@@ -707,7 +722,8 @@ impl Triangle {
             return None;
         }
 
-        let intr = Interaction::from_surface_sample(&p, &p_error, &n);
+        let uv_hit = b[0] * uv[0] + b[1] * uv[1] + b[2] * uv[2];
+        let intr = Interaction::from_surface_sample_with_uv(&p, &p_error, &n, &uv_hit);
         Some((intr, pdf))
     }
 
