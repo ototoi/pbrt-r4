@@ -16,18 +16,27 @@ fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // just which offset direction to use, not an eligibility filter.
     let material_kind = resolve_attributes_eval_work_item(surface.attributes_eval_work_item).bxdf_kind;
     let wo = -ray.direction.xyz;
-    // Flat IR represents the currently supported non-specular
-    // `is_diffuse && is_transmission` combination as DiffuseTransmission.
+    // pbrt-v4 SampleLd() only nudges the light-sampling point when the BSDF
+    // is purely reflective or purely transmissive (IsReflective XOR
+    // IsTransmissive); a BSDF with both components (rough dielectric reaches
+    // here only when non-specular, per classify_surface_scatter) samples
+    // from the raw, unoffset interaction point instead. Flat IR represents
+    // the currently supported non-specular `is_diffuse && is_transmission`
+    // combination as DiffuseTransmission, which is transmission-only here.
     let light_sample_offset_direction = select(
         wo,
         -wo,
         material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION,
     );
-    let light_sample_origin = offset_ray_origin(
+    let light_sample_origin = select(
+        offset_ray_origin(
+            surface.position.xyz,
+            surface.position_error.xyz,
+            surface.geometric_normal.xyz,
+            light_sample_offset_direction,
+        ),
         surface.position.xyz,
-        surface.position_error.xyz,
-        surface.geometric_normal.xyz,
-        light_sample_offset_direction,
+        material_kind == MATERIAL_KIND_DIELECTRIC,
     );
     let light_selection = sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz);
     if (light_selection.pmf <= 0.0 || light_selection.index == 0xffffffffu) {

@@ -22,10 +22,10 @@ fn classify_surface_scatter(@builtin(global_invocation_id) global_id: vec3<u32>)
         supports_direct = true;
     } else if (root_kind == MATERIAL_KIND_CONDUCTOR_ETA_K || root_kind == MATERIAL_KIND_CONDUCTOR_REFLECTANCE) {
         append_scatter_conductor(ray_index);
-        // pbrt-v4 ConductorBxDF::Flags(): EffectivelySmooth (alpha <= 1e-3,
-        // matching scatter_conductor's own indirect-bounce threshold) is
-        // Specular, so SampleLd is skipped for a mirror-smooth conductor.
-        supports_direct = evaluated.values[2].x > 1e-3;
+        // pbrt-v4 TrowbridgeReitzDistribution::EffectivelySmooth() is
+        // `alpha < 1e-3` (Specular); scatter_conductor's indirect-bounce
+        // threshold matches this, so SampleLd only applies at alpha >= 1e-3.
+        supports_direct = evaluated.values[2].x >= 1e-3;
     } else if (root_kind == MATERIAL_KIND_DIELECTRIC) {
         append_scatter_dielectric(ray_index);
         // pbrt-v4 DielectricBxDF::Flags(): a rough (non-EffectivelySmooth)
