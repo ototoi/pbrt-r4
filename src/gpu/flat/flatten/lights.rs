@@ -803,7 +803,7 @@ fn area_light_has_constant_zero_alpha(
                     TextureComponent::Texture(texture)
                         if texture.kind == TextureKind::Float && texture.name == "constant" =>
                     {
-                        Some(texture.params.get_one_float("value", 0.0) as f32)
+                        Some(texture.params.get_one_float("value", 1.0) as f32)
                     }
                     _ => None,
                 });
@@ -812,5 +812,42 @@ fn area_light_has_constant_zero_alpha(
         _ => Err(PbrtError::error(
             "Area-light alpha attribute must be scalar or float texture.",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gpu::flat::flatten::material::MaterialSourceNode;
+    use crate::gpu::flat::texture::TextureRootSpec;
+    use crate::gpu::flat::{AttributeKind, AttributeRef};
+    use crate::gpu::node::{Texture, TextureNode};
+    use crate::paramdict::ParameterDictionary;
+    use std::sync::Arc;
+
+    #[test]
+    fn constant_float_texture_without_value_is_not_zero_alpha() {
+        let mut texture = TextureNode::new("constant");
+        texture.components.push(TextureComponent::Texture(Texture {
+            name: "constant".to_string(),
+            kind: TextureKind::Float,
+            params: ParameterDictionary::default(),
+        }));
+        let mut builder = FlatBuilder::default();
+        builder.texture_root_specs.push(TextureRootSpec::Float {
+            node: Arc::new(texture),
+        });
+        builder.material_source_nodes.push(MaterialSourceNode {
+            kind: "alphamask".to_string(),
+            source_kind: "alphamask".to_string(),
+            attributes: vec![AttributeRef {
+                kind: AttributeKind::Texture,
+                index: 0,
+                name: "alpha".to_string(),
+            }],
+            children: vec![],
+        });
+
+        assert!(!area_light_has_constant_zero_alpha(0, &builder).unwrap());
     }
 }

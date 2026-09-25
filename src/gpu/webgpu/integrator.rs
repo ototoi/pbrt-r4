@@ -133,7 +133,7 @@ impl WavefrontPathIntegrator {
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
         log::info!("GPU create: WebGPU scene resources ready");
         if let Some(kind) = debug_material {
-            scene.replace_material_kind(queue, kind);
+            scene.replace_material_kind(kind);
             scene.film.mode = 1;
         }
         scene.material_table.attributes_eval_stride = u32::try_from(attributes_eval_stride)
@@ -711,7 +711,7 @@ impl WavefrontPathIntegrator {
     }
 
     pub fn replace_material_kind(&mut self, kind: MaterialKind) {
-        self.scene.replace_material_kind(&self.context.queue, kind);
+        self.scene.replace_material_kind(kind);
         self.context.queue.write_buffer(
             &self.material_table_buffer,
             0,
