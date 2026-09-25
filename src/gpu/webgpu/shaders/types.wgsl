@@ -1,6 +1,22 @@
 const RAY_T_MAX: f32 = 3.402823466e+38;
 const MACHINE_EPSILON: f32 = 1.1920929e-7;
 const PI: f32 = 3.141592653589793;
+// Indirect-dispatched stages size their dispatch from a queue's element
+// count, so they read their queue index from this linear id space rather
+// than deriving it from the output dimensions.
+const INDIRECT_WORKGROUP_SIZE: u32 = 64u;
+const INDIRECT_MAX_WORKGROUPS_X: u32 = 65535u;
+const INDIRECT_ROW_ITEMS: u32 = INDIRECT_MAX_WORKGROUPS_X * INDIRECT_WORKGROUP_SIZE;
+const QUEUE_DISPATCH_SLOT_MATERIAL_EVAL: u32 = 0u;
+const QUEUE_DISPATCH_SLOT_DIRECT_EVAL: u32 = 1u;
+const QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE: u32 = 2u;
+const QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION: u32 = 3u;
+const QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR: u32 = 4u;
+const QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC: u32 = 5u;
+const QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC: u32 = 6u;
+const QUEUE_DISPATCH_SLOT_SCATTER_MEASURED: u32 = 7u;
+const QUEUE_DISPATCH_SLOT_SCATTER_COATED: u32 = 8u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 9u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
@@ -403,6 +419,12 @@ struct QueueCounters {
     scatter_thin_dielectric: QueueState,
     scatter_measured: QueueState,
     scatter_coated: QueueState,
+};
+
+struct DispatchIndirectArgs {
+    x: u32,
+    y: u32,
+    z: u32,
 };
 
 struct RenderError {

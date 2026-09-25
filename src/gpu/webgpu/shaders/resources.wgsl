@@ -117,3 +117,5 @@ var<storage, read> measured_tables: array<MeasuredTableRecord>;
 var sampler_table: texture_2d<u32>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;
+@group(0) @binding(60)
+var<storage, read_write> queue_dispatch_args: array<DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_COUNT>;
