@@ -51,6 +51,7 @@ pub enum ResourceId {
     ScatterThinDielectricQueue,
     ScatterMeasuredQueue,
     ScatterCoatedQueue,
+    QueueDispatchArgs,
     ConstantBxdf,
     Film,
     MaterialTable,
@@ -275,6 +276,12 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     ] {
         push(binding, resource, BindingClass::Storage, Access::ReadWrite);
     }
+    push(
+        60,
+        ResourceId::QueueDispatchArgs,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
     push(
         19,
         ResourceId::MaterialTable,

@@ -1,7 +1,6 @@
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(64, 1, 1)
 fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (global_id.x >= viewport.width || global_id.y >= viewport.height) { return; }
-    let queue_index = global_id.y * viewport.width + global_id.x;
+    let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
     if (queue_index >= scatter_thin_dielectric_count()) { return; }
     let ray_index = load_scatter_thin_dielectric_ray(queue_index);
     let ray = load_current_ray(ray_index);

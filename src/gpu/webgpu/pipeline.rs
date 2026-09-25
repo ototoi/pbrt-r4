@@ -18,6 +18,7 @@ pub struct Pipeline {
     pub prepare_sample: StagePipeline,
     pub shade_surface: StagePipeline,
     pub handle_emissive: StagePipeline,
+    pub prepare_queue_dispatch: StagePipeline,
     pub evaluate_textures: StagePipeline,
     pub evaluate_attributes: StagePipeline,
     pub classify_surface_scatter: StagePipeline,
@@ -152,6 +153,11 @@ impl Pipeline {
                 "pbrt-r4 handle emissive",
                 include_str!("shaders/handle_emissive.wgsl"),
                 "handle_emissive",
+            ),
+            prepare_queue_dispatch: compute(
+                "pbrt-r4 prepare queue dispatch",
+                include_str!("shaders/prepare_queue_dispatch.wgsl"),
+                "prepare_queue_dispatch",
             ),
             evaluate_textures: compute(
                 "pbrt-r4 evaluate textures",

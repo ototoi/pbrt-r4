@@ -2,9 +2,9 @@ use bytemuck::{bytes_of, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::abi::{
-    AttributesEvalWorkItem, DirectLightSample, PixelSampleState, PortalLightCandidate,
-    QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem,
-    TextureEvalResult,
+    AttributesEvalWorkItem, DirectLightSample, DispatchIndirectArgs, PixelSampleState,
+    PortalLightCandidate, QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem,
+    SurfaceWorkItem, TextureEvalResult, QUEUE_DISPATCH_SLOT_COUNT,
 };
 use crate::util::error::PbrtError;
 
@@ -12,6 +12,8 @@ const QUEUE_COUNT: u64 = 14;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
 const RENDER_ERROR_BYTES: u64 = std::mem::size_of::<RenderError>() as u64;
 const STATE_READBACK_BYTES: u64 = QUEUE_COUNTER_BYTES + RENDER_ERROR_BYTES;
+const QUEUE_DISPATCH_ARGS_BYTES: u64 =
+    QUEUE_DISPATCH_SLOT_COUNT * std::mem::size_of::<DispatchIndirectArgs>() as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TypedQueueSizes {
@@ -148,6 +150,7 @@ pub struct Queues {
     pub scatter_thin_dielectric_ray_indices: wgpu::Buffer,
     pub scatter_measured_ray_indices: wgpu::Buffer,
     pub scatter_coated_ray_indices: wgpu::Buffer,
+    pub queue_dispatch_args: wgpu::Buffer,
     state_readback: wgpu::Buffer,
 }
 
@@ -267,6 +270,12 @@ impl Queues {
                 "pbrt-r4 scatter coated ray index queue",
                 sizes.scatter_coated_ray_indices,
             ),
+            queue_dispatch_args: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pbrt-r4 queue dispatch args"),
+                size: QUEUE_DISPATCH_ARGS_BYTES,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+                mapped_at_creation: false,
+            }),
             state_readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 wavefront state readback"),
                 size: STATE_READBACK_BYTES,
