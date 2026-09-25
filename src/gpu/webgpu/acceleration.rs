@@ -111,7 +111,7 @@ pub fn build(
             && lights
                 .get(flat_instance.area_light as usize)
                 .and_then(|light| light_sampling_models.get(light.sampling_model as usize))
-                .is_some_and(|model| model.flags & (1 << 1) != 0);
+                .is_some_and(|model| flat::area_light_is_zero_alpha_sample_only(model.flags));
         tlas[index] = Some(wgpu::TlasInstance::new(
             &blases[instance.geometry as usize],
             transform,

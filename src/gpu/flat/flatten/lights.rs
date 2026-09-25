@@ -1,3 +1,4 @@
+use super::super::area_light_flags;
 use super::{
     dot3, inverse_linear_transform, multiply_transform, push_scalar_attribute,
     push_spectrum_attribute, scale3, transform_point, transform_swaps_handedness, transform_vector,
@@ -734,7 +735,7 @@ pub fn append_area_light(
             PbrtError::error("The flattened GPU area-light distribution exceeds u32.")
         })?,
         total_area,
-        flags: u32::from(two_sided) | (u32::from(alpha_zero_light) << 1),
+        flags: area_light_flags(two_sided, alpha_zero_light),
         world_to_light: IDENTITY_LINEAR_TRANSFORM,
     });
     let emission_attr = push_spectrum_attribute(builder, "L", &emission)?;

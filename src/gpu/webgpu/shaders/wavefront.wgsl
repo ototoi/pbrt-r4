@@ -227,8 +227,8 @@ fn select_area_triangle(index: u32, u: f32) -> AreaTriangleSelection {
     return load_area_distribution_remapped(index, selected, u_remapped);
 }
 
-fn load_area_two_sided(index: u32) -> bool {
-    return (load_area_word(index, 7u) & 1u) != 0u;
+fn area_light_is_two_sided(index: u32) -> bool {
+    return (load_area_word(index, 7u) & AREA_LIGHT_FLAG_TWO_SIDED) != 0u;
 }
 
 fn load_point_position(index: u32) -> vec3<f32> {
@@ -361,8 +361,61 @@ fn alpha_mask_point_accept(alpha: f32, position: vec3<f32>) -> bool {
     return alpha_mask_point_hash(position) <= alpha;
 }
 
-fn load_area_alpha_zero(index: u32) -> bool {
-    return (load_area_word(index, 7u) & 2u) != 0u;
+fn area_light_is_zero_alpha_sample_only(index: u32) -> bool {
+    return (load_area_word(index, 7u) & AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY) != 0u;
+}
+
+fn instance_orientation_is_reversed(flags: u32) -> bool {
+    return (flags & INSTANCE_ORIENTATION_FLAG_REVERSED) != 0u;
+}
+
+fn instance_orientation_swaps_handedness(flags: u32) -> bool {
+    return (flags & INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS) != 0u;
+}
+
+fn reconstruct_triangle_surface(
+    instance_index: u32,
+    primitive: u32,
+    barycentrics: vec3<f32>,
+) -> TriangleSurfaceData {
+    let invalid_surface = TriangleSurfaceData(
+        vec3<f32>(0.0), vec2<f32>(0.0), vec3<f32>(0.0), 0u,
+    );
+    if (instance_index >= arrayLength(&instances)) {
+        set_render_error();
+        return invalid_surface;
+    }
+    let instance = instances[instance_index];
+    if (instance.geometry >= arrayLength(&geometries)) {
+        set_render_error();
+        return invalid_surface;
+    }
+    let geometry = geometries[instance.geometry];
+    let first_index = geometry.index_offset + primitive * 3u;
+    if (first_index + 2u >= arrayLength(&indices)) {
+        set_render_error();
+        return invalid_surface;
+    }
+    let i0 = geometry.vertex_offset + indices[first_index];
+    let i1 = geometry.vertex_offset + indices[first_index + 1u];
+    let i2 = geometry.vertex_offset + indices[first_index + 2u];
+    if (i0 >= arrayLength(&vertices) || i1 >= arrayLength(&vertices) || i2 >= arrayLength(&vertices)) {
+        set_render_error();
+        return invalid_surface;
+    }
+    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
+    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
+    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
+    let b0 = barycentrics.x;
+    let b1 = barycentrics.y;
+    let b2 = barycentrics.z;
+    let position = p0 * b0 + p1 * b1 + p2 * b2;
+    let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
+    var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
+    if (instance_orientation_is_reversed(instance.orientation_flags)) {
+        geometric_normal = -geometric_normal;
+    }
+    return TriangleSurfaceData(position, uv, geometric_normal, 1u);
 }
 
 fn alpha_area_sample_accept(
@@ -371,48 +424,14 @@ fn alpha_area_sample_accept(
     barycentrics: vec3<f32>,
     position: vec3<f32>,
 ) -> bool {
-    if (load_area_alpha_zero(area_light)) { return true; }
+    if (area_light_is_zero_alpha_sample_only(area_light)) { return true; }
     let instance_index = load_area_instance(area_light);
-    if (instance_index >= arrayLength(&instances)) {
-        set_render_error();
-        return false;
-    }
+    let surface = reconstruct_triangle_surface(instance_index, primitive, barycentrics);
+    if (surface.valid == 0u) { return false; }
     let instance = instances[instance_index];
-    if (instance.geometry >= arrayLength(&geometries)) {
-        set_render_error();
-        return false;
-    }
-    let geometry = geometries[instance.geometry];
-    let first_index = geometry.index_offset + primitive * 3u;
-    if (first_index + 2u >= arrayLength(&indices)) {
-        set_render_error();
-        return false;
-    }
-    let i0 = geometry.vertex_offset + indices[first_index];
-    let i1 = geometry.vertex_offset + indices[first_index + 1u];
-    let i2 = geometry.vertex_offset + indices[first_index + 2u];
-    if (i0 >= arrayLength(&vertices) || i1 >= arrayLength(&vertices) || i2 >= arrayLength(&vertices)) {
-        set_render_error();
-        return false;
-    }
-    let uv = vertices[i0].uv * barycentrics.x
-        + vertices[i1].uv * barycentrics.y
-        + vertices[i2].uv * barycentrics.z;
-    let object_normal = vertices[i0].normal.xyz * barycentrics.x
-        + vertices[i1].normal.xyz * barycentrics.y
-        + vertices[i2].normal.xyz * barycentrics.z;
-    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
-    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
-    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
-    var normal = normalize(cross(p1 - p0, p2 - p0));
-    if (dot(object_normal, object_normal) > 0.0) {
-        normal = normalize((instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz);
-    }
-    if ((instance.orientation_flags & 1u) != 0u) { normal = -normal; }
-    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
-        normal = -normal;
-    }
-    let alpha = alpha_mask_value(instance.material_root, uv, position, normal);
+    let alpha = alpha_mask_value(
+        instance.material_root, surface.uv, position, surface.geometric_normal,
+    );
     return alpha_mask_point_accept(alpha, position);
 }
 
@@ -436,49 +455,15 @@ fn alpha_mask_candidate_accept(origin: vec3<f32>, direction: vec3<f32>, hit: Ray
     if (load_material_kind_raw(root_node_index) != MATERIAL_KIND_ALPHA_MASK) {
         return true;
     }
-    var alpha = 0.0;
-    var uv = vec2<f32>(0.0);
-    var position = origin + hit.t * direction;
-    var normal = vec3<f32>(0.0, 0.0, 1.0);
-    if (instance.geometry >= arrayLength(&geometries)) {
-        set_render_error();
-        return false;
-    }
-    let geometry = geometries[instance.geometry];
-    let first_index = geometry.index_offset + hit.primitive_index * 3u;
-    if (first_index + 2u >= arrayLength(&indices)) {
-        set_render_error();
-        return false;
-    }
-    let i0 = geometry.vertex_offset + indices[first_index];
-    let i1 = geometry.vertex_offset + indices[first_index + 1u];
-    let i2 = geometry.vertex_offset + indices[first_index + 2u];
-    if (i0 >= arrayLength(&vertices) || i1 >= arrayLength(&vertices) || i2 >= arrayLength(&vertices)) {
-        set_render_error();
-        return false;
-    }
     let b1 = hit.barycentrics.x;
     let b2 = hit.barycentrics.y;
-    let b0 = 1.0 - b1 - b2;
-    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
-    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
-    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
-    position = p0 * b0 + p1 * b1 + p2 * b2;
-    uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
-    let object_normal = vertices[i0].normal.xyz * b0
-        + vertices[i1].normal.xyz * b1
-        + vertices[i2].normal.xyz * b2;
-    normal = normalize(cross(p1 - p0, p2 - p0));
-    if (dot(object_normal, object_normal) > 0.0) {
-        normal = normalize((instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz);
-    }
-    if ((instance.orientation_flags & 1u) != 0u) {
-        normal = -normal;
-    }
-    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
-        normal = -normal;
-    }
-    alpha = alpha_mask_value(instance.material_root, uv, position, normal);
+    let surface = reconstruct_triangle_surface(
+        hit.instance_custom_data, hit.primitive_index, vec3<f32>(1.0 - b1 - b2, b1, b2),
+    );
+    if (surface.valid == 0u) { return false; }
+    let alpha = alpha_mask_value(
+        instance.material_root, surface.uv, surface.position, surface.geometric_normal,
+    );
     if (alpha >= 1.0) { return true; }
     if (alpha <= 0.0) { return false; }
     return alpha_mask_hash(origin, direction) <= alpha;
