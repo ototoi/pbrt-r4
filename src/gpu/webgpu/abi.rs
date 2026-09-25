@@ -408,6 +408,14 @@ pub struct QueueCounters {
     pub material: QueueState,
     pub hit_area: QueueState,
     pub escaped: QueueState,
+    pub direct: QueueState,
+    pub scatter_diffuse: QueueState,
+    pub scatter_diffuse_transmission: QueueState,
+    pub scatter_conductor: QueueState,
+    pub scatter_dielectric: QueueState,
+    pub scatter_thin_dielectric: QueueState,
+    pub scatter_measured: QueueState,
+    pub scatter_coated: QueueState,
 }
 
 #[repr(C)]

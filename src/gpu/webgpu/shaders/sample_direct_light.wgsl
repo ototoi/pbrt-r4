@@ -4,35 +4,20 @@ fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let queue_index = global_id.y * viewport.width + global_id.x;
-    if (queue_index >= material_eval_count()) {
+    if (queue_index >= direct_eval_count()) {
         return;
     }
-    let ray_index = load_material_eval_ray(queue_index);
+    let ray_index = load_direct_eval_ray(queue_index);
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     direct_light_samples[pixel_index].valid = 0u;
     let surface = surfaces[pixel_index];
     let lambda = load_sample_lambda(pixel_index);
     let samples = load_ray_samples(pixel_index);
-    let selected_evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
-    let root_surface_kind = selected_evaluated.bxdf_kind;
-    var material_kind = root_surface_kind;
-    if (root_surface_kind == MATERIAL_KIND_COATED_DIFFUSE) {
-        material_kind = MATERIAL_KIND_DIFFUSE;
-    } else if (root_surface_kind == MATERIAL_KIND_COATED_CONDUCTOR) {
-        material_kind = MATERIAL_KIND_CONDUCTOR_ETA_K;
-    }
-    if (surface.hit == 0u
-        || (material_kind != MATERIAL_KIND_DIFFUSE
-            && material_kind != MATERIAL_KIND_DIFFUSE_TRANSMISSION
-            && material_kind != MATERIAL_KIND_CONDUCTOR_ETA_K
-            && material_kind != MATERIAL_KIND_CONDUCTOR_REFLECTANCE
-            && material_kind != MATERIAL_KIND_MEASURED)) {
-        return;
-    }
-    if (ray.depth >= viewport.max_depth || light_table.light_count == 0u) {
-        return;
-    }
+    // classify_surface_scatter only enqueues surfaces that are hit and whose
+    // resolved leaf kind supports direct lighting, so the kind check here is
+    // just which offset direction to use, not an eligibility filter.
+    let material_kind = resolve_attributes_eval_work_item(surface.attributes_eval_work_item).bxdf_kind;
     let wo = -ray.direction.xyz;
     // Flat IR represents the currently supported non-specular
     // `is_diffuse && is_transmission` combination as DiffuseTransmission.

@@ -43,6 +43,14 @@ pub enum ResourceId {
     TriangleDistribution,
     PortalLightCandidate,
     DirectLightSample,
+    DirectEvalQueue,
+    ScatterDiffuseQueue,
+    ScatterDiffuseTransmissionQueue,
+    ScatterConductorQueue,
+    ScatterDielectricQueue,
+    ScatterThinDielectricQueue,
+    ScatterMeasuredQueue,
+    ScatterCoatedQueue,
     ConstantBxdf,
     Film,
     MaterialTable,
@@ -315,6 +323,18 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::Storage,
         Access::ReadWrite,
     );
+    for (binding, resource) in [
+        (52, ResourceId::DirectEvalQueue),
+        (53, ResourceId::ScatterDiffuseQueue),
+        (54, ResourceId::ScatterDiffuseTransmissionQueue),
+        (55, ResourceId::ScatterConductorQueue),
+        (56, ResourceId::ScatterDielectricQueue),
+        (57, ResourceId::ScatterThinDielectricQueue),
+        (58, ResourceId::ScatterMeasuredQueue),
+        (59, ResourceId::ScatterCoatedQueue),
+    ] {
+        push(binding, resource, BindingClass::Storage, Access::ReadWrite);
+    }
     for (binding, resource) in [
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),

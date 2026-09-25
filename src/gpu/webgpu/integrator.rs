@@ -35,17 +35,18 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/handle_emissive.wgsl"),
     include_str!("shaders/evaluate_textures.wgsl"),
     include_str!("shaders/evaluate_attributes.wgsl"),
+    include_str!("shaders/classify_surface_scatter.wgsl"),
     include_str!("shaders/select_portal_direct.wgsl"),
     include_str!("shaders/sample_portal_direct.wgsl"),
     include_str!("shaders/sample_direct_light.wgsl"),
-    include_str!("shaders/evaluate_materials.wgsl"),
+    include_str!("shaders/scatter_diffuse.wgsl"),
+    include_str!("shaders/scatter_diffuse_transmission.wgsl"),
+    include_str!("shaders/scatter_conductor.wgsl"),
+    include_str!("shaders/scatter_dielectric.wgsl"),
+    include_str!("shaders/scatter_thin_dielectric.wgsl"),
+    include_str!("shaders/scatter_measured.wgsl"),
+    include_str!("shaders/scatter_coated.wgsl"),
     include_str!("shaders/intersect_shadow.wgsl"),
-    include_str!("shaders/sample_diffuse_bounce.wgsl"),
-    include_str!("shaders/sample_diffuse_transmission_bounce.wgsl"),
-    include_str!("shaders/sample_dielectric_bounce.wgsl"),
-    include_str!("shaders/sample_conductor_bounce.wgsl"),
-    include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
-    include_str!("shaders/sample_composite_bounce.wgsl"),
     include_str!("shaders/swap_ray_queues.wgsl"),
     include_str!("shaders/reset_next_ray_queue.wgsl"),
     include_str!("shaders/accumulate_sample.wgsl"),
@@ -262,6 +263,28 @@ impl WavefrontPathIntegrator {
                     queues.portal_light_candidates.as_entire_binding()
                 }
                 ResourceId::DirectLightSample => queues.direct_light_samples.as_entire_binding(),
+                ResourceId::DirectEvalQueue => queues.direct_eval_ray_indices.as_entire_binding(),
+                ResourceId::ScatterDiffuseQueue => {
+                    queues.scatter_diffuse_ray_indices.as_entire_binding()
+                }
+                ResourceId::ScatterDiffuseTransmissionQueue => queues
+                    .scatter_diffuse_transmission_ray_indices
+                    .as_entire_binding(),
+                ResourceId::ScatterConductorQueue => {
+                    queues.scatter_conductor_ray_indices.as_entire_binding()
+                }
+                ResourceId::ScatterDielectricQueue => {
+                    queues.scatter_dielectric_ray_indices.as_entire_binding()
+                }
+                ResourceId::ScatterThinDielectricQueue => queues
+                    .scatter_thin_dielectric_ray_indices
+                    .as_entire_binding(),
+                ResourceId::ScatterMeasuredQueue => {
+                    queues.scatter_measured_ray_indices.as_entire_binding()
+                }
+                ResourceId::ScatterCoatedQueue => {
+                    queues.scatter_coated_ray_indices.as_entire_binding()
+                }
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
                 ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
@@ -344,6 +367,11 @@ impl WavefrontPathIntegrator {
                 include_str!("shaders/evaluate_attributes.wgsl"),
             ),
             (
+                "classify_surface_scatter",
+                &pipeline.classify_surface_scatter,
+                include_str!("shaders/classify_surface_scatter.wgsl"),
+            ),
+            (
                 "sample_portal_direct",
                 &pipeline.sample_portal_direct,
                 include_str!("shaders/sample_portal_direct.wgsl"),
@@ -359,44 +387,44 @@ impl WavefrontPathIntegrator {
                 include_str!("shaders/sample_direct_light.wgsl"),
             ),
             (
-                "evaluate_materials",
-                &pipeline.evaluate_materials,
-                include_str!("shaders/evaluate_materials.wgsl"),
+                "scatter_diffuse",
+                &pipeline.scatter_diffuse,
+                include_str!("shaders/scatter_diffuse.wgsl"),
+            ),
+            (
+                "scatter_diffuse_transmission",
+                &pipeline.scatter_diffuse_transmission,
+                include_str!("shaders/scatter_diffuse_transmission.wgsl"),
+            ),
+            (
+                "scatter_conductor",
+                &pipeline.scatter_conductor,
+                include_str!("shaders/scatter_conductor.wgsl"),
+            ),
+            (
+                "scatter_dielectric",
+                &pipeline.scatter_dielectric,
+                include_str!("shaders/scatter_dielectric.wgsl"),
+            ),
+            (
+                "scatter_thin_dielectric",
+                &pipeline.scatter_thin_dielectric,
+                include_str!("shaders/scatter_thin_dielectric.wgsl"),
+            ),
+            (
+                "scatter_measured",
+                &pipeline.scatter_measured,
+                include_str!("shaders/scatter_measured.wgsl"),
+            ),
+            (
+                "scatter_coated",
+                &pipeline.scatter_coated,
+                include_str!("shaders/scatter_coated.wgsl"),
             ),
             (
                 "intersect_shadow",
                 &pipeline.intersect_shadow,
                 include_str!("shaders/intersect_shadow.wgsl"),
-            ),
-            (
-                "sample_diffuse_bounce",
-                &pipeline.sample_diffuse_bounce,
-                include_str!("shaders/sample_diffuse_bounce.wgsl"),
-            ),
-            (
-                "sample_diffuse_transmission_bounce",
-                &pipeline.sample_diffuse_transmission_bounce,
-                include_str!("shaders/sample_diffuse_transmission_bounce.wgsl"),
-            ),
-            (
-                "sample_dielectric_bounce",
-                &pipeline.sample_dielectric_bounce,
-                include_str!("shaders/sample_dielectric_bounce.wgsl"),
-            ),
-            (
-                "sample_conductor_bounce",
-                &pipeline.sample_conductor_bounce,
-                include_str!("shaders/sample_conductor_bounce.wgsl"),
-            ),
-            (
-                "sample_thin_dielectric_bounce",
-                &pipeline.sample_thin_dielectric_bounce,
-                include_str!("shaders/sample_thin_dielectric_bounce.wgsl"),
-            ),
-            (
-                "sample_composite_bounce",
-                &pipeline.sample_composite_bounce,
-                include_str!("shaders/sample_composite_bounce.wgsl"),
             ),
             (
                 "swap_ray_queues",
@@ -559,81 +587,95 @@ impl WavefrontPathIntegrator {
                     workgroups_x,
                     workgroups_y,
                 );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.select_portal_direct.pipeline,
-                    self.bind_groups("select_portal_direct"),
-                    workgroups_x,
-                    workgroups_y,
-                );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.sample_portal_direct.pipeline,
-                    self.bind_groups("sample_portal_direct"),
-                    workgroups_x,
-                    workgroups_y,
-                );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.sample_direct_light.pipeline,
-                    self.bind_groups("sample_direct_light"),
-                    workgroups_x,
-                    workgroups_y,
-                );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.evaluate_materials.pipeline,
-                    self.bind_groups("evaluate_materials"),
-                    workgroups_x,
-                    workgroups_y,
-                );
+                // classify_surface_scatter routes each hit surface into the
+                // scatter queue for its resolved leaf kind, and (for the
+                // non-specular kinds) the shared direct-lighting queue.
+                // Direct lighting and indirect bounces both require a next
+                // depth, so none of this needs to run once ray.depth reaches
+                // max_depth; the queues classify_surface_scatter would fill
+                // are never read at that point either way.
                 if depth < self.scene.render_settings.max_depth {
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.classify_surface_scatter.pipeline,
+                        self.bind_groups("classify_surface_scatter"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.select_portal_direct.pipeline,
+                        self.bind_groups("select_portal_direct"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_portal_direct.pipeline,
+                        self.bind_groups("sample_portal_direct"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.sample_direct_light.pipeline,
+                        self.bind_groups("sample_direct_light"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_diffuse.pipeline,
+                        self.bind_groups("scatter_diffuse"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_diffuse_transmission.pipeline,
+                        self.bind_groups("scatter_diffuse_transmission"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_conductor.pipeline,
+                        self.bind_groups("scatter_conductor"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_dielectric.pipeline,
+                        self.bind_groups("scatter_dielectric"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_thin_dielectric.pipeline,
+                        self.bind_groups("scatter_thin_dielectric"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_measured.pipeline,
+                        self.bind_groups("scatter_measured"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.scatter_coated.pipeline,
+                        self.bind_groups("scatter_coated"),
+                        workgroups_x,
+                        workgroups_y,
+                    );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.intersect_shadow.pipeline,
                         self.bind_groups("intersect_shadow"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_diffuse_bounce.pipeline,
-                        self.bind_groups("sample_diffuse_bounce"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_diffuse_transmission_bounce.pipeline,
-                        self.bind_groups("sample_diffuse_transmission_bounce"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_dielectric_bounce.pipeline,
-                        self.bind_groups("sample_dielectric_bounce"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_conductor_bounce.pipeline,
-                        self.bind_groups("sample_conductor_bounce"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_thin_dielectric_bounce.pipeline,
-                        self.bind_groups("sample_thin_dielectric_bounce"),
-                        workgroups_x,
-                        workgroups_y,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.sample_composite_bounce.pipeline,
-                        self.bind_groups("sample_composite_bounce"),
                         workgroups_x,
                         workgroups_y,
                     );
