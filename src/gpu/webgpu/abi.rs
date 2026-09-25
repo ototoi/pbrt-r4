@@ -16,6 +16,23 @@ pub const LIGHT_KIND_PORTAL_IMAGE_INFINITE: u32 = 6;
 pub const LIGHT_SAMPLER_KIND_UNIFORM: u32 = 0;
 pub const LIGHT_SAMPLER_KIND_BVH: u32 = 1;
 pub const INVALID_INDEX: u32 = u32::MAX;
+pub const INSTANCE_ORIENTATION_FLAG_REVERSED: u32 = 1 << 0;
+pub const INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS: u32 = 1 << 1;
+
+pub fn instance_orientation_flags(
+    reverse_orientation: bool,
+    transform_swaps_handedness: bool,
+) -> u32 {
+    (if reverse_orientation {
+        INSTANCE_ORIENTATION_FLAG_REVERSED
+    } else {
+        0
+    }) | (if transform_swaps_handedness {
+        INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS
+    } else {
+        0
+    })
+}
 pub const TEXTURE_OPERATION_IMAGE: u32 = 0;
 pub const TEXTURE_OPERATION_CONSTANT: u32 = 1;
 pub const TEXTURE_OPERATION_SCALE: u32 = 2;

@@ -14,7 +14,18 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let light_handle = instance.area_light;
     let area_light = load_light_payload(light_handle);
-    if (!load_area_two_sided(area_light)
+    if (!area_light_is_zero_alpha_sample_only(area_light)) {
+        let alpha = alpha_mask_value(
+            instance.material_root,
+            surface.uv,
+            surface.position.xyz,
+            surface.normal.xyz,
+        );
+        if (!alpha_mask_point_accept(alpha, surface.position.xyz)) {
+            return;
+        }
+    }
+    if (!area_light_is_two_sided(area_light)
         && dot(surface.geometric_normal.xyz, -ray.direction.xyz) <= 0.0) {
         return;
     }

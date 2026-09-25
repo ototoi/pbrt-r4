@@ -132,12 +132,16 @@ impl SceneBuilder {
         root_node.add_child(self.build_camera_node());
 
         for shape in &self.shapes {
-            if let Some(node) = self.realize_gpu_shape(shape, &materials, &named_materials)? {
+            if let Some(node) =
+                self.realize_gpu_shape(shape, &materials, &named_materials, &texture_lookup)?
+            {
                 root_node.add_child(node);
             }
         }
         for shape in &self.animated_shapes {
-            if let Some(node) = self.realize_gpu_shape(shape, &materials, &named_materials)? {
+            if let Some(node) =
+                self.realize_gpu_shape(shape, &materials, &named_materials, &texture_lookup)?
+            {
                 root_node.add_child(node);
             }
         }
@@ -156,7 +160,8 @@ impl SceneBuilder {
             root_node.add_child(Arc::new(RwLock::new(node)));
         }
 
-        let definitions = self.build_instance_definitions(&materials, &named_materials)?;
+        let definitions =
+            self.build_instance_definitions(&materials, &named_materials, &texture_lookup)?;
         for instance in &self.instance_uses {
             root_node.add_child(self.build_instance_node(instance, &definitions)?);
         }
@@ -338,8 +343,11 @@ impl SceneBuilder {
         shape: &ShapeSceneEntity,
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
+        texture_lookup: &HashMap<(NodeTextureKind, String), Arc<TextureNode>>,
     ) -> Result<Option<NodeRef>, PbrtError> {
-        if shape.base.params.get_one_float("alpha", 1.0) <= 0.0 {
+        let has_alpha_texture = shape.base.params.get_textures_ref("alpha").is_some();
+        let alpha = shape.base.params.get_one_float("alpha", 1.0);
+        if !has_alpha_texture && alpha <= 0.0 && shape.area_light_index.is_none() {
             return Ok(None);
         }
         let resolved_params;
@@ -419,7 +427,47 @@ impl SceneBuilder {
         }
 
         if let Some(material) = self.resolve_gpu_material(shape, materials, named_materials) {
-            node.add_component(Component::Material(MaterialComponent { material }));
+            if let Some(names) = shape.base.params.get_textures_ref("alpha") {
+                if names.len() != 1 {
+                    return Err(PbrtError::error(
+                        "Shape alpha texture parameter must name exactly one float texture.",
+                    ));
+                }
+                let name = names.first().ok_or_else(|| {
+                    PbrtError::error("Shape alpha texture parameter has no texture name.")
+                })?;
+                let texture = texture_lookup
+                    .get(&(NodeTextureKind::Float, name.clone()))
+                    .cloned()
+                    .ok_or_else(|| {
+                        PbrtError::error(&format!(
+                            "Couldn't find float texture for shape alpha parameter: {name}"
+                        ))
+                    })?;
+                node.add_component(Component::Material(MaterialComponent {
+                    material: Arc::new(Material {
+                        name: format!("{}:alpha", shape.base.name),
+                        kind: "alphamask".to_string(),
+                        params: ParameterDictionary::default(),
+                        material_attributes: vec![("material".to_string(), material)],
+                        texture_attributes: vec![("alpha".to_string(), texture)],
+                    }),
+                }));
+            } else if alpha < 1.0 {
+                let mut params = ParameterDictionary::default();
+                params.add_float("alpha", alpha);
+                node.add_component(Component::Material(MaterialComponent {
+                    material: Arc::new(Material {
+                        name: format!("{}:alpha", shape.base.name),
+                        kind: "alphamask".to_string(),
+                        params,
+                        material_attributes: vec![("material".to_string(), material)],
+                        texture_attributes: Vec::new(),
+                    }),
+                }));
+            } else {
+                node.add_component(Component::Material(MaterialComponent { material }));
+            }
         }
         Ok(Some(Arc::new(RwLock::new(node))))
     }
@@ -452,17 +500,22 @@ impl SceneBuilder {
         &self,
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
+        texture_lookup: &HashMap<(NodeTextureKind, String), Arc<TextureNode>>,
     ) -> Result<HashMap<String, NodeRef>, PbrtError> {
         let mut definitions = HashMap::new();
         for (name, definition) in &self.instance_definitions {
             let definition_node = Arc::new(RwLock::new(Node::new(name)));
             for shape in &definition.shapes {
-                if let Some(child) = self.realize_gpu_shape(shape, materials, named_materials)? {
+                if let Some(child) =
+                    self.realize_gpu_shape(shape, materials, named_materials, texture_lookup)?
+                {
                     definition_node.write().unwrap().add_child(child);
                 }
             }
             for shape in &definition.animated_shapes {
-                if let Some(child) = self.realize_gpu_shape(shape, materials, named_materials)? {
+                if let Some(child) =
+                    self.realize_gpu_shape(shape, materials, named_materials, texture_lookup)?
+                {
                     definition_node.write().unwrap().add_child(child);
                 }
             }

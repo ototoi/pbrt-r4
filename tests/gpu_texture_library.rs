@@ -36,6 +36,10 @@ fn texture_library_keeps_root_interpretation_outside_programs() {
 
     let library = compile_texture_library(&roots).unwrap();
     assert_eq!(library.programs.len(), 1);
+    assert!(matches!(
+        library.programs[0].instructions.as_slice(),
+        [TextureInstruction::ConstantFloat { value: 1.0, .. }]
+    ));
     assert!(library.image_views.is_empty());
     assert_eq!(library.roots.len(), 2);
 
@@ -255,11 +259,11 @@ fn texture_program_is_typed_post_order() {
     assert_eq!(program.slot_last_use, vec![0]);
     assert!(matches!(
         program.instructions[0],
-        TextureInstruction::ConstantFloat { dst: 0, value: 0.0 }
+        TextureInstruction::ConstantFloat { dst: 0, value: 2.0 }
     ));
     assert_eq!(
         evaluate_texture_root(&library, 0).unwrap(),
-        TextureValue::Float(0.0)
+        TextureValue::Float(2.0)
     );
 }
 
