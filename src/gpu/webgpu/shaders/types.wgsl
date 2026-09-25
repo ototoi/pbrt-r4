@@ -356,6 +356,17 @@ struct PortalLightCandidate {
     _padding1: u32,
 };
 
+struct DirectLightSample {
+    direction_pdf: vec4<f32>,
+    radiance: vec4<f32>,
+    position: vec3<f32>,
+    light_kind: u32,
+    position_error: vec3<f32>,
+    use_mis: u32,
+    normal: vec3<f32>,
+    valid: u32,
+};
+
 struct TriangleDistributionEntry {
     primitive: u32,
     cdf: f32,

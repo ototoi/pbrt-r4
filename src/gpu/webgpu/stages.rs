@@ -42,6 +42,7 @@ pub enum ResourceId {
     PrimitiveDistributionMap,
     TriangleDistribution,
     PortalLightCandidate,
+    DirectLightSample,
     ConstantBxdf,
     Film,
     MaterialTable,
@@ -305,6 +306,12 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     push(
         50,
         ResourceId::PortalLightCandidate,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        51,
+        ResourceId::DirectLightSample,
         BindingClass::Storage,
         Access::ReadWrite,
     );

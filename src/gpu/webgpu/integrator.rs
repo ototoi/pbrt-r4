@@ -37,6 +37,7 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/evaluate_attributes.wgsl"),
     include_str!("shaders/select_portal_direct.wgsl"),
     include_str!("shaders/sample_portal_direct.wgsl"),
+    include_str!("shaders/sample_direct_light.wgsl"),
     include_str!("shaders/evaluate_materials.wgsl"),
     include_str!("shaders/intersect_shadow.wgsl"),
     include_str!("shaders/sample_diffuse_bounce.wgsl"),
@@ -260,6 +261,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::PortalLightCandidate => {
                     queues.portal_light_candidates.as_entire_binding()
                 }
+                ResourceId::DirectLightSample => queues.direct_light_samples.as_entire_binding(),
                 ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
                 ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
                 ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
@@ -350,6 +352,11 @@ impl WavefrontPathIntegrator {
                 "select_portal_direct",
                 &pipeline.select_portal_direct,
                 include_str!("shaders/select_portal_direct.wgsl"),
+            ),
+            (
+                "sample_direct_light",
+                &pipeline.sample_direct_light,
+                include_str!("shaders/sample_direct_light.wgsl"),
             ),
             (
                 "evaluate_materials",
@@ -563,6 +570,13 @@ impl WavefrontPathIntegrator {
                     &mut encoder,
                     &self.pipeline.sample_portal_direct.pipeline,
                     self.bind_groups("sample_portal_direct"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.sample_direct_light.pipeline,
+                    self.bind_groups("sample_direct_light"),
                     workgroups_x,
                     workgroups_y,
                 );
