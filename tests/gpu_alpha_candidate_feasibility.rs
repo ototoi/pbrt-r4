@@ -608,3 +608,76 @@ Shape "trianglemesh"
         "GPU lost the constant-zero alpha area light: {gpu}"
     );
 }
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn fractional_texture_alpha_area_light_emits_for_accepted_samples() {
+    let directory = tempfile::tempdir().unwrap();
+    let scene = directory.path().join("fractional-alpha-area-light.pbrt");
+    let render = |with_alpha: bool| {
+        let scene_text = format!(
+            r#"LookAt 0 0 5  0 0 0  0 1 0
+Camera "perspective" "float fov" [25]
+Film "rgb" "integer xresolution" [16] "integer yresolution" [16]
+Sampler "independent" "integer pixelsamples" [4096] "integer seed" [17]
+Integrator "path" "integer maxdepth" [1]
+WorldBegin
+{alpha_texture}
+AttributeBegin
+    AreaLightSource "diffuse" "rgb L" [20 20 20]
+    Shape "trianglemesh"
+        "point3 P" [1 -1 2  2 1 2  3 -1 2]
+        "integer indices" [0 1 2]
+{alpha_attribute}
+AttributeEnd
+Material "diffuse" "rgb reflectance" [0.8 0.8 0.8]
+Shape "trianglemesh"
+    "point3 P" [-3 -3 0  3 -3 0  0 3 0]
+    "integer indices" [0 1 2]
+"#,
+            alpha_texture = if with_alpha {
+                "Texture \"mask\" \"float\" \"constant\" \"float value\" [0.5]"
+            } else {
+                ""
+            },
+            alpha_attribute = if with_alpha {
+                "        \"texture alpha\" [\"mask\"]"
+            } else {
+                ""
+            },
+        );
+        std::fs::write(&scene, scene_text).unwrap();
+        let output = directory.path().join(if with_alpha {
+            "fractional-area-gpu.exr"
+        } else {
+            "opaque-area-gpu.exr"
+        });
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
+        let status = command
+            .args([
+                "--use-gpu",
+                "--outfile",
+                output.to_str().unwrap(),
+                scene.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "area-light render failed: alpha={with_alpha}"
+        );
+        let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+        assert_eq!([resolution.x, resolution.y], [16, 16]);
+        pixels
+            .iter()
+            .map(|pixel| pixel.to_rgb().into_iter().sum::<f32>())
+            .sum::<f32>()
+            / pixels.len() as f32
+    };
+    let opaque = render(false);
+    let fractional = render(true);
+    assert!(
+        (0.4..0.6).contains(&(fractional / opaque)),
+        "fractional alpha should accept approximately half the sampled light points: alpha={fractional}, opaque={opaque}"
+    );
+}
