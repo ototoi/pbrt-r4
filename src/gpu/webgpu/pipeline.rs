@@ -22,8 +22,6 @@ pub struct Pipeline {
     pub evaluate_textures: StagePipeline,
     pub evaluate_attributes: StagePipeline,
     pub classify_surface_scatter: StagePipeline,
-    pub select_portal_direct: StagePipeline,
-    pub sample_portal_direct: StagePipeline,
     pub sample_direct_light: StagePipeline,
     pub scatter_diffuse: StagePipeline,
     pub scatter_diffuse_transmission: StagePipeline,
@@ -173,16 +171,6 @@ impl Pipeline {
                 "pbrt-r4 classify surface scatter",
                 include_str!("shaders/classify_surface_scatter.wgsl"),
                 "classify_surface_scatter",
-            ),
-            select_portal_direct: compute(
-                "pbrt-r4 select portal direct",
-                include_str!("shaders/select_portal_direct.wgsl"),
-                "select_portal_direct",
-            ),
-            sample_portal_direct: compute(
-                "pbrt-r4 sample portal direct",
-                include_str!("shaders/sample_portal_direct.wgsl"),
-                "sample_portal_direct",
             ),
             sample_direct_light: compute(
                 "pbrt-r4 sample direct light",

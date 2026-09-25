@@ -319,12 +319,6 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::Read,
     );
     push(
-        50,
-        ResourceId::PortalLightCandidate,
-        BindingClass::Storage,
-        Access::ReadWrite,
-    );
-    push(
         51,
         ResourceId::DirectLightSample,
         BindingClass::Storage,

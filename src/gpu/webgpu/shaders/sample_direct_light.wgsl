@@ -56,13 +56,32 @@ fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
     } else if (is_infinite_light_kind(light_kind)) {
         if (light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
-            let candidate = portal_light_candidates[pixel_index];
-            if (candidate.state != PORTAL_CANDIDATE_SAMPLED
-                || candidate.light_index != light_index) { return; }
-            wi = candidate.sample_direction_pdf.xyz;
-            sampled_light_pdf = candidate.sample_direction_pdf.w;
+            // Selecting and sampling the portal here, in the same
+            // invocation that selected it, avoids re-deriving the same
+            // light_selection from samples.direct.x in a separate stage.
+            let model = light_sampling_models[light_payload];
+            if (model.geometry_kind != 3u || model.geometry_index >= arrayLength(&portal_infinite_lights)) {
+                set_render_error();
+                return;
+            }
+            let portal = portal_infinite_lights[model.geometry_index];
+            if (portal.width == 0u || portal.height == 0u) {
+                set_render_error();
+                return;
+            }
+            let bounds = portal_image_bounds(portal, surface.position.xyz);
+            let portal_sample = sample_portal_distribution(
+                portal, vec2<f32>(samples.direct.y, samples.direct.z), bounds,
+            );
+            if (portal_sample.valid == 0u) { return; }
+            let direction = portal_render_from_image(portal, portal_sample.uv);
+            if (direction.valid == 0u || direction.duv_dw <= 0.0) { return; }
+            let portal_pdf = sampled_light_pdf * portal_sample.pdf / direction.duv_dw;
+            if (!portal_finite(portal_pdf) || portal_pdf == 0.0) { return; }
+            wi = direction.wi;
+            sampled_light_pdf = portal_pdf;
             light_radiance = load_portal_image_spectrum(
-                light_index, candidate.position_uv.xy, lambda,
+                light_index, portal_sample.uv, lambda,
             ) * load_light_scale(light_index);
         } else {
             wi = sample_uniform_infinite_direction(samples.direct.yz);

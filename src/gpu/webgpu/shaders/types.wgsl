@@ -41,9 +41,6 @@ const AREA_LIGHT_FLAG_TWO_SIDED: u32 = 1u;
 const AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY: u32 = 2u;
 const INSTANCE_ORIENTATION_FLAG_REVERSED: u32 = 1u;
 const INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS: u32 = 2u;
-const PORTAL_CANDIDATE_INVALID: u32 = 0u;
-const PORTAL_CANDIDATE_SAMPLED: u32 = 1u;
-const PORTAL_CANDIDATE_SELECTED: u32 = 2u;
 
 struct TriangleSurfaceData {
     position: vec3<f32>,
@@ -366,15 +363,6 @@ struct PortalImageInfiniteRecord {
 struct PortalDistributionTexel {
     function: f32,
     summed_area: f32,
-};
-
-struct PortalLightCandidate {
-    position_uv: vec4<f32>,
-    sample_direction_pdf: vec4<f32>,
-    state: u32,
-    light_index: u32,
-    _padding0: u32,
-    _padding1: u32,
 };
 
 struct DirectLightSample {
