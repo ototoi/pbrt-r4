@@ -467,7 +467,8 @@ impl Hyperboloid {
         if pdf <= 0.0 || !pdf.is_finite() {
             return None;
         }
-        let it = Interaction::from_surface_sample(&p, &p_error, &n_world);
+        let uv = Point2f::new(u, v);
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n_world, &uv);
         Some((it, pdf))
     }
 

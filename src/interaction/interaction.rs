@@ -158,6 +158,20 @@ impl Interaction {
         return Self::Base(it);
     }
 
+    pub fn from_surface_sample_with_uv(
+        p: &Point3f,
+        p_error: &Vector3f,
+        n: &Normal3f,
+        uv: &Point2f,
+    ) -> Self {
+        let mut it = BaseInteraction::default();
+        it.p = *p;
+        it.p_error = *p_error;
+        it.n = *n;
+        it.uv = *uv;
+        Self::Base(it)
+    }
+
     pub fn from_light_sample(p: &Point3f, time: Float, medium_interface: &MediumInterface) -> Self {
         let mut it = BaseInteraction::default();
         it.p = *p;

@@ -428,7 +428,17 @@ impl Sphere {
         if self.base.reverse_orientation {
             n *= -1.0;
         }
-        let it = Interaction::from_surface_sample(&p, &p_error, &n);
+        let p_obj = self.base.world_to_object.transform_point(&p);
+        let theta = Float::acos(Float::clamp(p_obj.z / radius, -1.0, 1.0));
+        let mut sphere_phi = Float::atan2(p_obj.y, p_obj.x);
+        if sphere_phi < 0.0 {
+            sphere_phi += 2.0 * PI;
+        }
+        let uv = Point2f::new(
+            sphere_phi / self.phi_max,
+            (theta - self.theta_min) / (self.theta_max - self.theta_min),
+        );
+        let it = Interaction::from_surface_sample_with_uv(&p, &p_error, &n, &uv);
         return Some((it, pdf));
     }
 

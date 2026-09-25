@@ -69,6 +69,10 @@ impl DiffuseAreaLight {
         self.l_emit.sample(lambda) * self.scale
     }
 
+    fn is_alpha_masked_at_sample(&self, interaction: &Interaction) -> bool {
+        self.light_type() == LightType::Area && self.shape.is_alpha_masked_at_sample(interaction)
+    }
+
     // v4 lights.cpp:823-841: cosine-weighted hemisphere sampling,
     // optionally two-sided (split probability 1/2 between hemispheres).
     fn sample_wo(&self, _u1: &Point2f, u2: &Point2f) -> (Vector3f, Float) {
@@ -182,13 +186,22 @@ impl DiffuseAreaLight {
 
     pub fn l(
         &self,
-        _p: Point3f,
+        p: Point3f,
         n: Normal3f,
         uv: Point2f,
         w: Vector3f,
         lambda: &SampledWavelengths,
     ) -> SampledSpectrum {
         if !self.two_sided && Vector3f::dot(&n, &w) < 0.0 {
+            return SampledSpectrum::zero();
+        }
+        let mut interaction = BaseInteraction::default();
+        interaction.p = p;
+        interaction.n = n;
+        interaction.uv = uv;
+        // v4 DiffuseAreaLight::L applies the point-hash test even after a
+        // primitive's ray-hash alpha test has accepted an intersection.
+        if self.is_alpha_masked_at_sample(&interaction.into()) {
             return SampledSpectrum::zero();
         }
         if let Some(image) = &self.image {
@@ -228,9 +241,7 @@ impl DiffuseAreaLight {
         let shape = self.shape.as_ref();
         let (mut intr, pdf) = shape.sample_from(&shape_ctx, &u)?;
         intr.set_medium_interface(&self.base.medium_interface);
-        if self.light_type() == LightType::Area
-            && shape.alpha(&intr).is_some_and(|alpha| alpha <= 0.0)
-        {
+        if self.is_alpha_masked_at_sample(&intr) {
             return None;
         }
         if pdf <= 0.0 || (intr.get_p() - ctx.p).length_squared() <= 0.0 {
@@ -286,9 +297,7 @@ impl DiffuseAreaLight {
         let (mut intr, pdf_pos) = shape.sample(&u1)?;
         intr.set_time(time);
         intr.set_medium_interface(&self.base.medium_interface);
-        if self.light_type() == LightType::Area
-            && shape.alpha(&intr).is_some_and(|alpha| alpha <= 0.0)
-        {
+        if self.is_alpha_masked_at_sample(&intr) {
             return None;
         }
         let n = intr.get_n();
