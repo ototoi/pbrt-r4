@@ -1,10 +1,10 @@
 // Rewrites every indirect-dispatch argument slot from the queues' current
-// counts. Called twice per depth: once after shade_surface, when the
-// material-eval queue's count is final for this depth, and again after
-// classify_surface_scatter, when the direct-eval and scatter queues' counts
-// are final too. Each call recomputes all slots; a slot whose queue has not
-// been (re)populated since the last reset simply reads its already-zero
-// count again, which is harmless.
+// counts. Called several times per depth, each time a batch of queues'
+// counts becomes final for this depth (after intersect_primary_rays, after
+// shade_surface, after classify_surface_scatter, after the scatter stages,
+// and after the ray queue swap). Each call recomputes every slot; a slot
+// whose queue has not been (re)populated since the last reset simply reads
+// its already-zero count again, which is harmless.
 fn write_dispatch_args(slot: u32, count: u32, capacity: u32) {
     let clamped = min(count, capacity);
     let n = (clamped + INDIRECT_WORKGROUP_SIZE - 1u) / INDIRECT_WORKGROUP_SIZE;
@@ -59,5 +59,20 @@ fn prepare_queue_dispatch() {
         QUEUE_DISPATCH_SLOT_SCATTER_COATED,
         scatter_coated_count(),
         queue_counters.scatter_coated.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_CURRENT_RAY, current_ray_count(), queue_counters.current.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_ESCAPED, escaped_ray_count(), queue_counters.escaped.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_HIT_AREA, hit_area_light_count(), queue_counters.hit_area.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_SHADOW, shadow_ray_count(), queue_counters.shadow.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_NEXT_RAY, next_ray_count(), queue_counters.next.capacity,
     );
 }

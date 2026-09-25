@@ -1,9 +1,6 @@
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(64, 1, 1)
 fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
-        return;
-    }
-    let ray_index = global_id.y * viewport.width + global_id.x;
+    let ray_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
     if (ray_index >= current_ray_count()) {
         return;
     }
