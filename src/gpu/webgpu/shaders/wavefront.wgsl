@@ -253,15 +253,45 @@ fn pixel_count() -> u32 {
     return viewport.width * viewport.height;
 }
 
-fn load_material_kind(index: u32) -> u32 {
-    if (material_table.debug_material_kind != 0xffffffffu) {
-        return material_table.debug_material_kind;
-    }
+fn load_material_kind_raw(index: u32) -> u32 {
     if (index >= arrayLength(&material_nodes) || index >= material_table.material_node_count) {
         set_render_error();
         return MATERIAL_KIND_NORMAL;
     }
     return material_nodes[index].kind;
+}
+
+fn load_material_kind(index: u32) -> u32 {
+    if (material_table.debug_material_kind != 0xffffffffu) {
+        let actual_kind = load_material_kind_raw(index);
+        if (actual_kind != MATERIAL_KIND_ALPHA_MASK) {
+            return material_table.debug_material_kind;
+        }
+        return actual_kind;
+    }
+    return load_material_kind_raw(index);
+}
+
+fn load_surface_material_kind(material_root: MaterialRoot) -> u32 {
+    var material_node = material_root.node_offset;
+    for (var depth = 0u; depth < material_root.node_count; depth++) {
+        if (load_material_kind_raw(material_node) != MATERIAL_KIND_ALPHA_MASK) {
+            return load_material_kind(material_node);
+        }
+        if (material_node >= arrayLength(&material_nodes)) {
+            set_render_error();
+            return MATERIAL_KIND_NORMAL;
+        }
+        let child = material_nodes[material_node].child0;
+        if (child == 0xffffffffu || child < material_root.node_offset
+            || child >= material_root.node_offset + material_root.node_count) {
+            set_render_error();
+            return MATERIAL_KIND_NORMAL;
+        }
+        material_node = child;
+    }
+    set_render_error();
+    return MATERIAL_KIND_NORMAL;
 }
 
 fn load_material_attribute(material_node: u32, ordinal: u32) -> AttributeRef {
@@ -270,6 +300,190 @@ fn load_material_attribute(material_node: u32, ordinal: u32) -> AttributeRef {
     if (ordinal >= material.attribute_count || material.attribute_offset + ordinal >= arrayLength(&attribute_refs)) { set_render_error(); return AttributeRef(0u, 0u); }
     return attribute_refs[material.attribute_offset + ordinal];
 }
+
+fn alpha_mask_hash(origin: vec3<f32>, direction: vec3<f32>) -> f32 {
+    let hash = murmur_hash_24(
+        vec2<u32>(bitcast<u32>(origin.x), bitcast<u32>(origin.y)),
+        vec2<u32>(bitcast<u32>(origin.z), bitcast<u32>(direction.x)),
+        vec2<u32>(bitcast<u32>(direction.y), bitcast<u32>(direction.z)),
+    );
+    return f32(hash.x) * (1.0 / 4294967296.0);
+}
+
+fn alpha_mask_point_hash(position: vec3<f32>) -> f32 {
+    let hash = murmur_hash_12(
+        vec2<u32>(bitcast<u32>(position.x), bitcast<u32>(position.y)),
+        bitcast<u32>(position.z),
+    );
+    return f32(hash.x) * (1.0 / 4294967296.0);
+}
+
+fn alpha_mask_value(material_root_index: u32, uv: vec2<f32>, position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if (material_root_index >= arrayLength(&material_roots)) {
+        set_render_error();
+        return 0.0;
+    }
+    let material_root = material_roots[material_root_index];
+    if (material_root.node_count == 0u
+        || material_root.node_offset >= arrayLength(&material_nodes)) {
+        set_render_error();
+        return 0.0;
+    }
+    let material_node = material_root.node_offset;
+    if (load_material_kind_raw(material_node) != MATERIAL_KIND_ALPHA_MASK) {
+        return 1.0;
+    }
+    let alpha_ref = load_material_attribute(material_node, 0u);
+    if (alpha_ref.kind == 0u) {
+        if (alpha_ref.index >= arrayLength(&scalar_attributes)) {
+            set_render_error();
+            return 0.0;
+        }
+        return scalar_attributes[alpha_ref.index];
+    }
+    if (alpha_ref.kind == 2u) {
+        if (alpha_ref.index >= arrayLength(&texture_roots)) {
+            set_render_error();
+            return 0.0;
+        }
+        material_texture_uv = uv;
+        material_texture_position = position;
+        material_texture_normal = normal;
+        return sample_texture_program(texture_roots[alpha_ref.index], uv).x;
+    }
+    set_render_error();
+    return 0.0;
+}
+
+fn alpha_mask_point_accept(alpha: f32, position: vec3<f32>) -> bool {
+    if (alpha >= 1.0) { return true; }
+    if (alpha <= 0.0) { return false; }
+    return alpha_mask_point_hash(position) <= alpha;
+}
+
+fn load_area_alpha_zero(index: u32) -> bool {
+    return (load_area_word(index, 7u) & 2u) != 0u;
+}
+
+fn alpha_area_sample_accept(
+    area_light: u32,
+    primitive: u32,
+    barycentrics: vec3<f32>,
+    position: vec3<f32>,
+) -> bool {
+    if (load_area_alpha_zero(area_light)) { return true; }
+    let instance_index = load_area_instance(area_light);
+    if (instance_index >= arrayLength(&instances)) {
+        set_render_error();
+        return false;
+    }
+    let instance = instances[instance_index];
+    if (instance.geometry >= arrayLength(&geometries)) {
+        set_render_error();
+        return false;
+    }
+    let geometry = geometries[instance.geometry];
+    let first_index = geometry.index_offset + primitive * 3u;
+    if (first_index + 2u >= arrayLength(&indices)) {
+        set_render_error();
+        return false;
+    }
+    let i0 = geometry.vertex_offset + indices[first_index];
+    let i1 = geometry.vertex_offset + indices[first_index + 1u];
+    let i2 = geometry.vertex_offset + indices[first_index + 2u];
+    if (i0 >= arrayLength(&vertices) || i1 >= arrayLength(&vertices) || i2 >= arrayLength(&vertices)) {
+        set_render_error();
+        return false;
+    }
+    let uv = vertices[i0].uv * barycentrics.x
+        + vertices[i1].uv * barycentrics.y
+        + vertices[i2].uv * barycentrics.z;
+    let object_normal = vertices[i0].normal.xyz * barycentrics.x
+        + vertices[i1].normal.xyz * barycentrics.y
+        + vertices[i2].normal.xyz * barycentrics.z;
+    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
+    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
+    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
+    var normal = normalize(cross(p1 - p0, p2 - p0));
+    if (dot(object_normal, object_normal) > 0.0) {
+        normal = normalize((instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz);
+    }
+    if ((instance.orientation_flags & 1u) != 0u) { normal = -normal; }
+    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
+        normal = -normal;
+    }
+    let alpha = alpha_mask_value(instance.material_root, uv, position, normal);
+    return alpha_mask_point_accept(alpha, position);
+}
+
+fn alpha_mask_candidate_accept(origin: vec3<f32>, direction: vec3<f32>, hit: RayIntersection) -> bool {
+    if (hit.instance_custom_data >= arrayLength(&instances)) {
+        set_render_error();
+        return false;
+    }
+    let instance = instances[hit.instance_custom_data];
+    if (instance.material_root >= arrayLength(&material_roots)) {
+        set_render_error();
+        return false;
+    }
+    let material_root = material_roots[instance.material_root];
+    if (material_root.node_count == 0u
+        || material_root.node_offset >= arrayLength(&material_nodes)) {
+        set_render_error();
+        return false;
+    }
+    let root_node_index = material_root.node_offset;
+    if (load_material_kind_raw(root_node_index) != MATERIAL_KIND_ALPHA_MASK) {
+        return true;
+    }
+    var alpha = 0.0;
+    var uv = vec2<f32>(0.0);
+    var position = origin + hit.t * direction;
+    var normal = vec3<f32>(0.0, 0.0, 1.0);
+    if (instance.geometry >= arrayLength(&geometries)) {
+        set_render_error();
+        return false;
+    }
+    let geometry = geometries[instance.geometry];
+    let first_index = geometry.index_offset + hit.primitive_index * 3u;
+    if (first_index + 2u >= arrayLength(&indices)) {
+        set_render_error();
+        return false;
+    }
+    let i0 = geometry.vertex_offset + indices[first_index];
+    let i1 = geometry.vertex_offset + indices[first_index + 1u];
+    let i2 = geometry.vertex_offset + indices[first_index + 2u];
+    if (i0 >= arrayLength(&vertices) || i1 >= arrayLength(&vertices) || i2 >= arrayLength(&vertices)) {
+        set_render_error();
+        return false;
+    }
+    let b1 = hit.barycentrics.x;
+    let b2 = hit.barycentrics.y;
+    let b0 = 1.0 - b1 - b2;
+    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
+    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
+    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
+    position = p0 * b0 + p1 * b1 + p2 * b2;
+    uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
+    let object_normal = vertices[i0].normal.xyz * b0
+        + vertices[i1].normal.xyz * b1
+        + vertices[i2].normal.xyz * b2;
+    normal = normalize(cross(p1 - p0, p2 - p0));
+    if (dot(object_normal, object_normal) > 0.0) {
+        normal = normalize((instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz);
+    }
+    if ((instance.orientation_flags & 1u) != 0u) {
+        normal = -normal;
+    }
+    if ((instance.orientation_flags & 2u) != 0u && dot(object_normal, object_normal) > 0.0) {
+        normal = -normal;
+    }
+    alpha = alpha_mask_value(instance.material_root, uv, position, normal);
+    if (alpha >= 1.0) { return true; }
+    if (alpha <= 0.0) { return false; }
+    return alpha_mask_hash(origin, direction) <= alpha;
+}
+
 fn load_texture_eval_result(material_node: u32, ordinal: u32, texture_root: u32) -> TextureEvalResult {
     for (var slot = 0u; slot < material_table.texture_eval_stride; slot++) {
         let result = texture_eval_results[material_texture_eval_base + slot];
@@ -879,6 +1093,11 @@ fn resolve_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     var current = root;
     for (var depth = 0u; depth < material_table.attributes_eval_stride; depth++) {
         let item = load_attributes_eval_work_item(current);
+        if (item.bxdf_kind == MATERIAL_KIND_ALPHA_MASK) {
+            if (item.child_work_item0 == 0xffffffffu) { set_render_error(); return item; }
+            current = item.child_work_item0;
+            continue;
+        }
         if (item.bxdf_kind != MATERIAL_KIND_MIX) { return item; }
         if (item.selected_child_work_item == 0xffffffffu) { set_render_error(); return item; }
         current = item.selected_child_work_item;

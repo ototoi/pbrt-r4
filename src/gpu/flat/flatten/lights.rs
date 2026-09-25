@@ -5,7 +5,10 @@ use super::{
     LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Transform,
     TriangleDistributionEntry, IDENTITY_LINEAR_TRANSFORM, INVALID_INDEX,
 };
-use crate::gpu::node::{AreaLight as NodeAreaLight, Light as NodeLight, TriangleMeshShape};
+use crate::gpu::node::{
+    AreaLight as NodeAreaLight, Light as NodeLight, TextureComponent, TextureKind,
+    TriangleMeshShape,
+};
 use crate::util::base::Point2f;
 use crate::util::error::PbrtError;
 use crate::util::geometry::equal_area_square_to_sphere;
@@ -641,6 +644,7 @@ pub fn append_area_light(
     name: &str,
     world_transform: &Transform,
     instance_index: u32,
+    material_source: u32,
     reverse_orientation: bool,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
@@ -719,6 +723,7 @@ pub fn append_area_light(
     let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
         PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
     })?;
+    let alpha_zero_light = area_light_has_constant_zero_alpha(material_source, builder)?;
     builder.light_sampling_models.push(LightSamplingModel {
         kind: LightKind::Area,
         geometry_kind: LightGeometryKind::Instance,
@@ -729,7 +734,7 @@ pub fn append_area_light(
             PbrtError::error("The flattened GPU area-light distribution exceeds u32.")
         })?,
         total_area,
-        flags: u32::from(two_sided),
+        flags: u32::from(two_sided) | (u32::from(alpha_zero_light) << 1),
         world_to_light: IDENTITY_LINEAR_TRANSFORM,
     });
     let emission_attr = push_spectrum_attribute(builder, "L", &emission)?;
@@ -748,4 +753,63 @@ pub fn append_area_light(
         two_sided,
     });
     Ok(light_handle)
+}
+
+fn area_light_has_constant_zero_alpha(
+    material_source: u32,
+    builder: &FlatBuilder,
+) -> Result<bool, PbrtError> {
+    let Some(material) = builder.material_source_nodes.get(material_source as usize) else {
+        return Err(PbrtError::error(
+            "Area light references an invalid material source node.",
+        ));
+    };
+    if material.kind != "alphamask" {
+        return Ok(false);
+    }
+    let Some(alpha) = material.attributes.first() else {
+        return Err(PbrtError::error(
+            "Area-light AlphaMask has no alpha attribute.",
+        ));
+    };
+    if alpha.name != "alpha" {
+        return Err(PbrtError::error(
+            "Area-light AlphaMask attribute is not alpha.",
+        ));
+    }
+    match alpha.kind {
+        super::AttributeKind::Scalar => {
+            let value = builder
+                .scalar_attributes
+                .get(alpha.index as usize)
+                .ok_or_else(|| PbrtError::error("Area-light alpha scalar is missing."))?;
+            Ok(*value == 0.0)
+        }
+        super::AttributeKind::Texture => {
+            let root = builder
+                .texture_root_specs
+                .get(alpha.index as usize)
+                .ok_or_else(|| PbrtError::error("Area-light alpha texture root is missing."))?;
+            let super::TextureRootSpec::Float { node } = root else {
+                return Err(PbrtError::error(
+                    "Area-light alpha texture root must be a float texture.",
+                ));
+            };
+            let constant = node
+                .components
+                .iter()
+                .find_map(|component| match component {
+                    TextureComponent::Texture(texture)
+                        if texture.kind == TextureKind::Float && texture.name == "constant" =>
+                    {
+                        Some(texture.params.get_one_float("value", 0.0) as f32)
+                    }
+                    _ => None,
+                });
+            Ok(node.children.is_empty() && constant == Some(0.0))
+        }
+        _ => Err(PbrtError::error(
+            "Area-light alpha attribute must be scalar or float texture.",
+        )),
+    }
 }

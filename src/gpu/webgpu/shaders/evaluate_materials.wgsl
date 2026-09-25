@@ -163,6 +163,11 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let b = triangle_sample.xyz;
         light_normal = triangle_geometric_normal(triangle);
         light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
+        if (!alpha_area_sample_accept(
+            light_payload, triangle_selection.primitive, b, light_position,
+        )) {
+            return;
+        }
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
         light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)
             + abs(triangle.p2.xyz * b.z)) * gamma(6.0);
@@ -262,7 +267,8 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
     }
     var mis_weight = 1.0;
-    if (light_kind == LIGHT_KIND_AREA || is_infinite_light_kind(light_kind)) {
+    if ((light_kind == LIGHT_KIND_AREA && !load_area_alpha_zero(light_payload))
+        || is_infinite_light_kind(light_kind)) {
         let light_pdf2 = sampled_light_pdf * sampled_light_pdf;
         let bsdf_pdf2 = bsdf_pdf * bsdf_pdf;
         mis_weight = light_pdf2 / max(light_pdf2 + bsdf_pdf2, 1e-7);
