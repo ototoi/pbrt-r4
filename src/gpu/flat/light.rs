@@ -2,6 +2,29 @@ use super::AttributeRef;
 
 pub const INVALID_INDEX: u32 = u32::MAX;
 
+pub const AREA_LIGHT_FLAG_TWO_SIDED: u32 = 1 << 0;
+pub const AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY: u32 = 1 << 1;
+
+pub fn area_light_flags(two_sided: bool, zero_alpha_sample_only: bool) -> u32 {
+    (if two_sided {
+        AREA_LIGHT_FLAG_TWO_SIDED
+    } else {
+        0
+    }) | (if zero_alpha_sample_only {
+        AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY
+    } else {
+        0
+    })
+}
+
+pub fn area_light_is_two_sided(flags: u32) -> bool {
+    flags & AREA_LIGHT_FLAG_TWO_SIDED != 0
+}
+
+pub fn area_light_is_zero_alpha_sample_only(flags: u32) -> bool {
+    flags & AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY != 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightKind {
     Point,

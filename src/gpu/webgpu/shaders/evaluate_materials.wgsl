@@ -173,7 +173,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
             + abs(triangle.p2.xyz * b.z)) * gamma(6.0);
         let area_wi = normalize(light_position - light_sample_origin);
         let cosine_light = dot(light_normal, -area_wi);
-        if (load_area_two_sided(light_payload)) {
+        if (area_light_is_two_sided(light_payload)) {
             if (abs(cosine_light) == 0.0) {
                 return;
             }
@@ -267,7 +267,7 @@ fn evaluate_materials(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
     }
     var mis_weight = 1.0;
-    if ((light_kind == LIGHT_KIND_AREA && !load_area_alpha_zero(light_payload))
+    if ((light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))
         || is_infinite_light_kind(light_kind)) {
         let light_pdf2 = sampled_light_pdf * sampled_light_pdf;
         let bsdf_pdf2 = bsdf_pdf * bsdf_pdf;
