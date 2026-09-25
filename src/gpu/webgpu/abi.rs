@@ -418,6 +418,26 @@ pub struct QueueCounters {
     pub scatter_coated: QueueState,
 }
 
+/// Indirect dispatch arguments, laid out identically to `wgpu::util::DispatchIndirectArgs`.
+pub const QUEUE_DISPATCH_SLOT_MATERIAL_EVAL: u64 = 0;
+pub const QUEUE_DISPATCH_SLOT_DIRECT_EVAL: u64 = 1;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE: u64 = 2;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION: u64 = 3;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR: u64 = 4;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC: u64 = 5;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC: u64 = 6;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_MEASURED: u64 = 7;
+pub const QUEUE_DISPATCH_SLOT_SCATTER_COATED: u64 = 8;
+pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 9;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DispatchIndirectArgs {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct RenderError {

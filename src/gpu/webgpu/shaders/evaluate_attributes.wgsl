@@ -51,10 +51,9 @@ fn evaluate_coated_child(parent: u32, parent_kind: u32, slot: u32, input: Attrib
     return e;
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(64, 1, 1)
 fn evaluate_attributes(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x >= viewport.width || id.y >= viewport.height) { return; }
-    let queue_index = id.y * viewport.width + id.x; if (queue_index >= material_eval_count()) { return; }
+    let queue_index = id.y * INDIRECT_ROW_ITEMS + id.x; if (queue_index >= material_eval_count()) { return; }
     let ray = load_current_ray(load_material_eval_ray(queue_index)); let pixel = ray.pixel_index; let surface = surfaces[pixel];
     material_texture_uv = surface.uv; material_texture_normal = surface.normal.xyz; material_texture_position = surface.position.xyz; material_texture_eval_base = queue_index * material_table.texture_eval_stride;
     if (surface.material_root >= arrayLength(&material_roots)) { set_render_error(); return; }
