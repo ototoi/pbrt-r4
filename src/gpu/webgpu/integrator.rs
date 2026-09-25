@@ -12,11 +12,13 @@ use crate::util::error::PbrtError;
 use crate::util::misc::ProgressReporter;
 
 use super::abi::{
-    DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_DIRECT_EVAL, QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
-    QUEUE_DISPATCH_SLOT_SCATTER_COATED, QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
-    QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
-    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION, QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
-    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, WORKGROUP_SIZE,
+    DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_CURRENT_RAY, QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
+    QUEUE_DISPATCH_SLOT_ESCAPED, QUEUE_DISPATCH_SLOT_HIT_AREA, QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
+    QUEUE_DISPATCH_SLOT_NEXT_RAY, QUEUE_DISPATCH_SLOT_SCATTER_COATED,
+    QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR, QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
+    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
+    QUEUE_DISPATCH_SLOT_SCATTER_MEASURED, QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
+    QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
 use super::context::Context;
 use super::film::Film;
@@ -541,62 +543,80 @@ impl WavefrontPathIntegrator {
                 workgroups_x,
                 workgroups_y,
             );
+            // Every pixel emits a primary ray, so the current-ray queue's
+            // count is final as soon as generate_primary_rays completes.
+            dispatch(
+                &mut encoder,
+                &self.pipeline.prepare_queue_dispatch.pipeline,
+                self.bind_groups("prepare_queue_dispatch"),
+                1,
+                1,
+            );
             for depth in 0..=self.scene.render_settings.max_depth {
                 if depth != 0 {
                     dispatch(
                         &mut encoder,
                         &self.pipeline.reset_shadow_queue.pipeline,
                         self.bind_groups("reset_shadow_queue"),
-                        workgroups_x,
-                        workgroups_y,
+                        1,
+                        1,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.reset_classification_queues.pipeline,
                         self.bind_groups("reset_classification_queues"),
-                        workgroups_x,
-                        workgroups_y,
+                        1,
+                        1,
                     );
                 }
-                dispatch(
+                dispatch_indirect(
                     &mut encoder,
                     &self.pipeline.intersect_primary_rays.pipeline,
                     self.bind_groups("intersect_primary_rays"),
-                    workgroups_x,
-                    workgroups_y,
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_CURRENT_RAY,
                 );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.handle_escaped.pipeline,
-                    self.bind_groups("handle_escaped"),
-                    workgroups_x,
-                    workgroups_y,
-                );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.shade_surface.pipeline,
-                    self.bind_groups("shade_surface"),
-                    workgroups_x,
-                    workgroups_y,
-                );
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.handle_emissive.pipeline,
-                    self.bind_groups("handle_emissive"),
-                    workgroups_x,
-                    workgroups_y,
-                );
-                // prepare_queue_dispatch rewrites every indirect-dispatch
-                // slot from the current queue counts. The material-eval
-                // queue's count is final now that shade_surface has run, so
-                // evaluate_textures/evaluate_attributes/classify_surface_scatter
-                // can dispatch only as many workgroups as there are hits.
+                // intersect_primary_rays has just finished populating the
+                // escaped-ray queue for this depth.
                 dispatch(
                     &mut encoder,
                     &self.pipeline.prepare_queue_dispatch.pipeline,
                     self.bind_groups("prepare_queue_dispatch"),
                     1,
                     1,
+                );
+                dispatch_indirect(
+                    &mut encoder,
+                    &self.pipeline.handle_escaped.pipeline,
+                    self.bind_groups("handle_escaped"),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_ESCAPED,
+                );
+                // The current-ray queue's count has not changed since the
+                // last prepare_queue_dispatch call, so shade_surface can
+                // reuse that same slot.
+                dispatch_indirect(
+                    &mut encoder,
+                    &self.pipeline.shade_surface.pipeline,
+                    self.bind_groups("shade_surface"),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_CURRENT_RAY,
+                );
+                // shade_surface has just finished populating the hit-area
+                // and material-eval queues for this depth.
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.prepare_queue_dispatch.pipeline,
+                    self.bind_groups("prepare_queue_dispatch"),
+                    1,
+                    1,
+                );
+                dispatch_indirect(
+                    &mut encoder,
+                    &self.pipeline.handle_emissive.pipeline,
+                    self.bind_groups("handle_emissive"),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_HIT_AREA,
                 );
                 dispatch_indirect(
                     &mut encoder,
@@ -706,26 +726,44 @@ impl WavefrontPathIntegrator {
                         &self.queues.queue_dispatch_args,
                         QUEUE_DISPATCH_SLOT_SCATTER_COATED,
                     );
+                    // The scatter stages have just finished appending this
+                    // depth's shadow rays and next-depth bounce rays.
                     dispatch(
+                        &mut encoder,
+                        &self.pipeline.prepare_queue_dispatch.pipeline,
+                        self.bind_groups("prepare_queue_dispatch"),
+                        1,
+                        1,
+                    );
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.intersect_shadow.pipeline,
                         self.bind_groups("intersect_shadow"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_SHADOW,
                     );
-                    dispatch(
+                    dispatch_indirect(
                         &mut encoder,
                         &self.pipeline.swap_ray_queues.pipeline,
                         self.bind_groups("swap_ray_queues"),
-                        workgroups_x,
-                        workgroups_y,
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_NEXT_RAY,
                     );
                     dispatch(
                         &mut encoder,
                         &self.pipeline.reset_next_ray_queue.pipeline,
                         self.bind_groups("reset_next_ray_queue"),
-                        workgroups_x,
-                        workgroups_y,
+                        1,
+                        1,
+                    );
+                    // reset_next_ray_queue has just committed the next
+                    // depth's current-ray count.
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.prepare_queue_dispatch.pipeline,
+                        self.bind_groups("prepare_queue_dispatch"),
+                        1,
+                        1,
                     );
                 }
             }
