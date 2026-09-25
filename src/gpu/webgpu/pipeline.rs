@@ -22,6 +22,7 @@ pub struct Pipeline {
     pub evaluate_attributes: StagePipeline,
     pub select_portal_direct: StagePipeline,
     pub sample_portal_direct: StagePipeline,
+    pub sample_direct_light: StagePipeline,
     pub evaluate_materials: StagePipeline,
     pub intersect_shadow: StagePipeline,
     pub sample_diffuse_bounce: StagePipeline,
@@ -170,6 +171,11 @@ impl Pipeline {
                 "pbrt-r4 sample portal direct",
                 include_str!("shaders/sample_portal_direct.wgsl"),
                 "sample_portal_direct",
+            ),
+            sample_direct_light: compute(
+                "pbrt-r4 sample direct light",
+                include_str!("shaders/sample_direct_light.wgsl"),
+                "sample_direct_light",
             ),
             evaluate_materials: compute(
                 "pbrt-r4 evaluate materials",

@@ -182,3 +182,46 @@ fn load_light_scalar(index: u32, ordinal: u32) -> f32 {
     if (attr.kind != 0u || attr.index >= arrayLength(&scalar_attributes)) { set_render_error(); return 0.0; }
     return scalar_attributes[attr.index];
 }
+
+fn is_infinite_light_kind(light_kind: u32) -> bool {
+    return light_kind == LIGHT_KIND_UNIFORM_INFINITE
+        || light_kind == LIGHT_KIND_IMAGE_INFINITE
+        || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE;
+}
+
+fn sample_uniform_infinite_direction(u: vec2<f32>) -> vec3<f32> {
+    let z = 1.0 - 2.0 * min(u.x, 0.99999994);
+    let phi = 2.0 * PI * u.y;
+    let radial = sqrt(max(0.0, 1.0 - z * z));
+    return vec3<f32>(radial * cos(phi), radial * sin(phi), z);
+}
+
+fn spot_falloff(light_index: u32, world_direction: vec3<f32>) -> f32 {
+    if (light_index >= arrayLength(&light_records)) {
+        set_render_error();
+        return 0.0;
+    }
+    let model_index = light_records[light_index].sampling_model;
+    if (model_index >= arrayLength(&light_sampling_models)) {
+        set_render_error();
+        return 0.0;
+    }
+    let model = light_sampling_models[model_index];
+    let local_w = vec3<f32>(
+        dot(model.world_to_light0.xyz, world_direction),
+        dot(model.world_to_light1.xyz, world_direction),
+        dot(model.world_to_light2.xyz, world_direction),
+    );
+    let local_length_squared = dot(local_w, local_w);
+    if (local_length_squared == 0.0) {
+        set_render_error();
+        return 0.0;
+    }
+    let cosine = dot(normalize(load_light_direction(light_index)), local_w * inverseSqrt(local_length_squared));
+    let falloff_start = load_light_scalar(light_index, 2u);
+    let falloff_end = load_light_scalar(light_index, 3u);
+    if (falloff_start == falloff_end) {
+        return select(0.0, 1.0, cosine >= falloff_start);
+    }
+    return smoothstep(falloff_end, falloff_start, cosine);
+}
