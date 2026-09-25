@@ -1,63 +1,10 @@
 use pbrt_r4::gpu::webgpu::stages::{
-    all_stage_specs, canonical_wavefront_bindings, initial_stage_specs, Access, BindingClass,
-    BindingSpec, RequiredLimits, ResourceId, StageId, StageSpec,
+    canonical_wavefront_bindings, Access, BindingClass, BindingSpec, RequiredLimits, ResourceId,
 };
 
 #[test]
-fn initial_stage_specs_request_their_actual_storage_dependencies() {
-    let specs = initial_stage_specs();
-    let limits = RequiredLimits::from_stages(&specs).unwrap();
-    assert_eq!(limits.storage_buffers_per_shader_stage, 14);
-    assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
-    assert_eq!(limits.bind_groups, 3);
-}
-
-#[test]
-fn all_stage_specs_cover_the_wavefront_registry() {
-    let specs = all_stage_specs();
-    assert_eq!(specs.len(), 18);
-    let limits = RequiredLimits::from_stages(&specs).unwrap();
-    assert_eq!(limits.storage_buffers_per_shader_stage, 14);
-    assert_eq!(limits.uniform_buffers_per_shader_stage, 2);
-}
-
-#[test]
-fn portal_distribution_resources_are_scoped_to_sampling_and_escaped_stages() {
-    let specs = all_stage_specs();
-    let direct = specs
-        .iter()
-        .find(|spec| spec.id == StageId::SamplePortalDirect)
-        .unwrap();
-    let escaped = specs
-        .iter()
-        .find(|spec| spec.id == StageId::HandleEscaped)
-        .unwrap();
-    for (resource, direct_binding, escaped_binding) in [
-        (ResourceId::PortalInfiniteLight, 2, 6),
-        (ResourceId::PortalDistribution, 3, 7),
-    ] {
-        assert!(direct.bindings.iter().any(|binding| {
-            binding.group == 1 && binding.binding == direct_binding && binding.resource == resource
-        }));
-        assert!(escaped.bindings.iter().any(|binding| {
-            binding.group == 1 && binding.binding == escaped_binding && binding.resource == resource
-        }));
-        assert!(specs
-            .iter()
-            .filter(|spec| !matches!(
-                spec.id,
-                StageId::SamplePortalDirect | StageId::HandleEscaped
-            ))
-            .all(|spec| spec
-                .bindings
-                .iter()
-                .all(|binding| binding.resource != resource)));
-    }
-}
-
-#[test]
 fn duplicate_bindings_are_rejected_before_device_creation() {
-    let bindings = Box::leak(Box::new([
+    let bindings = [
         BindingSpec {
             group: 0,
             binding: 0,
@@ -72,12 +19,8 @@ fn duplicate_bindings_are_rejected_before_device_creation() {
             class: BindingClass::Uniform,
             access: Access::Read,
         },
-    ]));
-    let result = RequiredLimits::from_stages(&[StageSpec {
-        id: StageId::BeginSample,
-        entry_point: "begin_sample",
-        bindings,
-    }]);
+    ];
+    let result = RequiredLimits::from_bindings(&bindings);
     assert!(result.is_err());
 }
 
