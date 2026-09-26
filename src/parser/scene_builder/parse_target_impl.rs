@@ -305,6 +305,7 @@ impl ParseTarget for SceneBuilder {
         self.camera_name = name.to_string();
         let params = into_parameter_dictionary(params);
         self.camera_params = make_absolute_path(&params, &self.work_dirs);
+        self.camera_medium = self.top_graphics_state().current_outside_medium.clone();
         // pbrt's `LookAt` accumulates `cameraFromWorld` into the CTM, so
         // the active transform at the `Camera` directive is actually the
         // world-to-camera direction; `realize_camera` inverts it before
