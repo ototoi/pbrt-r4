@@ -36,7 +36,7 @@ use lights::{append_area_light, flatten_light};
 
 mod scene_settings;
 use scene_settings::{
-    register_root_component, render_settings, screen_window, viewport_resolution,
+    region_bounds, register_root_component, render_settings, screen_window, viewport_resolution,
 };
 
 const MAX_LAYER_DEPTH: i32 = 32;
