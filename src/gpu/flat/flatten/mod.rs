@@ -104,6 +104,9 @@ pub fn flatten_node_with_material_override(
     let (material_roots, material_nodes, source_to_root) =
         build_material_roots(&builder.material_source_nodes, &root_source_nodes)?;
     for instance in &mut builder.instances {
+        if instance.material_root == INVALID_INDEX {
+            continue;
+        }
         instance.material_root = *source_to_root
             .get(instance.material_root as usize)
             .filter(|&&layout| layout != INVALID_INDEX)

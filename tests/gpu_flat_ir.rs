@@ -264,6 +264,98 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
 }
 
 #[test]
+fn flatten_node_allows_a_medium_interface_shape_with_no_material() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut medium_params = ParameterDictionary::default();
+    medium_params.add_string("string type", "homogeneous");
+    medium_params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    root.add_component(Component::Medium(MediumComponent {
+        medium: NodeMedium {
+            name: "fog".to_string(),
+            kind: "homogeneous".to_string(),
+            params: medium_params,
+            transform: Transform::default(),
+        },
+    }));
+
+    // `Material ""`/`"interface"`: a shape with no Material component,
+    // used as a volume boundary.
+    let mut shape_node = Node::new("boundary");
+    shape_node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+        medium_interface: MediumInterface::new("fog", ""),
+    }));
+    root.add_child(Arc::new(RwLock::new(shape_node)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].material_root, INVALID_INDEX);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
+    assert!(scene.material_roots.is_empty());
+    assert!(scene.material_nodes.is_empty());
+}
+
+#[test]
+fn flatten_node_rejects_an_area_light_on_a_shape_with_no_material() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut shape_node = Node::new("boundary");
+    shape_node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+        medium_interface: Default::default(),
+    }));
+    shape_node.add_component(Component::AreaLight(AreaLightComponent {
+        area_light: NodeAreaLight {
+            name: "diffuse".to_string(),
+            params: Default::default(),
+        },
+    }));
+    root.add_child(Arc::new(RwLock::new(shape_node)));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("no Material component"));
+}
+
+#[test]
 fn flatten_node_rejects_unsupported_medium_kinds() {
     let mut root = Node::new("root");
     let mut camera_params = ParameterDictionary::default();
