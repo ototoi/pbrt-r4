@@ -7,13 +7,22 @@ use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
 use crate::util::transform::Transform as CpuTransform;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct TriangleMeshShape {
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
     pub normals: Option<Vec<Vec3f>>,
     pub tangents: Option<Vec<Vec3f>>,
     pub uvs: Option<Vec<Vec2f>>,
+    /// Whether `tangents` came from an explicit, fully valid mesh `"S"`
+    /// attribute. pbrt-v4 only smooths (barycentric-interpolates) a tangent
+    /// across a shared vertex when `S` was actually supplied; otherwise it
+    /// recomputes a fresh, unaveraged dpdu at every triangle intersection.
+    /// `complete_triangle_attributes()` mirrors that: when this is `false`,
+    /// it expands the mesh to one vertex per triangle corner so a shared
+    /// vertex can never silently average tangents across faces. Meaningless
+    /// before `complete_triangle_attributes()` runs.
+    pub tangents_are_explicit: bool,
 }
 
 #[derive(Clone)]
@@ -117,6 +126,7 @@ pub fn triangle_mesh_from_params(
         normals: node_vec3_attribute(params, "N", vertex_count)?,
         tangents: node_vec3_attribute(params, "S", vertex_count)?,
         uvs: node_vec2_attribute(params, "uv", vertex_count)?,
+        ..Default::default()
     }))
 }
 
@@ -176,6 +186,7 @@ pub fn loop_subdiv_mesh_from_params(
         normals,
         tangents,
         uvs,
+        ..Default::default()
     }))
 }
 
@@ -250,10 +261,11 @@ pub fn complete_triangle_attributes(
         let uvs = shape
             .uvs
             .unwrap_or_else(|| generate_planar_uvs(&shape.positions));
-        return expand_flat_mesh(
+        return expand_mesh_to_corners(
             shape.positions,
             shape.indices,
             uvs,
+            None,
             shape.tangents,
             node_name,
         );
@@ -295,31 +307,34 @@ pub fn complete_triangle_attributes(
         .unwrap_or_else(|| generate_planar_uvs(&shape.positions));
     let source_tangents = shape.tangents.take();
     align_normals_to_winding(&shape.positions, &shape.indices, &mut normals);
-    let generated_tangents = generate_tangents(&shape.positions, &shape.indices, &normals, &uvs);
-    let tangents = if let Some(mut tangents) = source_tangents {
-        for (tangent, generated) in tangents.iter_mut().zip(&generated_tangents) {
-            if length_squared(tangent.0) == 0.0 {
-                *tangent = *generated;
-            }
-        }
+
+    let tangents_are_explicit = source_tangents.as_ref().is_some_and(|tangents| {
         tangents
-    } else {
-        generated_tangents
-    };
-    if !tangents.iter().all(|tangent| {
-        tangent.0.iter().all(|value| value.is_finite()) && length_squared(tangent.0) > 0.0
-    }) {
-        return Err(PbrtError::error(&format!(
-            "Shape node \"{}\" contains an invalid tangent.",
-            node_name
-        )));
+            .iter()
+            .all(|tangent| length_squared(tangent.0) > 0.0)
+    });
+    if !tangents_are_explicit {
+        // No explicit "S" (or an incomplete one): pbrt-v4 would recompute a
+        // fresh, unaveraged dpdu at every triangle intersection rather than
+        // interpolate a shared per-vertex value, so expand to one vertex per
+        // corner instead of averaging across incident triangles.
+        return expand_mesh_to_corners(
+            shape.positions,
+            shape.indices,
+            uvs,
+            Some(normals),
+            source_tangents,
+            node_name,
+        );
     }
+    let tangents = source_tangents.unwrap();
     Ok(TriangleMeshShape {
         positions: shape.positions,
         indices: shape.indices,
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
+        tangents_are_explicit: true,
     })
 }
 
@@ -546,10 +561,18 @@ fn generate_planar_uvs(positions: &[Vec3f]) -> Vec<Vec2f> {
         .collect()
 }
 
-fn expand_flat_mesh(
+/// Expands a mesh to one vertex per triangle corner, so no vertex is shared
+/// between faces. Used both when there are no smooth normals to interpolate
+/// (flat shading) and when tangents must be freshly computed per triangle
+/// (no explicit "S", so a shared vertex could otherwise average tangents
+/// across incident faces). When `normals` is `None`, the flat per-triangle
+/// face normal is also stored at each corner; otherwise the already-smooth
+/// per-vertex normal is carried over unchanged.
+fn expand_mesh_to_corners(
     positions: Vec<Vec3f>,
     indices: Vec<u32>,
     uvs: Vec<Vec2f>,
+    normals: Option<Vec<Vec3f>>,
     source_tangents: Option<Vec<Vec3f>>,
     node_name: &str,
 ) -> Result<TriangleMeshShape, PbrtError> {
@@ -569,21 +592,26 @@ fn expand_flat_mesh(
             uvs[triangle[1] as usize],
             uvs[triangle[2] as usize],
         ];
-        let normal = cross(sub(p[1].0, p[0].0), sub(p[2].0, p[0].0));
-        if !normal.iter().all(|value| value.is_finite()) || length_squared(normal) == 0.0 {
+        let face_normal = cross(sub(p[1].0, p[0].0), sub(p[2].0, p[0].0));
+        if !face_normal.iter().all(|value| value.is_finite()) || length_squared(face_normal) == 0.0
+        {
             return Err(PbrtError::error(&format!(
                 "Shape node \"{}\" contains a zero-area triangle.",
                 node_name
             )));
         }
-        let normal = normalize(normal);
-        let generated_tangent = triangle_tangent(p, uv, normal);
+        let face_normal = normalize(face_normal);
+        let generated_tangent = triangle_tangent(p, uv, face_normal);
         for corner in 0..3 {
+            let vertex_index = triangle[corner] as usize;
             let source_tangent = source_tangents
                 .as_ref()
-                .map(|tangents| tangents[triangle[corner] as usize]);
+                .map(|tangents| tangents[vertex_index]);
             expanded_positions.push(p[corner]);
-            expanded_normals.push(Vec3f(normal));
+            expanded_normals.push(match &normals {
+                Some(normals) => normals[vertex_index],
+                None => Vec3f(face_normal),
+            });
             expanded_tangents.push(match source_tangent {
                 Some(tangent) if length_squared(tangent.0) > 0.0 => tangent,
                 _ => Vec3f(generated_tangent),
@@ -606,43 +634,8 @@ fn expand_flat_mesh(
         normals: Some(expanded_normals),
         tangents: Some(expanded_tangents),
         uvs: Some(expanded_uvs),
+        tangents_are_explicit: false,
     })
-}
-
-fn generate_tangents(
-    positions: &[Vec3f],
-    indices: &[u32],
-    normals: &[Vec3f],
-    uvs: &[Vec2f],
-) -> Vec<Vec3f> {
-    let mut tangents = vec![[0.0; 3]; positions.len()];
-    for triangle in indices.chunks_exact(3) {
-        let i = [
-            triangle[0] as usize,
-            triangle[1] as usize,
-            triangle[2] as usize,
-        ];
-        let tangent = triangle_tangent(
-            [positions[i[0]], positions[i[1]], positions[i[2]]],
-            [uvs[i[0]], uvs[i[1]], uvs[i[2]]],
-            normalize(normals[i[0]].0),
-        );
-        for index in i {
-            tangents[index] = add(tangents[index], tangent);
-        }
-    }
-    tangents
-        .into_iter()
-        .zip(normals)
-        .map(|(tangent, normal)| {
-            let tangent = sub(tangent, scale(normalize(normal.0), dot(tangent, normal.0)));
-            Vec3f(if length_squared(tangent) > 0.0 {
-                normalize(tangent)
-            } else {
-                coordinate_tangent(normalize(normal.0))
-            })
-        })
-        .collect()
 }
 
 fn triangle_tangent(p: [Vec3f; 3], uv: [Vec2f; 3], normal: [f32; 3]) -> [f32; 3] {
@@ -739,6 +732,7 @@ fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
         normals,
         tangents: None,
         uvs,
+        ..Default::default()
     })
 }
 

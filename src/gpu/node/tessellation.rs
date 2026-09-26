@@ -139,6 +139,7 @@ fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, Pbrt
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
+        ..Default::default()
     })
 }
 
@@ -181,6 +182,7 @@ fn heightfield_to_mesh(shape: &HeightFieldShape) -> Result<TriangleMeshShape, Pb
         normals: None,
         tangents: None,
         uvs: Some(uvs),
+        ..Default::default()
     })
 }
 
@@ -281,6 +283,7 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
         normals: Some(tessellated_normals),
         tangents: Some(tessellated_tangents),
         uvs: Some(tessellated_uvs),
+        ..Default::default()
     })
 }
 
@@ -336,6 +339,7 @@ fn hyperboloid_to_mesh(shape: &HyperboloidShape) -> Result<TriangleMeshShape, Pb
         normals: None,
         tangents: None,
         uvs: Some(uvs),
+        ..Default::default()
     })
 }
 
@@ -376,6 +380,7 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
         normals,
         tangents,
         uvs,
+        ..Default::default()
     })
 }
 
@@ -424,6 +429,7 @@ fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtE
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
+        ..Default::default()
     })
 }
 
@@ -472,6 +478,7 @@ fn cone_to_mesh(cone: &ConeShape) -> Result<TriangleMeshShape, PbrtError> {
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
+        ..Default::default()
     })
 }
 
@@ -588,6 +595,7 @@ fn disk_to_mesh(disk: &DiskShape) -> Result<TriangleMeshShape, PbrtError> {
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
+        ..Default::default()
     })
 }
 
@@ -676,5 +684,6 @@ fn sphere_to_mesh(sphere: &SphereShape) -> TriangleMeshShape {
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
+        ..Default::default()
     }
 }
