@@ -17,7 +17,12 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
         atomicStore(&queue_counters.hit_area.overflow, 0u);
         atomicStore(&queue_counters.escaped.count, 0u);
         atomicStore(&queue_counters.escaped.overflow, 0u);
-        if (viewport.sample_index == 0u) {
+        // Only the render's very first tile-sample clears the error flag:
+        // every tile revisits sample_index == 0u, and a later tile must not
+        // erase an error an earlier tile already reported before it's read.
+        if (viewport.sample_index == 0u
+            && viewport.tile_x == viewport.region_x
+            && viewport.tile_y == viewport.region_y) {
             atomicStore(&render_error.value, 0u);
         }
     }
