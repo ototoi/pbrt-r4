@@ -7,15 +7,15 @@ use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
 use pbrt_r4::gpu::flat::{
     area_light_flags, area_light_is_two_sided, area_light_is_zero_alpha_sample_only,
     evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, SamplerKind,
-    SamplerRandomization, Scene as FlatScene,
+    SamplerRandomization, Scene as FlatScene, INVALID_INDEX,
 };
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, prepare_triangle_meshes, tessellate_shapes,
     AreaLight as NodeAreaLight, AreaLightComponent, Camera, CameraComponent, Component, Film,
     FilmComponent, Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator,
-    IntegratorComponent, Light as NodeLight, LightComponent, Material, MaterialComponent, Node,
-    Output, OutputComponent, Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent,
-    Transform, TriangleMeshShape,
+    IntegratorComponent, Light as NodeLight, LightComponent, Material, MaterialComponent,
+    Medium as NodeMedium, MediumComponent, MediumInterface, Node, Output, OutputComponent,
+    Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::paramdict::ParameterDictionary;
@@ -55,6 +55,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
             ]),
         })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
     node.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {
@@ -199,6 +200,86 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
     assert!(scene.primitive_distribution_map.offsets == vec![0]);
+}
+
+#[test]
+fn flatten_node_resolves_medium_interface_and_camera_medium() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut medium_params = ParameterDictionary::default();
+    medium_params.add_string("string type", "homogeneous");
+    medium_params.add_floats("rgb sigma_a", &[1.0, 0.1, 0.01]);
+    root.add_component(Component::Medium(MediumComponent {
+        medium: NodeMedium {
+            name: "blue".to_string(),
+            kind: "homogeneous".to_string(),
+            params: medium_params,
+            transform: Transform::default(),
+        },
+    }));
+
+    let mut shape_node = Node::new("gem");
+    shape_node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+        medium_interface: MediumInterface::new("blue", ""),
+    }));
+    shape_node.add_component(Component::Material(MaterialComponent {
+        material: Arc::new(Material {
+            name: "dielectric".to_string(),
+            kind: "dielectric".to_string(),
+            params: Default::default(),
+            material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
+        }),
+    }));
+    root.add_child(Arc::new(RwLock::new(shape_node)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.media.len(), 1);
+    assert_eq!(scene.media[0].name, "blue");
+    assert_eq!(scene.media[0].kind, "homogeneous");
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
+    assert_eq!(scene.camera.medium, INVALID_INDEX);
+}
+
+#[test]
+fn flatten_node_rejects_unsupported_medium_kinds() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    root.add_component(Component::Medium(MediumComponent {
+        medium: NodeMedium {
+            name: "fog".to_string(),
+            kind: "heterogeneous".to_string(),
+            params: Default::default(),
+            transform: Transform::default(),
+        },
+    }));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("heterogeneous"));
 }
 
 #[test]
@@ -413,6 +494,7 @@ fn flatten_node_requires_tessellated_shapes() {
             params: Default::default(),
         })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
     shape.add_component(Component::Material(MaterialComponent {
         material: Arc::new(Material {
