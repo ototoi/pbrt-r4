@@ -28,12 +28,13 @@ use std::sync::{Arc, RwLock};
 impl SceneBuilder {
     /// Realise the accumulated entities directly into an `Integrator` on GPU.
     pub fn build_gpu(&self) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
-        self.build_gpu_with_progress(false)
+        self.build_gpu_with_progress(false, None)
     }
 
     pub fn build_gpu_with_progress(
         &self,
         show_progress: bool,
+        tile_size: Option<u32>,
     ) -> Result<Arc<RwLock<WavefrontPathIntegrator>>, PbrtError> {
         if let Some(error) = self.import_errors.first() {
             return Err(PbrtError::error(error));
@@ -73,7 +74,8 @@ impl SceneBuilder {
         log::info!("GPU build: flatten complete; creating WebGPU integrator");
 
         // Create the WavefrontPathIntegrator from the flat scene.
-        let integrator = WavefrontPathIntegrator::create_with_progress(flat_scene, show_progress)?;
+        let integrator =
+            WavefrontPathIntegrator::create_with_progress(flat_scene, show_progress, tile_size)?;
         log::info!("GPU build: WebGPU integrator created");
         return Ok(Arc::new(RwLock::new(integrator)));
     }

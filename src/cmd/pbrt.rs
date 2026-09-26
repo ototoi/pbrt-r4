@@ -227,6 +227,12 @@ struct CommandOptions {
     #[arg(long, default_value = "false")]
     pub use_gpu: bool,
 
+    /// GPU wavefront tile side length in pixels (square tiles). Tiles are
+    /// processed sequentially to bound per-pixel wavefront buffer sizes;
+    /// this does not affect rendering speed. Defaults to 512.
+    #[arg(long = "gpu-tile-size", value_name = "pixels")]
+    pub gpu_tile_size: Option<u32>,
+
     /// Use Wavefront for rendering.
     #[arg(long, default_value = "false")]
     pub use_wavefront: bool,
@@ -487,7 +493,7 @@ fn create_gpu_integrator(
             .integrator_params
             .replace_one_int("integer maxdepth", i32::max(0, maxdepth));
     }
-    builder.build_gpu_with_progress(!opts.quiet)
+    builder.build_gpu_with_progress(!opts.quiet, opts.gpu_tile_size)
 }
 
 fn create_display(hostname: &str) -> Result<Arc<RwLock<dyn Display>>, PbrtError> {

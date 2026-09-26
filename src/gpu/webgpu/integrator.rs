@@ -32,6 +32,50 @@ use super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
 
 const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Default side length of a square wavefront tile. Tiles are processed
+/// strictly sequentially (never in parallel); the goal is bounding the size
+/// of every per-pixel wavefront buffer, not speed. See
+/// `docs/webgpu-tile-rendering-design_ja.md` in the devkit repo.
+const DEFAULT_GPU_TILE_SIZE: u32 = 512;
+
+/// One rectangular sub-region of the rendered region, in full-image
+/// coordinates.
+#[derive(Clone, Copy)]
+struct Tile {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+fn compute_tiles(
+    region_x: u32,
+    region_y: u32,
+    region_width: u32,
+    region_height: u32,
+    tile_width: u32,
+    tile_height: u32,
+) -> Vec<Tile> {
+    let mut tiles = Vec::new();
+    let mut y = 0;
+    while y < region_height {
+        let height = tile_height.min(region_height - y);
+        let mut x = 0;
+        while x < region_width {
+            let width = tile_width.min(region_width - x);
+            tiles.push(Tile {
+                x: region_x + x,
+                y: region_y + y,
+                width,
+                height,
+            });
+            x += tile_width;
+        }
+        y += tile_height;
+    }
+    tiles
+}
+
 const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/prepare_sample.wgsl"),
     include_str!("shaders/generate_primary_rays.wgsl"),
@@ -73,16 +117,19 @@ pub struct WavefrontPathIntegrator {
     bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]>,
     rendered: bool,
     show_progress: bool,
+    tile_width: u32,
+    tile_height: u32,
 }
 
 impl WavefrontPathIntegrator {
     pub fn create(flat_scene: flat::Scene) -> Result<Self, PbrtError> {
-        Self::create_with_progress(flat_scene, false)
+        Self::create_with_progress(flat_scene, false, None)
     }
 
     pub fn create_with_progress(
         flat_scene: flat::Scene,
         show_progress: bool,
+        tile_size: Option<u32>,
     ) -> Result<Self, PbrtError> {
         let attributes_eval_stride = u64::from(flat::max_attributes_eval_work_items_per_surface(
             &flat_scene,
@@ -174,8 +221,14 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.light_table),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let tile_pixel_count =
-            u64::from(scene.viewport.tile_width) * u64::from(scene.viewport.tile_height);
+        let tile_size = tile_size.unwrap_or(DEFAULT_GPU_TILE_SIZE).max(1);
+        let tile_width = tile_size.min(scene.viewport.region_width);
+        let tile_height = tile_size.min(scene.viewport.region_height);
+        scene.viewport.tile_x = scene.viewport.region_x;
+        scene.viewport.tile_y = scene.viewport.region_y;
+        scene.viewport.tile_width = tile_width;
+        scene.viewport.tile_height = tile_height;
+        let tile_pixel_count = u64::from(tile_width) * u64::from(tile_height);
         let queues = Queues::new(
             device,
             tile_pixel_count,
@@ -461,6 +514,8 @@ impl WavefrontPathIntegrator {
             bind_groups,
             rendered: false,
             show_progress,
+            tile_width,
+            tile_height,
         })
     }
 
@@ -483,301 +538,334 @@ impl WavefrontPathIntegrator {
         if let Err(error) = self.film.start() {
             log::warn!("WebGPU Film display start failed: {error}");
         }
-        let workgroups_x = self.scene.viewport.tile_width.div_ceil(WORKGROUP_SIZE);
-        let workgroups_y = self.scene.viewport.tile_height.div_ceil(WORKGROUP_SIZE);
         let samples_per_pixel = self.scene.render_settings.samples_per_pixel;
-        let mut reporter = self.show_progress.then(|| {
-            ProgressReporter::new(samples_per_pixel as usize, &self.scene.output.filename)
-        });
+        let tiles = compute_tiles(
+            self.scene.viewport.region_x,
+            self.scene.viewport.region_y,
+            self.scene.viewport.region_width,
+            self.scene.viewport.region_height,
+            self.tile_width,
+            self.tile_height,
+        );
+        let total_iterations = u32::try_from(tiles.len())
+            .ok()
+            .and_then(|tile_count| tile_count.checked_mul(samples_per_pixel))
+            .ok_or_else(|| PbrtError::error("GPU render: tile count times spp overflowed u32."))?;
+        let mut reporter = self
+            .show_progress
+            .then(|| ProgressReporter::new(total_iterations as usize, &self.scene.output.filename));
         let mut last_display_update = Instant::now();
         log::info!(
-            "GPU render: starting samples={samples_per_pixel} depth={}",
-            self.scene.render_settings.max_depth
+            "GPU render: starting samples={samples_per_pixel} depth={} tiles={}",
+            self.scene.render_settings.max_depth,
+            tiles.len()
         );
-        for sample_index in 0..samples_per_pixel {
-            log::info!(
-                "GPU render: sample {}/{}",
-                sample_index + 1,
-                samples_per_pixel
-            );
-            self.scene.viewport.sample_index = sample_index;
-            self.context.queue.write_buffer(
-                &self.viewport_buffer,
-                0,
-                bytes_of(&self.scene.viewport),
-            );
-            let mut encoder =
+        // Tiles are processed strictly sequentially, never in parallel: the
+        // goal is bounding wavefront buffer sizes, not speed. The film
+        // accumulates across all tiles, so it is only cleared once, here,
+        // before any tile runs.
+        {
+            let mut clear_encoder =
                 self.context
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("pbrt-r4 diffuse command encoder"),
+                        label: Some("pbrt-r4 film clear encoder"),
                     });
-            if sample_index == 0 {
-                self.film.clear(&mut encoder);
-            }
-            dispatch(
-                &mut encoder,
-                &self.pipeline.prepare_sample.pipeline,
-                self.bind_groups("prepare_sample"),
-                workgroups_x,
-                workgroups_y,
-            );
-            dispatch(
-                &mut encoder,
-                &self.pipeline.generate_primary_rays.pipeline,
-                self.bind_groups("generate_primary_rays"),
-                workgroups_x,
-                workgroups_y,
-            );
-            // Every pixel emits a primary ray, so the current-ray queue's
-            // count is final as soon as generate_primary_rays completes.
-            dispatch(
-                &mut encoder,
-                &self.pipeline.prepare_queue_dispatch.pipeline,
-                self.bind_groups("prepare_queue_dispatch"),
-                1,
-                1,
-            );
-            for depth in 0..=self.scene.render_settings.max_depth {
-                if depth != 0 {
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.reset_shadow_queue.pipeline,
-                        self.bind_groups("reset_shadow_queue"),
-                        1,
-                        1,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.reset_classification_queues.pipeline,
-                        self.bind_groups("reset_classification_queues"),
-                        1,
-                        1,
-                    );
-                }
-                dispatch_indirect(
-                    &mut encoder,
-                    &self.pipeline.intersect_primary_rays.pipeline,
-                    self.bind_groups("intersect_primary_rays"),
-                    &self.queues.queue_dispatch_args,
-                    QUEUE_DISPATCH_SLOT_CURRENT_RAY,
+            self.film.clear(&mut clear_encoder);
+            self.context.queue.submit(Some(clear_encoder.finish()));
+        }
+        for (tile_index, tile) in tiles.iter().enumerate() {
+            self.scene.viewport.tile_x = tile.x;
+            self.scene.viewport.tile_y = tile.y;
+            self.scene.viewport.tile_width = tile.width;
+            self.scene.viewport.tile_height = tile.height;
+            let workgroups_x = tile.width.div_ceil(WORKGROUP_SIZE);
+            let workgroups_y = tile.height.div_ceil(WORKGROUP_SIZE);
+            for sample_index in 0..samples_per_pixel {
+                log::info!(
+                    "GPU render: tile {}/{} sample {}/{}",
+                    tile_index + 1,
+                    tiles.len(),
+                    sample_index + 1,
+                    samples_per_pixel
                 );
-                // intersect_primary_rays has just finished populating the
-                // escaped-ray queue for this depth.
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.prepare_queue_dispatch.pipeline,
-                    self.bind_groups("prepare_queue_dispatch"),
-                    1,
-                    1,
+                self.scene.viewport.sample_index = sample_index;
+                self.context.queue.write_buffer(
+                    &self.viewport_buffer,
+                    0,
+                    bytes_of(&self.scene.viewport),
                 );
-                dispatch_indirect(
-                    &mut encoder,
-                    &self.pipeline.handle_escaped.pipeline,
-                    self.bind_groups("handle_escaped"),
-                    &self.queues.queue_dispatch_args,
-                    QUEUE_DISPATCH_SLOT_ESCAPED,
-                );
-                // The current-ray queue's count has not changed since the
-                // last prepare_queue_dispatch call, so shade_surface can
-                // reuse that same slot.
-                dispatch_indirect(
-                    &mut encoder,
-                    &self.pipeline.shade_surface.pipeline,
-                    self.bind_groups("shade_surface"),
-                    &self.queues.queue_dispatch_args,
-                    QUEUE_DISPATCH_SLOT_CURRENT_RAY,
-                );
-                // shade_surface has just finished populating the hit-area
-                // and material-eval queues for this depth.
-                dispatch(
-                    &mut encoder,
-                    &self.pipeline.prepare_queue_dispatch.pipeline,
-                    self.bind_groups("prepare_queue_dispatch"),
-                    1,
-                    1,
-                );
-                dispatch_indirect(
-                    &mut encoder,
-                    &self.pipeline.handle_emissive.pipeline,
-                    self.bind_groups("handle_emissive"),
-                    &self.queues.queue_dispatch_args,
-                    QUEUE_DISPATCH_SLOT_HIT_AREA,
-                );
-                dispatch_indirect(
-                    &mut encoder,
-                    &self.pipeline.evaluate_textures.pipeline,
-                    self.bind_groups("evaluate_textures"),
-                    &self.queues.queue_dispatch_args,
-                    QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
-                );
-                dispatch_indirect(
-                    &mut encoder,
-                    &self.pipeline.evaluate_attributes.pipeline,
-                    self.bind_groups("evaluate_attributes"),
-                    &self.queues.queue_dispatch_args,
-                    QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
-                );
-                // classify_surface_scatter routes each hit surface into the
-                // scatter queue for its resolved leaf kind, and (for the
-                // non-specular kinds) the shared direct-lighting queue.
-                // Direct lighting and indirect bounces both require a next
-                // depth, so none of this needs to run once ray.depth reaches
-                // max_depth; the queues classify_surface_scatter would fill
-                // are never read at that point either way.
-                if depth < self.scene.render_settings.max_depth {
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.classify_surface_scatter.pipeline,
-                        self.bind_groups("classify_surface_scatter"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
-                    );
-                    // The direct-eval and scatter queues' counts are final
-                    // now that classify_surface_scatter has run.
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.prepare_queue_dispatch.pipeline,
-                        self.bind_groups("prepare_queue_dispatch"),
-                        1,
-                        1,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.sample_direct_light.pipeline,
-                        self.bind_groups("sample_direct_light"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_diffuse.pipeline,
-                        self.bind_groups("scatter_diffuse"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_diffuse_transmission.pipeline,
-                        self.bind_groups("scatter_diffuse_transmission"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_conductor.pipeline,
-                        self.bind_groups("scatter_conductor"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_dielectric.pipeline,
-                        self.bind_groups("scatter_dielectric"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_thin_dielectric.pipeline,
-                        self.bind_groups("scatter_thin_dielectric"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_measured.pipeline,
-                        self.bind_groups("scatter_measured"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.scatter_coated.pipeline,
-                        self.bind_groups("scatter_coated"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SCATTER_COATED,
-                    );
-                    // The scatter stages have just finished appending this
-                    // depth's shadow rays and next-depth bounce rays.
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.prepare_queue_dispatch.pipeline,
-                        self.bind_groups("prepare_queue_dispatch"),
-                        1,
-                        1,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.intersect_shadow.pipeline,
-                        self.bind_groups("intersect_shadow"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_SHADOW,
-                    );
-                    dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.swap_ray_queues.pipeline,
-                        self.bind_groups("swap_ray_queues"),
-                        &self.queues.queue_dispatch_args,
-                        QUEUE_DISPATCH_SLOT_NEXT_RAY,
-                    );
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.reset_next_ray_queue.pipeline,
-                        self.bind_groups("reset_next_ray_queue"),
-                        1,
-                        1,
-                    );
-                    // reset_next_ray_queue has just committed the next
-                    // depth's current-ray count.
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.prepare_queue_dispatch.pipeline,
-                        self.bind_groups("prepare_queue_dispatch"),
-                        1,
-                        1,
-                    );
-                }
-            }
-            dispatch(
-                &mut encoder,
-                &self.pipeline.accumulate_sample.pipeline,
-                self.bind_groups("accumulate_sample"),
-                workgroups_x,
-                workgroups_y,
-            );
-            self.context.queue.submit(Some(encoder.finish()));
-            log::info!("GPU render: submitted sample {sample_index}; waiting for film completion");
-            self.film.complete_sample()?;
-            log::info!("GPU render: sample {sample_index} complete");
-            let completed_samples = self.film.completed_samples();
-            if !self.film.has_no_display()
-                && (last_display_update.elapsed() >= DEFAULT_DISPLAY_UPDATE_INTERVAL
-                    || completed_samples == samples_per_pixel)
-            {
-                let mut display_encoder =
+                let mut encoder =
                     self.context
                         .device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("pbrt-r4 WebGPU display readback encoder"),
+                            label: Some("pbrt-r4 diffuse command encoder"),
                         });
-                self.film.copy_to_readback(&mut display_encoder);
-                self.queues.copy_state_to_readback(&mut display_encoder);
-                self.context.queue.submit(Some(display_encoder.finish()));
-                self.context.wait()?;
-                if self.queues.read_error(&self.context.device)? {
-                    return Err(PbrtError::error(
-                        "WebGPU wavefront rendering reported an error.",
-                    ));
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.prepare_sample.pipeline,
+                    self.bind_groups("prepare_sample"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.generate_primary_rays.pipeline,
+                    self.bind_groups("generate_primary_rays"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                // Every pixel emits a primary ray, so the current-ray queue's
+                // count is final as soon as generate_primary_rays completes.
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.prepare_queue_dispatch.pipeline,
+                    self.bind_groups("prepare_queue_dispatch"),
+                    1,
+                    1,
+                );
+                for depth in 0..=self.scene.render_settings.max_depth {
+                    if depth != 0 {
+                        dispatch(
+                            &mut encoder,
+                            &self.pipeline.reset_shadow_queue.pipeline,
+                            self.bind_groups("reset_shadow_queue"),
+                            1,
+                            1,
+                        );
+                        dispatch(
+                            &mut encoder,
+                            &self.pipeline.reset_classification_queues.pipeline,
+                            self.bind_groups("reset_classification_queues"),
+                            1,
+                            1,
+                        );
+                    }
+                    dispatch_indirect(
+                        &mut encoder,
+                        &self.pipeline.intersect_primary_rays.pipeline,
+                        self.bind_groups("intersect_primary_rays"),
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_CURRENT_RAY,
+                    );
+                    // intersect_primary_rays has just finished populating the
+                    // escaped-ray queue for this depth.
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.prepare_queue_dispatch.pipeline,
+                        self.bind_groups("prepare_queue_dispatch"),
+                        1,
+                        1,
+                    );
+                    dispatch_indirect(
+                        &mut encoder,
+                        &self.pipeline.handle_escaped.pipeline,
+                        self.bind_groups("handle_escaped"),
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_ESCAPED,
+                    );
+                    // The current-ray queue's count has not changed since the
+                    // last prepare_queue_dispatch call, so shade_surface can
+                    // reuse that same slot.
+                    dispatch_indirect(
+                        &mut encoder,
+                        &self.pipeline.shade_surface.pipeline,
+                        self.bind_groups("shade_surface"),
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_CURRENT_RAY,
+                    );
+                    // shade_surface has just finished populating the hit-area
+                    // and material-eval queues for this depth.
+                    dispatch(
+                        &mut encoder,
+                        &self.pipeline.prepare_queue_dispatch.pipeline,
+                        self.bind_groups("prepare_queue_dispatch"),
+                        1,
+                        1,
+                    );
+                    dispatch_indirect(
+                        &mut encoder,
+                        &self.pipeline.handle_emissive.pipeline,
+                        self.bind_groups("handle_emissive"),
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_HIT_AREA,
+                    );
+                    dispatch_indirect(
+                        &mut encoder,
+                        &self.pipeline.evaluate_textures.pipeline,
+                        self.bind_groups("evaluate_textures"),
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
+                    );
+                    dispatch_indirect(
+                        &mut encoder,
+                        &self.pipeline.evaluate_attributes.pipeline,
+                        self.bind_groups("evaluate_attributes"),
+                        &self.queues.queue_dispatch_args,
+                        QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
+                    );
+                    // classify_surface_scatter routes each hit surface into the
+                    // scatter queue for its resolved leaf kind, and (for the
+                    // non-specular kinds) the shared direct-lighting queue.
+                    // Direct lighting and indirect bounces both require a next
+                    // depth, so none of this needs to run once ray.depth reaches
+                    // max_depth; the queues classify_surface_scatter would fill
+                    // are never read at that point either way.
+                    if depth < self.scene.render_settings.max_depth {
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.classify_surface_scatter.pipeline,
+                            self.bind_groups("classify_surface_scatter"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
+                        );
+                        // The direct-eval and scatter queues' counts are final
+                        // now that classify_surface_scatter has run.
+                        dispatch(
+                            &mut encoder,
+                            &self.pipeline.prepare_queue_dispatch.pipeline,
+                            self.bind_groups("prepare_queue_dispatch"),
+                            1,
+                            1,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.sample_direct_light.pipeline,
+                            self.bind_groups("sample_direct_light"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_diffuse.pipeline,
+                            self.bind_groups("scatter_diffuse"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_diffuse_transmission.pipeline,
+                            self.bind_groups("scatter_diffuse_transmission"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_conductor.pipeline,
+                            self.bind_groups("scatter_conductor"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_dielectric.pipeline,
+                            self.bind_groups("scatter_dielectric"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_thin_dielectric.pipeline,
+                            self.bind_groups("scatter_thin_dielectric"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_measured.pipeline,
+                            self.bind_groups("scatter_measured"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_coated.pipeline,
+                            self.bind_groups("scatter_coated"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SCATTER_COATED,
+                        );
+                        // The scatter stages have just finished appending this
+                        // depth's shadow rays and next-depth bounce rays.
+                        dispatch(
+                            &mut encoder,
+                            &self.pipeline.prepare_queue_dispatch.pipeline,
+                            self.bind_groups("prepare_queue_dispatch"),
+                            1,
+                            1,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.intersect_shadow.pipeline,
+                            self.bind_groups("intersect_shadow"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_SHADOW,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.swap_ray_queues.pipeline,
+                            self.bind_groups("swap_ray_queues"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_NEXT_RAY,
+                        );
+                        dispatch(
+                            &mut encoder,
+                            &self.pipeline.reset_next_ray_queue.pipeline,
+                            self.bind_groups("reset_next_ray_queue"),
+                            1,
+                            1,
+                        );
+                        // reset_next_ray_queue has just committed the next
+                        // depth's current-ray count.
+                        dispatch(
+                            &mut encoder,
+                            &self.pipeline.prepare_queue_dispatch.pipeline,
+                            self.bind_groups("prepare_queue_dispatch"),
+                            1,
+                            1,
+                        );
+                    }
                 }
-                self.film.readback(&self.context.device)?;
-                if let Err(error) = self.film.update_display() {
-                    log::warn!("WebGPU Film display update failed: {error}");
+                dispatch(
+                    &mut encoder,
+                    &self.pipeline.accumulate_sample.pipeline,
+                    self.bind_groups("accumulate_sample"),
+                    workgroups_x,
+                    workgroups_y,
+                );
+                self.context.queue.submit(Some(encoder.finish()));
+                log::info!(
+                    "GPU render: submitted sample {sample_index}; waiting for film completion"
+                );
+                self.film.complete_sample()?;
+                log::info!("GPU render: sample {sample_index} complete");
+                let completed_iterations = self.film.completed_samples();
+                if !self.film.has_no_display()
+                    && (last_display_update.elapsed() >= DEFAULT_DISPLAY_UPDATE_INTERVAL
+                        || completed_iterations == total_iterations)
+                {
+                    let mut display_encoder = self.context.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("pbrt-r4 WebGPU display readback encoder"),
+                        },
+                    );
+                    self.film.copy_to_readback(&mut display_encoder);
+                    self.queues.copy_state_to_readback(&mut display_encoder);
+                    self.context.queue.submit(Some(display_encoder.finish()));
+                    self.context.wait()?;
+                    if self.queues.read_error(&self.context.device)? {
+                        return Err(PbrtError::error(
+                            "WebGPU wavefront rendering reported an error.",
+                        ));
+                    }
+                    self.film.readback(&self.context.device)?;
+                    if let Err(error) = self.film.update_display() {
+                        log::warn!("WebGPU Film display update failed: {error}");
+                    }
+                    last_display_update = Instant::now();
                 }
-                last_display_update = Instant::now();
-            }
-            if let Some(reporter) = reporter.as_mut() {
-                reporter.update(1);
+                if let Some(reporter) = reporter.as_mut() {
+                    reporter.update(1);
+                }
             }
         }
         let mut encoder =
