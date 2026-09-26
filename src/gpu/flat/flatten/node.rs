@@ -157,16 +157,10 @@ pub fn flatten_node_ref(
                     if shape.indices.is_empty() {
                         continue;
                     }
-                    let material = material.clone().ok_or_else(|| {
-                        PbrtError::error(&format!(
-                            "Shape node \"{}\" has no Material component.",
-                            node.name
-                        ))
-                    })?;
                     shapes.push((
                         component_index,
                         shape,
-                        material,
+                        material.clone(),
                         area_light.clone(),
                         component.reverse_orientation,
                         component.medium_interface.clone(),
@@ -300,17 +294,26 @@ pub fn flatten_node_ref(
         shapes
     {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
-        let material = register_material_source(&material, builder, material_kind)?;
+        let material_root = match &material {
+            Some(material) => register_material_source(material, builder, material_kind)?,
+            None => INVALID_INDEX,
+        };
         let instance_index = u32::try_from(builder.instances.len())
             .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
         let area_light_handle = if let Some(area_light) = area_light {
+            if material_root == INVALID_INDEX {
+                return Err(PbrtError::error(&format!(
+                    "Shape node \"{name}\" has an AreaLightSource but no Material component; \
+                     GPU area lights require a surface material."
+                )));
+            }
             append_area_light(
                 area_light,
                 &shape,
                 &name,
                 &world_transform,
                 instance_index,
-                material,
+                material_root,
                 reverse_orientation,
                 builder,
             )?
@@ -322,7 +325,7 @@ pub fn flatten_node_ref(
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
-            material_root: material,
+            material_root,
             area_light: area_light_handle,
             reverse_orientation,
             inside_medium,
