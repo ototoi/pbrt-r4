@@ -20,7 +20,7 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
-    assert_eq!(std::mem::size_of::<ViewportUniform>(), 32);
+    assert_eq!(std::mem::size_of::<ViewportUniform>(), 56);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);

@@ -56,13 +56,29 @@ pub struct CameraUniform {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ViewportUniform {
-    pub width: u32,
-    pub height: u32,
+    /// Full output image resolution. Fixed for the whole render; the camera
+    /// raster transform and sampler pixel seeding are keyed to this, not to
+    /// `tile_width`/`tile_height`.
+    pub full_width: u32,
+    pub full_height: u32,
+    /// Offset and extent of the rendered region (cropwindow/pixelbounds)
+    /// within the full image; matches the `Film` framebuffer's actual
+    /// dimensions. Equal to the full image when rendering the whole image.
+    pub region_x: u32,
+    pub region_y: u32,
+    pub region_width: u32,
+    pub region_height: u32,
+    /// Offset and extent of the tile currently being dispatched, in full
+    /// image coordinates. Wavefront queues are sized and indexed by
+    /// `tile_width * tile_height`, not by the full image or region size.
+    pub tile_x: u32,
+    pub tile_y: u32,
+    pub tile_width: u32,
+    pub tile_height: u32,
     pub sample_index: u32,
     pub max_depth: u32,
     pub seed: u32,
     pub disable_wavelength_jitter: u32,
-    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -541,13 +557,20 @@ pub fn viewport_uniform(
         ));
     }
     Ok(ViewportUniform {
-        width,
-        height,
+        full_width: width,
+        full_height: height,
+        region_x: 0,
+        region_y: 0,
+        region_width: width,
+        region_height: height,
+        tile_x: 0,
+        tile_y: 0,
+        tile_width: width,
+        tile_height: height,
         sample_index: 0,
         max_depth: settings.max_depth,
         seed: settings.seed,
         disable_wavelength_jitter: u32::from(settings.disable_wavelength_jitter),
-        padding: [0; 2],
     })
 }
 
