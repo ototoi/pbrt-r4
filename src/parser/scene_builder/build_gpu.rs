@@ -81,6 +81,7 @@ impl SceneBuilder {
     }
 
     pub fn build_gpu_ir_node(&self) -> Result<Arc<RwLock<Node>>, PbrtError> {
+        self.check_gpu_medium_support()?;
         let texture_nodes = self.build_texture_resources()?;
         let texture_lookup = texture_node_lookup(&texture_nodes);
         let mut root_node = Node::new("root");
@@ -169,6 +170,67 @@ impl SceneBuilder {
         }
 
         return Ok(Arc::new(RwLock::new(root_node)));
+    }
+
+    /// Rejects scenes that reference a Medium (`MakeNamedMedium` /
+    /// `MediumInterface`). The GPU wavefront backend does not implement
+    /// participating media; without this check it silently drops the
+    /// references and renders the scene as vacuum instead (see
+    /// `docs/webgpu-medium-design_ja.md` in the devkit repo).
+    fn check_gpu_medium_support(&self) -> Result<(), PbrtError> {
+        if self.media.is_empty() {
+            return Ok(());
+        }
+
+        let mut defined: Vec<String> = self
+            .media
+            .values()
+            .map(|medium| {
+                let kind = medium.base.params.get_one_string("type", "unknown");
+                format!("\"{}\" (type=\"{kind}\")", medium.base.name)
+            })
+            .collect();
+        defined.sort();
+
+        let mut references: Vec<String> = Vec::new();
+        for shape in self.shapes.iter().chain(self.animated_shapes.iter()) {
+            if !shape.medium_interface.is_empty() {
+                references.push(format!(
+                    "shape \"{}\" (inside=\"{}\", outside=\"{}\")",
+                    shape.base.name,
+                    shape.medium_interface.inside_medium,
+                    shape.medium_interface.outside_medium,
+                ));
+            }
+        }
+        for light in &self.lights {
+            if !light.medium.is_empty() {
+                references.push(format!(
+                    "light \"{}\" (medium=\"{}\")",
+                    light.base.base.name, light.medium,
+                ));
+            }
+        }
+        let camera_outside_medium = self
+            .graphics_states
+            .last()
+            .map(|gs| gs.current_outside_medium.as_str())
+            .unwrap_or("");
+        if !camera_outside_medium.is_empty() {
+            references.push(format!("camera (outside=\"{camera_outside_medium}\")"));
+        }
+
+        let references_note = if references.is_empty() {
+            String::new()
+        } else {
+            format!(" Referenced by: {}.", references.join(", "))
+        };
+        Err(PbrtError::error(&format!(
+            "GPU backend does not support Medium (participating media). Defined media: {}.{} \
+             Remove MediumInterface/MakeNamedMedium usage, or render this scene on the CPU backend.",
+            defined.join(", "),
+            references_note,
+        )))
     }
 
     fn populate_gpu_material_references(
