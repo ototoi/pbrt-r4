@@ -7,22 +7,13 @@ use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
 use crate::util::transform::Transform as CpuTransform;
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
     pub normals: Option<Vec<Vec3f>>,
     pub tangents: Option<Vec<Vec3f>>,
     pub uvs: Option<Vec<Vec2f>>,
-    /// Whether `tangents` came from an explicit, fully valid mesh `"S"`
-    /// attribute. pbrt-v4 only smooths (barycentric-interpolates) a tangent
-    /// across a shared vertex when `S` was actually supplied; otherwise it
-    /// recomputes a fresh, unaveraged dpdu at every triangle intersection.
-    /// `complete_triangle_attributes()` mirrors that: when this is `false`,
-    /// it expands the mesh to one vertex per triangle corner so a shared
-    /// vertex can never silently average tangents across faces. Meaningless
-    /// before `complete_triangle_attributes()` runs.
-    pub tangents_are_explicit: bool,
 }
 
 #[derive(Clone)]
@@ -126,7 +117,6 @@ pub fn triangle_mesh_from_params(
         normals: node_vec3_attribute(params, "N", vertex_count)?,
         tangents: node_vec3_attribute(params, "S", vertex_count)?,
         uvs: node_vec2_attribute(params, "uv", vertex_count)?,
-        ..Default::default()
     }))
 }
 
@@ -186,7 +176,6 @@ pub fn loop_subdiv_mesh_from_params(
         normals,
         tangents,
         uvs,
-        ..Default::default()
     }))
 }
 
@@ -314,10 +303,8 @@ pub fn complete_triangle_attributes(
             .all(|tangent| length_squared(tangent.0) > 0.0)
     });
     if !tangents_are_explicit {
-        // No explicit "S" (or an incomplete one): pbrt-v4 would recompute a
-        // fresh, unaveraged dpdu at every triangle intersection rather than
-        // interpolate a shared per-vertex value, so expand to one vertex per
-        // corner instead of averaging across incident triangles.
+        // No explicit "S": pbrt-v4 recomputes a fresh dpdu per triangle
+        // instead of interpolating a shared vertex value.
         return expand_mesh_to_corners(
             shape.positions,
             shape.indices,
@@ -334,7 +321,6 @@ pub fn complete_triangle_attributes(
         normals: Some(normals),
         tangents: Some(tangents),
         uvs: Some(uvs),
-        tangents_are_explicit: true,
     })
 }
 
@@ -561,13 +547,10 @@ fn generate_planar_uvs(positions: &[Vec3f]) -> Vec<Vec2f> {
         .collect()
 }
 
-/// Expands a mesh to one vertex per triangle corner, so no vertex is shared
-/// between faces. Used both when there are no smooth normals to interpolate
-/// (flat shading) and when tangents must be freshly computed per triangle
-/// (no explicit "S", so a shared vertex could otherwise average tangents
-/// across incident faces). When `normals` is `None`, the flat per-triangle
-/// face normal is also stored at each corner; otherwise the already-smooth
-/// per-vertex normal is carried over unchanged.
+/// Expands a mesh to one vertex per triangle corner (flat shading, and/or a
+/// fresh per-triangle tangent). `normals` of `None` also stores the flat
+/// per-triangle face normal at each corner; otherwise the smooth per-vertex
+/// normal is carried over.
 fn expand_mesh_to_corners(
     positions: Vec<Vec3f>,
     indices: Vec<u32>,
@@ -634,7 +617,6 @@ fn expand_mesh_to_corners(
         normals: Some(expanded_normals),
         tangents: Some(expanded_tangents),
         uvs: Some(expanded_uvs),
-        tangents_are_explicit: false,
     })
 }
 
@@ -732,7 +714,6 @@ fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
         normals,
         tangents: None,
         uvs,
-        ..Default::default()
     })
 }
 
