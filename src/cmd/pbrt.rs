@@ -493,6 +493,15 @@ fn create_gpu_integrator(
             .integrator_params
             .replace_one_int("integer maxdepth", i32::max(0, maxdepth));
     }
+    if let Some(cropwindow) = opts.cropwindow.as_ref() {
+        if cropwindow.len() != 4 {
+            return Err(PbrtError::error(
+                "\"--cropwindow\" expects four comma-separated values.",
+            ));
+        }
+        let values: Vec<Float> = cropwindow.iter().map(|v| *v as Float).collect();
+        builder.film_params.replace_floats("cropwindow", &values);
+    }
     builder.build_gpu_with_progress(!opts.quiet, opts.gpu_tile_size)
 }
 

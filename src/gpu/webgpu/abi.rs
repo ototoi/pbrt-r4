@@ -556,17 +556,32 @@ pub fn viewport_uniform(
             "WebGPU viewport pixel count must fit in u32.",
         ));
     }
+    let [region_x, region_y] = viewport.region_offset;
+    let [region_width, region_height] = viewport.region_resolution;
+    if region_width == 0
+        || region_height == 0
+        || region_x
+            .checked_add(region_width)
+            .is_none_or(|edge| edge > width)
+        || region_y
+            .checked_add(region_height)
+            .is_none_or(|edge| edge > height)
+    {
+        return Err(PbrtError::error(
+            "WebGPU rendered region must be positive and fit within the full image.",
+        ));
+    }
     Ok(ViewportUniform {
         full_width: width,
         full_height: height,
-        region_x: 0,
-        region_y: 0,
-        region_width: width,
-        region_height: height,
-        tile_x: 0,
-        tile_y: 0,
-        tile_width: width,
-        tile_height: height,
+        region_x,
+        region_y,
+        region_width,
+        region_height,
+        tile_x: region_x,
+        tile_y: region_y,
+        tile_width: region_width,
+        tile_height: region_height,
         sample_index: 0,
         max_depth: settings.max_depth,
         seed: settings.seed,
