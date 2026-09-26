@@ -1,7 +1,8 @@
 use super::{
-    append_area_light, flatten_light, geometry_index, multiply_transform, register_material_source,
-    register_root_component, screen_window, viewport_resolution, Camera, Component, Film,
-    FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport, INVALID_INDEX,
+    append_area_light, flatten_light, geometry_index, multiply_transform, region_bounds,
+    register_material_source, register_root_component, screen_window, viewport_resolution, Camera,
+    Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport,
+    INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::util::error::PbrtError;
@@ -235,12 +236,17 @@ pub fn flatten_node_ref(
             }
         }
         let resolution = viewport_resolution(&film.params)?;
+        let (region_offset, region_resolution) = region_bounds(&film.params, resolution)?;
         if builder.viewport.is_some() {
             return Err(PbrtError::error(
                 "Multiple films were found while flattening GPU Node IR.",
             ));
         }
-        builder.viewport = Some(Viewport { resolution });
+        builder.viewport = Some(Viewport {
+            resolution,
+            region_offset,
+            region_resolution,
+        });
         let sensor_name = film.params.get_one_string("sensor", "cie1931");
         let iso = film.params.get_one_float("iso", 100.0);
         let white_balance = film.params.get_one_float("whitebalance", 0.0);
