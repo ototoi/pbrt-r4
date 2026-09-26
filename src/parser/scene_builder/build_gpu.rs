@@ -178,10 +178,6 @@ impl SceneBuilder {
     /// references and renders the scene as vacuum instead (see
     /// `docs/webgpu-medium-design_ja.md` in the devkit repo).
     fn check_gpu_medium_support(&self) -> Result<(), PbrtError> {
-        if self.media.is_empty() {
-            return Ok(());
-        }
-
         let mut defined: Vec<String> = self
             .media
             .values()
@@ -193,7 +189,12 @@ impl SceneBuilder {
         defined.sort();
 
         let mut references: Vec<String> = Vec::new();
-        for shape in self.shapes.iter().chain(self.animated_shapes.iter()) {
+        let all_shapes = self.shapes.iter().chain(self.animated_shapes.iter()).chain(
+            self.instance_definitions
+                .values()
+                .flat_map(|definition| definition.shapes.iter().chain(&definition.animated_shapes)),
+        );
+        for shape in all_shapes {
             if !shape.medium_interface.is_empty() {
                 references.push(format!(
                     "shape \"{}\" (inside=\"{}\", outside=\"{}\")",
@@ -211,13 +212,12 @@ impl SceneBuilder {
                 ));
             }
         }
-        let camera_outside_medium = self
-            .graphics_states
-            .last()
-            .map(|gs| gs.current_outside_medium.as_str())
-            .unwrap_or("");
-        if !camera_outside_medium.is_empty() {
-            references.push(format!("camera (outside=\"{camera_outside_medium}\")"));
+        if !self.camera_medium.is_empty() {
+            references.push(format!("camera (outside=\"{}\")", self.camera_medium));
+        }
+
+        if defined.is_empty() && references.is_empty() {
+            return Ok(());
         }
 
         let references_note = if references.is_empty() {
@@ -225,11 +225,14 @@ impl SceneBuilder {
         } else {
             format!(" Referenced by: {}.", references.join(", "))
         };
+        let defined_note = if defined.is_empty() {
+            "none".to_string()
+        } else {
+            defined.join(", ")
+        };
         Err(PbrtError::error(&format!(
-            "GPU backend does not support Medium (participating media). Defined media: {}.{} \
+            "GPU backend does not support Medium (participating media). Defined media: {defined_note}.{references_note} \
              Remove MediumInterface/MakeNamedMedium usage, or render this scene on the CPU backend.",
-            defined.join(", "),
-            references_note,
         )))
     }
 
