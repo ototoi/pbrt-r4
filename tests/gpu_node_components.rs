@@ -808,7 +808,6 @@ fn node_ir_preparation_removes_invalid_triangles_before_attribute_completion() {
         normals: None,
         tangents: None,
         uvs: None,
-        ..Default::default()
     };
     let mut node = Node::new("mixed-triangles");
     node.add_component(Component::Shape(ShapeComponent {
@@ -845,7 +844,6 @@ fn vertices_only_used_by_invalid_triangles_are_removed_with_their_attributes() {
         ]),
         tangents: None,
         uvs: None,
-        ..Default::default()
     };
 
     let filtered = remove_invalid_triangles(shape).unwrap();
@@ -880,7 +878,6 @@ fn zero_normals_and_tangents_are_repaired_from_mesh_geometry() {
             Vec2f([1.0, 0.0]),
             Vec2f([0.0, 1.0]),
         ]),
-        ..Default::default()
     };
 
     let completed = complete_triangle_attributes(shape, "repairable").unwrap();
@@ -918,7 +915,6 @@ fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
             Vec2f([1.0, 0.0]),
             Vec2f([0.0, 1.0]),
         ]),
-        ..Default::default()
     };
 
     let completed = complete_triangle_attributes(shape, "flat-repairable").unwrap();
@@ -936,11 +932,6 @@ fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
 
 #[test]
 fn missing_tangents_expand_shared_vertices_per_triangle_even_with_smooth_normals() {
-    // Two triangles in the XY plane sharing an edge (vertices 1 and 2), each
-    // with a differently rotated UV parametrization, so their per-triangle
-    // dpdu tangents point in different directions. Smooth per-vertex normals
-    // are supplied (both triangles are coplanar, facing +Z), but no
-    // explicit "S" tangent is given.
     let shape = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
@@ -957,23 +948,15 @@ fn missing_tangents_expand_shared_vertices_per_triangle_even_with_smooth_normals
             Vec2f([0.0, 1.0]),
             Vec2f([1.0, 1.0]),
         ]),
-        ..Default::default()
     };
 
     let completed = complete_triangle_attributes(shape, "shared-smooth").unwrap();
 
-    // No vertex is shared between the two triangles: a shared vertex could
-    // otherwise only hold one tangent, silently averaging it across faces.
     assert_eq!(completed.positions.len(), completed.indices.len());
     assert_eq!(completed.indices, vec![0, 1, 2, 3, 4, 5]);
-    assert!(!completed.tangents_are_explicit);
 
     let tangents = completed.tangents.unwrap();
-    // Corner 1 of the first triangle (original vertex 1) and corner 4 of the
-    // second triangle (original vertex 2, the shared edge) must each carry
-    // their own triangle's fresh dpdu rather than an averaged value.
     assert_ne!(tangents[1], tangents[4]);
-    // The smooth per-vertex normal is still carried over unchanged.
     assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, 1.0]); 6]);
 }
 
@@ -995,7 +978,6 @@ fn triangles_with_irreparable_zero_normals_are_removed() {
         ]),
         tangents: None,
         uvs: None,
-        ..Default::default()
     };
     let mut node = Node::new("opposite-winding");
     node.add_component(Component::Shape(ShapeComponent {
@@ -1023,7 +1005,6 @@ fn an_entirely_invalid_triangle_mesh_is_removed() {
         normals: None,
         tangents: None,
         uvs: None,
-        ..Default::default()
     };
 
     assert!(remove_invalid_triangles(shape).unwrap().indices.is_empty());

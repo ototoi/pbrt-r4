@@ -47,13 +47,12 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
             ],
             indices: vec![0, 1, 2],
             normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
-            tangents: None,
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
             uvs: Some(vec![
                 Vec2f([0.0, 0.0]),
                 Vec2f([1.0, 0.0]),
                 Vec2f([0.0, 1.0]),
             ]),
-            ..Default::default()
         })),
         reverse_orientation: false,
     }));
@@ -218,6 +217,7 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
         mesh.positions.push(Vec3f([2.0, 1.0, 0.0]));
         mesh.indices.extend_from_slice(&[1, 3, 2]);
         mesh.normals.as_mut().unwrap().push(Vec3f([0.0, 0.0, 1.0]));
+        mesh.tangents.as_mut().unwrap().push(Vec3f([1.0, 0.0, 0.0]));
         mesh.uvs.as_mut().unwrap().push(Vec2f([1.0, 1.0]));
         node.add_component(Component::AreaLight(AreaLightComponent {
             area_light: NodeAreaLight {
@@ -254,12 +254,7 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
 }
 
 #[test]
-fn flatten_node_rejects_shared_vertices_with_non_explicit_tangents() {
-    // A mesh whose vertices are shared across triangles but whose tangents
-    // are neither explicit nor expanded to one vertex per corner: this is
-    // exactly the shape complete_triangle_attributes() must never produce,
-    // and flatten_node() must refuse it rather than silently reuse a
-    // shared vertex's tangent across faces.
+fn flatten_node_rejects_zero_tangents() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
     let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
@@ -271,19 +266,35 @@ fn flatten_node_rejects_shared_vertices_with_non_explicit_tangents() {
         let Shape::TriangleMesh(mesh) = &mut shape.shape else {
             panic!("expected triangle mesh");
         };
-        mesh.positions.push(Vec3f([2.0, 1.0, 0.0]));
-        mesh.indices.extend_from_slice(&[1, 3, 2]);
-        mesh.normals.as_mut().unwrap().push(Vec3f([0.0, 0.0, 1.0]));
-        mesh.uvs.as_mut().unwrap().push(Vec2f([1.0, 1.0]));
+        mesh.tangents = Some(vec![Vec3f([0.0, 0.0, 0.0]); 3]);
     }
     root.add_child(area);
-    // Intentionally skipped: prepare_triangle_meshes(&mut root), so the
-    // shared-vertex mesh above reaches flatten_node() uncompleted.
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("zero or non-finite tangent"));
+}
+
+#[test]
+fn flatten_node_rejects_tangents_parallel_to_normal() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = area.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.tangents = Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]);
+    }
+    root.add_child(area);
 
     let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
     assert!(error
         .to_string()
-        .contains("shares vertices without explicit tangents"));
+        .contains("not reasonably orthogonal to its normal"));
 }
 
 #[test]
@@ -1534,7 +1545,6 @@ fn missing_normals_expand_shared_vertices_per_triangle() {
         normals: None,
         tangents: None,
         uvs: None,
-        ..Default::default()
     };
 
     let completed = complete_triangle_attributes(mesh, "shared").unwrap();
