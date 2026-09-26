@@ -48,6 +48,22 @@ struct Tile {
     height: u32,
 }
 
+/// Number of tiles along each axis, without materializing them.
+fn tile_grid_dims(
+    region_width: u32,
+    region_height: u32,
+    tile_width: u32,
+    tile_height: u32,
+) -> (u32, u32) {
+    (
+        region_width.div_ceil(tile_width),
+        region_height.div_ceil(tile_height),
+    )
+}
+
+/// Iterates every tile in the region's grid lazily: a `--gpu-tile-size 1`
+/// render of an 8K image would otherwise need a multi-gigabyte `Vec<Tile>`,
+/// defeating the point of tiling to reduce memory use.
 fn compute_tiles(
     region_x: u32,
     region_y: u32,
@@ -55,25 +71,20 @@ fn compute_tiles(
     region_height: u32,
     tile_width: u32,
     tile_height: u32,
-) -> Vec<Tile> {
-    let mut tiles = Vec::new();
-    let mut y = 0;
-    while y < region_height {
-        let height = tile_height.min(region_height - y);
-        let mut x = 0;
-        while x < region_width {
-            let width = tile_width.min(region_width - x);
-            tiles.push(Tile {
+) -> impl Iterator<Item = Tile> {
+    let (tiles_x, tiles_y) = tile_grid_dims(region_width, region_height, tile_width, tile_height);
+    (0..tiles_y).flat_map(move |tile_y| {
+        (0..tiles_x).map(move |tile_x| {
+            let x = tile_x * tile_width;
+            let y = tile_y * tile_height;
+            Tile {
                 x: region_x + x,
                 y: region_y + y,
-                width,
-                height,
-            });
-            x += tile_width;
-        }
-        y += tile_height;
-    }
-    tiles
+                width: tile_width.min(region_width - x),
+                height: tile_height.min(region_height - y),
+            }
+        })
+    })
 }
 
 const DEPLOYED_STAGE_SOURCES: &[&str] = &[
@@ -539,26 +550,25 @@ impl WavefrontPathIntegrator {
             log::warn!("WebGPU Film display start failed: {error}");
         }
         let samples_per_pixel = self.scene.render_settings.samples_per_pixel;
-        let tiles = compute_tiles(
-            self.scene.viewport.region_x,
-            self.scene.viewport.region_y,
+        let (tiles_x, tiles_y) = tile_grid_dims(
             self.scene.viewport.region_width,
             self.scene.viewport.region_height,
             self.tile_width,
             self.tile_height,
         );
-        let total_iterations = u32::try_from(tiles.len())
-            .ok()
-            .and_then(|tile_count| tile_count.checked_mul(samples_per_pixel))
+        let tile_count = tiles_x
+            .checked_mul(tiles_y)
+            .ok_or_else(|| PbrtError::error("GPU render: tile grid dimensions overflowed u32."))?;
+        let total_iterations = tile_count
+            .checked_mul(samples_per_pixel)
             .ok_or_else(|| PbrtError::error("GPU render: tile count times spp overflowed u32."))?;
         let mut reporter = self
             .show_progress
             .then(|| ProgressReporter::new(total_iterations as usize, &self.scene.output.filename));
         let mut last_display_update = Instant::now();
         log::info!(
-            "GPU render: starting samples={samples_per_pixel} depth={} tiles={}",
+            "GPU render: starting samples={samples_per_pixel} depth={} tiles={tile_count}",
             self.scene.render_settings.max_depth,
-            tiles.len()
         );
         // Tiles are processed strictly sequentially, never in parallel: the
         // goal is bounding wavefront buffer sizes, not speed. The film
@@ -574,7 +584,15 @@ impl WavefrontPathIntegrator {
             self.film.clear(&mut clear_encoder);
             self.context.queue.submit(Some(clear_encoder.finish()));
         }
-        for (tile_index, tile) in tiles.iter().enumerate() {
+        let tiles = compute_tiles(
+            self.scene.viewport.region_x,
+            self.scene.viewport.region_y,
+            self.scene.viewport.region_width,
+            self.scene.viewport.region_height,
+            self.tile_width,
+            self.tile_height,
+        );
+        for (tile_index, tile) in tiles.enumerate() {
             self.scene.viewport.tile_x = tile.x;
             self.scene.viewport.tile_y = tile.y;
             self.scene.viewport.tile_width = tile.width;
@@ -583,11 +601,9 @@ impl WavefrontPathIntegrator {
             let workgroups_y = tile.height.div_ceil(WORKGROUP_SIZE);
             for sample_index in 0..samples_per_pixel {
                 log::info!(
-                    "GPU render: tile {}/{} sample {}/{}",
+                    "GPU render: tile {}/{tile_count} sample {}/{samples_per_pixel}",
                     tile_index + 1,
-                    tiles.len(),
                     sample_index + 1,
-                    samples_per_pixel
                 );
                 self.scene.viewport.sample_index = sample_index;
                 self.context.queue.write_buffer(
