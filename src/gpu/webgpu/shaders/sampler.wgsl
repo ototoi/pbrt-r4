@@ -516,8 +516,18 @@ fn halton_pixel_radical_inverse(dimension: u32, index: u32) -> f32 {
     return halton_radical_inverse_impl(dimension, index, false);
 }
 
+// The low-discrepancy sequences keyed by pixel coordinate need the full
+// image's absolute coordinate, not a tile-local one: `pixel_index` only
+// indexes within the current tile's wavefront queues.
+fn sampler_pixel_from_index(pixel_index: u32) -> vec2<u32> {
+    return vec2<u32>(
+        viewport.tile_x + pixel_index % viewport.tile_width,
+        viewport.tile_y + pixel_index / viewport.tile_width,
+    );
+}
+
 fn sampler_get_1d(pixel_index: u32, dimension_in: u32) -> f32 {
-    let pixel = vec2<u32>(pixel_index % viewport.width, pixel_index / viewport.width);
+    let pixel = sampler_pixel_from_index(pixel_index);
     if (sampler_params.kind == SAMPLER_KIND_HALTON) {
         let dimension = select(dimension_in, 2u, dimension_in == 0u);
         return halton_radical_inverse(dimension, halton_index(pixel, viewport.sample_index));
@@ -543,7 +553,7 @@ fn sampler_get_1d(pixel_index: u32, dimension_in: u32) -> f32 {
 }
 
 fn sampler_get_2d(pixel_index: u32, dimension: u32) -> vec2<f32> {
-    let pixel = vec2<u32>(pixel_index % viewport.width, pixel_index / viewport.width);
+    let pixel = sampler_pixel_from_index(pixel_index);
     if (sampler_params.kind == SAMPLER_KIND_PADDED_SOBOL) {
         return padded_sobol_2d(pixel, dimension);
     }
@@ -566,7 +576,7 @@ fn sampler_get_2d(pixel_index: u32, dimension: u32) -> vec2<f32> {
 }
 
 fn sampler_get_pixel_2d(pixel_index: u32) -> vec2<f32> {
-    let pixel = vec2<u32>(pixel_index % viewport.width, pixel_index / viewport.width);
+    let pixel = sampler_pixel_from_index(pixel_index);
     if (sampler_params.kind == SAMPLER_KIND_HALTON) {
         let index = halton_index(pixel, viewport.sample_index);
         return vec2<f32>(

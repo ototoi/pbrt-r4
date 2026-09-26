@@ -263,13 +263,20 @@ fn compare_sampler_case(
 ) {
     let pixel_index = pixel.y as u32 * resolution[0] + pixel.x as u32;
     let viewport = ViewportUniform {
-        width: resolution[0],
-        height: resolution[1],
+        full_width: resolution[0],
+        full_height: resolution[1],
+        region_x: 0,
+        region_y: 0,
+        region_width: resolution[0],
+        region_height: resolution[1],
+        tile_x: 0,
+        tile_y: 0,
+        tile_width: resolution[0],
+        tile_height: resolution[1],
         sample_index,
         max_depth: 5,
         seed,
         disable_wavelength_jitter: 0,
-        padding: [0; 2],
     };
 
     cpu.start_pixel_sample(pixel, sample_index, 0);
