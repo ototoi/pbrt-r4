@@ -52,7 +52,6 @@ pub fn geometry_index(
         node_name,
         shape.tangents.as_deref(),
         shape.normals.as_deref(),
-        shape.positions.len(),
     )?;
 
     let first_vertex = u32::try_from(builder.vertices.len()).map_err(|_| {
@@ -111,10 +110,12 @@ fn validate_tangent_directions(
     node_name: &str,
     tangents: Option<&[Vec3f]>,
     normals: Option<&[Vec3f]>,
-    vertex_count: usize,
 ) -> Result<(), PbrtError> {
-    for index in 0..vertex_count {
-        let tangent = tangents.map_or([0.0; 3], |tangents| tangents[index].0);
+    let Some(tangents) = tangents else {
+        return Ok(());
+    };
+    for (index, tangent) in tangents.iter().enumerate() {
+        let tangent = tangent.0;
         let tangent_len2: f32 = tangent.iter().map(|value| value * value).sum();
         if !tangent.iter().all(|value| value.is_finite()) || !(tangent_len2 > 0.0) {
             return Err(PbrtError::error(&format!(

@@ -1501,7 +1501,7 @@ fn flatten_node_keeps_conductor_reflectance_layout_separate() {
 }
 
 #[test]
-fn node_ir_preparation_completes_missing_mesh_attributes_before_flattening() {
+fn node_ir_preparation_completes_missing_mesh_uvs_before_flattening() {
     let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
     {
         let mut node = shape.write().unwrap();
@@ -1523,17 +1523,18 @@ fn node_ir_preparation_completes_missing_mesh_attributes_before_flattening() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.vertices.len(), 3);
-    assert_eq!(scene.vertices[0].normal, [0.0, 0.0, 1.0]);
     assert_eq!(scene.vertices[0].uv, [0.0, 0.0]);
     assert_eq!(scene.vertices[1].uv, [1.0, 0.0]);
     assert_eq!(scene.vertices[2].uv, [0.0, 1.0]);
-    assert!(scene.vertices.iter().all(|vertex| {
-        vertex.tangent.iter().all(|value| value.is_finite()) && vertex.tangent[0].abs() > 0.9
-    }));
+    // Missing normal/tangent are left zero: shade_surface.wgsl recomputes a
+    // fresh per-triangle geometric normal / dpdu whenever the interpolated
+    // vertex value is zero, so there is nothing to precompute here.
+    assert_eq!(scene.vertices[0].normal, [0.0, 0.0, 0.0]);
+    assert_eq!(scene.vertices[0].tangent, [0.0, 0.0, 0.0]);
 }
 
 #[test]
-fn missing_normals_expand_shared_vertices_per_triangle() {
+fn missing_normals_are_left_for_shade_surface_to_recompute() {
     let mesh = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
@@ -1548,10 +1549,8 @@ fn missing_normals_expand_shared_vertices_per_triangle() {
     };
 
     let completed = complete_triangle_attributes(mesh, "shared").unwrap();
-    assert_eq!(completed.positions.len(), 6);
-    assert_eq!(completed.indices, vec![0, 1, 2, 3, 4, 5]);
-    assert_ne!(
-        completed.normals.as_ref().unwrap()[0],
-        completed.normals.as_ref().unwrap()[3]
-    );
+    assert_eq!(completed.positions.len(), 4);
+    assert_eq!(completed.indices, vec![0, 1, 2, 0, 2, 3]);
+    assert!(completed.normals.is_none());
+    assert!(completed.tangents.is_none());
 }
