@@ -4,8 +4,8 @@ use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
     Camera, DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput,
-    LightGeometryKind, LightKind, LightSamplingModel, Output, PrimitiveDistributionMap, Scene,
-    Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
+    LightGeometryKind, LightKind, LightSamplingModel, Medium, Output, PrimitiveDistributionMap,
+    Scene, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
     INVALID_INDEX,
 };
 use crate::gpu::node::{
@@ -25,6 +25,8 @@ use super::geometry::{
 mod material;
 use material::{build_material_roots, register_material_source, MaterialSourceNode};
 mod material_attributes;
+mod medium;
+use medium::{register_medium, resolve_medium_name};
 mod node;
 use node::flatten_node_ref;
 
@@ -124,6 +126,7 @@ pub fn flatten_node_with_material_override(
         indices: builder.indices,
         geometries: builder.geometries,
         instances: builder.instances,
+        media: builder.media,
         material_roots,
         material_nodes,
         scalar_attributes: builder.scalar_attributes,
@@ -261,6 +264,7 @@ struct FlatBuilder {
     geometries: Vec<Geometry>,
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
+    media: Vec<Medium>,
     material_source_nodes: Vec<MaterialSourceNode>,
     scalar_attributes: Vec<f32>,
     texture_root_specs: Vec<TextureRootSpec>,
