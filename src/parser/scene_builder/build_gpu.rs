@@ -123,11 +123,12 @@ impl SceneBuilder {
         let named_materials = self.build_named_material_resources(&materials);
 
         for medium in self.media.values() {
+            let params = make_absolute_path(&medium.base.params, &self.seen_work_dirs);
             root_node.add_component(Component::Medium(MediumComponent {
                 medium: Medium {
                     name: medium.base.name.clone(),
-                    kind: medium.base.params.get_one_string("type", ""),
-                    params: medium.base.params.clone(),
+                    kind: params.get_one_string("type", ""),
+                    params,
                     transform: node_transform(&medium.render_from_medium.primary()),
                 },
             }));
