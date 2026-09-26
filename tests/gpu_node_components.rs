@@ -39,6 +39,7 @@ fn node_components_wrap_declarative_resources() {
             params: sphere_params,
         })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     });
     let material_component = Component::Material(MaterialComponent {
         material: Arc::clone(&material),
@@ -651,6 +652,7 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
 
     tessellate_shapes(&mut root).unwrap();
@@ -686,6 +688,7 @@ fn disk_ring_uses_radial_segments_and_preserves_seam_vertices() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
 
     tessellate_shapes(&mut root).unwrap();
@@ -710,6 +713,7 @@ fn disk_rejects_invalid_parameters_during_tessellation() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
 
     assert!(tessellate_shapes(&mut root).is_err());
@@ -720,6 +724,7 @@ fn disk_rejects_invalid_parameters_during_tessellation() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
     assert!(tessellate_shapes(&mut root).is_err());
 }
@@ -735,6 +740,7 @@ fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
                 params: Default::default(),
             })),
             reverse_orientation: false,
+            medium_interface: Default::default(),
         }));
     let mut root = Node::new("root");
     root.add_child(child);
@@ -767,6 +773,7 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
                 params: Default::default(),
             })),
             reverse_orientation: false,
+            medium_interface: Default::default(),
         }));
     let mut root = Node::new("root");
     root.add_child(child);
@@ -813,6 +820,7 @@ fn node_ir_preparation_removes_invalid_triangles_before_attribute_completion() {
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(mesh)),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
 
     prepare_triangle_meshes(&mut node).unwrap();
@@ -967,6 +975,7 @@ fn triangles_with_irreparable_zero_normals_are_removed() {
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(mesh)),
         reverse_orientation: false,
+        medium_interface: Default::default(),
     }));
 
     prepare_triangle_meshes(&mut node).unwrap();

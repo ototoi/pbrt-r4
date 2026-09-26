@@ -7,9 +7,9 @@ use crate::gpu::node::{
     AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
     CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
     HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, Node, NodeRef,
-    NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent, Scene,
-    SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
+    LightComponent, Material, MaterialComponent, Medium, MediumComponent, MediumInterface, Node,
+    NodeRef, NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent,
+    Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
     TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
 };
 // Uncomment together with the diagnostic blocks below when Node IR JSON output is needed.
@@ -126,6 +126,7 @@ impl SceneBuilder {
             root_node.add_component(Component::Medium(MediumComponent {
                 medium: Medium {
                     name: medium.base.name.clone(),
+                    kind: medium.base.params.get_one_string("type", ""),
                     params: medium.base.params.clone(),
                     transform: node_transform(&medium.render_from_medium.primary()),
                 },
@@ -298,7 +299,7 @@ impl SceneBuilder {
         node.add_component(Component::Camera(CameraComponent {
             camera: Camera {
                 params: self.camera_params.clone(),
-                medium: String::new(),
+                medium: self.camera_medium.clone(),
             },
         }));
         let mut film_params = self.film_params.clone();
@@ -471,6 +472,10 @@ impl SceneBuilder {
         node.add_component(Component::Shape(ShapeComponent {
             shape: shape_value,
             reverse_orientation: shape.reverse_orientation,
+            medium_interface: MediumInterface::new(
+                shape.medium_interface.inside_medium.clone(),
+                shape.medium_interface.outside_medium.clone(),
+            ),
         }));
 
         // Object definitions are shared by ObjectInstance and must not create
