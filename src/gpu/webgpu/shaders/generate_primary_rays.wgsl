@@ -1,9 +1,9 @@
 @compute @workgroup_size(8, 8, 1)
 fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
+    if (global_id.x >= viewport.tile_width || global_id.y >= viewport.tile_height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
+    let pixel_index = global_id.y * viewport.tile_width + global_id.x;
     var wavelength_u = sampler_get_1d(pixel_index, 0u);
     if (viewport.disable_wavelength_jitter != 0u) { wavelength_u = 0.5; }
     let wavelength_offsets = fract(vec4<f32>(wavelength_u) + vec4<f32>(0.0, 0.25, 0.5, 0.75));
@@ -13,9 +13,11 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     store_sample_wavelengths(pixel_index, lambda, lambda_pdf);
     let jitter = sampler_get_pixel_2d(pixel_index);
     store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));
+    // camera.raster_to_camera expects a raster coordinate in the full image,
+    // not a tile-local one.
     let pixel = vec4<f32>(
-        f32(global_id.x) + jitter.x - 0.5,
-        f32(global_id.y) + jitter.y - 0.5,
+        f32(viewport.tile_x + global_id.x) + jitter.x - 0.5,
+        f32(viewport.tile_y + global_id.y) + jitter.y - 0.5,
         1.0,
         1.0,
     );

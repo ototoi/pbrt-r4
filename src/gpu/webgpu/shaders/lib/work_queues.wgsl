@@ -112,7 +112,7 @@ fn store_next_ray(index: u32, ray: RayWorkItem) {
 }
 
 fn pixel_count() -> u32 {
-    return viewport.width * viewport.height;
+    return viewport.tile_width * viewport.tile_height;
 }
 
 fn append_direct_eval(ray_index: u32) {

@@ -174,14 +174,20 @@ struct CameraUniform {
 };
 
 struct ViewportUniform {
-    width: u32,
-    height: u32,
+    full_width: u32,
+    full_height: u32,
+    region_x: u32,
+    region_y: u32,
+    region_width: u32,
+    region_height: u32,
+    tile_x: u32,
+    tile_y: u32,
+    tile_width: u32,
+    tile_height: u32,
     sample_index: u32,
     max_depth: u32,
     seed: u32,
     disable_wavelength_jitter: u32,
-    mode: u32,
-    _padding: u32,
 };
 
 struct SamplerUniform {
