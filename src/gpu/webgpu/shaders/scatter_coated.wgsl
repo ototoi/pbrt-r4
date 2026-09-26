@@ -8,6 +8,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let root = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
     let kind = root.bxdf_kind;
+    let tangent = surface.tangent.xyz;
 
     // Direct lighting.
     let light_sample = direct_light_samples[pixel_index];
@@ -20,8 +21,8 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (cos_wo * cos_wi > 0.0) {
             let cosine = abs(cos_wi);
             if (cosine > 0.0) {
-                let layered_wo = scattering_local(wo, shading_n);
-                let layered_wi = scattering_local(wi, shading_n);
+                let layered_wo = scattering_local_frame(wo, tangent, shading_n);
+                let layered_wi = scattering_local_frame(wi, tangent, shading_n);
                 let f = evaluate_layered_f(root, kind, layered_wo, layered_wi, pixel_index, ray.depth);
                 let bsdf_pdf = evaluate_layered_pdf(root, kind, layered_wo, layered_wi, pixel_index, ray.depth);
                 add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, cosine);
@@ -35,9 +36,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let top = load_attributes_eval_work_item(root.child_work_item0);
     let bottom = load_attributes_eval_work_item(root.child_work_item1);
     let normal = normalize(surface.normal.xyz);
-    let tangent = make_tangent(normal);
-    let bitangent = cross(normal, tangent);
-    var wo = scattering_local(normalize(-ray.direction.xyz), normal);
+    var wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
     if (wo.z == 0.0) { return; }
     var flip_wi = false;
     if (wo.z < 0.0) {
@@ -158,9 +157,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     if (!result_valid || result_pdf <= 0.0 || max_spectrum(result_f) <= 0.0) { return; }
     if (flip_wi) { result_wi = -result_wi; }
-    let direction = normalize(
-        tangent * result_wi.x + bitangent * result_wi.y + normal * result_wi.z,
-    );
+    let direction = normalize(scattering_world_frame(result_wi, tangent, normal));
     var next_throughput = ray.throughput * result_f * abs(result_wi.z) / result_pdf;
     if (ray.depth >= 1u) {
         let rr_beta = max_spectrum(next_throughput) / max(ray.inv_w_u, 1e-7);
