@@ -18,9 +18,8 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let normal = normalize(surface.normal.xyz);
-    let tangent = make_tangent(normal);
-    let bitangent = cross(normal, tangent);
-    let wo = scattering_local(normalize(-ray.direction.xyz), normal);
+    let tangent = surface.tangent.xyz;
+    let wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
     if (wo.z == 0.0) { return; }
 
     // Direct lighting. pbrt-v4 DielectricBxDF::f/PDF are non-zero only for a
@@ -28,7 +27,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // dielectrics into the direct-lighting queue).
     let light_sample = direct_light_samples[pixel_index];
     if (light_sample.valid != 0u) {
-        let wi = scattering_local(light_sample.direction_pdf.xyz, normal);
+        let wi = scattering_local_frame(light_sample.direction_pdf.xyz, tangent, normal);
         let bsdf_pdf = dielectric_interface_pdf(evaluated, wo, wi, true, true);
         if (bsdf_pdf > 0.0) {
             let f = dielectric_interface_f(evaluated, wo, wi);
@@ -42,7 +41,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         evaluated, wo, samples.indirect.x, samples.indirect.yz, true, true,
     );
     if (bs.valid == 0u || bs.pdf <= 0.0 || bs.wi.z == 0.0) { return; }
-    let direction = normalize(tangent * bs.wi.x + bitangent * bs.wi.y + normal * bs.wi.z);
+    let direction = normalize(scattering_world_frame(bs.wi, tangent, normal));
     let next_throughput = ray.throughput * bs.f * abs(bs.wi.z) / bs.pdf;
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),
