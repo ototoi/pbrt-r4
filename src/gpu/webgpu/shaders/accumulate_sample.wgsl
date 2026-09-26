@@ -27,5 +27,5 @@ fn accumulate_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (film_params.max_sample_luminance > 0.0 && maximum > film_params.max_sample_luminance) {
         sensor_rgb *= film_params.max_sample_luminance / maximum;
     }
-    framebuffer[pixel_index] += vec4<f32>(sensor_rgb, 1.0);
+    framebuffer[framebuffer_index] += vec4<f32>(sensor_rgb, 1.0);
 }
