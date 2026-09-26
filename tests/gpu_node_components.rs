@@ -855,7 +855,7 @@ fn vertices_only_used_by_invalid_triangles_are_removed_with_their_attributes() {
 }
 
 #[test]
-fn zero_normals_and_tangents_are_repaired_from_mesh_geometry() {
+fn zero_normals_are_repaired_and_a_partially_invalid_tangent_is_dropped() {
     let shape = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
@@ -883,20 +883,13 @@ fn zero_normals_and_tangents_are_repaired_from_mesh_geometry() {
     let completed = complete_triangle_attributes(shape, "repairable").unwrap();
 
     assert_eq!(completed.normals.unwrap()[0], Vec3f([0.0, 0.0, 1.0]));
-    let tangents = completed.tangents.unwrap();
-    assert!(tangents
-        .iter()
-        .all(|tangent| tangent.0.iter().all(|value| value.is_finite())));
-    assert!(tangents.iter().all(|tangent| tangent
-        .0
-        .iter()
-        .map(|value| value * value)
-        .sum::<f32>()
-        > 0.0));
+    // One degenerate entry disqualifies the whole "S" array as explicit:
+    // shade_surface.wgsl recomputes a fresh per-triangle dpdu instead.
+    assert!(completed.tangents.is_none());
 }
 
 #[test]
-fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
+fn a_partially_invalid_tangent_is_dropped_when_normals_are_also_missing() {
     let shape = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
@@ -919,19 +912,12 @@ fn zero_tangents_are_repaired_when_flat_normals_are_generated() {
 
     let completed = complete_triangle_attributes(shape, "flat-repairable").unwrap();
 
-    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, 1.0]); 3]);
-    assert_eq!(
-        completed.tangents.unwrap(),
-        vec![
-            Vec3f([1.0, 0.0, 0.0]),
-            Vec3f([0.0, 1.0, 0.0]),
-            Vec3f([0.0, 1.0, 0.0]),
-        ]
-    );
+    assert!(completed.normals.is_none());
+    assert!(completed.tangents.is_none());
 }
 
 #[test]
-fn missing_tangents_expand_shared_vertices_per_triangle_even_with_smooth_normals() {
+fn missing_tangents_are_left_for_shade_surface_even_with_smooth_normals() {
     let shape = TriangleMeshShape {
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
@@ -952,12 +938,10 @@ fn missing_tangents_expand_shared_vertices_per_triangle_even_with_smooth_normals
 
     let completed = complete_triangle_attributes(shape, "shared-smooth").unwrap();
 
-    assert_eq!(completed.positions.len(), completed.indices.len());
-    assert_eq!(completed.indices, vec![0, 1, 2, 3, 4, 5]);
-
-    let tangents = completed.tangents.unwrap();
-    assert_ne!(tangents[1], tangents[4]);
-    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, 1.0]); 6]);
+    assert_eq!(completed.positions.len(), 4);
+    assert_eq!(completed.indices, vec![0, 1, 2, 0, 2, 3]);
+    assert!(completed.tangents.is_none());
+    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, 1.0]); 4]);
 }
 
 #[test]
