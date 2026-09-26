@@ -47,6 +47,20 @@ pub fn geometry_index(
     )?;
     validate_attribute_len(node_name, shape.uvs.as_deref(), shape.positions.len(), "UV")?;
 
+    // complete_triangle_attributes() (Node IR) expands a mesh to one vertex
+    // per triangle corner whenever tangents are not explicit, so a shared
+    // vertex can never silently average tangents across faces. If this
+    // invariant were ever violated, a shared vertex's single stored tangent
+    // would be reused verbatim by every triangle that references it, instead
+    // of pbrt-v4's fresh per-triangle dpdu.
+    if !shape.tangents_are_explicit && vertex_count != index_count {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" shares vertices without explicit tangents \
+             (expected one vertex per triangle corner).",
+            node_name
+        )));
+    }
+
     let first_vertex = u32::try_from(builder.vertices.len()).map_err(|_| {
         PbrtError::error("The flattened GPU vertex buffer exceeds the u32 index range.")
     })?;
