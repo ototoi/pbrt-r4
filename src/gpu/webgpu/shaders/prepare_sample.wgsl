@@ -1,9 +1,9 @@
 @compute @workgroup_size(8, 8, 1)
 fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (global_id.x >= viewport.width || global_id.y >= viewport.height) {
+    if (global_id.x >= viewport.tile_width || global_id.y >= viewport.tile_height) {
         return;
     }
-    let pixel_index = global_id.y * viewport.width + global_id.x;
+    let pixel_index = global_id.y * viewport.tile_width + global_id.x;
     if (pixel_index == 0u) {
         atomicStore(&queue_counters.current.count, 0u);
         atomicStore(&queue_counters.current.overflow, 0u);

@@ -174,10 +174,11 @@ impl WavefrontPathIntegrator {
             contents: bytes_of(&scene.light_table),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let pixel_count = u64::from(scene.viewport.width) * u64::from(scene.viewport.height);
+        let tile_pixel_count =
+            u64::from(scene.viewport.tile_width) * u64::from(scene.viewport.tile_height);
         let queues = Queues::new(
             device,
-            pixel_count,
+            tile_pixel_count,
             attributes_eval_stride,
             texture_eval_stride,
         )?;
@@ -185,7 +186,7 @@ impl WavefrontPathIntegrator {
         log::info!("GPU create: queues and film resources ready");
         let film = Film::new(
             device,
-            [scene.viewport.width, scene.viewport.height],
+            [scene.viewport.region_width, scene.viewport.region_height],
             scene.film_output_matrix,
             scene.film_scale,
             scene.film.mode != 0,
@@ -482,8 +483,8 @@ impl WavefrontPathIntegrator {
         if let Err(error) = self.film.start() {
             log::warn!("WebGPU Film display start failed: {error}");
         }
-        let workgroups_x = self.scene.viewport.width.div_ceil(WORKGROUP_SIZE);
-        let workgroups_y = self.scene.viewport.height.div_ceil(WORKGROUP_SIZE);
+        let workgroups_x = self.scene.viewport.tile_width.div_ceil(WORKGROUP_SIZE);
+        let workgroups_y = self.scene.viewport.tile_height.div_ceil(WORKGROUP_SIZE);
         let samples_per_pixel = self.scene.render_settings.samples_per_pixel;
         let mut reporter = self.show_progress.then(|| {
             ProgressReporter::new(samples_per_pixel as usize, &self.scene.output.filename)
