@@ -1,6 +1,8 @@
 use super::{FlatBuilder, Geometry, Vertex};
-use crate::gpu::node::TriangleMeshShape;
+use crate::gpu::node::{TriangleMeshShape, Vec3f};
 use crate::util::error::PbrtError;
+
+const MAX_TANGENT_NORMAL_COS: f32 = 0.8;
 
 pub fn geometry_index(
     node_key: usize,
@@ -46,6 +48,11 @@ pub fn geometry_index(
         "tangent",
     )?;
     validate_attribute_len(node_name, shape.uvs.as_deref(), shape.positions.len(), "UV")?;
+    validate_tangent_directions(
+        node_name,
+        shape.tangents.as_deref(),
+        shape.normals.as_deref(),
+    )?;
 
     let first_vertex = u32::try_from(builder.vertices.len()).map_err(|_| {
         PbrtError::error("The flattened GPU vertex buffer exceeds the u32 index range.")
@@ -97,6 +104,42 @@ pub fn geometry_index(
     });
     builder.geometries_by_shape.insert(key, geometry);
     Ok(geometry)
+}
+
+fn validate_tangent_directions(
+    node_name: &str,
+    tangents: Option<&[Vec3f]>,
+    normals: Option<&[Vec3f]>,
+) -> Result<(), PbrtError> {
+    let Some(tangents) = tangents else {
+        return Ok(());
+    };
+    for (index, tangent) in tangents.iter().enumerate() {
+        let tangent = tangent.0;
+        let tangent_len2: f32 = tangent.iter().map(|value| value * value).sum();
+        if !tangent.iter().all(|value| value.is_finite()) || !(tangent_len2 > 0.0) {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" has a zero or non-finite tangent.",
+                node_name
+            )));
+        }
+        let Some(normal) = normals.map(|normals| normals[index].0) else {
+            continue;
+        };
+        let normal_len2: f32 = normal.iter().map(|value| value * value).sum();
+        if normal_len2 == 0.0 {
+            continue;
+        }
+        let dot: f32 = tangent.iter().zip(normal).map(|(a, b)| a * b).sum();
+        let cos = dot / (tangent_len2.sqrt() * normal_len2.sqrt());
+        if cos.abs() > MAX_TANGENT_NORMAL_COS {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" has a tangent that is not reasonably orthogonal to its normal.",
+                node_name
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_attribute_len<T>(
