@@ -7,10 +7,15 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
+    let roughness = evaluated.values[2].x;
 
-    // Direct lighting.
+    // Direct lighting. classify_surface_scatter only enqueues this ray into
+    // direct_eval when roughness >= 1e-3 (glossy); below that, a smooth
+    // conductor is Specular in pbrt-v4 and direct_light_samples[pixel_index]
+    // may hold a stale entry from an earlier depth, so gate on the same
+    // predicate rather than trusting `valid` alone.
     let light_sample = direct_light_samples[pixel_index];
-    if (light_sample.valid != 0u) {
+    if (roughness >= 1e-3 && light_sample.valid != 0u) {
         let wo = -ray.direction.xyz;
         let wi = light_sample.direction_pdf.xyz;
         let shading_n = surface.normal.xyz;
@@ -40,14 +45,13 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Indirect bounce.
     let lambda = load_sample_lambda(pixel_index);
-    let roughness = evaluated.values[2].x;
     let normal = normalize(surface.normal.xyz);
     let wo = normalize(-ray.direction.xyz);
     let tangent = make_tangent(normal);
     let bitangent = cross(normal, tangent);
     var half_local = vec3<f32>(0.0, 0.0, 1.0);
     var pdf = 1.0;
-    if (roughness > 1e-3) {
+    if (roughness >= 1e-3) {
         let samples = load_ray_samples(pixel_index);
         let alpha = max(roughness, 1e-3);
         let tan2 = alpha * alpha * samples.indirect.x / max(1.0 - samples.indirect.x, 1e-7);
@@ -65,7 +69,7 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
     var f = conductor_fresnel(cos_i, evaluated.values[0], evaluated.values[1]) / cos_i;
-    if (roughness > 1e-3) {
+    if (roughness >= 1e-3) {
         let wi_local = scattering_local(direction, normal);
         let wo_local = scattering_local(wo, normal);
         let h_local = scattering_local(normalize(wo + direction), normal);
@@ -85,7 +89,7 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
         next_throughput,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.inv_w_u, ray.inv_w_u / pdf, pdf, u32(roughness <= 1e-3), 0u, 0u,
+        ray.inv_w_u, ray.inv_w_u / pdf, pdf, u32(roughness < 1e-3), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

@@ -377,10 +377,17 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(
         common_shader().contains("fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>)")
     );
+    // The rough (GGX) and eta==1/smooth (delta) interface math is shared
+    // with the layered top interface via lib/bxdfs/dielectric.wgsl, so a
+    // standalone rough dielectric matches pbrt-v4 DielectricBxDF exactly.
+    let source = compose_source(SCATTER_DIELECTRIC_SHADER);
+    assert!(source.contains("fn sample_dielectric_interface("));
+    assert!(source.contains("fn dielectric_interface_f("));
+    assert!(source.contains("fn dielectric_interface_pdf("));
+    assert!(source.contains("fn sample_rough_dielectric_interface("));
+    assert!(source.contains("fn sample_smooth_dielectric_interface("));
     assert!(SCATTER_DIELECTRIC_SHADER.contains("evaluated.values[0]"));
-    assert!(SCATTER_DIELECTRIC_SHADER.contains("fresnel"));
-    assert!(SCATTER_DIELECTRIC_SHADER.contains("refract(-wo, normal, eta_ratio)"));
-    assert!(SCATTER_DIELECTRIC_SHADER.contains("reflect(-wo, normal)"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("sample_dielectric_interface(\n        evaluated,"));
 }
 
 #[test]
