@@ -1,7 +1,9 @@
+use crate::base::film::Film as CpuFilm;
 use crate::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization, MAX_GPU_RENDER_DEPTH};
 use crate::gpu::node::{Integrator as NodeIntegrator, Sampler as NodeSampler};
 use crate::options::PbrtOptions;
 use crate::paramdict::ParameterDictionary;
+use crate::util::base::Point2i;
 use crate::util::error::PbrtError;
 
 pub fn register_root_component<T>(
@@ -192,6 +194,37 @@ pub fn viewport_resolution(params: &ParameterDictionary) -> Result<[u32; 2], Pbr
         return Err(PbrtError::error("Film resolution must be positive."));
     }
     Ok(resolution)
+}
+
+/// Rendered region within the full image (`"cropwindow"`/`"pixelbounds"`),
+/// shared with the CPU backend so both apply the same convention. The
+/// output image is sized to this region, not the full resolution; the
+/// camera and sampler still use the full resolution (see
+/// `docs/webgpu-tile-rendering-design_ja.md` in the devkit repo).
+pub fn region_bounds(
+    params: &ParameterDictionary,
+    resolution: [u32; 2],
+) -> Result<([u32; 2], [u32; 2]), PbrtError> {
+    let full_resolution = Point2i::new(
+        i32::try_from(resolution[0])
+            .map_err(|_| PbrtError::error("Film xresolution exceeds i32."))?,
+        i32::try_from(resolution[1])
+            .map_err(|_| PbrtError::error("Film yresolution exceeds i32."))?,
+    );
+    let bounds = CpuFilm::get_pixel_bounds_from_params(params, &full_resolution)?;
+    let offset = [
+        u32::try_from(bounds.min.x)
+            .map_err(|_| PbrtError::error("Film pixel bounds minimum x is negative."))?,
+        u32::try_from(bounds.min.y)
+            .map_err(|_| PbrtError::error("Film pixel bounds minimum y is negative."))?,
+    ];
+    let region_resolution = [
+        u32::try_from(bounds.max.x - bounds.min.x)
+            .map_err(|_| PbrtError::error("Film pixel bounds width is not positive."))?,
+        u32::try_from(bounds.max.y - bounds.min.y)
+            .map_err(|_| PbrtError::error("Film pixel bounds height is not positive."))?,
+    ];
+    Ok((offset, region_resolution))
 }
 
 pub fn screen_window(
