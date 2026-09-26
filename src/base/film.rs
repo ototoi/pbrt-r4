@@ -107,7 +107,7 @@ impl Film {
 
     /// Shared with the GPU backend (`gpu::flat::flatten::scene_settings`) so
     /// `"cropwindow"`/`"pixelbounds"` behave identically on both.
-    pub(crate) fn get_pixel_bounds_from_params(
+    pub fn get_pixel_bounds_from_params(
         params: &ParameterDictionary,
         full_resolution: &Point2i,
     ) -> Result<Bounds2i, PbrtError> {
