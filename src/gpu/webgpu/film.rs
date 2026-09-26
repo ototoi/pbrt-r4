@@ -10,6 +10,12 @@ use super::output::Output;
 
 pub struct Film {
     pub resolution: [u32; 2],
+    /// Full output image resolution (the EXR displayWindow); may be larger
+    /// than `resolution` when rendering a cropwindow/pixelbounds region.
+    full_resolution: [u32; 2],
+    /// Offset of `resolution`'s region within `full_resolution` (the EXR
+    /// dataWindow position).
+    region_offset: [u32; 2],
     pub framebuffer: wgpu::Buffer,
     readback: wgpu::Buffer,
     display: MultipleDisplay,
@@ -24,6 +30,8 @@ impl Film {
     pub fn new(
         device: &wgpu::Device,
         resolution: [u32; 2],
+        full_resolution: [u32; 2],
+        region_offset: [u32; 2],
         output_matrix: [[f32; 3]; 3],
         scale: f32,
         display_mode: bool,
@@ -37,6 +45,8 @@ impl Film {
         let framebuffer_size = pixel_byte_size;
         Ok(Self {
             resolution,
+            full_resolution,
+            region_offset,
             framebuffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 framebuffer"),
                 size: framebuffer_size,
@@ -168,11 +178,17 @@ impl Film {
 
     pub fn write_output(&self, output: &Output) -> Result<(), PbrtError> {
         let bounds = Bounds2i::from((
-            (0, 0),
-            (self.resolution[0] as i32, self.resolution[1] as i32),
+            (self.region_offset[0] as i32, self.region_offset[1] as i32),
+            (
+                (self.region_offset[0] + self.resolution[0]) as i32,
+                (self.region_offset[1] + self.resolution[1]) as i32,
+            ),
         ));
-        let resolution = Point2i::new(self.resolution[0] as i32, self.resolution[1] as i32);
+        let full_resolution = Point2i::new(
+            self.full_resolution[0] as i32,
+            self.full_resolution[1] as i32,
+        );
         let pixels: Vec<Float> = self.pixels.iter().map(|value| *value as Float).collect();
-        write_image(&output.filename, &pixels, &bounds, &resolution)
+        write_image(&output.filename, &pixels, &bounds, &full_resolution)
     }
 }

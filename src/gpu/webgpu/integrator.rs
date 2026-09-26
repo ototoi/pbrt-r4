@@ -251,6 +251,8 @@ impl WavefrontPathIntegrator {
         let film = Film::new(
             device,
             [scene.viewport.region_width, scene.viewport.region_height],
+            [scene.viewport.full_width, scene.viewport.full_height],
+            [scene.viewport.region_x, scene.viewport.region_y],
             scene.film_output_matrix,
             scene.film_scale,
             scene.film.mode != 0,
