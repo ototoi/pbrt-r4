@@ -11,6 +11,9 @@ pub struct StagePipeline {
 pub struct Pipeline {
     pub generate_primary_rays: StagePipeline,
     pub intersect_primary_rays: StagePipeline,
+    pub sample_medium: StagePipeline,
+    pub initialize_medium_segments: StagePipeline,
+    pub initialize_shadow_segments: StagePipeline,
     pub handle_escaped: StagePipeline,
     pub prepare_sample: StagePipeline,
     pub shade_surface: StagePipeline,
@@ -125,6 +128,21 @@ impl Pipeline {
                 "pbrt-r4 intersect primary rays",
                 include_str!("shaders/intersect_primary_rays.wgsl"),
                 "intersect_primary_rays",
+            ),
+            sample_medium: compute(
+                "pbrt-r4 sample medium",
+                include_str!("shaders/sample_medium.wgsl"),
+                "sample_medium",
+            ),
+            initialize_medium_segments: compute(
+                "pbrt-r4 initialize medium segments",
+                include_str!("shaders/initialize_medium_segments.wgsl"),
+                "initialize_medium_segments",
+            ),
+            initialize_shadow_segments: compute(
+                "pbrt-r4 initialize shadow segments",
+                include_str!("shaders/initialize_shadow_segments.wgsl"),
+                "initialize_shadow_segments",
             ),
             handle_escaped: compute(
                 "pbrt-r4 handle escaped rays",

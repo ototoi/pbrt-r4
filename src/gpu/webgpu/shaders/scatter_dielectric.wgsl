@@ -61,7 +61,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.depth + 1u,
         eta_scale,
         bs.pdf,
-        bs.specular, 0u, 0u, 0u,
+        bs.specular, medium_for_direction(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

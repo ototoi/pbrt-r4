@@ -93,6 +93,9 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/reset_shadow_queue.wgsl"),
     include_str!("shaders/reset_classification_queues.wgsl"),
     include_str!("shaders/intersect_primary_rays.wgsl"),
+    include_str!("shaders/sample_medium.wgsl"),
+    include_str!("shaders/initialize_medium_segments.wgsl"),
+    include_str!("shaders/initialize_shadow_segments.wgsl"),
     include_str!("shaders/handle_escaped.wgsl"),
     include_str!("shaders/shade_surface.wgsl"),
     include_str!("shaders/handle_emissive.wgsl"),
@@ -130,6 +133,7 @@ pub struct WavefrontPathIntegrator {
     show_progress: bool,
     tile_width: u32,
     tile_height: u32,
+    has_interface_only_instances: bool,
 }
 
 impl WavefrontPathIntegrator {
@@ -142,6 +146,10 @@ impl WavefrontPathIntegrator {
         show_progress: bool,
         tile_size: Option<u32>,
     ) -> Result<Self, PbrtError> {
+        let has_interface_only_instances = flat_scene
+            .instances
+            .iter()
+            .any(|instance| instance.material_root == flat::INVALID_INDEX);
         let attributes_eval_stride = u64::from(flat::max_attributes_eval_work_items_per_surface(
             &flat_scene,
         )?);
@@ -280,6 +288,11 @@ impl WavefrontPathIntegrator {
                 ResourceId::Index => scene.index_buffer.as_entire_binding(),
                 ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
                 ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
+                ResourceId::Medium => scene.medium_buffer.as_entire_binding(),
+                ResourceId::ActiveMediumIndices => queues.active_medium_indices.as_entire_binding(),
+                ResourceId::NextMediumIndices => queues.next_medium_indices.as_entire_binding(),
+                ResourceId::ActiveShadowIndices => queues.active_shadow_indices.as_entire_binding(),
+                ResourceId::NextShadowIndices => queues.next_shadow_indices.as_entire_binding(),
                 ResourceId::FilmParams => film_params_buffer.as_entire_binding(),
                 ResourceId::Surface => queues.surfaces.as_entire_binding(),
                 ResourceId::Film => film.framebuffer.as_entire_binding(),
@@ -414,6 +427,21 @@ impl WavefrontPathIntegrator {
                 include_str!("shaders/intersect_primary_rays.wgsl"),
             ),
             (
+                "sample_medium",
+                &pipeline.sample_medium,
+                include_str!("shaders/sample_medium.wgsl"),
+            ),
+            (
+                "initialize_medium_segments",
+                &pipeline.initialize_medium_segments,
+                include_str!("shaders/initialize_medium_segments.wgsl"),
+            ),
+            (
+                "initialize_shadow_segments",
+                &pipeline.initialize_shadow_segments,
+                include_str!("shaders/initialize_shadow_segments.wgsl"),
+            ),
+            (
                 "handle_escaped",
                 &pipeline.handle_escaped,
                 include_str!("shaders/handle_escaped.wgsl"),
@@ -529,6 +557,7 @@ impl WavefrontPathIntegrator {
             show_progress,
             tile_width,
             tile_height,
+            has_interface_only_instances,
         })
     }
 
@@ -613,21 +642,21 @@ impl WavefrontPathIntegrator {
                     0,
                     bytes_of(&self.scene.viewport),
                 );
-                let mut encoder =
+                let mut sample_encoder =
                     self.context
                         .device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("pbrt-r4 diffuse command encoder"),
                         });
                 dispatch(
-                    &mut encoder,
+                    &mut sample_encoder,
                     &self.pipeline.prepare_sample.pipeline,
                     self.bind_groups("prepare_sample"),
                     workgroups_x,
                     workgroups_y,
                 );
                 dispatch(
-                    &mut encoder,
+                    &mut sample_encoder,
                     &self.pipeline.generate_primary_rays.pipeline,
                     self.bind_groups("generate_primary_rays"),
                     workgroups_x,
@@ -636,44 +665,131 @@ impl WavefrontPathIntegrator {
                 // Every pixel emits a primary ray, so the current-ray queue's
                 // count is final as soon as generate_primary_rays completes.
                 dispatch(
-                    &mut encoder,
+                    &mut sample_encoder,
                     &self.pipeline.prepare_queue_dispatch.pipeline,
                     self.bind_groups("prepare_queue_dispatch"),
                     1,
                     1,
                 );
+                self.context.queue.submit(Some(sample_encoder.finish()));
                 for depth in 0..=self.scene.render_settings.max_depth {
                     if depth != 0 {
+                        let mut reset_encoder = self.context.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("pbrt-r4 wavefront queue reset encoder"),
+                            },
+                        );
                         dispatch(
-                            &mut encoder,
+                            &mut reset_encoder,
                             &self.pipeline.reset_shadow_queue.pipeline,
                             self.bind_groups("reset_shadow_queue"),
                             1,
                             1,
                         );
                         dispatch(
-                            &mut encoder,
+                            &mut reset_encoder,
                             &self.pipeline.reset_classification_queues.pipeline,
                             self.bind_groups("reset_classification_queues"),
                             1,
                             1,
                         );
+                        self.context.queue.submit(Some(reset_encoder.finish()));
                     }
+                    self.queues.reset_medium_active(&self.context.queue);
+                    let mut initialize_medium_encoder = self.context.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("pbrt-r4 initialize medium segment encoder"),
+                        },
+                    );
                     dispatch_indirect(
-                        &mut encoder,
-                        &self.pipeline.intersect_primary_rays.pipeline,
-                        self.bind_groups("intersect_primary_rays"),
+                        &mut initialize_medium_encoder,
+                        &self.pipeline.initialize_medium_segments.pipeline,
+                        self.bind_groups("initialize_medium_segments"),
                         &self.queues.queue_dispatch_args,
                         QUEUE_DISPATCH_SLOT_CURRENT_RAY,
                     );
-                    // intersect_primary_rays has just finished populating the
-                    // escaped-ray queue for this depth.
-                    dispatch(
-                        &mut encoder,
-                        &self.pipeline.prepare_queue_dispatch.pipeline,
-                        self.bind_groups("prepare_queue_dispatch"),
-                        1,
-                        1,
+                    self.context
+                        .queue
+                        .submit(Some(initialize_medium_encoder.finish()));
+                    let mut active_medium_count = None;
+                    loop {
+                        self.queues.reset_medium_continuation(&self.context.queue);
+                        let mut segment_encoder = self.context.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("pbrt-r4 medium segment encoder"),
+                            },
+                        );
+                        dispatch(
+                            &mut segment_encoder,
+                            &self.pipeline.prepare_queue_dispatch.pipeline,
+                            self.bind_groups("prepare_queue_dispatch"),
+                            1,
+                            1,
+                        );
+                        for (pipeline, groups) in [
+                            (
+                                &self.pipeline.intersect_primary_rays.pipeline,
+                                self.bind_groups("intersect_primary_rays"),
+                            ),
+                            (
+                                &self.pipeline.sample_medium.pipeline,
+                                self.bind_groups("sample_medium"),
+                            ),
+                        ] {
+                            if let Some(count) = active_medium_count {
+                                dispatch_count(&mut segment_encoder, pipeline, groups, count);
+                            } else {
+                                dispatch_indirect(
+                                    &mut segment_encoder,
+                                    pipeline,
+                                    groups,
+                                    &self.queues.queue_dispatch_args,
+                                    QUEUE_DISPATCH_SLOT_CURRENT_RAY,
+                                );
+                            }
+                        }
+                        dispatch(
+                            &mut segment_encoder,
+                            &self.pipeline.prepare_queue_dispatch.pipeline,
+                            self.bind_groups("prepare_queue_dispatch"),
+                            1,
+                            1,
+                        );
+                        if self.has_interface_only_instances {
+                            self.queues.copy_state_to_readback(&mut segment_encoder);
+                        }
+                        self.context.queue.submit(Some(segment_encoder.finish()));
+                        if !self.has_interface_only_instances {
+                            break;
+                        }
+                        self.context.wait()?;
+                        if self.queues.read_error(&self.context.device)? {
+                            return Err(PbrtError::error(
+                                "WebGPU wavefront rendering reported an error.",
+                            ));
+                        }
+                        let continuation_count = self
+                            .queues
+                            .read_medium_continuation_count(&self.context.device)?;
+                        if continuation_count == 0 {
+                            break;
+                        }
+                        let mut copy_encoder = self.context.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("pbrt-r4 medium segment queue copy"),
+                            },
+                        );
+                        self.queues
+                            .copy_medium_continuations(&mut copy_encoder, continuation_count);
+                        self.context.queue.submit(Some(copy_encoder.finish()));
+                        self.queues
+                            .set_medium_active_count(&self.context.queue, continuation_count);
+                        active_medium_count = Some(continuation_count);
+                    }
+                    let mut encoder = self.context.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("pbrt-r4 wavefront surface encoder"),
+                        },
                     );
                     dispatch_indirect(
                         &mut encoder,
@@ -811,22 +927,93 @@ impl WavefrontPathIntegrator {
                             1,
                             1,
                         );
+                        self.context.queue.submit(Some(encoder.finish()));
+                        self.queues.reset_shadow_active(&self.context.queue);
+                        let mut initialize_shadow_encoder = self
+                            .context
+                            .device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("pbrt-r4 initialize shadow segment encoder"),
+                            });
                         dispatch_indirect(
-                            &mut encoder,
-                            &self.pipeline.intersect_shadow.pipeline,
-                            self.bind_groups("intersect_shadow"),
+                            &mut initialize_shadow_encoder,
+                            &self.pipeline.initialize_shadow_segments.pipeline,
+                            self.bind_groups("initialize_shadow_segments"),
                             &self.queues.queue_dispatch_args,
                             QUEUE_DISPATCH_SLOT_SHADOW,
                         );
+                        self.context
+                            .queue
+                            .submit(Some(initialize_shadow_encoder.finish()));
+                        let mut active_shadow_count = None;
+                        loop {
+                            self.queues.reset_shadow_continuation(&self.context.queue);
+                            let mut shadow_encoder = self.context.device.create_command_encoder(
+                                &wgpu::CommandEncoderDescriptor {
+                                    label: Some("pbrt-r4 shadow segment encoder"),
+                                },
+                            );
+                            if let Some(count) = active_shadow_count {
+                                dispatch_count(
+                                    &mut shadow_encoder,
+                                    &self.pipeline.intersect_shadow.pipeline,
+                                    self.bind_groups("intersect_shadow"),
+                                    count,
+                                );
+                            } else {
+                                dispatch_indirect(
+                                    &mut shadow_encoder,
+                                    &self.pipeline.intersect_shadow.pipeline,
+                                    self.bind_groups("intersect_shadow"),
+                                    &self.queues.queue_dispatch_args,
+                                    QUEUE_DISPATCH_SLOT_SHADOW,
+                                );
+                            }
+                            if self.has_interface_only_instances {
+                                self.queues.copy_state_to_readback(&mut shadow_encoder);
+                            }
+                            self.context.queue.submit(Some(shadow_encoder.finish()));
+                            if !self.has_interface_only_instances {
+                                break;
+                            }
+                            self.context.wait()?;
+                            if self.queues.read_error(&self.context.device)? {
+                                return Err(PbrtError::error(
+                                    "WebGPU wavefront rendering reported an error.",
+                                ));
+                            }
+                            let continuation_count = self
+                                .queues
+                                .read_shadow_continuation_count(&self.context.device)?;
+                            if continuation_count == 0 {
+                                break;
+                            }
+                            let mut copy_encoder = self.context.device.create_command_encoder(
+                                &wgpu::CommandEncoderDescriptor {
+                                    label: Some("pbrt-r4 shadow segment queue copy"),
+                                },
+                            );
+                            self.queues
+                                .copy_shadow_continuations(&mut copy_encoder, continuation_count);
+                            self.context.queue.submit(Some(copy_encoder.finish()));
+                            self.queues
+                                .set_shadow_active_count(&self.context.queue, continuation_count);
+                            active_shadow_count = Some(continuation_count);
+                        }
+                        let mut next_encoder = self.context.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("pbrt-r4 next-ray queue encoder"),
+                            },
+                        );
                         dispatch_indirect(
-                            &mut encoder,
+                            &mut next_encoder,
                             &self.pipeline.swap_ray_queues.pipeline,
                             self.bind_groups("swap_ray_queues"),
                             &self.queues.queue_dispatch_args,
                             QUEUE_DISPATCH_SLOT_NEXT_RAY,
                         );
                         dispatch(
-                            &mut encoder,
+                            &mut next_encoder,
                             &self.pipeline.reset_next_ray_queue.pipeline,
                             self.bind_groups("reset_next_ray_queue"),
                             1,
@@ -835,22 +1022,31 @@ impl WavefrontPathIntegrator {
                         // reset_next_ray_queue has just committed the next
                         // depth's current-ray count.
                         dispatch(
-                            &mut encoder,
+                            &mut next_encoder,
                             &self.pipeline.prepare_queue_dispatch.pipeline,
                             self.bind_groups("prepare_queue_dispatch"),
                             1,
                             1,
                         );
+                        self.context.queue.submit(Some(next_encoder.finish()));
+                    } else {
+                        self.context.queue.submit(Some(encoder.finish()));
                     }
                 }
+                let mut accumulate_encoder =
+                    self.context
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("pbrt-r4 sample accumulation encoder"),
+                        });
                 dispatch(
-                    &mut encoder,
+                    &mut accumulate_encoder,
                     &self.pipeline.accumulate_sample.pipeline,
                     self.bind_groups("accumulate_sample"),
                     workgroups_x,
                     workgroups_y,
                 );
-                self.context.queue.submit(Some(encoder.finish()));
+                self.context.queue.submit(Some(accumulate_encoder.finish()));
                 log::info!(
                     "GPU render: submitted sample {sample_index}; waiting for film completion"
                 );
@@ -941,6 +1137,18 @@ fn dispatch(
     pass.set_bind_group(0, &bind_groups[0], &[]);
     pass.set_bind_group(1, &bind_groups[1], &[]);
     pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+}
+
+fn dispatch_count(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::ComputePipeline,
+    bind_groups: &[wgpu::BindGroup; 2],
+    count: u32,
+) {
+    let groups = count.div_ceil(64);
+    let x = groups.min(65_535);
+    let y = groups.div_ceil(65_535);
+    dispatch(encoder, pipeline, bind_groups, x, y);
 }
 
 fn dispatch_indirect(

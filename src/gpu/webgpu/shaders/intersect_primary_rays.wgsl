@@ -1,9 +1,10 @@
 @compute @workgroup_size(64, 1, 1)
 fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let ray_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
-    if (ray_index >= current_ray_count()) {
+    let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
+    if (queue_index >= atomicLoad(&queue_counters.medium_active.count)) {
         return;
     }
+    let ray_index = active_medium_indices[queue_index];
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     var query: ray_query;
@@ -22,7 +23,6 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let intersection = rayQueryGetCommittedIntersection(&query);
     if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
         surfaces[pixel_index].hit = 0u;
-        append_escaped_ray(ray_index);
     } else {
         surfaces[pixel_index].t = intersection.t;
         surfaces[pixel_index].hit = 1u;

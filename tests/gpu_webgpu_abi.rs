@@ -1,9 +1,9 @@
 use pbrt_r4::gpu::webgpu::abi::{
     inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform, DenseSpectrum,
     DispatchIndirectArgs, FilmUniform, Geometry, Instance, LightRecord, LightTableUniform,
-    MaterialNode, MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord, PixelSampleState,
-    QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem,
-    TextureEvalResult, TriangleDistributionEntry, Vertex, ViewportUniform,
+    MaterialNode, MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord,
+    PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem,
+    SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry, Vertex, ViewportUniform,
     QUEUE_DISPATCH_SLOT_COUNT,
 };
 use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
@@ -19,20 +19,23 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
-    assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
+    assert_eq!(std::mem::size_of::<CameraUniform>(), 144);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 56);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
     assert_eq!(std::mem::size_of::<Geometry>(), 16);
-    assert_eq!(std::mem::size_of::<Instance>(), 144);
+    assert_eq!(std::mem::size_of::<Instance>(), 160);
+    assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
     assert_eq!(std::mem::size_of::<MaterialNode>(), 32);
     assert_eq!(std::mem::size_of::<AttributeRef>(), 8);
     assert_eq!(std::mem::size_of::<MeasuredBsdfRecord>(), 32);
     assert_eq!(std::mem::size_of::<MeasuredTableRecord>(), 80);
     assert_eq!(std::mem::size_of::<DenseSpectrum>(), 1888);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 176);
-    assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 112);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, medium_id), 164);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, medium_segment_index), 168);
+    assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 176);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<TextureEvalResult>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
@@ -41,7 +44,20 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
         80
     );
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
-    assert_eq!(std::mem::size_of::<QueueCounters>(), 224);
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 288);
+    assert_eq!(
+        std::mem::offset_of!(QueueCounters, medium_continuation),
+        224
+    );
+    assert_eq!(
+        std::mem::offset_of!(QueueCounters, shadow_continuation),
+        240
+    );
+    assert_eq!(std::mem::offset_of!(QueueCounters, medium_active), 256);
+    assert_eq!(std::mem::offset_of!(QueueCounters, shadow_active), 272);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, endpoint), 32);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, transmittance), 112);
+    assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, segment_index), 164);
     assert_eq!(std::mem::size_of::<DispatchIndirectArgs>(), 12);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, x), 0);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, y), 4);
@@ -63,6 +79,7 @@ fn webgpu_storage_array_strides_are_16_byte_aligned() {
         std::mem::size_of::<Vertex>(),
         std::mem::size_of::<Geometry>(),
         std::mem::size_of::<Instance>(),
+        std::mem::size_of::<MediumRecord>(),
         std::mem::size_of::<RayWorkItem>(),
         std::mem::size_of::<ShadowRayWorkItem>(),
         std::mem::size_of::<SurfaceWorkItem>(),
@@ -86,7 +103,7 @@ fn webgpu_work_item_padding_uses_scalar_shader_fields() {
     assert!(!types.contains("_padding0: array<u32, 3>"));
     assert!(!types.contains("_padding1: array<u32, 3>"));
     assert!(types.contains("_padding2: u32"));
-    assert!(types.contains("_padding5: u32"));
+    assert!(types.contains("segment_index: u32"));
 }
 
 #[test]

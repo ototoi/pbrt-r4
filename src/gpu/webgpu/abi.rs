@@ -51,6 +51,8 @@ pub const TEXTURE_OPERATION_MARBLE: u32 = 11;
 pub struct CameraUniform {
     pub camera_to_world: [[f32; 4]; 4],
     pub raster_to_camera: [[f32; 4]; 4],
+    pub medium_id: u32,
+    pub padding: [u32; 3],
 }
 
 #[repr(C)]
@@ -157,8 +159,23 @@ pub struct Instance {
     pub material_root: u32,
     pub area_light: u32,
     pub orientation_flags: u32,
+    pub medium_inside: u32,
+    pub medium_outside: u32,
+    pub padding: [u32; 2],
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MediumRecord {
+    pub kind: u32,
+    pub sigma_a: u32,
+    pub sigma_s: u32,
+    pub le: u32,
+    pub g: f32,
+    pub padding: [u32; 3],
+    pub medium_to_world: [[f32; 4]; 4],
 }
 
 #[repr(C)]
@@ -244,7 +261,9 @@ pub struct RayWorkItem {
     pub eta_scale: f32,
     pub prev_pdf: f32,
     pub prev_specular: u32,
-    pub padding: [u32; 3],
+    pub medium_id: u32,
+    pub medium_segment_index: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
@@ -252,13 +271,20 @@ pub struct RayWorkItem {
 pub struct ShadowRayWorkItem {
     pub origin: [f32; 4],
     pub direction: [f32; 4],
+    pub endpoint: [f32; 4],
     pub max_t: f32,
-    pub padding: [u32; 3],
+    pub medium_id: u32,
+    pub depth: u32,
+    pub infinite_distance: u32,
     pub direct: [f32; 4],
     pub r_u: [f32; 4],
     pub r_l: [f32; 4],
+    pub transmittance: [f32; 4],
+    pub inv_w_u: [f32; 4],
+    pub inv_w_l: [f32; 4],
     pub pixel_index: u32,
-    pub reserved: [u32; 3],
+    pub segment_index: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -425,6 +451,10 @@ pub struct QueueCounters {
     pub scatter_thin_dielectric: QueueState,
     pub scatter_measured: QueueState,
     pub scatter_coated: QueueState,
+    pub medium_continuation: QueueState,
+    pub shadow_continuation: QueueState,
+    pub medium_active: QueueState,
+    pub shadow_active: QueueState,
 }
 
 /// Indirect dispatch arguments, laid out identically to `wgpu::util::DispatchIndirectArgs`.
@@ -541,6 +571,8 @@ pub fn camera_uniform(
     Ok(CameraUniform {
         camera_to_world,
         raster_to_camera,
+        medium_id: camera.medium,
+        padding: [0; 3],
     })
 }
 

@@ -2,6 +2,24 @@ fn current_ray_count() -> u32 {
     return atomicLoad(&queue_counters.current.count);
 }
 
+fn append_medium_continuation(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.medium_continuation.count, 1u);
+    if (index >= queue_counters.medium_continuation.capacity) {
+        atomicStore(&queue_counters.medium_continuation.overflow, 1u);
+    } else {
+        next_medium_indices[index] = ray_index;
+    }
+}
+
+fn append_shadow_continuation(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.shadow_continuation.count, 1u);
+    if (index >= queue_counters.shadow_continuation.capacity) {
+        atomicStore(&queue_counters.shadow_continuation.overflow, 1u);
+    } else {
+        next_shadow_indices[index] = ray_index;
+    }
+}
+
 fn next_ray_count() -> u32 {
     return atomicLoad(&queue_counters.next.count);
 }
@@ -15,6 +33,9 @@ fn append_shadow_ray(
     origin: vec3<f32>,
     direction: vec3<f32>,
     t: f32,
+    medium_id: u32,
+    depth: u32,
+    infinite_distance: u32,
     direct: vec4<f32>,
     r_u: vec4<f32>,
     r_l: vec4<f32>,
@@ -24,11 +45,15 @@ fn append_shadow_ray(
         shadow_rays[index] = ShadowRayWorkItem(
             vec4<f32>(origin, 0.0),
             vec4<f32>(direction, 0.0),
+            vec4<f32>(select(origin + direction * t, vec3<f32>(0.0), infinite_distance != 0u), 1.0),
             t,
-            0u, 0u, 0u,
+            medium_id, depth, infinite_distance,
             direct,
             r_u,
             r_l,
+            vec4<f32>(1.0),
+            vec4<f32>(1.0),
+            vec4<f32>(1.0),
             pixel_index,
             0u, 0u, 0u,
         );
@@ -44,6 +69,10 @@ fn load_shadow_pixel(index: u32) -> u32 {
 fn load_shadow_t(index: u32) -> f32 {
     return shadow_rays[index].max_t;
 }
+
+fn load_shadow_medium(index: u32) -> u32 { return shadow_rays[index].medium_id; }
+fn load_shadow_depth(index: u32) -> u32 { return shadow_rays[index].depth; }
+fn load_shadow_infinite(index: u32) -> u32 { return shadow_rays[index].infinite_distance; }
 
 fn load_shadow_direct(index: u32) -> vec4<f32> {
     return shadow_rays[index].direct;
@@ -119,6 +148,15 @@ fn load_current_ray(index: u32) -> RayWorkItem {
 
 fn load_next_ray(index: u32) -> RayWorkItem {
     return next_rays[index];
+}
+
+fn medium_for_direction(ray: RayWorkItem, surface: SurfaceWorkItem, direction: vec3<f32>) -> u32 {
+    let instance = instances[surface.instance_custom_data];
+    if (instance.medium_inside == 0xffffffffu && instance.medium_outside == 0xffffffffu) {
+        return ray.medium_id;
+    }
+    return select(instance.medium_inside, instance.medium_outside,
+        dot(direction, surface.geometric_normal.xyz) > 0.0);
 }
 
 fn store_current_ray(index: u32, ray: RayWorkItem) {
@@ -303,6 +341,11 @@ fn add_direct_lighting(
     );
     var shadow_direction = wi;
     var shadow_distance = RAY_T_MAX;
+    let infinite_distance = select(
+        0u,
+        1u,
+        light_kind == LIGHT_KIND_DISTANT || is_infinite_light_kind(light_kind),
+    );
     if (light_kind == LIGHT_KIND_AREA) {
         let shadow_target = offset_ray_origin(
             light_sample.position, light_sample.position_error, light_sample.normal, -wi,
@@ -320,6 +363,9 @@ fn add_direct_lighting(
         shadow_origin,
         shadow_direction,
         shadow_distance,
+        medium_for_direction(ray, surface, wi),
+        ray.depth,
+        infinite_distance,
         direct,
         r_u,
         r_l,
