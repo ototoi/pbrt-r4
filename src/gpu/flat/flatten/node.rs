@@ -1,8 +1,8 @@
 use super::{
     append_area_light, flatten_light, geometry_index, multiply_transform, region_bounds,
-    register_material_source, register_root_component, screen_window, viewport_resolution, Camera,
-    Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport,
-    INVALID_INDEX,
+    register_material_source, register_medium, register_root_component, resolve_medium_name,
+    screen_window, viewport_resolution, Camera, Component, Film, FlatBuilder, Instance, NodeRef,
+    Output, Shape, Transform, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::util::error::PbrtError;
@@ -32,6 +32,7 @@ pub fn flatten_node_ref(
         sampler,
         integrator,
         light,
+        media,
         shapes,
         instances,
         children,
@@ -48,6 +49,7 @@ pub fn flatten_node_ref(
             });
         let mut shapes = Vec::new();
         let mut instances = Vec::new();
+        let mut media = Vec::new();
         let camera = node
             .components
             .iter()
@@ -155,18 +157,13 @@ pub fn flatten_node_ref(
                     if shape.indices.is_empty() {
                         continue;
                     }
-                    let material = material.clone().ok_or_else(|| {
-                        PbrtError::error(&format!(
-                            "Shape node \"{}\" has no Material component.",
-                            node.name
-                        ))
-                    })?;
                     shapes.push((
                         component_index,
                         shape,
-                        material,
+                        material.clone(),
                         area_light.clone(),
                         component.reverse_orientation,
+                        component.medium_interface.clone(),
                     ));
                 }
                 Component::Instance(component) => {
@@ -174,6 +171,9 @@ pub fn flatten_node_ref(
                         Arc::clone(&component.instance.target),
                         component.instance.transform.clone(),
                     ));
+                }
+                Component::Medium(component) => {
+                    media.push(component.medium.clone());
                 }
                 _ => {}
             }
@@ -187,6 +187,7 @@ pub fn flatten_node_ref(
             sampler,
             integrator,
             light,
+            media,
             shapes,
             instances,
             node.children.clone(),
@@ -194,6 +195,9 @@ pub fn flatten_node_ref(
     };
 
     let world_transform = multiply_transform(parent_transform, &local_transform);
+    for medium in &media {
+        register_medium(medium, &world_transform, builder)?;
+    }
     if let Some(sampler) = sampler {
         register_root_component(&mut builder.sampler, sampler, stack.len(), "Sampler")?;
     }
@@ -275,40 +279,57 @@ pub fn flatten_node_ref(
         let viewport = builder.viewport.as_ref().ok_or_else(|| {
             PbrtError::error("A camera must be attached to a node with a film component.")
         })?;
+        let medium = resolve_medium_name(&camera.medium, builder)?;
         builder.camera = Some(Camera {
             camera_to_world: world_transform,
             fov,
             screen_window: screen_window(&camera.params, viewport.resolution)?,
+            medium,
         });
     }
     if let Some(light) = light {
         flatten_light(light, &world_transform, &name, builder)?;
     }
-    for (component_index, shape, material, area_light, reverse_orientation) in shapes {
+    for (component_index, shape, material, area_light, reverse_orientation, medium_interface) in
+        shapes
+    {
         let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
-        let material = register_material_source(&material, builder, material_kind)?;
+        let material_root = match &material {
+            Some(material) => register_material_source(material, builder, material_kind)?,
+            None => INVALID_INDEX,
+        };
         let instance_index = u32::try_from(builder.instances.len())
             .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
         let area_light_handle = if let Some(area_light) = area_light {
+            if material_root == INVALID_INDEX {
+                return Err(PbrtError::error(&format!(
+                    "Shape node \"{name}\" has an AreaLightSource but no Material component; \
+                     GPU area lights require a surface material."
+                )));
+            }
             append_area_light(
                 area_light,
                 &shape,
                 &name,
                 &world_transform,
                 instance_index,
-                material,
+                material_root,
                 reverse_orientation,
                 builder,
             )?
         } else {
             INVALID_INDEX
         };
+        let inside_medium = resolve_medium_name(&medium_interface.inside_medium, builder)?;
+        let outside_medium = resolve_medium_name(&medium_interface.outside_medium, builder)?;
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
-            material_root: material,
+            material_root,
             area_light: area_light_handle,
             reverse_orientation,
+            inside_medium,
+            outside_medium,
         });
     }
     for (target, instance_transform) in instances {

@@ -1,4 +1,4 @@
-use super::{AttributeKind, AttributeRef, Scene};
+use super::{AttributeKind, AttributeRef, Scene, INVALID_INDEX};
 use crate::util::error::PbrtError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +20,9 @@ pub struct MaterialNode {
 
 pub fn max_attributes_eval_work_items_per_surface(scene: &Scene) -> Result<u32, PbrtError> {
     scene.instances.iter().try_fold(0, |maximum, instance| {
+        if instance.material_root == INVALID_INDEX {
+            return Ok(maximum);
+        }
         let layout = scene
             .material_roots
             .get(instance.material_root as usize)
@@ -30,6 +33,9 @@ pub fn max_attributes_eval_work_items_per_surface(scene: &Scene) -> Result<u32, 
 
 pub fn max_texture_eval_results_per_surface(scene: &Scene) -> Result<u32, PbrtError> {
     scene.instances.iter().try_fold(0, |maximum, instance| {
+        if instance.material_root == INVALID_INDEX {
+            return Ok(maximum);
+        }
         let layout = scene
             .material_roots
             .get(instance.material_root as usize)

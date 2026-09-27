@@ -713,6 +713,13 @@ impl Scene {
                         "Flat instance {index} references an invalid geometry."
                     )));
                 }
+                if instance.material_root == INVALID_INDEX {
+                    return Err(PbrtError::error(&format!(
+                        "Flat instance {index} has no surface material (\"Material \\\"\\\"\"/\"interface\"). \
+                         The WebGPU wavefront backend does not yet render material-less medium-boundary \
+                         surfaces; see docs/webgpu-medium-design_ja.md in the devkit repo."
+                    )));
+                }
                 if instance.material_root as usize >= flat.material_roots.len() {
                     return Err(PbrtError::error(&format!(
                         "Flat instance {index} references an invalid material."

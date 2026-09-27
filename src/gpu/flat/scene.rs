@@ -3,7 +3,7 @@ use super::texture::TextureLibrary;
 use super::{
     Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds,
     LightGeometryKind, LightKind, LightSamplingModel, MaterialNode, MaterialRoot,
-    MeasuredBsdfResources, Output, PrimitiveDistributionMap, RenderSettings,
+    MeasuredBsdfResources, Medium, Output, PrimitiveDistributionMap, RenderSettings,
     TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
 };
 use crate::util::error::PbrtError;
@@ -26,6 +26,7 @@ pub struct Scene {
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
+    pub media: Vec<Medium>,
     pub material_roots: Vec<MaterialRoot>,
     pub material_nodes: Vec<MaterialNode>,
     pub scalar_attributes: Vec<f32>,
