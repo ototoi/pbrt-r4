@@ -79,6 +79,9 @@ pub fn build_material_roots(
     let mut nodes = Vec::new();
     let mut source_to_root = vec![INVALID_INDEX; source_nodes.len()];
     for &root in root_source_nodes {
+        if root == INVALID_INDEX {
+            continue;
+        }
         let root_index = usize::try_from(root)
             .map_err(|_| PbrtError::error("Flat material root does not fit usize."))?;
         let mapped_root = source_to_root.get_mut(root_index).ok_or_else(|| {
