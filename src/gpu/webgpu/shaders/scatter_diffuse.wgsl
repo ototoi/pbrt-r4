@@ -58,32 +58,33 @@ fn scatter_diffuse(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let direction = normalize(tangent * local.x + bitangent * local.y + normal * local.z);
     let next_pdf = abs(dot(normal, direction)) / PI;
-    var next_throughput = ray.throughput * reflectance;
+    var next_beta = ray.beta * reflectance;
     if (ray.depth >= 1u) {
         let rr_beta = max(
-            max_spectrum(next_throughput),
+            max_spectrum(next_beta * ray.eta_scale),
             0.0,
-        ) / max(ray.inv_w_u, 1e-7);
+        ) / max(average_spectrum(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) {
             return;
         }
-        next_throughput = next_throughput / max(1.0 - q, 1e-7);
+        next_beta = next_beta / max(1.0 - q, 1e-7);
     }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
-        next_throughput,
+        next_beta,
+        ray.r_u,
+        ray.r_u / max(next_pdf, 1e-7),
         surface.position,
         surface.position_error,
         surface.geometric_normal,
         vec4<f32>(normal, 0.0),
         pixel_index,
         ray.depth + 1u,
-        ray.inv_w_u,
-        ray.inv_w_u / max(next_pdf, 1e-7),
+        ray.eta_scale,
         next_pdf,
-        0u, 0u, 0u,
+        0u, 0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

@@ -29,8 +29,14 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         && dot(surface.geometric_normal.xyz, -ray.direction.xyz) <= 0.0) {
         return;
     }
-    var weight = 1.0;
-    if (ray.depth > 0u && ray.prev_pdf > 0.0) {
+    // Balance-heuristic MIS with the v4 rescaled-path-probability (r_u/r_l)
+    // formulation; see handle_escaped.wgsl for the analogous infinite-light
+    // case. depth==0 or a specular previous bounce means this light could
+    // only ever be found this way (no MIS against BSDF sampling).
+    var denom = 1.0;
+    if (ray.depth == 0u || ray.prev_specular != 0u) {
+        denom = average_spectrum(ray.r_u);
+    } else {
         var triangle_distribution_index = 0xffffffffu;
         let distribution_count = load_area_distribution_count(area_light);
         if (distribution_count == 0u || load_area_total(area_light) <= 0.0) {
@@ -57,9 +63,13 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
         let light_pdf = light_pmf_for_handle(light_handle, ray.prev_position.xyz, ray.prev_shading_normal.xyz)
             * triangle_selection.pmf * triangle_pdf;
-        weight = ray.prev_pdf / max(ray.prev_pdf + light_pdf, 1e-7);
+        let r_l = ray.r_l * light_pdf;
+        denom = average_spectrum(ray.r_u + r_l);
+    }
+    if (denom <= 1e-7) {
+        return;
     }
     store_sample_radiance(pixel_index, load_sample_radiance(pixel_index)
-        + ray.throughput * load_light_spectrum(light_handle, 0u, load_sample_lambda(pixel_index))
-            * load_light_scale(light_handle) * weight);
+        + ray.beta * load_light_spectrum(light_handle, 0u, load_sample_lambda(pixel_index))
+            * load_light_scale(light_handle) / denom);
 }

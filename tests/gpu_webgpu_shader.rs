@@ -230,9 +230,9 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
     ));
     assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
-    assert!(escaped.contains("ray.throughput * radiance"));
-    assert!(escaped.contains("radiance += light_radiance * mis_weight"));
-    assert!(!escaped.contains("ray.throughput * radiance * mis_weight"));
+    assert!(escaped.contains("ray.beta * radiance"));
+    assert!(escaped.contains("radiance += light_radiance / denom;"));
+    assert!(!escaped.contains("mis_weight"));
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn classification_queues_resolve_current_rays_in_constant_time() {
 fn shadow_queue_carries_the_complete_rgb_contribution() {
     // add_direct_lighting is the single shared place every scatter kind
     // enqueues its shadow ray from.
-    assert!(common_shader().contains("ray.throughput * direct"));
+    assert!(common_shader().contains("let direct = ray.beta * light_sample.radiance * f * cosine;"));
 
     let shadow = compose_source(INTERSECT_SHADOW_SHADER);
     assert!(shadow.contains("load_sample_radiance(pixel_index) + shadow_direct"));
@@ -317,9 +317,9 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(!sample.contains("MAX_SPHERICAL_SAMPLE_AREA"));
     assert!(!SAMPLE_DIRECT_LIGHT_SHADER.contains("random01("));
 
-    // The direct-lighting pdf/MIS denominator is shared by every scatter
+    // The direct-lighting pdf/MIS bookkeeping is shared by every scatter
     // kind through add_direct_lighting.
-    assert!(common_shader().contains("max(ray.inv_w_u, 1e-7) * sampled_light_pdf"));
+    assert!(common_shader().contains("let r_l = ray.r_u * sampled_light_pdf;"));
 
     let bounce = compose_source(SCATTER_DIFFUSE_SHADER);
     assert!(bounce.contains("let u = vec2<f32>(samples.indirect.y, samples.indirect.z);"));
@@ -356,7 +356,7 @@ fn diffuse_shaders_load_type_specific_reflectance() {
     assert!(EVALUATE_ATTRIBUTES_SHADER.contains("load_diffuse_reflectance"));
     assert!(SCATTER_DIFFUSE_SHADER.contains("let reflectance = evaluated.values[0];"));
     assert!(SCATTER_DIFFUSE_SHADER.contains("reflectance / PI"));
-    assert!(SCATTER_DIFFUSE_SHADER.contains("ray.throughput * reflectance"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("ray.beta * reflectance"));
 }
 
 #[test]
@@ -364,7 +364,7 @@ fn diffuse_transmission_shader_uses_reflection_and_transmission_paths() {
     let source = compose_source(SCATTER_DIFFUSE_TRANSMISSION_SHADER);
     assert!(source.contains("pr / total"));
     assert!(source.contains("pt / total"));
-    assert!(source.contains("next_throughput = ray.throughput * f * cosine / pdf"));
+    assert!(source.contains("next_beta = ray.beta * f * cosine / pdf"));
     assert!(EVALUATE_ATTRIBUTES_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
     // classify_surface_scatter is the only place that still checks the kind
     // by name; scatter_diffuse_transmission's queue membership is proof enough.
@@ -388,6 +388,15 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     assert!(source.contains("fn sample_smooth_dielectric_interface("));
     assert!(SCATTER_DIELECTRIC_SHADER.contains("evaluated.values[0]"));
     assert!(SCATTER_DIELECTRIC_SHADER.contains("sample_dielectric_interface(\n        evaluated,"));
+}
+
+#[test]
+fn dielectric_transmission_updates_eta_scale_for_russian_roulette() {
+    // v4 VolPathIntegrator::Li: `if bs.is_transmission() { eta_scale *= bs.eta * bs.eta; }`,
+    // consumed later by RR as `beta * eta_scale / r_u.Average()`. Reflection
+    // (including TIR) must leave eta_scale unchanged.
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("if (bs.transmission != 0u) {"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("eta_scale = eta_scale * bs.etap * bs.etap;"));
 }
 
 #[test]
