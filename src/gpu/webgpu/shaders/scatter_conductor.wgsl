@@ -80,15 +80,15 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
         f = conductor_fresnel(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
-    var next_throughput = ray.throughput * f * cos_i / pdf;
+    var next_beta = ray.beta * f * cos_i / pdf;
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
-        next_throughput,
+        next_beta, ray.r_u, ray.r_u / pdf,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.inv_w_u, ray.inv_w_u / pdf, pdf, u32(roughness < 1e-3), 0u, 0u,
+        ray.eta_scale, pdf, u32(roughness < 1e-3), 0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

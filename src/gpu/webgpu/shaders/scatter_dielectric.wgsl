@@ -42,21 +42,26 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
     if (bs.valid == 0u || bs.pdf <= 0.0 || bs.wi.z == 0.0) { return; }
     let direction = normalize(scattering_world_frame(bs.wi, tangent, normal));
-    let next_throughput = ray.throughput * bs.f * abs(bs.wi.z) / bs.pdf;
+    let next_beta = ray.beta * bs.f * abs(bs.wi.z) / bs.pdf;
+    var eta_scale = ray.eta_scale;
+    if (bs.transmission != 0u) {
+        eta_scale = eta_scale * bs.etap * bs.etap;
+    }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),
         vec4<f32>(direction, 0.0),
-        next_throughput,
+        next_beta,
+        ray.r_u,
+        ray.r_u / bs.pdf,
         surface.position,
         surface.position_error,
         surface.geometric_normal,
         vec4<f32>(normal, 0.0),
         pixel_index,
         ray.depth + 1u,
-        ray.inv_w_u,
-        ray.inv_w_u / bs.pdf,
+        eta_scale,
         bs.pdf,
-        bs.specular, 0u, 0u,
+        bs.specular, 0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

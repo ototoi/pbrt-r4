@@ -232,18 +232,19 @@ pub struct DenseSpectrum {
 pub struct RayWorkItem {
     pub origin: [f32; 4],
     pub direction: [f32; 4],
-    pub throughput: [f32; 4],
+    pub beta: [f32; 4],
+    pub r_u: [f32; 4],
+    pub r_l: [f32; 4],
     pub prev_position: [f32; 4],
     pub prev_position_error: [f32; 4],
     pub prev_geometric_normal: [f32; 4],
     pub prev_shading_normal: [f32; 4],
     pub pixel_index: u32,
     pub depth: u32,
-    pub inv_w_u: f32,
-    pub inv_w_l: f32,
+    pub eta_scale: f32,
     pub prev_pdf: f32,
     pub prev_specular: u32,
-    pub padding: [u32; 2],
+    pub padding: [u32; 3],
 }
 
 #[repr(C)]
@@ -254,6 +255,8 @@ pub struct ShadowRayWorkItem {
     pub max_t: f32,
     pub padding: [u32; 3],
     pub direct: [f32; 4],
+    pub r_u: [f32; 4],
+    pub r_l: [f32; 4],
     pub pixel_index: u32,
     pub reserved: [u32; 3],
 }

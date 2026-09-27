@@ -10,7 +10,15 @@ fn shadow_ray_count() -> u32 {
     return atomicLoad(&queue_counters.shadow.count);
 }
 
-fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, t: f32, direct: vec4<f32>) {
+fn append_shadow_ray(
+    pixel_index: u32,
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    t: f32,
+    direct: vec4<f32>,
+    r_u: vec4<f32>,
+    r_l: vec4<f32>,
+) {
     let index = atomicAdd(&queue_counters.shadow.count, 1u);
     if (index < queue_counters.shadow.capacity) {
         shadow_rays[index] = ShadowRayWorkItem(
@@ -19,6 +27,8 @@ fn append_shadow_ray(pixel_index: u32, origin: vec3<f32>, direction: vec3<f32>, 
             t,
             0u, 0u, 0u,
             direct,
+            r_u,
+            r_l,
             pixel_index,
             0u, 0u, 0u,
         );
@@ -37,6 +47,14 @@ fn load_shadow_t(index: u32) -> f32 {
 
 fn load_shadow_direct(index: u32) -> vec4<f32> {
     return shadow_rays[index].direct;
+}
+
+fn load_shadow_r_u(index: u32) -> vec4<f32> {
+    return shadow_rays[index].r_u;
+}
+
+fn load_shadow_r_l(index: u32) -> vec4<f32> {
+    return shadow_rays[index].r_l;
 }
 
 fn load_shadow_origin(index: u32) -> vec3<f32> {
@@ -266,15 +284,16 @@ fn add_direct_lighting(
     let wi = light_sample.direction_pdf.xyz;
     let sampled_light_pdf = light_sample.direction_pdf.w;
     let light_kind = light_sample.light_kind;
-    var mis_weight = 1.0;
+    // v4 balance-heuristic MIS via rescaled path probabilities: the final
+    // contribution (applied at shadow-ray resolution) is
+    // direct / (r_u + r_l).average(), so no division by light_pdf or an
+    // explicit MIS weight happens here.
+    let direct = ray.beta * light_sample.radiance * f * cosine;
+    let r_l = ray.r_u * sampled_light_pdf;
+    var r_u = vec4<f32>(0.0);
     if (light_sample.use_mis != 0u) {
-        let light_pdf2 = sampled_light_pdf * sampled_light_pdf;
-        let bsdf_pdf2 = bsdf_pdf * bsdf_pdf;
-        mis_weight = light_pdf2 / max(light_pdf2 + bsdf_pdf2, 1e-7);
+        r_u = ray.r_u * bsdf_pdf;
     }
-    let direct = light_sample.radiance * f * cosine
-        / (max(ray.inv_w_u, 1e-7) * sampled_light_pdf)
-        * mis_weight;
     // Spawn the shadow ray from the side containing the sampled light.
     let shadow_origin = offset_ray_origin(
         surface.position.xyz,
@@ -301,6 +320,8 @@ fn add_direct_lighting(
         shadow_origin,
         shadow_direction,
         shadow_distance,
-        (ray.throughput * direct),
+        direct,
+        r_u,
+        r_l,
     );
 }

@@ -297,19 +297,22 @@ struct RaySamples {
 struct RayWorkItem {
     origin: vec4<f32>,
     direction: vec4<f32>,
-    throughput: vec4<f32>,
+    // v4 beta/r_u/r_l: path throughput and rescaled MIS probabilities.
+    beta: vec4<f32>,
+    r_u: vec4<f32>,
+    r_l: vec4<f32>,
     prev_position: vec4<f32>,
     prev_position_error: vec4<f32>,
     prev_geometric_normal: vec4<f32>,
     prev_shading_normal: vec4<f32>,
     pixel_index: u32,
     depth: u32,
-    inv_w_u: f32,
-    inv_w_l: f32,
+    eta_scale: f32,
     prev_pdf: f32,
     prev_specular: u32,
     _padding0: u32,
     _padding1: u32,
+    _padding2: u32,
 };
 
 struct SurfaceWorkItem {
@@ -448,7 +451,10 @@ struct ShadowRayWorkItem {
     _padding0: u32,
     _padding1: u32,
     _padding2: u32,
+    // v4 Ld/r_u/r_l: final contribution is direct / (r_u + r_l).average().
     direct: vec4<f32>,
+    r_u: vec4<f32>,
+    r_l: vec4<f32>,
     pixel_index: u32,
     _padding3: u32,
     _padding4: u32,
