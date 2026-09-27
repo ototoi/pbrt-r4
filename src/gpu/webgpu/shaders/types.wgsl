@@ -444,6 +444,8 @@ struct QueueCounters {
     scatter_coated: QueueState,
     medium_continuation: QueueState,
     shadow_continuation: QueueState,
+    medium_active: QueueState,
+    shadow_active: QueueState,
 };
 
 struct DispatchIndirectArgs {
@@ -483,9 +485,9 @@ struct ShadowRayWorkItem {
     inv_w_u: vec4<f32>,
     inv_w_l: vec4<f32>,
     pixel_index: u32,
-    status: u32,
     segment_index: u32,
-    _padding: u32,
+    _padding0: u32,
+    _padding1: u32,
 };
 
 struct LightSelection {

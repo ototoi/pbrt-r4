@@ -2,17 +2,21 @@ fn current_ray_count() -> u32 {
     return atomicLoad(&queue_counters.current.count);
 }
 
-fn append_medium_continuation() {
+fn append_medium_continuation(ray_index: u32) {
     let index = atomicAdd(&queue_counters.medium_continuation.count, 1u);
     if (index >= queue_counters.medium_continuation.capacity) {
         atomicStore(&queue_counters.medium_continuation.overflow, 1u);
+    } else {
+        next_medium_indices[index] = ray_index;
     }
 }
 
-fn append_shadow_continuation() {
+fn append_shadow_continuation(ray_index: u32) {
     let index = atomicAdd(&queue_counters.shadow_continuation.count, 1u);
     if (index >= queue_counters.shadow_continuation.capacity) {
         atomicStore(&queue_counters.shadow_continuation.overflow, 1u);
+    } else {
+        next_shadow_indices[index] = ray_index;
     }
 }
 

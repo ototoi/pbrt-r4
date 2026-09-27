@@ -1,19 +1,16 @@
 @compute @workgroup_size(64, 1, 1)
 fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let ray_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
-    if (ray_index >= shadow_ray_count()) {
+    let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
+    if (queue_index >= atomicLoad(&queue_counters.shadow_active.count)) {
         return;
     }
+    let ray_index = active_shadow_indices[queue_index];
     var shadow = shadow_rays[ray_index];
-    if (shadow.status == 1u) {
-        return;
-    }
 
     let shadow_origin = shadow.origin.xyz;
     let shadow_direction = shadow.direction.xyz;
     let shadow_t = shadow.max_t;
     if (shadow_t <= 0.0) {
-        shadow.status = 1u;
         shadow_rays[ray_index] = shadow;
         return;
     }
@@ -53,7 +50,6 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (sigma_a.x > 0.0) {
             if (shadow.infinite_distance != 0u && !hit) {
                 shadow.transmittance = vec4<f32>(0.0);
-                shadow.status = 1u;
                 shadow_rays[ray_index] = shadow;
                 return;
             }
@@ -61,7 +57,6 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let event_distance = -log(1.0 - u) / sigma_a.x;
             if (event_distance < segment_distance) {
                 shadow.transmittance = vec4<f32>(0.0);
-                shadow.status = 1u;
                 shadow_rays[ray_index] = shadow;
                 return;
             }
@@ -85,7 +80,6 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let instance = instances[intersection.instance_custom_data];
         if (instance.material_root != 0xffffffffu) {
             shadow.transmittance = vec4<f32>(0.0);
-            shadow.status = 1u;
             shadow_rays[ray_index] = shadow;
             return;
         }
@@ -120,9 +114,8 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             );
         }
         shadow.segment_index += 1u;
-        shadow.status = 2u;
         shadow_rays[ray_index] = shadow;
-        append_shadow_continuation();
+        append_shadow_continuation(ray_index);
         return;
     }
 
@@ -134,6 +127,5 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 + shadow.direct * shadow.transmittance / denom,
         );
     }
-    shadow.status = 1u;
     shadow_rays[ray_index] = shadow;
 }

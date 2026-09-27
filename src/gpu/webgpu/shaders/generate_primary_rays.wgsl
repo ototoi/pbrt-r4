@@ -47,5 +47,4 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     store_current_ray(current_queue_index, ray);
-    surfaces[pixel_index]._padding = 0xffffffffu;
 }
