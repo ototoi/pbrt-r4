@@ -122,7 +122,9 @@ impl SceneBuilder {
         self.populate_gpu_material_references(&mut materials)?;
         let named_materials = self.build_named_material_resources(&materials);
 
-        for medium in self.media.values() {
+        let mut named_media: Vec<_> = self.media.iter().collect();
+        named_media.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (_, medium) in named_media {
             let params = make_absolute_path(&medium.base.params, &self.seen_work_dirs);
             root_node.add_component(Component::Medium(MediumComponent {
                 medium: Medium {
@@ -174,67 +176,28 @@ impl SceneBuilder {
         return Ok(Arc::new(RwLock::new(root_node)));
     }
 
-    /// Rejects scenes that reference a Medium (`MakeNamedMedium` /
-    /// `MediumInterface`). The GPU wavefront backend does not implement
-    /// participating media; without this check it silently drops the
-    /// references and renders the scene as vacuum instead (see
-    /// `docs/webgpu-medium-design_ja.md` in the devkit repo).
+    /// Rejects medium references whose data is not represented in the GPU IR.
+    /// Homogeneous shape and camera media are preserved and validated during
+    /// flattening; lights still lack an initial-medium field in Flat IR.
     fn check_gpu_medium_support(&self) -> Result<(), PbrtError> {
-        let mut defined: Vec<String> = self
-            .media
-            .values()
-            .map(|medium| {
-                let kind = medium.base.params.get_one_string("type", "unknown");
-                format!("\"{}\" (type=\"{kind}\")", medium.base.name)
+        let mut light_media: Vec<String> = self
+            .lights
+            .iter()
+            .filter(|light| !light.medium.is_empty())
+            .map(|light| {
+                format!(
+                    "light \"{}\" (medium=\"{}\")",
+                    light.base.base.name, light.medium
+                )
             })
             .collect();
-        defined.sort();
-
-        let mut references: Vec<String> = Vec::new();
-        let all_shapes = self.shapes.iter().chain(self.animated_shapes.iter()).chain(
-            self.instance_definitions
-                .values()
-                .flat_map(|definition| definition.shapes.iter().chain(&definition.animated_shapes)),
-        );
-        for shape in all_shapes {
-            if !shape.medium_interface.is_empty() {
-                references.push(format!(
-                    "shape \"{}\" (inside=\"{}\", outside=\"{}\")",
-                    shape.base.name,
-                    shape.medium_interface.inside_medium,
-                    shape.medium_interface.outside_medium,
-                ));
-            }
-        }
-        for light in &self.lights {
-            if !light.medium.is_empty() {
-                references.push(format!(
-                    "light \"{}\" (medium=\"{}\")",
-                    light.base.base.name, light.medium,
-                ));
-            }
-        }
-        if !self.camera_medium.is_empty() {
-            references.push(format!("camera (outside=\"{}\")", self.camera_medium));
-        }
-
-        if defined.is_empty() && references.is_empty() {
+        light_media.sort();
+        if light_media.is_empty() {
             return Ok(());
         }
-
-        let references_note = if references.is_empty() {
-            String::new()
-        } else {
-            format!(" Referenced by: {}.", references.join(", "))
-        };
-        let defined_note = if defined.is_empty() {
-            "none".to_string()
-        } else {
-            defined.join(", ")
-        };
         Err(PbrtError::error(&format!(
-            "GPU backend does not support Medium (participating media). Defined media: {defined_note}.{references_note} \
-             Remove MediumInterface/MakeNamedMedium usage, or render this scene on the CPU backend.",
+            "GPU backend does not support light Medium references yet: {}.",
+            light_media.join(", "),
         )))
     }
 

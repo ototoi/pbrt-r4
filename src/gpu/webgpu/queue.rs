@@ -8,7 +8,7 @@ use super::abi::{
 };
 use crate::util::error::PbrtError;
 
-const QUEUE_COUNT: u64 = 14;
+const QUEUE_COUNT: u64 = 16;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
 const RENDER_ERROR_BYTES: u64 = std::mem::size_of::<RenderError>() as u64;
 const STATE_READBACK_BYTES: u64 = QUEUE_COUNTER_BYTES + RENDER_ERROR_BYTES;
@@ -146,6 +146,7 @@ pub struct Queues {
     pub scatter_coated_ray_indices: wgpu::Buffer,
     pub queue_dispatch_args: wgpu::Buffer,
     state_readback: wgpu::Buffer,
+    capacity: u32,
 }
 
 impl Queues {
@@ -179,6 +180,8 @@ impl Queues {
             scatter_thin_dielectric: state,
             scatter_measured: state,
             scatter_coated: state,
+            medium_continuation: state,
+            shadow_continuation: state,
         };
         let storage = |label: &'static str, size: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -193,7 +196,9 @@ impl Queues {
             counters: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 wavefront queue counters"),
                 contents: bytes_of(&counters),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             }),
             render_error: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 render error"),
@@ -272,7 +277,36 @@ impl Queues {
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
+            capacity,
         })
+    }
+
+    pub fn reset_medium_continuation(&self, queue: &wgpu::Queue) {
+        let state = QueueState {
+            count: 0,
+            capacity: self.capacity,
+            overflow: 0,
+            padding: 0,
+        };
+        queue.write_buffer(
+            &self.counters,
+            14 * std::mem::size_of::<QueueState>() as u64,
+            bytes_of(&state),
+        );
+    }
+
+    pub fn reset_shadow_continuation(&self, queue: &wgpu::Queue) {
+        let state = QueueState {
+            count: 0,
+            capacity: self.capacity,
+            overflow: 0,
+            padding: 0,
+        };
+        queue.write_buffer(
+            &self.counters,
+            15 * std::mem::size_of::<QueueState>() as u64,
+            bytes_of(&state),
+        );
     }
 
     pub fn copy_state_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -293,6 +327,38 @@ impl Queues {
     }
 
     pub fn read_error(&self, device: &wgpu::Device) -> Result<bool, PbrtError> {
+        let words = self.read_words(device)?;
+        let overflowed = (0..QUEUE_COUNT)
+            .map(|index| index as usize * 4 + 2)
+            .any(|index| words.get(index).copied().unwrap_or(0) != 0);
+        let render_error = words
+            .get(QUEUE_COUNTER_BYTES as usize / std::mem::size_of::<u32>())
+            .copied()
+            .unwrap_or(0)
+            != 0;
+        if words.get(14 * 4 + 2).copied().unwrap_or(0) != 0 {
+            log::error!("WebGPU medium-boundary continuation queue overflowed.");
+        }
+        if words.get(15 * 4 + 2).copied().unwrap_or(0) != 0 {
+            log::error!("WebGPU shadow-boundary continuation queue overflowed.");
+        }
+        if overflowed || render_error {
+            log::error!("WebGPU queue counters and render error: {words:?}");
+        }
+        Ok(overflowed || render_error)
+    }
+
+    pub fn read_medium_continuation_count(&self, device: &wgpu::Device) -> Result<u32, PbrtError> {
+        let words = self.read_words(device)?;
+        Ok(words.get(14 * 4).copied().unwrap_or(0))
+    }
+
+    pub fn read_shadow_continuation_count(&self, device: &wgpu::Device) -> Result<u32, PbrtError> {
+        let words = self.read_words(device)?;
+        Ok(words.get(15 * 4).copied().unwrap_or(0))
+    }
+
+    fn read_words(&self, device: &wgpu::Device) -> Result<Vec<u32>, PbrtError> {
         let slice = self.state_readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -316,21 +382,9 @@ impl Queues {
         })?;
         let words = bytemuck::try_cast_slice::<u8, u32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU queue-state readback was not u32-aligned."))?;
-        // Each QueueState is 4 u32 words (count, capacity, overflow, padding);
-        // the overflow flag is the third word of every queue in QueueCounters.
-        let overflowed = (0..QUEUE_COUNT)
-            .map(|index| index as usize * 4 + 2)
-            .any(|index| words.get(index).copied().unwrap_or(0) != 0);
-        let render_error = words
-            .get(QUEUE_COUNTER_BYTES as usize / std::mem::size_of::<u32>())
-            .copied()
-            .unwrap_or(0)
-            != 0;
-        if overflowed || render_error {
-            log::error!("WebGPU queue counters and render error: {words:?}");
-        }
+        let words = words.to_vec();
         drop(mapped);
         self.state_readback.unmap();
-        Ok(overflowed || render_error)
+        Ok(words)
     }
 }

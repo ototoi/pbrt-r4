@@ -12,7 +12,7 @@ fn reconstruct_triangle_surface(
     barycentrics: vec3<f32>,
 ) -> TriangleSurfaceData {
     let invalid_surface = TriangleSurfaceData(
-        vec3<f32>(0.0), vec2<f32>(0.0), vec3<f32>(0.0), 0u,
+        vec3<f32>(0.0), vec3<f32>(0.0), vec2<f32>(0.0), vec3<f32>(0.0), 0u,
     );
     if (instance_index >= arrayLength(&instances)) {
         set_render_error();
@@ -43,12 +43,13 @@ fn reconstruct_triangle_surface(
     let b1 = barycentrics.y;
     let b2 = barycentrics.z;
     let position = p0 * b0 + p1 * b1 + p2 * b2;
+    let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
     let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     if (instance_orientation_is_reversed(instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
     }
-    return TriangleSurfaceData(position, uv, geometric_normal, 1u);
+    return TriangleSurfaceData(position, position_error, uv, geometric_normal, 1u);
 }
 
 fn offset_ray_origin(position: vec3<f32>, error: vec3<f32>, normal: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {

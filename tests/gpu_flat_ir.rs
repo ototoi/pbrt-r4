@@ -212,11 +212,24 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
     let mut medium_params = ParameterDictionary::default();
     medium_params.add_string("string type", "homogeneous");
     medium_params.add_floats("rgb sigma_a", &[1.0, 0.1, 0.01]);
+    medium_params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
     root.add_component(Component::Medium(MediumComponent {
         medium: NodeMedium {
             name: "blue".to_string(),
             kind: "homogeneous".to_string(),
             params: medium_params,
+            transform: Transform::default(),
+        },
+    }));
+    let mut amber_params = ParameterDictionary::default();
+    amber_params.add_string("string type", "homogeneous");
+    amber_params.add_floats("rgb sigma_a", &[0.2, 0.1, 0.05]);
+    amber_params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+    root.add_component(Component::Medium(MediumComponent {
+        medium: NodeMedium {
+            name: "amber".to_string(),
+            kind: "homogeneous".to_string(),
+            params: amber_params,
             transform: Transform::default(),
         },
     }));
@@ -254,13 +267,39 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.media.len(), 1);
+    assert_eq!(scene.media.len(), 2);
     assert_eq!(scene.media[0].name, "blue");
+    assert_eq!(scene.media[1].name, "amber");
     assert_eq!(scene.media[0].kind, "homogeneous");
     assert_eq!(scene.instances.len(), 1);
     assert_eq!(scene.instances[0].inside_medium, 0);
     assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
     assert_eq!(scene.camera.medium, INVALID_INDEX);
+}
+
+#[test]
+fn flatten_node_rejects_homogeneous_scattering_until_phase_support_exists() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut medium_params = ParameterDictionary::default();
+    medium_params.add_string("string type", "homogeneous");
+    medium_params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    medium_params.add_floats("rgb sigma_s", &[0.01, 0.01, 0.01]);
+    root.add_component(Component::Medium(MediumComponent {
+        medium: NodeMedium {
+            name: "scattering-medium".to_string(),
+            kind: "homogeneous".to_string(),
+            params: medium_params,
+            transform: Transform::default(),
+        },
+    }));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(format!("{error:?}").contains("supports homogeneous absorption only"));
+    assert!(format!("{error:?}").contains("scattering-medium"));
 }
 
 #[test]
@@ -273,6 +312,7 @@ fn flatten_node_allows_a_medium_interface_shape_with_no_material() {
     let mut medium_params = ParameterDictionary::default();
     medium_params.add_string("string type", "homogeneous");
     medium_params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    medium_params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
     root.add_component(Component::Medium(MediumComponent {
         medium: NodeMedium {
             name: "fog".to_string(),
