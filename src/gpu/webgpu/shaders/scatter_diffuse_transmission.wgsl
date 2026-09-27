@@ -59,20 +59,20 @@ fn scatter_diffuse_transmission(@builtin(global_invocation_id) global_id: vec3<u
     let pdf = cosine / PI * branch_probability;
     if (pdf <= 0.0) { return; }
     let f = select(t, r, reflect) / PI;
-    var next_throughput = ray.throughput * f * cosine / pdf;
+    var next_beta = ray.beta * f * cosine / pdf;
     if (ray.depth >= 1u) {
-        let rr_beta = max(max_spectrum(next_throughput), 0.0) / max(ray.inv_w_u, 1e-7);
+        let rr_beta = max(max_spectrum(next_beta * ray.eta_scale), 0.0) / max(average_spectrum(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) { return; }
-        next_throughput /= max(1.0 - q, 1e-7);
+        next_beta /= max(1.0 - q, 1e-7);
     }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
-        vec4<f32>(direction, 0.0), next_throughput,
+        vec4<f32>(direction, 0.0), next_beta, ray.r_u, ray.r_u / pdf,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.inv_w_u, ray.inv_w_u / pdf, pdf, 0u, 0u, 0u,
+        ray.eta_scale, pdf, 0u, 0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
