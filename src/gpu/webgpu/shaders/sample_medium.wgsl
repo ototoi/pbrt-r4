@@ -1,7 +1,8 @@
 @compute @workgroup_size(64, 1, 1)
 fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let ray_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
-    if (ray_index >= current_ray_count()) { return; }
+    let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
+    if (queue_index >= atomicLoad(&queue_counters.medium_active.count)) { return; }
+    let ray_index = active_medium_indices[queue_index];
     var ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
@@ -51,6 +52,12 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.r_l *= weight;
     }
 
+    if (!any(ray.beta != vec4<f32>(0.0))) {
+        surfaces[pixel_index].hit = 0u;
+        store_current_ray(ray_index, ray);
+        return;
+    }
+
     if (surface.hit == 1u
         && instances[surface.instance_custom_data].material_root == 0xffffffffu) {
         let triangle = reconstruct_triangle_surface(
@@ -75,12 +82,11 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             triangle.geometric_normal, ray.direction.xyz,
         ), 1.0);
         ray._padding0 += 1u;
-        surfaces[pixel_index].hit = 2u;
-        if (any(ray.beta != vec4<f32>(0.0))) {
-            append_medium_continuation();
-        } else {
-            surfaces[pixel_index].hit = 0u;
-        }
+        surfaces[pixel_index].hit = 0u;
+        append_medium_continuation(ray_index);
     }
     store_current_ray(ray_index, ray);
+    if (infinite && any(ray.beta != vec4<f32>(0.0))) {
+        append_escaped_ray(ray_index);
+    }
 }

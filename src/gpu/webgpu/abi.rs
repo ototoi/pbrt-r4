@@ -282,9 +282,8 @@ pub struct ShadowRayWorkItem {
     pub inv_w_u: [f32; 4],
     pub inv_w_l: [f32; 4],
     pub pixel_index: u32,
-    pub status: u32,
     pub segment_index: u32,
-    pub padding: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -453,6 +452,8 @@ pub struct QueueCounters {
     pub scatter_coated: QueueState,
     pub medium_continuation: QueueState,
     pub shadow_continuation: QueueState,
+    pub medium_active: QueueState,
+    pub shadow_active: QueueState,
 }
 
 /// Indirect dispatch arguments, laid out identically to `wgpu::util::DispatchIndirectArgs`.

@@ -69,6 +69,10 @@ pub enum ResourceId {
     PortalInfiniteLight,
     PortalDistribution,
     Medium,
+    ActiveMediumIndices,
+    NextMediumIndices,
+    ActiveShadowIndices,
+    NextShadowIndices,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,6 +144,14 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::Read,
     );
     push(61, ResourceId::Medium, BindingClass::Storage, Access::Read);
+    for (binding, resource) in [
+        (62, ResourceId::ActiveMediumIndices),
+        (63, ResourceId::NextMediumIndices),
+        (64, ResourceId::ActiveShadowIndices),
+        (65, ResourceId::NextShadowIndices),
+    ] {
+        push(binding, resource, BindingClass::Storage, Access::ReadWrite);
+    }
     push(
         1,
         ResourceId::SampleParams,
