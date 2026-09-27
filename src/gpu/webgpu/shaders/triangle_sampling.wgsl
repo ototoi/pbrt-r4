@@ -25,7 +25,7 @@ fn triangle_geometric_normal(triangle: TriangleVertices) -> vec3<f32> {
         triangle.p1.xyz - triangle.p0.xyz,
         triangle.p2.xyz - triangle.p0.xyz,
     ));
-    if (instance_orientation_is_reversed(triangle.orientation_flags)) {
+    if (instance_orientation_flips_geometric_normal(triangle.orientation_flags)) {
         normal = -normal;
     }
     return normal;

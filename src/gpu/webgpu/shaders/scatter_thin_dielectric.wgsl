@@ -29,7 +29,7 @@ fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) 
         ray.beta * f / probability, ray.r_u, ray.r_u / probability, surface.position,
         surface.position_error, surface.geometric_normal, surface.normal,
         pixel_index, ray.depth + 1u, ray.eta_scale, probability,
-        1u, 0u, 0u, 0u,
+        1u, medium_for_direction(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) { atomicStore(&queue_counters.next.overflow, 1u); return; }

@@ -60,6 +60,24 @@ pub fn register_medium(
     let mut le_dense = DenselySampledSpectrum::from_spectrum(&le);
     le_dense.scale(le_scale);
 
+    if !scale.is_finite()
+        || !g.is_finite()
+        || !sigma_a_dense.is_valid()
+        || !sigma_s_dense.is_valid()
+        || !le_dense.is_valid()
+    {
+        return Err(PbrtError::error(&format!(
+            "GPU medium \"{}\" contains non-finite coefficients.",
+            medium.name
+        )));
+    }
+    if sigma_s_dense.max_value() != 0.0 || le_dense.max_value() != 0.0 {
+        return Err(PbrtError::error(&format!(
+            "GPU medium \"{}\" supports homogeneous absorption only (sigma_s and Le must be zero).",
+            medium.name
+        )));
+    }
+
     let sigma_a_index = builder
         .spectrum_table_builder
         .intern_dense(&sigma_a_dense, 0)?;

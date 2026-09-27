@@ -33,6 +33,9 @@ pub fn build(
     }
     let mut geometry_has_alpha_mask = vec![false; geometries.len()];
     for (index, instance) in flat_instances.iter().enumerate() {
+        if instance.material_root == flat::INVALID_INDEX {
+            continue;
+        }
         let layout = material_roots
             .get(instance.material_root as usize)
             .ok_or_else(|| {

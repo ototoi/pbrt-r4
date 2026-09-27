@@ -44,6 +44,7 @@ const INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS: u32 = 2u;
 
 struct TriangleSurfaceData {
     position: vec3<f32>,
+    position_error: vec3<f32>,
     uv: vec2<f32>,
     geometric_normal: vec3<f32>,
     valid: u32,
@@ -171,6 +172,10 @@ const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;
 struct CameraUniform {
     camera_to_world: mat4x4<f32>,
     raster_to_camera: mat4x4<f32>,
+    medium_id: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 
 struct ViewportUniform {
@@ -255,8 +260,24 @@ struct Instance {
     material_root: u32,
     area_light: u32,
     orientation_flags: u32,
+    medium_inside: u32,
+    medium_outside: u32,
+    _padding0: u32,
+    _padding1: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
+};
+
+struct MediumRecord {
+    kind: u32,
+    sigma_a: u32,
+    sigma_s: u32,
+    le: u32,
+    g: f32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
+    medium_to_world: mat4x4<f32>,
 };
 
 struct TextureNodeRecord {
@@ -310,9 +331,9 @@ struct RayWorkItem {
     eta_scale: f32,
     prev_pdf: f32,
     prev_specular: u32,
+    medium_id: u32,
+    medium_segment_index: u32,
     _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
 };
 
 struct SurfaceWorkItem {
@@ -421,6 +442,10 @@ struct QueueCounters {
     scatter_thin_dielectric: QueueState,
     scatter_measured: QueueState,
     scatter_coated: QueueState,
+    medium_continuation: QueueState,
+    shadow_continuation: QueueState,
+    medium_active: QueueState,
+    shadow_active: QueueState,
 };
 
 struct DispatchIndirectArgs {
@@ -447,18 +472,22 @@ struct PixelSampleState {
 struct ShadowRayWorkItem {
     origin: vec4<f32>,
     direction: vec4<f32>,
+    endpoint: vec4<f32>,
     max_t: f32,
-    _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
+    medium_id: u32,
+    depth: u32,
+    infinite_distance: u32,
     // v4 Ld/r_u/r_l: final contribution is direct / (r_u + r_l).average().
     direct: vec4<f32>,
     r_u: vec4<f32>,
     r_l: vec4<f32>,
+    transmittance: vec4<f32>,
+    inv_w_u: vec4<f32>,
+    inv_w_l: vec4<f32>,
     pixel_index: u32,
-    _padding3: u32,
-    _padding4: u32,
-    _padding5: u32,
+    segment_index: u32,
+    _padding0: u32,
+    _padding1: u32,
 };
 
 struct LightSelection {

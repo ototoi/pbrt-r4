@@ -18,7 +18,7 @@ use super::abi::{
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
     AttributeRef, CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord,
     LightSamplingModel, LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform,
-    MeasuredBsdfRecord, MeasuredTableRecord, TextureNodeRecord, TextureRootRecord,
+    MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, TextureNodeRecord, TextureRootRecord,
     TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
     LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
     LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
@@ -657,6 +657,7 @@ pub struct Scene {
     pub index_buffer: wgpu::Buffer,
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
+    pub medium_buffer: wgpu::Buffer,
     pub material_root_buffer: wgpu::Buffer,
     pub material_node_buffer: wgpu::Buffer,
     pub attribute_ref_buffer: wgpu::Buffer,
@@ -703,6 +704,11 @@ impl Scene {
             ));
         }
         let (vertices, geometries, indices) = convert_geometry(&flat)?;
+        if flat.camera.medium != INVALID_INDEX && flat.camera.medium as usize >= flat.media.len() {
+            return Err(PbrtError::error(
+                "Flat camera references an invalid medium.",
+            ));
+        }
         let instances = flat
             .instances
             .iter()
@@ -713,14 +719,19 @@ impl Scene {
                         "Flat instance {index} references an invalid geometry."
                     )));
                 }
-                if instance.material_root == INVALID_INDEX {
-                    return Err(PbrtError::error(&format!(
-                        "Flat instance {index} has no surface material (\"Material \\\"\\\"\"/\"interface\"). \
-                         The WebGPU wavefront backend does not yet render material-less medium-boundary \
-                         surfaces; see docs/webgpu-medium-design_ja.md in the devkit repo."
-                    )));
+                for (side, medium_id) in [
+                    ("inside", instance.inside_medium),
+                    ("outside", instance.outside_medium),
+                ] {
+                    if medium_id != INVALID_INDEX && medium_id as usize >= flat.media.len() {
+                        return Err(PbrtError::error(&format!(
+                            "Flat instance {index} references an invalid {side} medium."
+                        )));
+                    }
                 }
-                if instance.material_root as usize >= flat.material_roots.len() {
+                if instance.material_root != INVALID_INDEX
+                    && instance.material_root as usize >= flat.material_roots.len()
+                {
                     return Err(PbrtError::error(&format!(
                         "Flat instance {index} references an invalid material."
                     )));
@@ -735,11 +746,44 @@ impl Scene {
                         instance.reverse_orientation,
                         flat::transform_swaps_handedness(instance.transform),
                     ),
+                    medium_inside: instance.inside_medium,
+                    medium_outside: instance.outside_medium,
+                    padding: [0; 2],
                     world_from_object: row_major_to_columns(instance.transform),
                     normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let media = flat
+            .media
+            .iter()
+            .enumerate()
+            .map(|(index, medium)| {
+                if medium.sigma_a as usize >= flat.spectrum_attributes.len()
+                    || medium.sigma_s as usize >= flat.spectrum_attributes.len()
+                    || medium.le as usize >= flat.spectrum_attributes.len()
+                {
+                    return Err(PbrtError::error(&format!(
+                        "Flat medium {index} references an invalid spectrum."
+                    )));
+                }
+                if medium.kind != "homogeneous" {
+                    return Err(PbrtError::error(&format!(
+                        "Flat medium \"{}\" has unsupported type \"{}\".",
+                        medium.name, medium.kind
+                    )));
+                }
+                Ok(MediumRecord {
+                    kind: 0,
+                    sigma_a: medium.sigma_a,
+                    sigma_s: medium.sigma_s,
+                    le: medium.le,
+                    g: medium.g,
+                    padding: [0; 3],
+                    medium_to_world: row_major_to_columns(medium.transform),
+                })
+            })
+            .collect::<Result<Vec<_>, PbrtError>>()?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
         let measured_bsdfs = flat
@@ -945,6 +989,11 @@ impl Scene {
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 instance SBO"),
             contents: buffer_contents(&instances),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let medium_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 medium records SBO"),
+            contents: buffer_contents(&media),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let material_roots = flat
@@ -1254,6 +1303,7 @@ impl Scene {
             index_buffer,
             geometry_buffer,
             instance_buffer,
+            medium_buffer,
             material_root_buffer,
             material_node_buffer,
             attribute_ref_buffer,

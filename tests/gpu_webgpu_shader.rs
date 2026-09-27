@@ -74,6 +74,63 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
+fn homogeneous_absorption_stage_tracks_path_medium_and_spectral_weights() {
+    let stage = include_str!("../src/gpu/webgpu/shaders/sample_medium.wgsl");
+    let source = compose_source(stage);
+    assert!(source.contains("var<storage, read> media: array<MediumRecord>;"));
+    assert!(source.contains("let event_distance = -log(1.0 - u) / sigma_a.x;"));
+    assert!(source.contains("ray.beta *= weight;"));
+    assert!(source.contains("ray.r_u *= weight;"));
+    assert!(source.contains("ray.r_l *= weight;"));
+    assert!(source.contains("append_medium_continuation(ray_index);"));
+    assert!(source.contains("append_escaped_ray(ray_index);"));
+    assert!(source.contains("active_medium_indices[queue_index]"));
+}
+
+#[test]
+fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
+    let scatter = compose_source(SCATTER_DIELECTRIC_SHADER);
+    assert!(scatter.contains("medium_for_direction(ray, surface, direction)"));
+    assert!(scatter.contains("dot(direction, surface.geometric_normal.xyz) > 0.0"));
+
+    let primary = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    assert!(primary.contains("camera.medium_id"));
+
+    let shadow = compose_source(INTERSECT_SHADOW_SHADER);
+    assert!(shadow.contains("shadow.medium_id"));
+    assert!(shadow.contains("shadow.infinite_distance"));
+    assert!(shadow.contains("shadow.depth"));
+    assert!(shadow.contains("append_shadow_continuation(ray_index)"));
+    assert!(shadow.contains("active_shadow_indices[queue_index]"));
+    assert!(shadow.contains("random01_stream("));
+
+    let thin_dielectric = compose_source(SCATTER_THIN_DIELECTRIC_SHADER);
+    assert!(thin_dielectric.contains("medium_for_direction(ray, surface, direction)"));
+}
+
+#[test]
+fn medium_side_and_alpha_candidates_handle_instance_edge_cases() {
+    let interaction = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/lib/interaction.wgsl"
+    ));
+    assert!(interaction.contains(
+        "instance_orientation_is_reversed(flags)\n        != instance_orientation_swaps_handedness(flags)"
+    ));
+
+    let alpha = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl"
+    ));
+    let accept = alpha
+        .split("fn alpha_mask_candidate_accept")
+        .nth(1)
+        .unwrap();
+    let material_less = accept.find("if (instance.material_root == 0xffffffffu)");
+    let material_validation =
+        accept.find("if (instance.material_root >= arrayLength(&material_roots))");
+    assert!(material_less.is_some() && material_less < material_validation);
+}
+
+#[test]
 fn measured_material_shader_uses_packed_texture_tables() {
     let direct = compose_source(SCATTER_MEASURED_SHADER);
     assert!(direct.contains("fn measured_f("));
@@ -262,8 +319,8 @@ fn composed_stage_contains_only_referenced_resources() {
 fn shadow_direction_is_loaded_from_the_typed_shadow_queue() {
     let source = compose_source(INTERSECT_SHADOW_SHADER);
 
-    assert!(source.contains("load_shadow_direction(ray_index)"));
-    assert!(source.contains("return shadow_rays[index].direction.xyz;"));
+    assert!(source.contains("let shadow_direction = shadow.direction.xyz;"));
+    assert!(source.contains("shadow_rays[ray_index] = shadow;"));
     assert!(!source.contains("bitcast<f32>(atomicLoad"));
 }
 
@@ -294,7 +351,10 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
     assert!(common_shader().contains("let direct = ray.beta * light_sample.radiance * f * cosine;"));
 
     let shadow = compose_source(INTERSECT_SHADOW_SHADER);
-    assert!(shadow.contains("load_sample_radiance(pixel_index) + shadow_direct"));
+    assert!(shadow.contains("shadow.direct * shadow.transmittance / denom"));
+    assert!(shadow.contains("append_shadow_continuation(ray_index)"));
+    assert!(shadow.contains("shadow.endpoint.xyz"));
+    assert!(shadow.contains("shadow.r_u * shadow.inv_w_u + shadow.r_l * shadow.inv_w_l"));
     assert!(!shadow.contains("load_current_ray"));
 }
 
@@ -344,7 +404,9 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
         "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
     ));
     assert!(source.contains("sample_uniform_triangle_for_context"));
-    assert!(source.contains("instance_orientation_is_reversed(triangle.orientation_flags)"));
+    assert!(
+        source.contains("instance_orientation_flips_geometric_normal(triangle.orientation_flags)")
+    );
     assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
     assert!(source.contains("load_area_distribution_count(light_payload)"));
 }
@@ -506,10 +568,16 @@ fn random_samples_are_independent_across_pixel_sample_and_depth() {
         .nth(1)
         .and_then(|tail| tail.split("\nfn ").next())
         .expect("random01 must be defined in the shared library");
+    let random01_stream = common
+        .split("fn random01_stream(")
+        .nth(1)
+        .and_then(|tail| tail.split("\nfn ").next())
+        .expect("random01_stream must be defined in the shared library");
 
-    assert!(random01.contains("pixel_index"));
-    assert!(random01.contains("viewport.sample_index"));
-    assert!(random01.contains("dimension + depth * 8u"));
+    assert!(random01.contains("random01_stream(pixel_index, dimension, depth, 0u)"));
+    assert!(random01_stream.contains("pixel_index"));
+    assert!(random01_stream.contains("viewport.sample_index"));
+    assert!(random01_stream.contains("dimension + depth * 8u"));
 }
 
 fn common_shader() -> String {

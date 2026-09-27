@@ -81,6 +81,9 @@ fn alpha_mask_candidate_accept(origin: vec3<f32>, direction: vec3<f32>, hit: Ray
         return false;
     }
     let instance = instances[hit.instance_custom_data];
+    if (instance.material_root == 0xffffffffu) {
+        return true;
+    }
     if (instance.material_root >= arrayLength(&material_roots)) {
         set_render_error();
         return false;
