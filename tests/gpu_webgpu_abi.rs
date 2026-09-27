@@ -33,6 +33,8 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<MeasuredTableRecord>(), 80);
     assert_eq!(std::mem::size_of::<DenseSpectrum>(), 1888);
     assert_eq!(std::mem::size_of::<RayWorkItem>(), 176);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, medium_id), 164);
+    assert_eq!(std::mem::offset_of!(RayWorkItem, medium_segment_index), 168);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 176);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 144);
     assert_eq!(std::mem::size_of::<TextureEvalResult>(), 32);

@@ -42,8 +42,10 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);
     }
-    if (instance_orientation_is_reversed(instance.orientation_flags)) {
+    if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
+    }
+    if (instance_orientation_is_reversed(instance.orientation_flags)) {
         normal = -normal;
     }
     if (instance_orientation_swaps_handedness(instance.orientation_flags)

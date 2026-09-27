@@ -102,6 +102,32 @@ fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
     assert!(shadow.contains("shadow.depth"));
     assert!(shadow.contains("append_shadow_continuation(ray_index)"));
     assert!(shadow.contains("active_shadow_indices[queue_index]"));
+    assert!(shadow.contains("random01_stream("));
+
+    let thin_dielectric = compose_source(SCATTER_THIN_DIELECTRIC_SHADER);
+    assert!(thin_dielectric.contains("medium_for_direction(ray, surface, direction)"));
+}
+
+#[test]
+fn medium_side_and_alpha_candidates_handle_instance_edge_cases() {
+    let interaction = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/lib/interaction.wgsl"
+    ));
+    assert!(interaction.contains(
+        "instance_orientation_is_reversed(flags)\n        != instance_orientation_swaps_handedness(flags)"
+    ));
+
+    let alpha = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl"
+    ));
+    let accept = alpha
+        .split("fn alpha_mask_candidate_accept")
+        .nth(1)
+        .unwrap();
+    let material_less = accept.find("if (instance.material_root == 0xffffffffu)");
+    let material_validation =
+        accept.find("if (instance.material_root >= arrayLength(&material_roots))");
+    assert!(material_less.is_some() && material_less < material_validation);
 }
 
 #[test]
@@ -378,7 +404,9 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
         "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
     ));
     assert!(source.contains("sample_uniform_triangle_for_context"));
-    assert!(source.contains("instance_orientation_is_reversed(triangle.orientation_flags)"));
+    assert!(
+        source.contains("instance_orientation_flips_geometric_normal(triangle.orientation_flags)")
+    );
     assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
     assert!(source.contains("load_area_distribution_count(light_payload)"));
 }
@@ -540,10 +568,16 @@ fn random_samples_are_independent_across_pixel_sample_and_depth() {
         .nth(1)
         .and_then(|tail| tail.split("\nfn ").next())
         .expect("random01 must be defined in the shared library");
+    let random01_stream = common
+        .split("fn random01_stream(")
+        .nth(1)
+        .and_then(|tail| tail.split("\nfn ").next())
+        .expect("random01_stream must be defined in the shared library");
 
-    assert!(random01.contains("pixel_index"));
-    assert!(random01.contains("viewport.sample_index"));
-    assert!(random01.contains("dimension + depth * 8u"));
+    assert!(random01.contains("random01_stream(pixel_index, dimension, depth, 0u)"));
+    assert!(random01_stream.contains("pixel_index"));
+    assert!(random01_stream.contains("viewport.sample_index"));
+    assert!(random01_stream.contains("dimension + depth * 8u"));
 }
 
 fn common_shader() -> String {

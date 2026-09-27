@@ -53,7 +53,9 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 shadow_rays[ray_index] = shadow;
                 return;
             }
-            let u = random01(shadow.pixel_index, 16385u + shadow.segment_index, shadow.depth);
+            let u = random01_stream(
+                shadow.pixel_index, 16384u + shadow.segment_index, shadow.depth, 1u,
+            );
             let event_distance = -log(1.0 - u) / sigma_a.x;
             if (event_distance < segment_distance) {
                 shadow.transmittance = vec4<f32>(0.0);

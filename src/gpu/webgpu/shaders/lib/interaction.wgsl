@@ -6,6 +6,11 @@ fn instance_orientation_swaps_handedness(flags: u32) -> bool {
     return (flags & INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS) != 0u;
 }
 
+fn instance_orientation_flips_geometric_normal(flags: u32) -> bool {
+    return instance_orientation_is_reversed(flags)
+        != instance_orientation_swaps_handedness(flags);
+}
+
 fn reconstruct_triangle_surface(
     instance_index: u32,
     primitive: u32,
@@ -46,7 +51,7 @@ fn reconstruct_triangle_surface(
     let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
     let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
-    if (instance_orientation_is_reversed(instance.orientation_flags)) {
+    if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
     }
     return TriangleSurfaceData(position, position_error, uv, geometric_normal, 1u);
