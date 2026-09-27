@@ -68,6 +68,7 @@ pub enum ResourceId {
     SamplerTable,
     PortalInfiniteLight,
     PortalDistribution,
+    Medium,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,6 +139,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::Uniform,
         Access::Read,
     );
+    push(61, ResourceId::Medium, BindingClass::Storage, Access::Read);
     push(
         1,
         ResourceId::SampleParams,
