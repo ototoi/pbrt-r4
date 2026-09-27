@@ -262,7 +262,8 @@ pub struct RayWorkItem {
     pub prev_pdf: f32,
     pub prev_specular: u32,
     pub medium_id: u32,
-    pub padding: [u32; 2],
+    pub medium_segment_index: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]

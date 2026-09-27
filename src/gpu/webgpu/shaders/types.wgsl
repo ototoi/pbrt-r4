@@ -332,8 +332,8 @@ struct RayWorkItem {
     prev_pdf: f32,
     prev_specular: u32,
     medium_id: u32,
+    medium_segment_index: u32,
     _padding0: u32,
-    _padding1: u32,
 };
 
 struct SurfaceWorkItem {

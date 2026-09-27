@@ -28,7 +28,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             store_current_ray(ray_index, ray);
             return;
         }
-        let u = random01(pixel_index, 16384u + ray._padding0, ray.depth);
+        let u = random01(pixel_index, 16384u + ray.medium_segment_index, ray.depth);
         let event_distance = -log(1.0 - u) / sigma_a.x;
         if (event_distance < distance) {
             ray.beta = vec4<f32>(0.0);
@@ -81,7 +81,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             triangle.position, triangle.position_error,
             triangle.geometric_normal, ray.direction.xyz,
         ), 1.0);
-        ray._padding0 += 1u;
+        ray.medium_segment_index += 1u;
         surfaces[pixel_index].hit = 0u;
         append_medium_continuation(ray_index);
     }
