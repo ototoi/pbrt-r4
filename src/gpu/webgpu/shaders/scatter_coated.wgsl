@@ -158,21 +158,21 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (!result_valid || result_pdf <= 0.0 || max_spectrum(result_f) <= 0.0) { return; }
     if (flip_wi) { result_wi = -result_wi; }
     let direction = normalize(scattering_world_frame(result_wi, tangent, normal));
-    var next_throughput = ray.throughput * result_f * abs(result_wi.z) / result_pdf;
+    var next_beta = ray.beta * result_f * abs(result_wi.z) / result_pdf;
     if (ray.depth >= 1u) {
-        let rr_beta = max_spectrum(next_throughput) / max(ray.inv_w_u, 1e-7);
+        let rr_beta = max_spectrum(next_beta * ray.eta_scale) / max(average_spectrum(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) { return; }
-        next_throughput /= max(1.0 - q, 1e-7);
+        next_beta /= max(1.0 - q, 1e-7);
     }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
-        vec4<f32>(direction, 0.0), next_throughput,
+        vec4<f32>(direction, 0.0), next_beta, ray.r_u, ray.r_u / max(result_pdf, 1e-7),
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), ray.pixel_index, ray.depth + 1u,
-        ray.inv_w_u, ray.inv_w_u / max(result_pdf, 1e-7), result_pdf,
-        result_specular, 0u, 0u,
+        ray.eta_scale, result_pdf,
+        result_specular, 0u, 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= queue_counters.next.capacity) {
