@@ -96,7 +96,8 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let b2 = surface.barycentric.y;
     let b0 = 1.0 - b1 - b2;
     let position = p0 * b0 + p1 * b1 + p2 * b2;
-    let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
+    let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0)
+        + hardware_intersection_error(p0, p1, p2);
     let uv0 = vertices[i0].uv;
     let uv1 = vertices[i1].uv;
     let uv2 = vertices[i2].uv;
