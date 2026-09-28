@@ -96,10 +96,20 @@ impl ImageDecoder {
                 ColorSpace::Srgb,
             )
         };
-        let channels = u32::try_from(raw.channels)
+        let mut data = raw.data_f32();
+        let mut channel_count = raw.channels;
+        // pbrt-v4 MIPMap::CreateFromFile and the CPU imagemap loader drop an
+        // all-ones alpha channel, so Float textures read color, not alpha.
+        if channel_count == 4 && data.chunks_exact(4).all(|pixel| pixel[3] == 1.0) {
+            data = data
+                .chunks_exact(4)
+                .flat_map(|pixel| pixel[..3].iter().copied())
+                .collect();
+            channel_count = 3;
+        }
+        let channels = u32::try_from(channel_count)
             .map_err(|_| PbrtError::error("Texture channel count exceeds u32."))?;
         let mut resolution = [raw.resolution.x as u32, raw.resolution.y as u32];
-        let mut data = raw.data_f32();
         let mut levels = Vec::new();
         loop {
             levels.push(MipmapLevel {
