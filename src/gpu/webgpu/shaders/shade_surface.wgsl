@@ -188,14 +188,33 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
         tangent = coordinate_system_x(normal);
     }
     tangent = normalize(tangent);
+    // pbrt-v4 Triangle::InteractionFromIntersection: meshes with normals or
+    // tangents use shading dpdu/dpdv built around the shading normal. Bump
+    // mapping reads these; the geometric ones above only feed differentials.
+    var shading_dpdu = dpdu;
+    var shading_dpdv = dpdv;
+    if (dot(object_normal, object_normal) > 0.0 || dot(object_tangent, object_tangent) > 0.0) {
+        var ss = dpdu;
+        if (dot(object_tangent, object_tangent) > 0.0) {
+            ss = (instance.world_from_object * vec4<f32>(object_tangent, 0.0)).xyz;
+        }
+        let ts = cross(normal, ss);
+        if (dot(ts, ts) > 0.0) {
+            shading_dpdu = cross(ts, normal);
+            shading_dpdv = ts;
+        } else {
+            shading_dpdu = coordinate_system_x(normal);
+            shading_dpdv = coordinate_system_y(normal);
+        }
+    }
     let material_root = material_roots[instance.material_root];
     let material_kind = load_surface_material_kind(material_root);
     surfaces[pixel_index].position = vec4<f32>(position, 1.0);
     surfaces[pixel_index].normal = vec4<f32>(normal, 0.0);
     surfaces[pixel_index].geometric_normal = vec4<f32>(geometric_normal, 0.0);
     surfaces[pixel_index].tangent = vec4<f32>(tangent, 0.0);
-    surfaces[pixel_index].dpdu = vec4<f32>(dpdu, 0.0);
-    surfaces[pixel_index].dpdv = vec4<f32>(dpdv, 0.0);
+    surfaces[pixel_index].dpdu = vec4<f32>(shading_dpdu, 0.0);
+    surfaces[pixel_index].dpdv = vec4<f32>(shading_dpdv, 0.0);
     surfaces[pixel_index].dndu = vec4<f32>(dndu, 0.0);
     surfaces[pixel_index].dndv = vec4<f32>(dndv, 0.0);
     surfaces[pixel_index].dpdx = vec4<f32>(dp_dxy[0], 0.0);
