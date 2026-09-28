@@ -1,10 +1,11 @@
+use pbrt_r4::gpu::flat;
 use pbrt_r4::gpu::webgpu::abi::{
-    inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform, DenseSpectrum,
-    DispatchIndirectArgs, FilmUniform, Geometry, Instance, LightRecord, LightTableUniform,
-    MaterialNode, MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord,
-    PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem,
-    SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry, Vertex, ViewportUniform,
-    QUEUE_DISPATCH_SLOT_COUNT,
+    camera_uniform, inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform,
+    DenseSpectrum, DispatchIndirectArgs, FilmUniform, Geometry, Instance, LightRecord,
+    LightTableUniform, MaterialNode, MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord,
+    MediumRecord, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
+    ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry, Vertex,
+    ViewportUniform, QUEUE_DISPATCH_SLOT_COUNT,
 };
 use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
 
@@ -19,7 +20,7 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
-    assert_eq!(std::mem::size_of::<CameraUniform>(), 144);
+    assert_eq!(std::mem::size_of::<CameraUniform>(), 240);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 56);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
@@ -36,7 +37,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(RayWorkItem, medium_id), 164);
     assert_eq!(std::mem::offset_of!(RayWorkItem, medium_segment_index), 168);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 176);
-    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 144);
+    assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 256);
     assert_eq!(std::mem::size_of::<TextureEvalResult>(), 32);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(
@@ -118,4 +119,37 @@ fn webgpu_normal_matrix_is_inverse_transpose_of_linear_transform() {
     assert_eq!(normal[0][0], 0.5);
     assert_eq!(normal[1][1], 0.25);
     assert_eq!(normal[2][2], 0.125);
+}
+
+#[test]
+fn perspective_camera_upload_includes_finite_minimum_ray_differentials() {
+    let camera = flat::Camera {
+        camera_to_world: [
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ],
+        kind: "perspective".to_string(),
+        fov: 45.0,
+        disable_texture_filtering: false,
+        disable_pixel_jitter: false,
+        screen_window: [-1.0, 1.0, -1.0, 1.0],
+        medium: u32::MAX,
+    };
+    let viewport = flat::Viewport {
+        resolution: [64, 32],
+        region_offset: [0, 0],
+        region_resolution: [64, 32],
+    };
+
+    let uniform = camera_uniform(&camera, &viewport).unwrap();
+
+    for differential in [
+        uniform.min_dir_differential_x,
+        uniform.min_dir_differential_y,
+    ] {
+        assert!(differential[..3].iter().all(|value| value.is_finite()));
+        assert!(differential[..3].iter().any(|value| *value != 0.0));
+    }
+    assert_eq!(uniform.world_to_camera[0], [1.0, 0.0, 0.0, 0.0]);
+    assert_eq!(uniform.world_to_camera[1], [0.0, 1.0, 0.0, 0.0]);
+    assert_eq!(uniform.world_to_camera[2], [0.0, 0.0, 1.0, 0.0]);
 }

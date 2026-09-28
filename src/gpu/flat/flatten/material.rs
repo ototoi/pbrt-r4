@@ -16,6 +16,7 @@ pub struct MaterialSourceNode {
     pub source_kind: String,
     pub attributes: Vec<AttributeRef>,
     pub children: Vec<u32>,
+    pub displacement_texture_root: u32,
 }
 
 pub fn build_material_roots(
@@ -50,6 +51,7 @@ pub fn build_material_roots(
             parent_slot,
             child0: INVALID_INDEX,
             child1: INVALID_INDEX,
+            displacement_texture_root: source.displacement_texture_root,
         });
         if source.children.len() > 2 {
             return Err(PbrtError::error(
@@ -275,9 +277,36 @@ pub fn register_material_source(
             )
         }
     };
+    let displacement_texture_root = if let Some((_, texture_node)) = source_material
+        .texture_attributes
+        .iter()
+        .find(|(name, _)| name == "displacement")
+    {
+        let texture = texture_node
+            .components
+            .iter()
+            .find_map(|component| match component {
+                TextureComponent::Texture(texture) => Some(texture),
+                TextureComponent::Mapping(_) => None,
+            });
+        let Some(texture) = texture else {
+            return Err(PbrtError::error(&format!(
+                "Material \"{}\" displacement has no texture component.",
+                source_material.name
+            )));
+        };
+        if texture.kind != TextureKind::Float {
+            return Err(PbrtError::error(&format!(
+                "Material \"{}\" displacement texture must be Float.",
+                source_material.name
+            )));
+        }
+        validate_bump_texture_filters(&source_material.name, texture_node)?;
+        intern_texture_root(builder, Arc::clone(texture_node), 0)?
+    } else {
+        INVALID_INDEX
+    };
     for (name, texture_node) in &source_material.texture_attributes {
-        // Displacement is consumed during CPU shape realization and is not a
-        // material-evaluation attribute in the WebGPU backend.
         if name == "displacement" {
             continue;
         }
@@ -372,9 +401,38 @@ pub fn register_material_source(
         source_kind: source_kind.to_string(),
         attributes: attributes.clone(),
         children: material_children,
+        displacement_texture_root,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)
+}
+
+fn validate_bump_texture_filters(
+    material_name: &str,
+    texture_node: &Arc<TextureNode>,
+) -> Result<(), PbrtError> {
+    for component in &texture_node.components {
+        let TextureComponent::Texture(texture) = component else {
+            continue;
+        };
+        if texture.name != "imagemap" {
+            continue;
+        }
+        let filter = texture.params.get_one_string("filter", "bilinear");
+        if !matches!(
+            filter.as_str(),
+            "point" | "nearest" | "bilinear" | "trilinear"
+        ) {
+            return Err(PbrtError::error(&format!(
+                "Material \"{material_name}\" displacement texture \"{}\" uses unsupported image filter \"{filter}\".",
+                texture_node.name
+            )));
+        }
+    }
+    for child in &texture_node.children {
+        validate_bump_texture_filters(material_name, child)?;
+    }
+    Ok(())
 }
 
 pub fn diffuse_reflectance(source_material: &NodeMaterial) -> Result<Spectrum, PbrtError> {
@@ -535,5 +593,79 @@ pub fn spectrum_attribute(
             );
             Ok(Spectrum::from_rgb(&[1.0, 0.0, 1.0], spectrum_type))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paramdict::ParameterDictionary;
+
+    #[test]
+    fn displacement_float_texture_is_kept_as_a_separate_material_root() {
+        let displacement = Arc::new(TextureNode {
+            name: "height".to_string(),
+            components: vec![TextureComponent::Texture(crate::gpu::node::Texture {
+                name: "constant".to_string(),
+                kind: TextureKind::Float,
+                params: Default::default(),
+            })],
+            children: Vec::new(),
+        });
+        let material = Arc::new(NodeMaterial {
+            name: "bumped".to_string(),
+            kind: "diffuse".to_string(),
+            params: Default::default(),
+            material_attributes: Vec::new(),
+            texture_attributes: vec![("displacement".to_string(), displacement)],
+        });
+        let mut builder = FlatBuilder::default();
+
+        let source_index = register_material_source(&material, &mut builder, None).unwrap();
+        let source = &builder.material_source_nodes[source_index as usize];
+        assert_eq!(source.displacement_texture_root, 0);
+        assert!(source
+            .attributes
+            .iter()
+            .all(|attribute| attribute.name != "displacement"));
+
+        let (_, flat_nodes, _) =
+            build_material_roots(&builder.material_source_nodes, &[source_index]).unwrap();
+        assert_eq!(flat_nodes[0].displacement_texture_root, 0);
+        assert_eq!(builder.texture_root_specs.len(), 1);
+        assert!(matches!(
+            builder.texture_root_specs[0],
+            TextureRootSpec::Float { .. }
+        ));
+    }
+
+    #[test]
+    fn displacement_texture_rejects_filters_without_gpu_footprint_support() {
+        let mut texture_params = ParameterDictionary::new();
+        texture_params.add_string("filter", "ewa");
+        let displacement = Arc::new(TextureNode {
+            name: "height-image".to_string(),
+            components: vec![TextureComponent::Texture(crate::gpu::node::Texture {
+                name: "imagemap".to_string(),
+                kind: TextureKind::Float,
+                params: texture_params,
+            })],
+            children: Vec::new(),
+        });
+        let material = Arc::new(NodeMaterial {
+            name: "bumped-material".to_string(),
+            kind: "diffuse".to_string(),
+            params: Default::default(),
+            material_attributes: Vec::new(),
+            texture_attributes: vec![("displacement".to_string(), displacement)],
+        });
+
+        let error = register_material_source(&material, &mut FlatBuilder::default(), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("bumped-material"));
+        assert!(error.contains("height-image"));
+        assert!(error.contains("ewa"));
     }
 }

@@ -189,7 +189,7 @@ fn lower_texture_library(
                 operation: lowered.operation,
                 mapping_kind: lowered.mapping.0,
                 sampler: lowered.image_view.1,
-                _operation_padding: 0,
+                image_filter_mode: lowered.image_view.4,
                 constant_value: lowered.constant_value,
                 mapping: lowered.mapping.1,
             });
@@ -271,7 +271,7 @@ struct LoweredTextureInstruction {
     operation: u32,
     constant_value: [f32; 4],
     color_space: u32,
-    image_view: (u32, u32, u32, u32),
+    image_view: (u32, u32, u32, u32, u32),
     mapping: (u32, [[f32; 4]; 4]),
 }
 
@@ -289,7 +289,7 @@ fn lower_texture_instruction(
         TextureValueType::Float => (0, 0),
         TextureValueType::LinearRgb(color_space) => (1, color_space_id(*color_space)),
     };
-    let empty_image = (INVALID_INDEX, INVALID_INDEX, 0, 0);
+    let empty_image = (INVALID_INDEX, INVALID_INDEX, 0, 0, 0);
     match instruction {
         TextureInstruction::ConstantFloat { value, .. } => Ok(LoweredTextureInstruction {
             kind: 0,
@@ -334,13 +334,24 @@ fn lower_texture_instruction(
                 ImageWrapMode::Clamp => 1,
                 ImageWrapMode::Black => 2,
             };
+            let filter_mode = match view.filter {
+                ImageFilterMode::Nearest => 0,
+                ImageFilterMode::Bilinear => 1,
+                ImageFilterMode::Trilinear => 2,
+            };
             Ok(LoweredTextureInstruction {
                 kind: value_type(texture_type).0,
                 implementation_hash: stable_texture_hash("imagemap"),
                 operation: TEXTURE_OPERATION_IMAGE,
                 constant_value: [view.scale, if view.invert { 1.0 } else { 0.0 }, 0.0, 0.0],
                 color_space: value_type(texture_type).1,
-                image_view: (image, sampler, wrap_mode(view.swrap), wrap_mode(view.twrap)),
+                image_view: (
+                    image,
+                    sampler,
+                    wrap_mode(view.swrap),
+                    wrap_mode(view.twrap),
+                    filter_mode,
+                ),
                 mapping: lower_mapping(mapping.as_ref(), identity),
             })
         }

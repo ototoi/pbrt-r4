@@ -10,6 +10,10 @@ fn evaluate_textures(@builtin(global_invocation_id) global_id: vec3<u32>) {
     material_texture_uv = surface.uv;
     material_texture_normal = surface.normal.xyz;
     material_texture_position = surface.position.xyz;
+    material_texture_uv_dx = vec2<f32>(surface.uv_differentials.x, surface.uv_differentials.y);
+    material_texture_uv_dy = vec2<f32>(surface.uv_differentials.z, surface.uv_differentials.w);
+    material_texture_dpdx = surface.dpdx.xyz;
+    material_texture_dpdy = surface.dpdy.xyz;
     let result_base = queue_index * material_table.texture_eval_stride;
     for (var slot = 0u; slot < material_table.texture_eval_stride; slot++) {
         texture_eval_results[result_base + slot] =

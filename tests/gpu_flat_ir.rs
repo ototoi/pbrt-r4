@@ -82,6 +82,7 @@ fn add_camera_and_named_film(root: &mut Node, camera_params: ParameterDictionary
     let mut camera = Node::new("camera");
     camera.add_component(Component::Camera(CameraComponent {
         camera: Camera {
+            kind: "perspective".to_string(),
             params: camera_params,
             medium: String::new(),
         },
@@ -550,6 +551,7 @@ fn flatten_node_preserves_explicit_camera_screen_window() {
     camera_params.add_float("float[] screenwindow", 2.0);
     camera.add_component(Component::Camera(CameraComponent {
         camera: Camera {
+            kind: "perspective".to_string(),
             params: camera_params,
             medium: String::new(),
         },

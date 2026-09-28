@@ -37,7 +37,7 @@ impl MaterialTable {
                     parent_slot: material.parent_slot,
                     child0: material.child0,
                     child1: material.child1,
-                    padding: 0,
+                    displacement_texture_root: material.displacement_texture_root,
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
