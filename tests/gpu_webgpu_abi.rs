@@ -153,3 +153,74 @@ fn perspective_camera_upload_includes_finite_minimum_ray_differentials() {
     assert_eq!(uniform.world_to_camera[1], [0.0, 1.0, 0.0, 0.0]);
     assert_eq!(uniform.world_to_camera[2], [0.0, 0.0, 1.0, 0.0]);
 }
+
+#[test]
+fn webgpu_rust_struct_sizes_match_wgsl_types() {
+    use pbrt_r4::gpu::webgpu::abi;
+    use wgpu::naga;
+
+    // Buffers are allocated with Rust struct sizes while shaders index them
+    // with WGSL strides, so any mismatch silently drops out-of-range items.
+    let source = include_str!("../src/gpu/webgpu/shaders/types.wgsl");
+    let module = naga::front::wgsl::parse_str(source)
+        .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+    let wgsl_size = |name: &str| {
+        module
+            .types
+            .iter()
+            .find_map(|(_, ty)| match ty.inner {
+                naga::TypeInner::Struct { span, .. } if ty.name.as_deref() == Some(name) => {
+                    Some(span as usize)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("WGSL struct {name} is missing from types.wgsl"))
+    };
+    macro_rules! rust_sizes {
+        ($($name:ident),* $(,)?) => {
+            [$((stringify!($name), std::mem::size_of::<abi::$name>())),*]
+        };
+    }
+    let rust_sizes = rust_sizes![
+        CameraUniform,
+        ViewportUniform,
+        MaterialTableUniform,
+        LightTableUniform,
+        Vertex,
+        Geometry,
+        TextureNodeRecord,
+        Instance,
+        MediumRecord,
+        MaterialNode,
+        AttributeRef,
+        MeasuredBsdfRecord,
+        MeasuredTableRecord,
+        TextureRootRecord,
+        DenseSpectrum,
+        RayWorkItem,
+        ShadowRayWorkItem,
+        SurfaceWorkItem,
+        AttributesEvalWorkItem,
+        MaterialRoot,
+        TextureEvalResult,
+        LightRecord,
+        LightSamplingModel,
+        PortalImageInfiniteRecord,
+        PortalDistributionTexel,
+        DirectLightSample,
+        TriangleDistributionEntry,
+        QueueState,
+        FilmUniform,
+        QueueCounters,
+        DispatchIndirectArgs,
+        RenderError,
+        PixelSampleState,
+    ];
+    for (name, rust_size) in rust_sizes {
+        assert_eq!(
+            rust_size,
+            wgsl_size(name),
+            "{name} size differs between Rust and WGSL"
+        );
+    }
+}

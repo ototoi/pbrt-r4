@@ -311,8 +311,9 @@ pub struct SurfaceWorkItem {
     pub dndv: [f32; 4],
     pub dpdx: [f32; 4],
     pub dpdy: [f32; 4],
-    pub uv: [f32; 2],
+    // Keep the vec4 before the vec2 so WGSL inserts no implicit padding.
     pub uv_differentials: [f32; 4],
+    pub uv: [f32; 2],
     pub material_root: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,
