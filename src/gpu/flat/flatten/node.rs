@@ -270,6 +270,18 @@ pub fn flatten_node_ref(
         });
     }
     if let Some(camera) = camera {
+        if camera.kind != "perspective" {
+            return Err(PbrtError::error(&format!(
+                "WebGPU camera kind \"{}\" is unsupported; expected perspective.",
+                camera.kind
+            )));
+        }
+        let lens_radius = camera.params.get_one_float("lensradius", 0.0);
+        if lens_radius != 0.0 {
+            return Err(PbrtError::error(
+                "WebGPU perspective camera does not support nonzero lensradius.",
+            ));
+        }
         let fov = camera.params.get_one_float("fov", 90.0) as f32;
         if builder.camera.is_some() {
             return Err(PbrtError::error(
@@ -282,7 +294,10 @@ pub fn flatten_node_ref(
         let medium = resolve_medium_name(&camera.medium, builder)?;
         builder.camera = Some(Camera {
             camera_to_world: world_transform,
+            kind: camera.kind.clone(),
             fov,
+            disable_texture_filtering: crate::options::PbrtOptions::get().disable_texture_filtering,
+            disable_pixel_jitter: crate::options::PbrtOptions::get().disable_pixel_jitter,
             screen_window: screen_window(&camera.params, viewport.resolution)?,
             medium,
         });

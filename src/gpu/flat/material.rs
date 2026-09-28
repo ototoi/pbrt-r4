@@ -16,6 +16,7 @@ pub struct MaterialNode {
     pub parent_slot: u32,
     pub child0: u32,
     pub child1: u32,
+    pub displacement_texture_root: u32,
 }
 
 pub fn max_attributes_eval_work_items_per_surface(scene: &Scene) -> Result<u32, PbrtError> {
