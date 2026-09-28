@@ -179,6 +179,29 @@ fn image_decoder_interns_canonical_file_identity() {
 }
 
 #[test]
+fn image_decoder_drops_all_ones_alpha_so_float_textures_read_color() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("opaque.png");
+    ImageBuffer::<image::Rgba<u8>, _>::from_raw(1, 1, vec![51, 51, 51, 255])
+        .unwrap()
+        .save(&path)
+        .unwrap();
+
+    let decoded = ImageDecoder::default().decode(&path, "linear").unwrap();
+    assert_eq!(decoded.levels[0].channels, 3);
+
+    let compiled = ImageCompiler::default()
+        .compile(&decoded, ImageValueType::Float)
+        .unwrap();
+    let value = match &compiled.levels[0].data {
+        MipmapLevelData::F32(values) => values[0],
+        MipmapLevelData::F16(values) => half::f16::from_bits(values[0]).to_f32(),
+        MipmapLevelData::U8(values) => f32::from(values[0]) / 255.0,
+    };
+    assert!((value - 0.2).abs() < 1e-3, "value = {value}");
+}
+
+#[test]
 fn image_compiler_chooses_one_storage_format_for_the_full_mipmap() {
     let source = Arc::new(Mipmap {
         levels: vec![
