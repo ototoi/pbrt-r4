@@ -26,6 +26,7 @@ fn node_components_wrap_declarative_resources() {
 
     let camera = Component::Camera(CameraComponent {
         camera: Camera {
+            kind: "perspective".to_string(),
             params: Default::default(),
             medium: String::new(),
         },

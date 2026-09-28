@@ -51,8 +51,13 @@ pub const TEXTURE_OPERATION_MARBLE: u32 = 11;
 pub struct CameraUniform {
     pub camera_to_world: [[f32; 4]; 4],
     pub raster_to_camera: [[f32; 4]; 4],
+    pub world_to_camera: [[f32; 4]; 4],
+    pub min_dir_differential_x: [f32; 4],
+    pub min_dir_differential_y: [f32; 4],
     pub medium_id: u32,
-    pub padding: [u32; 3],
+    pub disable_texture_filtering: u32,
+    pub disable_pixel_jitter: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]
@@ -147,7 +152,7 @@ pub struct TextureNodeRecord {
     pub operation: u32,
     pub mapping_kind: u32,
     pub sampler: u32,
-    pub _operation_padding: u32,
+    pub image_filter_mode: u32,
     pub constant_value: [f32; 4],
     pub mapping: [[f32; 4]; 4],
 }
@@ -188,7 +193,7 @@ pub struct MaterialNode {
     pub parent_slot: u32,
     pub child0: u32,
     pub child1: u32,
-    pub padding: u32,
+    pub displacement_texture_root: u32,
 }
 
 #[repr(C)]
@@ -300,12 +305,20 @@ pub struct SurfaceWorkItem {
     pub normal: [f32; 4],
     pub geometric_normal: [f32; 4],
     pub tangent: [f32; 4],
+    pub dpdu: [f32; 4],
+    pub dpdv: [f32; 4],
+    pub dndu: [f32; 4],
+    pub dndv: [f32; 4],
+    pub dpdx: [f32; 4],
+    pub dpdy: [f32; 4],
+    // Keep the vec4 before the vec2 so WGSL inserts no implicit padding.
+    pub uv_differentials: [f32; 4],
     pub uv: [f32; 2],
-    pub uv_padding: [f32; 2],
     pub material_root: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,
     pub padding: u32,
+    pub tail_padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -503,6 +516,12 @@ pub fn camera_uniform(
     camera: &flat::Camera,
     viewport: &flat::Viewport,
 ) -> Result<CameraUniform, PbrtError> {
+    if camera.kind != "perspective" {
+        return Err(PbrtError::error(&format!(
+            "WebGPU camera kind \"{}\" is unsupported; expected perspective.",
+            camera.kind
+        )));
+    }
     let [width, height] = viewport.resolution;
     if width == 0 || height == 0 {
         return Err(PbrtError::error(
@@ -539,6 +558,7 @@ pub fn camera_uniform(
         ));
     }
     validate_affine(camera.camera_to_world, "Camera")?;
+    let world_to_camera = inverse_affine(camera.camera_to_world, "Camera")?;
 
     let tan_half_fov = (camera.fov.to_radians() * 0.5).tan();
     if !tan_half_fov.is_finite() {
@@ -568,12 +588,152 @@ pub fn camera_uniform(
         0.0,
         1.0,
     ]);
+    let [min_dir_differential_x, min_dir_differential_y] =
+        minimum_perspective_camera_direction_differentials(
+            camera.screen_window,
+            [width, height],
+            tan_half_fov,
+        );
     Ok(CameraUniform {
         camera_to_world,
         raster_to_camera,
+        world_to_camera,
+        min_dir_differential_x: [
+            min_dir_differential_x[0],
+            min_dir_differential_x[1],
+            min_dir_differential_x[2],
+            0.0,
+        ],
+        min_dir_differential_y: [
+            min_dir_differential_y[0],
+            min_dir_differential_y[1],
+            min_dir_differential_y[2],
+            0.0,
+        ],
         medium_id: camera.medium,
-        padding: [0; 3],
+        disable_texture_filtering: u32::from(camera.disable_texture_filtering),
+        disable_pixel_jitter: u32::from(camera.disable_pixel_jitter),
+        padding: 0,
     })
+}
+
+fn inverse_affine(transform: [f32; 16], label: &str) -> Result<[[f32; 4]; 4], PbrtError> {
+    let [a, b, c, tx, d, e, f, ty, g, h, i, tz, _, _, _, _] = transform;
+    let determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if !determinant.is_finite() || determinant == 0.0 {
+        return Err(PbrtError::error(&format!(
+            "{label} transform has a singular linear part."
+        )));
+    }
+    let inverse_determinant = 1.0 / determinant;
+    let inverse_linear = [
+        (e * i - f * h) * inverse_determinant,
+        (c * h - b * i) * inverse_determinant,
+        (b * f - c * e) * inverse_determinant,
+        (f * g - d * i) * inverse_determinant,
+        (a * i - c * g) * inverse_determinant,
+        (c * d - a * f) * inverse_determinant,
+        (d * h - e * g) * inverse_determinant,
+        (b * g - a * h) * inverse_determinant,
+        (a * e - b * d) * inverse_determinant,
+    ];
+    let inverse_translation = [
+        -(inverse_linear[0] * tx + inverse_linear[1] * ty + inverse_linear[2] * tz),
+        -(inverse_linear[3] * tx + inverse_linear[4] * ty + inverse_linear[5] * tz),
+        -(inverse_linear[6] * tx + inverse_linear[7] * ty + inverse_linear[8] * tz),
+    ];
+    Ok(row_major_to_columns([
+        inverse_linear[0],
+        inverse_linear[1],
+        inverse_linear[2],
+        inverse_translation[0],
+        inverse_linear[3],
+        inverse_linear[4],
+        inverse_linear[5],
+        inverse_translation[1],
+        inverse_linear[6],
+        inverse_linear[7],
+        inverse_linear[8],
+        inverse_translation[2],
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ]))
+}
+
+fn minimum_perspective_camera_direction_differentials(
+    screen_window: [f32; 4],
+    resolution: [u32; 2],
+    tan_half_fov: f32,
+) -> [[f32; 3]; 2] {
+    let [xmin, xmax, ymin, ymax] = screen_window;
+    let dx = (xmax - xmin) / resolution[0] as f32;
+    let dy = (ymax - ymin) / resolution[1] as f32;
+    let delta_x = [dx * tan_half_fov, 0.0, 0.0];
+    let delta_y = [0.0, -dy * tan_half_fov, 0.0];
+    let mut minimum = [[0.0; 3], [0.0; 3]];
+    let mut minimum_length_squared = [f32::INFINITY; 2];
+
+    for sample in 0..512 {
+        let t = sample as f32 / 511.0;
+        let p_camera = [
+            (xmin + dx * (t * resolution[0] as f32)) * tan_half_fov,
+            (ymax - dy * (t * resolution[1] as f32)) * tan_half_fov,
+            1.0,
+        ];
+        let direction = normalize3(p_camera);
+        let (frame_x, frame_y) = coordinate_system3(direction);
+        let rx_direction = normalize3(add3(p_camera, delta_x));
+        let ry_direction = normalize3(add3(p_camera, delta_y));
+        let local_x = [
+            dot3(rx_direction, frame_x),
+            dot3(rx_direction, frame_y),
+            dot3(rx_direction, direction),
+        ];
+        let local_y = [
+            dot3(ry_direction, frame_x),
+            dot3(ry_direction, frame_y),
+            dot3(ry_direction, direction),
+        ];
+        let dx = sub3(local_x, [0.0, 0.0, 1.0]);
+        let dy = sub3(local_y, [0.0, 0.0, 1.0]);
+        for (axis, differential) in [dx, dy].into_iter().enumerate() {
+            let length_squared = dot3(differential, differential);
+            if length_squared < minimum_length_squared[axis] {
+                minimum_length_squared[axis] = length_squared;
+                minimum[axis] = differential;
+            }
+        }
+    }
+    minimum
+}
+
+fn normalize3(v: [f32; 3]) -> [f32; 3] {
+    let length = dot3(v, v).sqrt();
+    [v[0] / length, v[1] / length, v[2] / length]
+}
+
+fn coordinate_system3(z: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    let sign = if z[2].is_sign_negative() { -1.0 } else { 1.0 };
+    let a = -1.0 / (sign + z[2]);
+    let b = z[0] * z[1] * a;
+    (
+        [1.0 + sign * z[0] * z[0] * a, sign * b, -sign * z[0]],
+        [b, sign + z[1] * z[1] * a, -z[1]],
+    )
+}
+
+fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
 pub fn viewport_uniform(

@@ -38,6 +38,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let normal = normalize(surface.normal.xyz);
     var wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
     if (wo.z == 0.0) { return; }
+    let unflipped_wo = wo;
     var flip_wi = false;
     if (wo.z < 0.0) {
         wo = -wo;
@@ -56,6 +57,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var result_valid = bs.transmission == 0u;
     var result_specular = bs.specular;
     if (!result_valid) {
+        var specular_path = bs.specular != 0u;
         var w = bs.wi;
         var path_f = bs.f * abs(bs.wi.z);
         var path_pdf = bs.pdf;
@@ -91,6 +93,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     if (phase_p == 0.0 || phase_wi.z == 0.0) { break; }
                     path_f *= params.albedo * phase_p;
                     path_pdf *= phase_p;
+                    specular_path = false;
                     w = phase_wi;
                     z = zp;
                     continue;
@@ -117,6 +120,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     if (diffuse_pdf == 0.0) { break; }
                     path_f *= bottom.values[0] / PI;
                     path_pdf *= diffuse_pdf;
+                    specular_path = false;
                     w = wi;
                 } else {
                     let bottom_sample = sample_conductor_interface(bottom, -w, u);
@@ -124,6 +128,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         || bottom_sample.wi.z == 0.0) { break; }
                     path_f *= bottom_sample.f;
                     path_pdf *= bottom_sample.pdf;
+                    specular_path = specular_path && bottom_sample.specular != 0u;
                     w = bottom_sample.wi;
                 }
                 path_f *= abs(w.z);
@@ -142,13 +147,14 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 if (bs.valid == 0u || bs.pdf == 0.0 || bs.wi.z == 0.0) { break; }
                 path_f *= bs.f;
                 path_pdf *= bs.pdf;
+                specular_path = specular_path && bs.specular != 0u;
                 w = bs.wi;
                 if (bs.transmission != 0u) {
                     result_f = path_f;
                     result_pdf = path_pdf;
                     result_wi = w;
                     result_valid = true;
-                    result_specular = bs.specular;
+                    result_specular = select(0u, 1u, specular_path);
                     break;
                 }
                 path_f *= abs(w.z);
@@ -159,6 +165,12 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (flip_wi) { result_wi = -result_wi; }
     let direction = normalize(scattering_world_frame(result_wi, tangent, normal));
     var next_beta = ray.beta * result_f * abs(result_wi.z) / result_pdf;
+    // pbrt-v4 LayeredBxDF::Sample_f returns pdfIsProportional samples: the
+    // throughput uses the random-walk pdf, while MIS uses LayeredBxDF::PDF.
+    var mis_pdf = result_pdf;
+    if (result_specular == 0u) {
+        mis_pdf = evaluate_layered_pdf(root, kind, unflipped_wo, result_wi, pixel_index, ray.depth);
+    }
     if (ray.depth >= 1u) {
         let rr_beta = max_spectrum(next_beta * ray.eta_scale) / max(average_spectrum(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
@@ -168,7 +180,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz,
             surface.geometric_normal.xyz, direction), 1.0),
-        vec4<f32>(direction, 0.0), next_beta, ray.r_u, ray.r_u / max(result_pdf, 1e-7),
+        vec4<f32>(direction, 0.0), next_beta, ray.r_u, ray.r_u / max(mis_pdf, 1e-7),
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), ray.pixel_index, ray.depth + 1u,
         ray.eta_scale, result_pdf,

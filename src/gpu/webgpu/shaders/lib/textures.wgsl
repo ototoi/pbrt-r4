@@ -100,11 +100,11 @@ fn texture_marble(p: vec3<f32>, omega: f32, octaves: f32, scale: f32, variation:
     return 1.5 * mix(d, e, t);
 }
 
-fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
+fn mapped_texture_uv_at(node: TextureNodeRecord, uv: vec2<f32>, position: vec3<f32>) -> vec2<f32> {
     if (node.mapping_kind == 1u) {
-        return (node.mapping * vec4<f32>(material_texture_position, 1.0)).xy;
+        return (node.mapping * vec4<f32>(position, 1.0)).xy;
     }
-    let p = (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
+    let p = (node.mapping * vec4<f32>(position, 1.0)).xyz;
     if (node.mapping_kind == 2u) {
         let q = normalize(p);
         var phi = atan2(q.y, q.x) / (2.0 * 3.14159265359);
@@ -116,6 +116,10 @@ fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
         return vec2<f32>(s, p.z);
     }
     return (node.mapping * vec4<f32>(uv, 0.0, 1.0)).xy;
+}
+
+fn mapped_texture_uv(node: TextureNodeRecord, uv: vec2<f32>) -> vec2<f32> {
+    return mapped_texture_uv_at(node, uv, material_texture_position);
 }
 
 fn mapped_texture_position(node: TextureNodeRecord) -> vec3<f32> {
@@ -131,13 +135,41 @@ fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
         || (node.twrap_mode == 2u && (mapped_uv.y < 0.0 || mapped_uv.y > 1.0))) {
         return vec3<f32>(0.0);
     }
+    var mapped_dx = mapped_texture_uv_at(
+        node, uv + material_texture_uv_dx, material_texture_position + material_texture_dpdx,
+    ) - mapped_uv;
+    var mapped_dy = mapped_texture_uv_at(
+        node, uv + material_texture_uv_dy, material_texture_position + material_texture_dpdy,
+    ) - mapped_uv;
+    if (node.mapping_kind == 2u) {
+        mapped_dx.y = select(mapped_dx.y + 1.0, mapped_dx.y - 1.0, mapped_dx.y > 0.5);
+        mapped_dy.y = select(mapped_dy.y + 1.0, mapped_dy.y - 1.0, mapped_dy.y > 0.5);
+        mapped_dx.y = select(mapped_dx.y, mapped_dx.y + 1.0, mapped_dx.y < -0.5);
+        mapped_dy.y = select(mapped_dy.y, mapped_dy.y + 1.0, mapped_dy.y < -0.5);
+    } else if (node.mapping_kind == 3u) {
+        mapped_dx.x = select(mapped_dx.x + 1.0, mapped_dx.x - 1.0, mapped_dx.x > 0.5);
+        mapped_dy.x = select(mapped_dy.x + 1.0, mapped_dy.x - 1.0, mapped_dy.x > 0.5);
+        mapped_dx.x = select(mapped_dx.x, mapped_dx.x + 1.0, mapped_dx.x < -0.5);
+        mapped_dy.x = select(mapped_dy.x, mapped_dy.x + 1.0, mapped_dy.x < -0.5);
+    }
     // pbrt-v4 image textures use image-space origin at the upper left.
     let image_uv = vec2<f32>(mapped_uv.x, 1.0 - mapped_uv.y);
+    let image_dx = vec2<f32>(mapped_dx.x, -mapped_dx.y);
+    let image_dy = vec2<f32>(mapped_dy.x, -mapped_dy.y);
+    let image = texture_images[node.texture_index];
+    let max_level = f32(textureNumLevels(image) - 1u);
+    let footprint = 2.0 * max(
+        max(abs(mapped_dx.x), abs(mapped_dx.y)),
+        max(abs(mapped_dy.x), abs(mapped_dy.y)),
+    );
+    let level = max_level + log2(max(footprint, 1e-8));
+    var sample_level = floor(level);
+    if (node.image_filter_mode == 2u) {
+        sample_level = level;
+    }
+    sample_level = clamp(sample_level, 0.0, max_level);
     var value = textureSampleLevel(
-        texture_images[node.texture_index],
-        texture_samplers[node.sampler],
-        image_uv,
-        0.0,
+        image, texture_samplers[node.sampler], image_uv, sample_level,
     ).rgb * node.constant_value.x;
     if (node.constant_value.y > 0.5) {
         value = max(vec3<f32>(0.0), vec3<f32>(1.0) - value);
@@ -322,4 +354,8 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
 var<private> material_texture_uv: vec2<f32>;
 var<private> material_texture_normal: vec3<f32>;
 var<private> material_texture_position: vec3<f32>;
+var<private> material_texture_uv_dx: vec2<f32>;
+var<private> material_texture_uv_dy: vec2<f32>;
+var<private> material_texture_dpdx: vec3<f32>;
+var<private> material_texture_dpdy: vec3<f32>;
 var<private> material_texture_eval_base: u32;

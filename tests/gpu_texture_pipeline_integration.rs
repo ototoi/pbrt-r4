@@ -53,6 +53,203 @@ fn dynamic_and_constant_scale_shader_paths_match_the_cpu_reference() {
     );
 }
 
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn bump_mapping_changes_the_gpu_render() {
+    let directory = tempfile::tempdir().unwrap();
+    let scene = directory.path().join("bump.pbrt");
+    let baseline = directory.path().join("baseline.pbrt");
+    std::fs::write(&scene, bump_scene(true)).unwrap();
+    std::fs::write(&baseline, bump_scene(false)).unwrap();
+
+    let bumped = render(&scene, directory.path(), "bumped.exr", true);
+    let plain = render(&baseline, directory.path(), "plain.exr", true);
+
+    let difference: f32 = bumped
+        .iter()
+        .zip(&plain)
+        .map(|(bumped, plain)| {
+            bumped
+                .to_rgb()
+                .into_iter()
+                .zip(plain.to_rgb())
+                .map(|(bumped, plain)| (bumped - plain).abs())
+                .sum::<f32>()
+        })
+        .sum();
+    assert!(difference > 0.01, "bump map did not change the GPU render");
+
+    let constant_scene_path = directory.path().join("constant-bump.pbrt");
+    std::fs::write(&constant_scene_path, constant_bump_scene()).unwrap();
+    let constant = render(
+        &constant_scene_path,
+        directory.path(),
+        "constant-bump.exr",
+        true,
+    );
+    assert_same_image(
+        &constant,
+        &plain,
+        "constant displacement changed the render",
+    );
+
+    for (name, scene) in [
+        (
+            "reversed-uv",
+            bump_scene_with_options(true, true, false, false),
+        ),
+        (
+            "reversed-orientation",
+            bump_scene_with_options(true, false, true, false),
+        ),
+        (
+            "negative-determinant",
+            bump_scene_with_options(true, false, false, true),
+        ),
+    ] {
+        let scene_path = directory.path().join(format!("{name}.pbrt"));
+        std::fs::write(&scene_path, scene).unwrap();
+        let pixels = render(&scene_path, directory.path(), &format!("{name}.exr"), true);
+        assert!(pixels.iter().all(RGBSpectrum::is_valid));
+    }
+}
+
+fn bump_scene(with_bump: bool) -> String {
+    bump_scene_with_options(with_bump, false, false, false)
+}
+
+fn bump_scene_with_options(
+    with_bump: bool,
+    reverse_uv: bool,
+    reverse_orientation: bool,
+    negative_determinant: bool,
+) -> String {
+    let bump = if with_bump {
+        r#"
+Texture "height" "float" "bilerp"
+    "float v00" [ 0 ] "float v01" [ 0.5 ]
+    "float v10" [ 0.5 ] "float v11" [ 1 ]
+Material "diffuse" "rgb reflectance" [ 0.8 0.7 0.6 ]
+    "texture displacement" [ "height" ]
+"#
+    } else {
+        "Material \"diffuse\" \"rgb reflectance\" [ 0.8 0.7 0.6 ]\n"
+    };
+    let uv = if reverse_uv {
+        "    \"point2 uv\" [ 1 0  0 0  0 1  1 1 ]\n"
+    } else {
+        "    \"point2 uv\" [ 0 0  1 0  1 1  0 1 ]\n"
+    };
+    let orientation = if reverse_orientation {
+        "ReverseOrientation\n"
+    } else {
+        ""
+    };
+    let transform = if negative_determinant {
+        "Scale -1 1 1\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"Integrator "volpath" "integer maxdepth" [ 1 ]
+Sampler "independent" "integer pixelsamples" [ 1 ]
+Film "rgb" "integer xresolution" [ 8 ] "integer yresolution" [ 8 ]
+LookAt 0 0 4  0 0 0  0 1 0
+Camera "perspective" "float fov" [ 35 ]
+WorldBegin
+{bump}
+LightSource "point" "point3 from" [ 0 2 4 ] "rgb I" [ 40 40 40 ]
+{transform}{orientation}
+Shape "trianglemesh"
+    "point3 P" [ -2 -2 0  2 -2 0  2 2 0  -2 2 0 ]
+{uv}    "integer indices" [ 0 1 2  0 2 3 ]
+"#
+    )
+}
+
+fn constant_bump_scene() -> String {
+    bump_scene(false).replace(
+        "Material \"diffuse\" \"rgb reflectance\" [ 0.8 0.7 0.6 ]",
+        "Texture \"height\" \"float\" \"constant\" \"float value\" [ 0.4 ]\nMaterial \"diffuse\" \"rgb reflectance\" [ 0.8 0.7 0.6 ] \"texture displacement\" [ \"height\" ]",
+    )
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn mix_bump_mapping_uses_only_the_selected_child() {
+    let directory = tempfile::tempdir().unwrap();
+    let plain_scene = directory.path().join("plain.pbrt");
+    let bumped_scene = directory.path().join("bumped.pbrt");
+    let mix_plain_scene = directory.path().join("mix-plain.pbrt");
+    let mix_bumped_scene = directory.path().join("mix-bumped.pbrt");
+    std::fs::write(&plain_scene, bump_scene(false)).unwrap();
+    std::fs::write(&bumped_scene, bump_scene(true)).unwrap();
+    std::fs::write(&mix_plain_scene, mix_bump_scene(0.0)).unwrap();
+    std::fs::write(&mix_bumped_scene, mix_bump_scene(1.0)).unwrap();
+
+    let plain = render(&plain_scene, directory.path(), "plain.exr", true);
+    let bumped = render(&bumped_scene, directory.path(), "bumped.exr", true);
+    let mix_plain = render(&mix_plain_scene, directory.path(), "mix-plain.exr", true);
+    let mix_bumped = render(&mix_bumped_scene, directory.path(), "mix-bumped.exr", true);
+
+    assert_same_image(
+        &mix_plain,
+        &plain,
+        "Mix selected the bumped child at amount zero",
+    );
+    assert_same_image(
+        &mix_bumped,
+        &bumped,
+        "Mix did not apply the bumped child at amount one",
+    );
+}
+
+fn mix_bump_scene(amount: f32) -> String {
+    let material_definitions = format!(
+        r#"Texture "height" "float" "bilerp"
+    "float v00" [ 0 ] "float v01" [ 0.5 ]
+    "float v10" [ 0.5 ] "float v11" [ 1 ]
+MakeNamedMaterial "bumped" "string type" [ "diffuse" ]
+    "rgb reflectance" [ 0.8 0.7 0.6 ] "texture displacement" [ "height" ]
+MakeNamedMaterial "plain" "string type" [ "diffuse" ] "rgb reflectance" [ 0.8 0.7 0.6 ]
+MakeNamedMaterial "mixed" "string type" [ "mix" ] "float amount" [ {amount} ]
+    "string namedmaterial1" [ "bumped" ] "string namedmaterial2" [ "plain" ]
+NamedMaterial "mixed"
+"#
+    );
+    base_triangle_scene(&material_definitions)
+}
+
+fn base_triangle_scene(material: &str) -> String {
+    format!(
+        r#"Integrator "volpath" "integer maxdepth" [ 1 ]
+Sampler "independent" "integer pixelsamples" [ 1 ]
+Film "rgb" "integer xresolution" [ 8 ] "integer yresolution" [ 8 ]
+LookAt 0 0 4  0 0 0  0 1 0
+Camera "perspective" "float fov" [ 35 ]
+WorldBegin
+{material}
+LightSource "point" "point3 from" [ 0 2 4 ] "rgb I" [ 40 40 40 ]
+Shape "trianglemesh"
+    "point3 P" [ -2 -2 0  2 -2 0  2 2 0  -2 2 0 ]
+    "point2 uv" [ 0 0  1 0  1 1  0 1 ]
+    "integer indices" [ 0 1 2  0 2 3 ]
+"#
+    )
+}
+
+fn assert_same_image(actual: &[RGBSpectrum], expected: &[RGBSpectrum], message: &str) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        for (actual, expected) in actual.to_rgb().into_iter().zip(expected.to_rgb()) {
+            assert!(
+                (actual - expected).abs() <= 1e-6,
+                "{message}: {actual} != {expected}"
+            );
+        }
+    }
+}
+
 fn scale_scene(dynamic: bool) -> String {
     let factor = if dynamic {
         r#"

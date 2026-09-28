@@ -48,7 +48,8 @@ fn reconstruct_triangle_surface(
     let b1 = barycentrics.y;
     let b2 = barycentrics.z;
     let position = p0 * b0 + p1 * b1 + p2 * b2;
-    let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0);
+    let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0)
+        + hardware_intersection_error(p0, p1, p2);
     let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {

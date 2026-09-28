@@ -186,7 +186,7 @@ fn non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture() {
         operation: TEXTURE_OPERATION_IMAGE,
         mapping_kind: 0,
         sampler: 0,
-        _operation_padding: 0,
+        image_filter_mode: 0,
         constant_value: [1.0, 0.0, 0.0, 0.0],
         mapping: identity,
     });

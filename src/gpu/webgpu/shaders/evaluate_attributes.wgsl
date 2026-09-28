@@ -51,6 +51,93 @@ fn evaluate_coated_child(parent: u32, parent_kind: u32, slot: u32, input: Attrib
     return e;
 }
 
+fn resolved_bump_material_node(material_root: MaterialRoot, attributes_base: u32) -> u32 {
+    var node_index = material_root.node_offset;
+    for (var depth = 0u; depth < material_root.node_count; depth++) {
+        let kind = load_material_kind_raw(node_index);
+        if (kind == MATERIAL_KIND_MIX) {
+            let work_index = attributes_base + node_index - material_root.node_offset;
+            let evaluation = attributes_eval_work_items[work_index];
+            if (evaluation.selected_child_work_item == 0xffffffffu
+                || evaluation.selected_child_work_item < attributes_base) {
+                set_render_error();
+                return node_index;
+            }
+            let child_offset = evaluation.selected_child_work_item - attributes_base;
+            if (child_offset >= material_root.node_count) {
+                set_render_error();
+                return node_index;
+            }
+            node_index = material_root.node_offset + child_offset;
+        } else if (kind == MATERIAL_KIND_ALPHA_MASK) {
+            let child = material_nodes[node_index].child0;
+            if (child == 0xffffffffu) {
+                set_render_error();
+                return node_index;
+            }
+            node_index = child;
+        } else {
+            return node_index;
+        }
+    }
+    set_render_error();
+    return node_index;
+}
+
+fn apply_surface_bump(pixel: u32, surface: SurfaceWorkItem, material_root: MaterialRoot, attributes_base: u32) {
+    let material_node = resolved_bump_material_node(material_root, attributes_base);
+    if (material_node >= arrayLength(&material_nodes)) { set_render_error(); return; }
+    let texture_root = material_nodes[material_node].displacement_texture_root;
+    if (texture_root == 0xffffffffu) { return; }
+    if (texture_root >= arrayLength(&texture_roots)) { set_render_error(); return; }
+
+    let uv_differentials = surface.uv_differentials;
+    var du = 0.5 * (abs(uv_differentials.x) + abs(uv_differentials.z));
+    var dv = 0.5 * (abs(uv_differentials.y) + abs(uv_differentials.w));
+    if (du == 0.0) { du = 0.0005; }
+    if (dv == 0.0) { dv = 0.0005; }
+
+    material_texture_uv_dx = vec2<f32>(uv_differentials.x, uv_differentials.y);
+    material_texture_uv_dy = vec2<f32>(uv_differentials.z, uv_differentials.w);
+    material_texture_dpdx = surface.dpdx.xyz;
+    material_texture_dpdy = surface.dpdy.xyz;
+    material_texture_normal = surface.normal.xyz;
+
+    material_texture_position = surface.position.xyz + du * surface.dpdu.xyz;
+    material_texture_uv = surface.uv + vec2<f32>(du, 0.0);
+    let u_displacement = sample_texture_program(texture_roots[texture_root], material_texture_uv).x;
+
+    material_texture_position = surface.position.xyz + dv * surface.dpdv.xyz;
+    material_texture_uv = surface.uv + vec2<f32>(0.0, dv);
+    let v_displacement = sample_texture_program(texture_roots[texture_root], material_texture_uv).x;
+
+    material_texture_position = surface.position.xyz;
+    material_texture_uv = surface.uv;
+    let displacement = sample_texture_program(texture_roots[texture_root], surface.uv).x;
+
+    // Mesh dndu/dndv come from per-triangle vertex-normal differences and
+    // carry a component along the shading normal. With a nonzero constant
+    // displacement that tilts the bumped normal by a different amount on
+    // each triangle, leaving visible seams on tessellated shapes. Keep only
+    // the tangent-plane part; analytic shapes already have dndu/dndv there.
+    let shading_normal = surface.normal.xyz;
+    let dndu = surface.dndu.xyz - dot(surface.dndu.xyz, shading_normal) * shading_normal;
+    let dndv = surface.dndv.xyz - dot(surface.dndv.xyz, shading_normal) * shading_normal;
+    let bumped_dpdu = surface.dpdu.xyz
+        + ((u_displacement - displacement) / du) * shading_normal
+        + displacement * dndu;
+    let bumped_dpdv = surface.dpdv.xyz
+        + ((v_displacement - displacement) / dv) * shading_normal
+        + displacement * dndv;
+    var bumped_normal = normalize(cross(bumped_dpdu, bumped_dpdv));
+    if (dot(bumped_normal, surface.geometric_normal.xyz) < 0.0) {
+        bumped_normal = -bumped_normal;
+    }
+    let bumped_tangent = normalize(bumped_dpdu);
+    surfaces[pixel].normal = vec4<f32>(bumped_normal, 0.0);
+    surfaces[pixel].tangent = vec4<f32>(bumped_tangent, 0.0);
+}
+
 @compute @workgroup_size(64, 1, 1)
 fn evaluate_attributes(@builtin(global_invocation_id) id: vec3<u32>) {
     let queue_index = id.y * INDIRECT_ROW_ITEMS + id.x; if (queue_index >= material_eval_count()) { return; }
@@ -67,5 +154,8 @@ fn evaluate_attributes(@builtin(global_invocation_id) id: vec3<u32>) {
         if (node.child1 != 0xffffffffu) { e.child_work_item1 = base + node.child1 - material_root.node_offset; }
         if (e.bxdf_kind == MATERIAL_KIND_MIX) { if (node.child0 == 0xffffffffu || node.child1 == 0xffffffffu) { set_render_error(); return; } let amount = clamp(e.values[0].x, 0.0, 1.0); e.selected_child_work_item = select(e.child_work_item1, e.child_work_item0, samples.indirect.x < amount); }
         attributes_eval_work_items[base + node_index - material_root.node_offset] = e; node_index = next_material_node(material_root, node_index);
+    }
+    if (surface.flags == 0u) {
+        apply_surface_bump(pixel, surface, material_root, base);
     }
 }
