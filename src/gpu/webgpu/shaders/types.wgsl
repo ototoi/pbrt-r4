@@ -75,7 +75,7 @@ struct MaterialNode {
     parent_slot: u32,
     child0: u32,
     child1: u32,
-    _padding: u32,
+    displacement_texture_root: u32,
 };
 
 struct MeasuredBsdfRecord {
@@ -172,10 +172,13 @@ const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;
 struct CameraUniform {
     camera_to_world: mat4x4<f32>,
     raster_to_camera: mat4x4<f32>,
+    world_to_camera: mat4x4<f32>,
+    min_dir_differential_x: vec4<f32>,
+    min_dir_differential_y: vec4<f32>,
     medium_id: u32,
-    _padding0: u32,
-    _padding1: u32,
-    _padding2: u32,
+    disable_texture_filtering: u32,
+    disable_pixel_jitter: u32,
+    _padding: u32,
 };
 
 struct ViewportUniform {
@@ -292,7 +295,7 @@ struct TextureNodeRecord {
     operation: u32,
     mapping_kind: u32,
     sampler: u32,
-    operation_pad: u32,
+    image_filter_mode: u32,
     constant_value: vec4<f32>,
     mapping: mat4x4<f32>,
 };
@@ -347,12 +350,20 @@ struct SurfaceWorkItem {
     normal: vec4<f32>,
     geometric_normal: vec4<f32>,
     tangent: vec4<f32>,
+    dpdu: vec4<f32>,
+    dpdv: vec4<f32>,
+    dndu: vec4<f32>,
+    dndv: vec4<f32>,
+    dpdx: vec4<f32>,
+    dpdy: vec4<f32>,
+    uv_differentials: vec4<f32>,
     uv: vec2<f32>,
-    _uv_padding: vec2<f32>,
     material_root: u32,
     flags: u32,
     attributes_eval_work_item: u32,
     _padding: u32,
+    _tail_padding0: u32,
+    _tail_padding1: u32,
 };
 
 struct LightRecord {

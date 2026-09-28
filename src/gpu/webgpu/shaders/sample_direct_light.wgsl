@@ -128,7 +128,8 @@ fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
         light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)
-            + abs(triangle.p2.xyz * b.z)) * gamma(6.0);
+            + abs(triangle.p2.xyz * b.z)) * gamma(6.0)
+            + hardware_intersection_error(triangle.p0.xyz, triangle.p1.xyz, triangle.p2.xyz);
         let area_wi = normalize(light_position - light_sample_origin);
         let cosine_light = dot(light_normal, -area_wi);
         if (area_light_is_two_sided(light_payload)) {

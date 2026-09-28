@@ -846,6 +846,7 @@ mod tests {
                 name: "alpha".to_string(),
             }],
             children: vec![],
+            displacement_texture_root: super::INVALID_INDEX,
         });
 
         assert!(!area_light_has_constant_zero_alpha(0, &builder).unwrap());

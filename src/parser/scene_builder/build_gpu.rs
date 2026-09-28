@@ -262,6 +262,7 @@ impl SceneBuilder {
         node.transform = node_transform(&camera_to_world);
         node.add_component(Component::Camera(CameraComponent {
             camera: Camera {
+                kind: self.camera_name.clone(),
                 params: self.camera_params.clone(),
                 medium: self.camera_medium.clone(),
             },

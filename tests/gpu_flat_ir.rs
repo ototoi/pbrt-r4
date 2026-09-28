@@ -82,6 +82,7 @@ fn add_camera_and_named_film(root: &mut Node, camera_params: ParameterDictionary
     let mut camera = Node::new("camera");
     camera.add_component(Component::Camera(CameraComponent {
         camera: Camera {
+            kind: "perspective".to_string(),
             params: camera_params,
             medium: String::new(),
         },
@@ -550,6 +551,7 @@ fn flatten_node_preserves_explicit_camera_screen_window() {
     camera_params.add_float("float[] screenwindow", 2.0);
     camera.add_component(Component::Camera(CameraComponent {
         camera: Camera {
+            kind: "perspective".to_string(),
             params: camera_params,
             medium: String::new(),
         },
@@ -1435,6 +1437,31 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
             .iter()
             .all(|v| v.is_finite())
     );
+}
+
+#[test]
+fn flatten_node_names_unsupported_gpu_material() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("triangle", "subsurface", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material).unwrap().name = "unsupported-substrate".to_string();
+    }
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("unsupported-substrate"), "{message}");
+    assert!(message.contains("subsurface"), "{message}");
 }
 
 #[test]

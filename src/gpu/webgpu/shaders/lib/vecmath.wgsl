@@ -25,3 +25,10 @@ fn coordinate_system_x(z: vec3<f32>) -> vec3<f32> {
     let b = z.x * z.y * a;
     return vec3<f32>(1.0 + sign * z.x * z.x * a, sign * b, -sign * z.x);
 }
+
+fn coordinate_system_y(z: vec3<f32>) -> vec3<f32> {
+    let sign = select(1.0, -1.0, (bitcast<u32>(z.z) & 0x80000000u) != 0u);
+    let a = -1.0 / (sign + z.z);
+    let b = z.x * z.y * a;
+    return vec3<f32>(b, sign + z.y * z.y * a, -z.y);
+}
