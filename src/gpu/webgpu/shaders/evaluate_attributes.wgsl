@@ -115,12 +115,20 @@ fn apply_surface_bump(pixel: u32, surface: SurfaceWorkItem, material_root: Mater
     material_texture_uv = surface.uv;
     let displacement = sample_texture_program(texture_roots[texture_root], surface.uv).x;
 
+    // Mesh dndu/dndv come from per-triangle vertex-normal differences and
+    // carry a component along the shading normal. With a nonzero constant
+    // displacement that tilts the bumped normal by a different amount on
+    // each triangle, leaving visible seams on tessellated shapes. Keep only
+    // the tangent-plane part; analytic shapes already have dndu/dndv there.
+    let shading_normal = surface.normal.xyz;
+    let dndu = surface.dndu.xyz - dot(surface.dndu.xyz, shading_normal) * shading_normal;
+    let dndv = surface.dndv.xyz - dot(surface.dndv.xyz, shading_normal) * shading_normal;
     let bumped_dpdu = surface.dpdu.xyz
-        + ((u_displacement - displacement) / du) * surface.normal.xyz
-        + displacement * surface.dndu.xyz;
+        + ((u_displacement - displacement) / du) * shading_normal
+        + displacement * dndu;
     let bumped_dpdv = surface.dpdv.xyz
-        + ((v_displacement - displacement) / dv) * surface.normal.xyz
-        + displacement * surface.dndv.xyz;
+        + ((v_displacement - displacement) / dv) * shading_normal
+        + displacement * dndv;
     var bumped_normal = normalize(cross(bumped_dpdu, bumped_dpdv));
     if (dot(bumped_normal, surface.geometric_normal.xyz) < 0.0) {
         bumped_normal = -bumped_normal;
