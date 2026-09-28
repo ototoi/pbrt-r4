@@ -189,18 +189,10 @@ pub fn register_material_source(
             vec![push_spectrum_attribute(builder, "reflectance", &magenta)?],
         )
     } else if !supported {
-        log::warn!(
-            concat!(
-                "GPU material \"{}\" of kind \"{}\" is unsupported; ",
-                "using diffuse reflectance (1, 1, 0)."
-            ),
-            source_material.name,
-            requested_kind,
-        );
-        ("diffuse", {
-            let yellow = Spectrum::from_rgb(&[1.0, 1.0, 0.0], SpectrumType::Albedo);
-            vec![push_spectrum_attribute(builder, "reflectance", &yellow)?]
-        })
+        return Err(PbrtError::error(&format!(
+            "GPU material \"{}\" of kind \"{}\" is unsupported.",
+            source_material.name, requested_kind
+        )));
     } else {
         if requested_kind == "alphamask" {
             if source_material.material_attributes.len() != 1 {
