@@ -179,6 +179,9 @@ struct CameraUniform {
     disable_texture_filtering: u32,
     disable_pixel_jitter: u32,
     _padding: u32,
+    lens_radius: f32,
+    focal_distance: f32,
+    _lens_padding: vec2<f32>,
 };
 
 struct ViewportUniform {
