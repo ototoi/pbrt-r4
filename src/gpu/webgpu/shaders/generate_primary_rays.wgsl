@@ -40,21 +40,22 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1.0,
     );
     let camera_point = camera.raster_to_camera * pixel;
-    var camera_origin = vec3<f32>(0.0);
-    var camera_direction = normalize(camera_point.xyz);
+    var origin = (camera.camera_to_world * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
+    var direction = normalize((camera.camera_to_world * vec4<f32>(camera_point.xyz, 0.0)).xyz);
     if (camera.lens_radius > 0.0) {
         var lens_sample = vec2<f32>(0.5);
         if (camera.disable_pixel_jitter == 0u) {
             lens_sample = sampler_get_2d(pixel_index, 4u);
         }
         let lens_point = concentric_sample_disk(lens_sample) * camera.lens_radius;
+        let camera_direction = normalize(camera_point.xyz);
         let focal_t = camera.focal_distance / camera_direction.z;
-        let focus_point = camera_origin + focal_t * camera_direction;
-        camera_origin = vec3<f32>(lens_point, 0.0);
-        camera_direction = normalize(focus_point - camera_origin);
+        let focus_point = focal_t * camera_direction;
+        let camera_origin = vec3<f32>(lens_point, 0.0);
+        let lens_direction = normalize(focus_point - camera_origin);
+        origin = (camera.camera_to_world * vec4<f32>(camera_origin, 1.0)).xyz;
+        direction = normalize((camera.camera_to_world * vec4<f32>(lens_direction, 0.0)).xyz);
     }
-    let origin = (camera.camera_to_world * vec4<f32>(camera_origin, 1.0)).xyz;
-    let direction = normalize((camera.camera_to_world * vec4<f32>(camera_direction, 0.0)).xyz);
     let ray = RayWorkItem(
         vec4<f32>(origin, 1.0),
         vec4<f32>(direction, 0.0),
