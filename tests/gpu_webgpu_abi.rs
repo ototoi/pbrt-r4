@@ -20,7 +20,7 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
 
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
-    assert_eq!(std::mem::size_of::<CameraUniform>(), 240);
+    assert_eq!(std::mem::size_of::<CameraUniform>(), 256);
     assert_eq!(std::mem::size_of::<ViewportUniform>(), 56);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
@@ -129,6 +129,8 @@ fn perspective_camera_upload_includes_finite_minimum_ray_differentials() {
         ],
         kind: "perspective".to_string(),
         fov: 45.0,
+        lens_radius: 0.0,
+        focal_distance: 1.0e6,
         disable_texture_filtering: false,
         disable_pixel_jitter: false,
         screen_window: [-1.0, 1.0, -1.0, 1.0],

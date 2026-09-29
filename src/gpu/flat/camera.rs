@@ -5,6 +5,8 @@ pub struct Camera {
     pub camera_to_world: Transform,
     pub kind: String,
     pub fov: f32,
+    pub lens_radius: f32,
+    pub focal_distance: f32,
     pub disable_texture_filtering: bool,
     pub disable_pixel_jitter: bool,
     /// The pbrt screen window in the order [xmin, xmax, ymin, ymax].
