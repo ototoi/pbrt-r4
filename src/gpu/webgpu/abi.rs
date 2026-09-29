@@ -910,9 +910,18 @@ pub fn validate_affine(matrix: [f32; 16], label: &str) -> Result<(), PbrtError> 
             "{label} transform contains a non-finite value."
         )));
     }
-    if matrix[12..16] != [0.0, 0.0, 0.0, 1.0] {
+    // Camera transforms are inverted and composed in Float before being
+    // narrowed to f32 for the GPU. Keep the affine check strict enough to
+    // reject projective transforms while accepting roundoff in the final row.
+    let affine_tolerance = 16.0 * f32::EPSILON;
+    if matrix[12..15]
+        .iter()
+        .any(|value| value.abs() > affine_tolerance)
+        || (matrix[15] - 1.0).abs() > affine_tolerance
+    {
         return Err(PbrtError::error(&format!(
-            "{label} transform must be affine."
+            "{label} transform must be affine; bottom row is {:?}.",
+            &matrix[12..16]
         )));
     }
     let determinant = matrix[0] * (matrix[5] * matrix[10] - matrix[6] * matrix[9])

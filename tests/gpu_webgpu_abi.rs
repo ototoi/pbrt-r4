@@ -1,11 +1,11 @@
 use pbrt_r4::gpu::flat;
 use pbrt_r4::gpu::webgpu::abi::{
-    camera_uniform, inverse_transpose_linear, row_major_to_columns, AttributeRef, CameraUniform,
-    DenseSpectrum, DispatchIndirectArgs, FilmUniform, Geometry, Instance, LightRecord,
-    LightTableUniform, MaterialNode, MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord,
-    MediumRecord, PixelSampleState, QueueCounters, QueueState, RayWorkItem, RenderError,
-    ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry, Vertex,
-    ViewportUniform, QUEUE_DISPATCH_SLOT_COUNT,
+    camera_uniform, inverse_transpose_linear, row_major_to_columns, validate_affine, AttributeRef,
+    CameraUniform, DenseSpectrum, DispatchIndirectArgs, FilmUniform, Geometry, Instance,
+    LightRecord, LightTableUniform, MaterialNode, MaterialTableUniform, MeasuredBsdfRecord,
+    MeasuredTableRecord, MediumRecord, PixelSampleState, QueueCounters, QueueState, RayWorkItem,
+    RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry,
+    Vertex, ViewportUniform, QUEUE_DISPATCH_SLOT_COUNT,
 };
 use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
 
@@ -16,6 +16,18 @@ fn webgpu_matrices_are_uploaded_as_column_major() {
     ]);
     assert_eq!(matrix[0], [0.0, 4.0, 8.0, 12.0]);
     assert_eq!(matrix[3], [3.0, 7.0, 11.0, 15.0]);
+}
+
+#[test]
+fn webgpu_affine_validation_accepts_f32_roundoff_but_rejects_projective_rows() {
+    let mut matrix = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -8.0e-11, 2.2e-10, -2.3e-10,
+        1.0,
+    ];
+    validate_affine(matrix, "test").unwrap();
+
+    matrix[12] = 1.0e-3;
+    assert!(validate_affine(matrix, "test").is_err());
 }
 
 #[test]
