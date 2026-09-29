@@ -58,6 +58,9 @@ pub struct CameraUniform {
     pub disable_texture_filtering: u32,
     pub disable_pixel_jitter: u32,
     pub padding: u32,
+    pub lens_radius: f32,
+    pub focal_distance: f32,
+    pub lens_padding: [f32; 2],
 }
 
 #[repr(C)]
@@ -593,6 +596,8 @@ pub fn camera_uniform(
             camera.screen_window,
             [width, height],
             tan_half_fov,
+            camera.lens_radius,
+            camera.focal_distance,
         );
     Ok(CameraUniform {
         camera_to_world,
@@ -614,6 +619,9 @@ pub fn camera_uniform(
         disable_texture_filtering: u32::from(camera.disable_texture_filtering),
         disable_pixel_jitter: u32::from(camera.disable_pixel_jitter),
         padding: 0,
+        lens_radius: camera.lens_radius,
+        focal_distance: camera.focal_distance,
+        lens_padding: [0.0; 2],
     })
 }
 
@@ -666,6 +674,8 @@ fn minimum_perspective_camera_direction_differentials(
     screen_window: [f32; 4],
     resolution: [u32; 2],
     tan_half_fov: f32,
+    lens_radius: f32,
+    focal_distance: f32,
 ) -> [[f32; 3]; 2] {
     let [xmin, xmax, ymin, ymax] = screen_window;
     let dx = (xmax - xmin) / resolution[0] as f32;
@@ -684,8 +694,26 @@ fn minimum_perspective_camera_direction_differentials(
         ];
         let direction = normalize3(p_camera);
         let (frame_x, frame_y) = coordinate_system3(direction);
-        let rx_direction = normalize3(add3(p_camera, delta_x));
-        let ry_direction = normalize3(add3(p_camera, delta_y));
+        let (rx_direction, ry_direction) = if lens_radius > 0.0 {
+            let rx_p_camera = add3(p_camera, delta_x);
+            let ry_p_camera = add3(p_camera, delta_y);
+            let rx_focus = [
+                focal_distance * rx_p_camera[0] / rx_p_camera[2],
+                focal_distance * rx_p_camera[1] / rx_p_camera[2],
+                focal_distance,
+            ];
+            let ry_focus = [
+                focal_distance * ry_p_camera[0] / ry_p_camera[2],
+                focal_distance * ry_p_camera[1] / ry_p_camera[2],
+                focal_distance,
+            ];
+            (normalize3(rx_focus), normalize3(ry_focus))
+        } else {
+            (
+                normalize3(add3(p_camera, delta_x)),
+                normalize3(add3(p_camera, delta_y)),
+            )
+        };
         let local_x = [
             dot3(rx_direction, frame_x),
             dot3(rx_direction, frame_y),

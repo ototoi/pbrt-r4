@@ -1,3 +1,18 @@
+fn concentric_sample_disk(u: vec2<f32>) -> vec2<f32> {
+    let u_offset = 2.0 * u - vec2<f32>(1.0);
+    if (u_offset.x == 0.0 && u_offset.y == 0.0) {
+        return vec2<f32>(0.0);
+    }
+    if (abs(u_offset.x) > abs(u_offset.y)) {
+        let radius = u_offset.x;
+        let theta = 0.7853981633974483 * (u_offset.y / u_offset.x);
+        return radius * vec2<f32>(cos(theta), sin(theta));
+    }
+    let radius = u_offset.y;
+    let theta = 1.5707963267948966 - 0.7853981633974483 * (u_offset.x / u_offset.y);
+    return radius * vec2<f32>(cos(theta), sin(theta));
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.tile_width || global_id.y >= viewport.tile_height) {
@@ -25,8 +40,18 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1.0,
     );
     let camera_point = camera.raster_to_camera * pixel;
-    let origin = (camera.camera_to_world * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
-    let direction = normalize((camera.camera_to_world * vec4<f32>(camera_point.xyz, 0.0)).xyz);
+    var camera_origin = vec3<f32>(0.0);
+    var camera_direction = normalize(camera_point.xyz);
+    if (camera.lens_radius > 0.0) {
+        let lens_sample = sampler_get_2d(pixel_index, 4u);
+        let lens_point = concentric_sample_disk(lens_sample) * camera.lens_radius;
+        let focal_t = camera.focal_distance / camera_direction.z;
+        let focus_point = camera_origin + focal_t * camera_direction;
+        camera_origin = vec3<f32>(lens_point, 0.0);
+        camera_direction = normalize(focus_point - camera_origin);
+    }
+    let origin = (camera.camera_to_world * vec4<f32>(camera_origin, 1.0)).xyz;
+    let direction = normalize((camera.camera_to_world * vec4<f32>(camera_direction, 0.0)).xyz);
     let ray = RayWorkItem(
         vec4<f32>(origin, 1.0),
         vec4<f32>(direction, 0.0),

@@ -277,17 +277,7 @@ pub fn flatten_node_ref(
             )));
         }
         let lens_radius = camera.params.get_one_float("lensradius", 0.0);
-        if lens_radius != 0.0 {
-            // generate_primary_rays.wgsl always emits a pinhole ray from the
-            // camera-space origin; it has no lens-sample or focal-distance
-            // defocus like pbrt-v4's PerspectiveCamera::GenerateRay. Warn and
-            // render without depth of field rather than reject the scene,
-            // until thin-lens sampling is implemented on the GPU path.
-            log::warn!(
-                "WebGPU perspective camera does not support nonzero lensradius; \
-                 rendering without depth of field."
-            );
-        }
+        let focal_distance = camera.params.get_one_float("focaldistance", 1.0e6);
         let fov = camera.params.get_one_float("fov", 90.0) as f32;
         if builder.camera.is_some() {
             return Err(PbrtError::error(
@@ -302,6 +292,8 @@ pub fn flatten_node_ref(
             camera_to_world: world_transform,
             kind: camera.kind.clone(),
             fov,
+            lens_radius,
+            focal_distance,
             disable_texture_filtering: crate::options::PbrtOptions::get().disable_texture_filtering,
             disable_pixel_jitter: crate::options::PbrtOptions::get().disable_pixel_jitter,
             screen_window: screen_window(&camera.params, viewport.resolution)?,
