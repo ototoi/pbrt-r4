@@ -43,7 +43,10 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var camera_origin = vec3<f32>(0.0);
     var camera_direction = normalize(camera_point.xyz);
     if (camera.lens_radius > 0.0) {
-        let lens_sample = sampler_get_2d(pixel_index, 4u);
+        var lens_sample = vec2<f32>(0.5);
+        if (camera.disable_pixel_jitter == 0u) {
+            lens_sample = sampler_get_2d(pixel_index, 4u);
+        }
         let lens_point = concentric_sample_disk(lens_sample) * camera.lens_radius;
         let focal_t = camera.focal_distance / camera_direction.z;
         let focus_point = camera_origin + focal_t * camera_direction;
