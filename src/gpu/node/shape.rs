@@ -1,11 +1,9 @@
 use super::types::Vec2f;
 use super::types::Vec3f;
-use crate::base::shape::Shape as CpuShape;
 use crate::paramdict::ParameterDictionary;
 use crate::shapes::LoopSubdiv;
 use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
-use crate::util::transform::Transform as CpuTransform;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
@@ -128,22 +126,18 @@ pub fn triangle_mesh_from_params(
 pub fn loop_subdiv_mesh_from_params(
     params: &ParameterDictionary,
 ) -> Result<Option<TriangleMeshShape>, PbrtError> {
-    let identity = CpuTransform::identity();
-    // The GPU instance carries reverse_orientation separately. Keep the mesh
-    // vertex normals in their unflipped form so shade_surface applies it once.
-    let triangles = LoopSubdiv::create(&identity, &identity, false, params)?;
-    let Some(CpuShape::Triangle(first_triangle)) = triangles.first() else {
+    let mesh = LoopSubdiv::create_mesh_data(params)?;
+    if mesh.vertex_indices.is_empty() {
         return Ok(None);
-    };
-    let mesh = &first_triangle.mesh;
+    }
     let positions = mesh
-        .p
+        .positions
         .iter()
         .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
         .collect();
-    let normals = if mesh.n.len() == mesh.p.len() {
+    let normals = if mesh.normals.len() == mesh.positions.len() {
         Some(
-            mesh.n
+            mesh.normals
                 .iter()
                 .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
                 .collect(),
@@ -151,32 +145,12 @@ pub fn loop_subdiv_mesh_from_params(
     } else {
         None
     };
-    let tangents = if mesh.s.len() == mesh.p.len() {
-        Some(
-            mesh.s
-                .iter()
-                .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
-                .collect(),
-        )
-    } else {
-        None
-    };
-    let uvs = if mesh.uv.len() == mesh.p.len() {
-        Some(
-            mesh.uv
-                .iter()
-                .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
-                .collect(),
-        )
-    } else {
-        None
-    };
     Ok(Some(TriangleMeshShape {
         positions,
-        indices: mesh.vertex_indices.clone(),
+        indices: mesh.vertex_indices,
         normals,
-        tangents,
-        uvs,
+        tangents: None,
+        uvs: None,
     }))
 }
 
