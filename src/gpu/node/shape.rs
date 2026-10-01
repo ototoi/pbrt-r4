@@ -1,12 +1,18 @@
 use super::types::Vec2f;
 use super::types::Vec3f;
+use crate::base::shape::Shape as CpuShape;
 use crate::paramdict::ParameterDictionary;
-use crate::shapes::LoopSubdiv;
+use crate::shapes::{LoopSubdiv, TriangleMesh};
+use crate::util::base::Normal3f;
 use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
+use crate::util::transform::Transform as CpuTransform;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
+    /// As in CPU TriangleMesh, supplied normals include this orientation;
+    /// index winding is unchanged.
+    pub reverse_orientation: bool,
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
     pub normals: Option<Vec<Vec3f>>,
@@ -110,6 +116,7 @@ pub fn triangle_mesh_from_params(
     };
 
     Ok(Some(TriangleMeshShape {
+        reverse_orientation: false,
         positions,
         indices,
         normals: node_vec3_attribute(params, "N", vertex_count)?,
@@ -125,19 +132,27 @@ pub fn triangle_mesh_from_params(
 /// shared mesh once instead of creating one Node IR shape per face.
 pub fn loop_subdiv_mesh_from_params(
     params: &ParameterDictionary,
+    reverse_orientation: bool,
 ) -> Result<Option<TriangleMeshShape>, PbrtError> {
-    let mesh = LoopSubdiv::create_mesh_data(params)?;
-    if mesh.vertex_indices.is_empty() {
+    let identity = CpuTransform::identity();
+    let triangles = LoopSubdiv::create(&identity, &identity, reverse_orientation, params)?;
+    let Some(CpuShape::Triangle(triangle)) = triangles.first() else {
         return Ok(None);
-    }
+    };
+    Ok(Some(triangle_mesh_from_cpu_mesh(&triangle.mesh)))
+}
+
+/// Copies stored CPU mesh coordinates and its normal orientation without
+/// applying another transform or orientation change.
+pub fn triangle_mesh_from_cpu_mesh(mesh: &TriangleMesh) -> TriangleMeshShape {
     let positions = mesh
-        .positions
+        .p
         .iter()
         .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
         .collect();
-    let normals = if mesh.normals.len() == mesh.positions.len() {
+    let normals = if mesh.n.len() == mesh.p.len() {
         Some(
-            mesh.normals
+            mesh.n
                 .iter()
                 .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
                 .collect(),
@@ -145,13 +160,26 @@ pub fn loop_subdiv_mesh_from_params(
     } else {
         None
     };
-    Ok(Some(TriangleMeshShape {
+    let tangents = (mesh.s.len() == mesh.p.len()).then(|| {
+        mesh.s
+            .iter()
+            .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
+            .collect()
+    });
+    let uvs = (mesh.uv.len() == mesh.p.len()).then(|| {
+        mesh.uv
+            .iter()
+            .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+            .collect()
+    });
+    TriangleMeshShape {
+        reverse_orientation: mesh.reverse_orientation,
         positions,
-        indices: mesh.vertex_indices,
+        indices: mesh.vertex_indices.clone(),
         normals,
-        tangents: None,
-        uvs: None,
-    }))
+        tangents,
+        uvs,
+    }
 }
 
 /// Completes the attributes required by the renderable GPU Node IR mesh
@@ -234,7 +262,12 @@ pub fn complete_triangle_attributes(
                 node_name
             )));
         }
-        repair_zero_normals(&shape.positions, &shape.indices, &mut normals);
+        repair_zero_normals(
+            &shape.positions,
+            &shape.indices,
+            &mut normals,
+            shape.reverse_orientation,
+        );
         if normals.iter().any(|normal| length_squared(normal.0) == 0.0) {
             shape.indices = shape
                 .indices
@@ -267,6 +300,7 @@ pub fn complete_triangle_attributes(
             .all(|tangent| length_squared(tangent.0) > 0.0)
     });
     Ok(TriangleMeshShape {
+        reverse_orientation: shape.reverse_orientation,
         positions: shape.positions,
         indices: shape.indices,
         normals: shape.normals,
@@ -291,7 +325,12 @@ pub fn prepare_triangle_mesh(
 ///
 /// This follows pbrt-v4's `TriQuadMesh::ComputeNormals()` weighting while
 /// preserving every nonzero authored normal.
-fn repair_zero_normals(positions: &[Vec3f], indices: &[u32], normals: &mut [Vec3f]) {
+fn repair_zero_normals(
+    positions: &[Vec3f],
+    indices: &[u32],
+    normals: &mut [Vec3f],
+    reverse_orientation: bool,
+) {
     if normals.iter().all(|normal| length_squared(normal.0) > 0.0) {
         return;
     }
@@ -313,7 +352,17 @@ fn repair_zero_normals(positions: &[Vec3f], indices: &[u32], normals: &mut [Vec3
     }
     for (normal, reconstructed) in normals.iter_mut().zip(reconstructed) {
         if length_squared(normal.0) == 0.0 && length_squared(reconstructed) > 0.0 {
-            normal.0 = normalize(reconstructed);
+            let reconstructed = normalize(reconstructed);
+            let oriented = TriangleMesh::transform_normal(
+                &CpuTransform::identity(),
+                reverse_orientation,
+                Normal3f::new(
+                    reconstructed[0] as _,
+                    reconstructed[1] as _,
+                    reconstructed[2] as _,
+                ),
+            );
+            normal.0 = [oriented.x as f32, oriented.y as f32, oriented.z as f32];
         }
     }
 }
@@ -528,6 +577,7 @@ fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
         None
     };
     Some(TriangleMeshShape {
+        reverse_orientation: false,
         positions,
         indices: mesh.tri_indices.clone(),
         normals,
