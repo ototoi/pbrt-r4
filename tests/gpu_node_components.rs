@@ -12,6 +12,8 @@ use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
     FileLoc, RenderFromObject, SceneBuilder, SceneEntity, ShapeSceneEntity,
 };
+use pbrt_r4::shapes::LoopSubdiv;
+use pbrt_r4::util::transform::Transform as CpuTransform;
 use tempfile::tempdir;
 
 #[test]
@@ -1145,6 +1147,47 @@ fn loop_subdiv_gpu_mesh_keeps_reverse_orientation_on_the_instance() {
     assert!(!forward_orientation);
     assert!(reversed_orientation);
     assert_eq!(normal_forward, normal_reversed);
+}
+
+#[test]
+fn loop_subdiv_cpu_shapes_use_the_shared_unoriented_mesh_data() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_ints("indices", &[0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3]);
+    params.add_point(
+        "P",
+        &[
+            1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0,
+        ],
+    );
+    params.add_int("levels", 1);
+
+    let mesh_data = LoopSubdiv::create_mesh_data(&params).expect("shared LoopSubdiv output");
+    let identity = CpuTransform::identity();
+    let shapes =
+        LoopSubdiv::create(&identity, &identity, false, &params).expect("CPU LoopSubdiv shapes");
+    let Some(pbrt_r4::base::shape::Shape::Triangle(triangle)) = shapes.first() else {
+        panic!("CPU LoopSubdiv should produce triangles");
+    };
+
+    assert_eq!(triangle.mesh.vertex_indices, mesh_data.vertex_indices);
+    assert_eq!(triangle.mesh.p, mesh_data.positions);
+    assert_eq!(triangle.mesh.n, mesh_data.normals);
+
+    let reversed_shapes = LoopSubdiv::create(&identity, &identity, true, &params)
+        .expect("CPU LoopSubdiv with reverse orientation");
+    let Some(pbrt_r4::base::shape::Shape::Triangle(reversed_triangle)) = reversed_shapes.first()
+    else {
+        panic!("reversed CPU LoopSubdiv should produce triangles");
+    };
+    assert!(reversed_triangle.mesh.reverse_orientation);
+    assert_eq!(
+        reversed_triangle.mesh.n,
+        mesh_data
+            .normals
+            .iter()
+            .map(|normal| -*normal)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
