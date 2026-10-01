@@ -954,6 +954,29 @@ fn missing_tangents_are_left_for_shade_surface_even_with_smooth_normals() {
 }
 
 #[test]
+fn complete_triangle_attributes_preserves_shading_normal_orientation() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2],
+        normals: Some(vec![Vec3f([0.0, 0.0, -1.0]); 3]),
+        tangents: None,
+        uvs: Some(vec![
+            Vec2f([0.0, 0.0]),
+            Vec2f([1.0, 0.0]),
+            Vec2f([0.0, 1.0]),
+        ]),
+    };
+
+    let completed = complete_triangle_attributes(shape, "opposed-shading-normal").unwrap();
+
+    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, -1.0]); 3]);
+}
+
+#[test]
 fn triangles_with_irreparable_zero_normals_are_removed() {
     let mesh = TriangleMeshShape {
         positions: vec![
@@ -1071,6 +1094,57 @@ end_header
             })
     });
     assert_eq!(shape_node, Some((3, 3, true, true)));
+}
+
+#[test]
+fn loop_subdiv_gpu_mesh_keeps_reverse_orientation_on_the_instance() {
+    fn build_mesh(reverse_orientation: bool) -> (Vec<Vec3f>, bool) {
+        let reverse = if reverse_orientation {
+            "ReverseOrientation\n"
+        } else {
+            ""
+        };
+        let input = format!(
+            r#"WorldBegin
+{reverse}Shape "loopsubdiv" "integer levels" 1
+    "integer indices" [ 0 2 1 0 1 3 1 2 3 2 0 3 ]
+    "point3 P" [ 1 1 1 -1 -1 1 -1 1 -1 1 -1 -1 ]
+"#
+        );
+        let mut builder = SceneBuilder::new();
+        parse_string(&input, &mut builder).expect("loopsubdiv scene should parse");
+        let root = builder
+            .build_gpu_ir_node()
+            .expect("loopsubdiv Node IR should build");
+        let root = root.read().unwrap();
+        root.children
+            .iter()
+            .find_map(|child| {
+                let child = child.read().unwrap();
+                child
+                    .components
+                    .iter()
+                    .find_map(|component| match component {
+                        Component::Shape(ShapeComponent {
+                            shape: Shape::TriangleMesh(mesh),
+                            reverse_orientation,
+                            ..
+                        }) => Some((
+                            mesh.normals.clone().expect("LoopSubdiv normals"),
+                            *reverse_orientation,
+                        )),
+                        _ => None,
+                    })
+            })
+            .expect("LoopSubdiv mesh component")
+    }
+
+    let (normal_forward, forward_orientation) = build_mesh(false);
+    let (normal_reversed, reversed_orientation) = build_mesh(true);
+
+    assert!(!forward_orientation);
+    assert!(reversed_orientation);
+    assert_eq!(normal_forward, normal_reversed);
 }
 
 #[test]
