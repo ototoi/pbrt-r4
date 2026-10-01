@@ -64,6 +64,9 @@ pub fn geometry_index(
     let first_index = u32::try_from(builder.indices.len()).map_err(|_| {
         PbrtError::error("The flattened GPU index buffer exceeds the u32 index range.")
     })?;
+    // Node IR normals are uniformly un-oriented for every source Shape.
+    // Apply the actual shape flag here through CPU TriangleMesh's shared
+    // processing. Final GPU normals are oriented; the shader must not flip again.
     let identity = Transform::identity();
     for (index, position) in shape.positions.iter().enumerate() {
         builder.vertices.push(Vertex {
@@ -73,12 +76,9 @@ pub fn geometry_index(
                 .as_ref()
                 .map(|normals| {
                     let normal = normals[index].0;
-                    if shape.reverse_orientation == reverse_orientation {
-                        return normal;
-                    }
                     let normal = TriangleMesh::transform_normal(
                         &identity,
-                        true,
+                        reverse_orientation,
                         Normal3f::new(normal[0] as _, normal[1] as _, normal[2] as _),
                     );
                     [normal.x as f32, normal.y as f32, normal.z as f32]

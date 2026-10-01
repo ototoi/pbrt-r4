@@ -134,7 +134,6 @@ fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, Pbrt
         }
     }
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: Some(normals),
@@ -177,7 +176,6 @@ fn heightfield_to_mesh(shape: &HeightFieldShape) -> Result<TriangleMeshShape, Pb
         }
     }
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: None,
@@ -278,7 +276,6 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
         }
     }
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions: tessellated_positions,
         indices,
         normals: Some(tessellated_normals),
@@ -334,7 +331,6 @@ fn hyperboloid_to_mesh(shape: &HyperboloidShape) -> Result<TriangleMeshShape, Pb
         }
     }
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: None,
@@ -375,7 +371,6 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
             .collect(),
     );
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals,
@@ -424,7 +419,6 @@ fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtE
         indices.extend_from_slice(&[i, i + 3, i + 1, i, i + 2, i + 3]);
     }
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: Some(normals),
@@ -473,7 +467,6 @@ fn cone_to_mesh(cone: &ConeShape) -> Result<TriangleMeshShape, PbrtError> {
         indices.extend_from_slice(&[i, i + 3, i + 1, i, i + 2, i + 3]);
     }
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: Some(normals),
@@ -590,7 +583,6 @@ fn disk_to_mesh(disk: &DiskShape) -> Result<TriangleMeshShape, PbrtError> {
     }
 
     Ok(TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: Some(normals),
@@ -679,7 +671,6 @@ fn sphere_to_mesh(sphere: &SphereShape) -> TriangleMeshShape {
         }
     }
     TriangleMeshShape {
-        reverse_orientation: false,
         positions,
         indices,
         normals: Some(normals),

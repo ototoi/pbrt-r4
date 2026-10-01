@@ -43,7 +43,6 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
     node.transform.matrix[11] = offset[2];
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            reverse_orientation: false,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -242,7 +241,6 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
     let mut shape_node = Node::new("gem");
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            reverse_orientation: false,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -333,7 +331,6 @@ fn flatten_node_allows_a_medium_interface_shape_with_no_material() {
     let mut shape_node = Node::new("boundary");
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            reverse_orientation: false,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -373,7 +370,6 @@ fn flatten_node_rejects_an_area_light_on_a_shape_with_no_material() {
     let mut shape_node = Node::new("boundary");
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            reverse_orientation: false,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -636,72 +632,68 @@ fn flattened_normals_match_cpu_mesh_under_transforms_and_orientation() {
         CpuTransform::scale(-2.0, 3.0, 4.0),
     ] {
         for reverse_orientation in [false, true] {
-            for stored_reverse_orientation in [false, true] {
-                // Deliberately oppose the winding, as LTE Orb's limit normals do.
-                let source_normal = Normal3f::new(0.0, 0.0, -1.0);
-                let cpu = TriangleMesh::new(
-                    &transform,
-                    reverse_orientation,
-                    false,
-                    vec![0, 1, 2],
-                    vec![
-                        Point3f::new(0.0, 0.0, 0.0),
-                        Point3f::new(1.0, 0.0, 0.0),
-                        Point3f::new(0.0, 1.0, 0.0),
-                    ],
-                    Vec::new(),
-                    vec![source_normal; 3],
-                    Vec::new(),
+            // Deliberately oppose the winding, as LTE Orb's limit normals do.
+            let source_normal = Normal3f::new(0.0, 0.0, -1.0);
+            let cpu = TriangleMesh::new(
+                &transform,
+                reverse_orientation,
+                false,
+                vec![0, 1, 2],
+                vec![
+                    Point3f::new(0.0, 0.0, 0.0),
+                    Point3f::new(1.0, 0.0, 0.0),
+                    Point3f::new(0.0, 1.0, 0.0),
+                ],
+                Vec::new(),
+                vec![source_normal; 3],
+                Vec::new(),
+            );
+            let target = triangle_node("oriented", "diffuse", [0.0; 3]);
+            {
+                let mut node = target.write().unwrap();
+                node.transform.matrix = transform.m.m.map(|v| v as f32);
+                let Component::Shape(component) = &mut node.components[0] else {
+                    unreachable!()
+                };
+                component.reverse_orientation = reverse_orientation;
+                let Shape::TriangleMesh(mesh) = &mut component.shape else {
+                    unreachable!()
+                };
+                mesh.normals = Some(vec![Vec3f([0.0, 0.0, -1.0]); 3]);
+            }
+            let mut root = Node::new("root");
+            add_camera_and_film(&mut root, Default::default());
+            root.add_child(instance_node("first", &target, [0.0; 3]));
+            root.add_child(instance_node("second", &target, [1.0, 2.0, 3.0]));
+            let root = Arc::new(RwLock::new(root));
+            // Repeated preparation/flattening must not mutate shared mesh normals.
+            for _ in 0..2 {
+                prepare_triangle_meshes(&mut root.write().unwrap()).unwrap();
+                let flat = flatten_node(Arc::clone(&root)).unwrap();
+                assert_eq!(flat.geometries.len(), 1);
+                assert_eq!(flat.instances.len(), 2);
+                assert_eq!(flat.indices, vec![0, 1, 2]);
+                for vertex in &flat.vertices {
+                    let n = vertex.normal;
+                    let world =
+                        transform.transform_normal(&Normal3f::new(n[0] as _, n[1] as _, n[2] as _));
+                    assert!((world - cpu.n[0]).length() < 1e-6);
+                }
+                assert!(flat
+                    .instances
+                    .iter()
+                    .all(|instance| instance.reverse_orientation == reverse_orientation));
+                let target = target.read().unwrap();
+                let Component::Shape(component) = &target.components[0] else {
+                    unreachable!()
+                };
+                let Shape::TriangleMesh(mesh) = &component.shape else {
+                    unreachable!()
+                };
+                assert_eq!(
+                    mesh.normals.as_ref().unwrap(),
+                    &vec![Vec3f([0.0, 0.0, -1.0]); 3]
                 );
-                let target = triangle_node("oriented", "diffuse", [0.0; 3]);
-                {
-                    let mut node = target.write().unwrap();
-                    node.transform.matrix = transform.m.m.map(|v| v as f32);
-                    let Component::Shape(component) = &mut node.components[0] else {
-                        unreachable!()
-                    };
-                    component.reverse_orientation = reverse_orientation;
-                    let Shape::TriangleMesh(mesh) = &mut component.shape else {
-                        unreachable!()
-                    };
-                    mesh.reverse_orientation = stored_reverse_orientation;
-                    mesh.normals = Some(vec![
-                        Vec3f([
-                            0.0,
-                            0.0,
-                            if stored_reverse_orientation {
-                                1.0
-                            } else {
-                                -1.0
-                            }
-                        ]);
-                        3
-                    ]);
-                }
-                let mut root = Node::new("root");
-                add_camera_and_film(&mut root, Default::default());
-                root.add_child(instance_node("first", &target, [0.0; 3]));
-                root.add_child(instance_node("second", &target, [1.0, 2.0, 3.0]));
-                let root = Arc::new(RwLock::new(root));
-                // Repeated preparation/flattening must not mutate shared mesh normals.
-                for _ in 0..2 {
-                    prepare_triangle_meshes(&mut root.write().unwrap()).unwrap();
-                    let flat = flatten_node(Arc::clone(&root)).unwrap();
-                    assert_eq!(flat.geometries.len(), 1);
-                    assert_eq!(flat.instances.len(), 2);
-                    assert_eq!(flat.indices, vec![0, 1, 2]);
-                    for vertex in &flat.vertices {
-                        let n = vertex.normal;
-                        let world = transform
-                            .transform_normal(&Normal3f::new(n[0] as _, n[1] as _, n[2] as _));
-                        let expected = cpu.n[0];
-                        assert!((world - expected).length() < 1e-6);
-                    }
-                    assert!(flat
-                        .instances
-                        .iter()
-                        .all(|instance| instance.reverse_orientation == reverse_orientation));
-                }
             }
         }
     }
@@ -1865,7 +1857,6 @@ fn node_ir_preparation_completes_missing_mesh_uvs_before_flattening() {
 #[test]
 fn missing_normals_are_left_for_shade_surface_to_recompute() {
     let mesh = TriangleMeshShape {
-        reverse_orientation: false,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
