@@ -41,8 +41,6 @@ const GAMMA7: Float = (7.0 * MACHINE_EPSILON) / (1.0 - (7.0 * MACHINE_EPSILON));
 const TRI: [usize; 4] = [0, 1, 2, 0];
 
 impl TriangleMesh {
-    /// pbrt-v4 TriangleMesh constructor: transform supplied normals, then
-    /// apply reverse orientation. Handedness belongs to geometric normals.
     pub fn transform_normal(
         object_to_world: &Transform,
         reverse_orientation: bool,

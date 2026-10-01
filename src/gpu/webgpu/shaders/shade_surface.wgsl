@@ -107,8 +107,6 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
     }
-    // Vertex normals already include ReverseOrientation, as in CPU TriangleMesh.
-    // Only the geometric normal above needs the instance orientation flags.
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;

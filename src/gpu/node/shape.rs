@@ -11,8 +11,7 @@ use crate::util::transform::Transform as CpuTransform;
 pub struct TriangleMeshShape {
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
-    /// All Node IR meshes keep object-space normals before ReverseOrientation.
-    /// Flattening applies it through the shared CPU TriangleMesh normal processing.
+    /// Object-space normals before ReverseOrientation.
     pub normals: Option<Vec<Vec3f>>,
     pub tangents: Option<Vec<Vec3f>>,
     pub uvs: Option<Vec<Vec2f>>,
@@ -131,10 +130,8 @@ pub fn loop_subdiv_mesh_from_params(
     params: &ParameterDictionary,
 ) -> Result<Option<TriangleMeshShape>, PbrtError> {
     let identity = CpuTransform::identity();
-    // Every Node IR mesh stores normals before ReverseOrientation, including
-    // LoopSubdiv. Pass false to satisfy that uniform IR contract; the actual
-    // shape flag is applied once during flattening using CPU TriangleMesh's
-    // shared normal processing. The shader reads those oriented vertex normals.
+    // Node IR keeps normals before ReverseOrientation; flattening applies
+    // the actual shape flag through the shared CPU normal processing.
     let triangles = LoopSubdiv::create(&identity, &identity, false, params)?;
     let Some(CpuShape::Triangle(triangle)) = triangles.first() else {
         return Ok(None);
