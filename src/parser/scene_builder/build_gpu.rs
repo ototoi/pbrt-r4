@@ -424,10 +424,12 @@ impl SceneBuilder {
                     None => return Ok(None),
                 }
             }
-            "loopsubdiv" => match loop_subdiv_mesh_from_params(params)? {
-                Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
-                None => return Ok(None),
-            },
+            "loopsubdiv" => {
+                match loop_subdiv_mesh_from_params(params, shape.reverse_orientation)? {
+                    Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
+                    None => return Ok(None),
+                }
+            }
             _ => return Ok(None),
         };
         let mut node = Node::new(&shape.base.name);

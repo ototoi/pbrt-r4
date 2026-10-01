@@ -16,16 +16,6 @@ use super::create_triangle_mesh;
 
 pub struct LoopSubdiv;
 
-/// Object-space subdivision output shared by CPU and GPU shape builders.
-/// Vertex normals are un-oriented; consumers apply reverse orientation once
-/// when constructing their render representation.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LoopSubdivMeshData {
-    pub vertex_indices: Vec<u32>,
-    pub positions: Vec<Point3f>,
-    pub normals: Vec<Normal3f>,
-}
-
 impl LoopSubdiv {
     pub fn create(
         o2w: &Transform,
@@ -34,10 +24,6 @@ impl LoopSubdiv {
         params: &ParameterDictionary,
     ) -> Result<Vec<Shape>, PbrtError> {
         create_loop_subdiv(o2w, w2o, reverse_orientation, params)
-    }
-
-    pub fn create_mesh_data(params: &ParameterDictionary) -> Result<LoopSubdivMeshData, PbrtError> {
-        create_loop_subdiv_mesh_data(params)
     }
 }
 
@@ -426,10 +412,14 @@ fn loop_gamma(valence: u32) -> Float {
 }
 
 fn loop_subdiv(
+    o2w: &Transform,
+    w2o: &Transform,
+    reverse_orientation: bool,
     n_levels: i32,
     vertex_indices: Vec<u32>,
     p: Vec<Point3f>,
-) -> Result<LoopSubdivMeshData, PbrtError> {
+    params: &ParameterDictionary,
+) -> Result<Vec<Shape>, PbrtError> {
     let mut vertices = Vec::new();
     let mut faces = Vec::new();
 
@@ -802,16 +792,29 @@ fn loop_subdiv(
         }
     }
     remove_degenerate_output_triangles(&mut verts, &p_limit, &mut ns);
-    Ok(LoopSubdivMeshData {
-        vertex_indices: verts,
-        positions: p_limit,
-        normals: ns,
-    })
+    let _uv = Vec::new();
+    let _s = Vec::new();
+    let mesh = create_triangle_mesh(
+        o2w,
+        w2o,
+        reverse_orientation,
+        verts,
+        p_limit,
+        _s,
+        ns,
+        _uv,
+        params,
+    )?;
+    let mesh: Vec<Shape> = mesh.into_iter().map(Shape::Triangle).collect();
+    return Ok(mesh);
 }
 
-fn create_loop_subdiv_mesh_data(
+pub fn create_loop_subdiv(
+    o2w: &Transform,
+    w2o: &Transform,
+    reverse_orientation: bool,
     params: &ParameterDictionary,
-) -> Result<LoopSubdivMeshData, PbrtError> {
+) -> Result<Vec<Shape>, PbrtError> {
     let n_levels = params.get_one_int("levels", params.get_one_int("nlevels", 3));
 
     let mut vertex_indices = Vec::new();
@@ -841,26 +844,13 @@ fn create_loop_subdiv_mesh_data(
     }
 
     let _scheme = params.get_one_string("scheme", "loop");
-    loop_subdiv(n_levels, vertex_indices, p)
-}
-
-pub fn create_loop_subdiv(
-    o2w: &Transform,
-    w2o: &Transform,
-    reverse_orientation: bool,
-    params: &ParameterDictionary,
-) -> Result<Vec<Shape>, PbrtError> {
-    let mesh_data = create_loop_subdiv_mesh_data(params)?;
-    let triangles = create_triangle_mesh(
+    return loop_subdiv(
         o2w,
         w2o,
         reverse_orientation,
-        mesh_data.vertex_indices,
-        mesh_data.positions,
-        Vec::new(),
-        mesh_data.normals,
-        Vec::new(),
+        n_levels,
+        vertex_indices,
+        p,
         params,
-    )?;
-    Ok(triangles.into_iter().map(Shape::Triangle).collect())
+    );
 }

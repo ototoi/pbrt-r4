@@ -41,6 +41,21 @@ const GAMMA7: Float = (7.0 * MACHINE_EPSILON) / (1.0 - (7.0 * MACHINE_EPSILON));
 const TRI: [usize; 4] = [0, 1, 2, 0];
 
 impl TriangleMesh {
+    /// pbrt-v4 TriangleMesh constructor: transform supplied normals, then
+    /// apply reverse orientation. Handedness belongs to geometric normals.
+    pub fn transform_normal(
+        object_to_world: &Transform,
+        reverse_orientation: bool,
+        normal: Normal3f,
+    ) -> Normal3f {
+        let normal = object_to_world.transform_normal(&normal);
+        if reverse_orientation {
+            -normal
+        } else {
+            normal
+        }
+    }
+
     pub fn new(
         object_to_world: &Transform,
         reverse_orientation: bool,
@@ -63,23 +78,9 @@ impl TriangleMesh {
                 return object_to_world.transform_vector(s);
             })
             .collect();
-        // pbrt-v4 `TriangleMesh` ctor (util/mesh.cpp:49-55) flips per-vertex
-        // normals when `reverseOrientation` is set. Without this flip the
-        // shading normal disagrees with the geometric normal that
-        // `Triangle::Intersect` produced (which IS flipped by RO via the
-        // `cross(dp02, dp12)` sign), so `SetShadingGeometry(..., auth=true)`
-        // pulls the surface normal back to the un-flipped direction and the
-        // `MediumInterface` inside/outside lookup ends up inverted (dambreak1
-        // bias).
         let n: Vec<Normal3f> = n
             .iter()
-            .map(|n| -> Normal3f {
-                let mut nn = object_to_world.transform_normal(n);
-                if reverse_orientation {
-                    nn = -nn;
-                }
-                nn
-            })
+            .map(|n| Self::transform_normal(object_to_world, reverse_orientation, *n))
             .collect();
         let swaps_handedness = object_to_world.swaps_handedness();
         TriangleMesh {

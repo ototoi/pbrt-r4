@@ -104,6 +104,11 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let uv = uv0 * b0 + uv1 * b1 + uv2 * b2;
     surfaces[pixel_index].position_error = vec4<f32>(position_error, 0.0);
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
+    if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
+        geometric_normal = -geometric_normal;
+    }
+    // Vertex normals already include ReverseOrientation, as in CPU TriangleMesh.
+    // Only the geometric normal above needs the instance orientation flags.
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;
@@ -111,16 +116,6 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var normal = geometric_normal;
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);
-    }
-    if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
-        geometric_normal = -geometric_normal;
-    }
-    if (instance_orientation_is_reversed(instance.orientation_flags)) {
-        normal = -normal;
-    }
-    if (instance_orientation_swaps_handedness(instance.orientation_flags)
-        && dot(object_normal, object_normal) > 0.0) {
-        normal = -normal;
     }
     let duv02 = uv0 - uv2;
     let duv12 = uv1 - uv2;
@@ -160,17 +155,8 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var dpdu = (instance.world_from_object * vec4<f32>(object_dpdu, 0.0)).xyz;
     var dpdv = (instance.world_from_object * vec4<f32>(object_dpdv, 0.0)).xyz;
-    var dndu = (instance.normal_from_object * vec4<f32>(object_dndu, 0.0)).xyz;
-    var dndv = (instance.normal_from_object * vec4<f32>(object_dndv, 0.0)).xyz;
-    if (instance_orientation_is_reversed(instance.orientation_flags)) {
-        dndu = -dndu;
-        dndv = -dndv;
-    }
-    if (instance_orientation_swaps_handedness(instance.orientation_flags)
-        && dot(object_normal, object_normal) > 0.0) {
-        dndu = -dndu;
-        dndv = -dndv;
-    }
+    let dndu = (instance.normal_from_object * vec4<f32>(object_dndu, 0.0)).xyz;
+    let dndv = (instance.normal_from_object * vec4<f32>(object_dndv, 0.0)).xyz;
     let dp_dxy = approximate_position_differentials(position, geometric_normal);
     let uv_differentials = surface_uv_differentials(dpdu, dpdv, dp_dxy[0], dp_dxy[1]);
     let object_tangent = vertices[i0].tangent.xyz * b0
