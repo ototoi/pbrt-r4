@@ -10,11 +10,12 @@ use crate::gpu::node::{
     AreaLight as NodeAreaLight, Light as NodeLight, TextureComponent, TextureKind,
     TriangleMeshShape,
 };
-use crate::util::base::Point2f;
+use crate::util::base::{Point2f, Vector3f};
 use crate::util::error::PbrtError;
 use crate::util::geometry::equal_area_square_to_sphere;
 use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, ACES2065_1, DCI_P3, REC2020, SRGB};
 use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use crate::util::vecmath::Frame;
 
 use super::super::portal::{prepare_portal_image, PortalImageInfiniteLight};
 use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, Mipmap, MipmapLevelData};
@@ -159,12 +160,40 @@ pub fn spot_light(
             node_name
         )));
     };
-    let world_to_light = inverse_linear_transform(&transform).map_err(|message| {
+    let base_world_to_light = inverse_linear_transform(&transform).map_err(|message| {
         PbrtError::error(&format!(
             "Spot light on node \"{}\" has an invalid transform: {}.",
             node_name, message
         ))
     })?;
+    // SpotLight::Create uses worldToLight = Frame::FromZ(to - from)
+    // * inverse(base renderFromLight) for direction conversion.
+    let direction_frame = Frame::from_z(Vector3f::new(direction[0], direction[1], direction[2]));
+    let frame_rows = [
+        [
+            direction_frame.x.x,
+            direction_frame.x.y,
+            direction_frame.x.z,
+        ],
+        [
+            direction_frame.y.x,
+            direction_frame.y.y,
+            direction_frame.y.z,
+        ],
+        [
+            direction_frame.z.x,
+            direction_frame.z.y,
+            direction_frame.z.z,
+        ],
+    ];
+    let mut world_to_light = [[0.0; 4]; 3];
+    for row in 0..3 {
+        for column in 0..3 {
+            world_to_light[row][column] = (0..3)
+                .map(|axis| frame_rows[row][axis] * base_world_to_light[axis][column])
+                .sum();
+        }
+    }
     let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let intensity = light
         .params
