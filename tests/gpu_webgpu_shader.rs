@@ -511,7 +511,14 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
 #[test]
 fn thin_dielectric_shader_uses_thin_interface_transport() {
     assert!(common_shader().contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
-    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("direction = select(-wo"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("scattering_local_frame("));
+    let grazing_guard = SCATTER_THIN_DIELECTRIC_SHADER.find("if (wo.z == 0.0) { return; }");
+    let fresnel = SCATTER_THIN_DIELECTRIC_SHADER.find("let r0 =").unwrap();
+    assert!(grazing_guard.is_some_and(|guard| guard < fresnel));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("direction_local = select(-wo"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("scattering_world_frame(direction_local"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("t / abs(direction_local.z)"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("f * abs(direction_local.z) / probability"));
     assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("r0 + (1.0 - r0)"));
 }
 
