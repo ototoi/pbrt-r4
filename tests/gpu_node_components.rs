@@ -1,3 +1,4 @@
+use pbrt_r4::gpu::shape::SourceShape;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -666,7 +667,7 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     let Shape::TriangleMesh(mesh) = &shape.shape else {
         panic!("expected tessellated disk mesh");
     };
-    assert_eq!(mesh.source_shape, pbrt_r4::gpu::node::SourceShape::Disk);
+    assert_eq!(mesh.source_shape, SourceShape::Disk);
     assert_eq!(mesh.indices.len(), 4 * 3);
     assert_eq!(mesh.positions.len(), 5 + 1);
     assert!(mesh
@@ -759,7 +760,7 @@ fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
     else {
         panic!("sphere was not tessellated to a triangle mesh");
     };
-    assert_eq!(mesh.source_shape, pbrt_r4::gpu::node::SourceShape::Sphere);
+    assert_eq!(mesh.source_shape, SourceShape::Sphere);
     let tangents = mesh.tangents.as_ref().expect("sphere tangents");
     assert_eq!(tangents.len(), mesh.positions.len());
     assert!(tangents.iter().all(|tangent| {
@@ -811,7 +812,7 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
 #[test]
 fn node_ir_preparation_removes_invalid_triangles_before_attribute_completion() {
     let mesh = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -843,7 +844,7 @@ fn node_ir_preparation_removes_invalid_triangles_before_attribute_completion() {
 #[test]
 fn vertices_only_used_by_invalid_triangles_are_removed_with_their_attributes() {
     let shape = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -872,7 +873,7 @@ fn vertices_only_used_by_invalid_triangles_are_removed_with_their_attributes() {
 #[test]
 fn zero_normals_are_repaired_and_a_partially_invalid_tangent_is_dropped() {
     let shape = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -907,7 +908,7 @@ fn zero_normals_are_repaired_and_a_partially_invalid_tangent_is_dropped() {
 #[test]
 fn a_partially_invalid_tangent_is_dropped_when_normals_are_also_missing() {
     let shape = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -936,7 +937,7 @@ fn a_partially_invalid_tangent_is_dropped_when_normals_are_also_missing() {
 #[test]
 fn missing_tangents_are_left_for_shade_surface_even_with_smooth_normals() {
     let shape = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -965,7 +966,7 @@ fn missing_tangents_are_left_for_shade_surface_even_with_smooth_normals() {
 #[test]
 fn complete_triangle_attributes_preserves_shading_normal_orientation() {
     let shape = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -989,7 +990,7 @@ fn complete_triangle_attributes_preserves_shading_normal_orientation() {
 #[test]
 fn triangles_with_irreparable_zero_normals_are_removed() {
     let mesh = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -1028,7 +1029,7 @@ fn triangles_with_irreparable_zero_normals_are_removed() {
 #[test]
 fn an_entirely_invalid_triangle_mesh_is_removed() {
     let shape = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![Vec3f([0.0, 0.0, 0.0]), Vec3f([1.0, 0.0, 0.0])],
         indices: vec![0, 1, 1],
         normals: None,

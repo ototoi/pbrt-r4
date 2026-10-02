@@ -1,5 +1,5 @@
 use super::Transform;
-use crate::gpu::node::SourceShape;
+use crate::gpu::shape::SourceShape;
 use crate::util::error::PbrtError;
 
 #[derive(Clone, Debug, Default, PartialEq)]

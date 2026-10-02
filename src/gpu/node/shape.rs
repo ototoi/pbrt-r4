@@ -1,28 +1,12 @@
 use super::types::Vec2f;
 use super::types::Vec3f;
 use crate::base::shape::Shape as CpuShape;
+use crate::gpu::shape::SourceShape;
 use crate::paramdict::ParameterDictionary;
 use crate::shapes::LoopSubdiv;
 use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
 use crate::util::transform::Transform as CpuTransform;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SourceShape {
-    #[default]
-    TriangleMesh,
-    PlyMesh,
-    LoopSubdiv,
-    Disk,
-    Sphere,
-    Cylinder,
-    Cone,
-    Paraboloid,
-    HeightField,
-    BilinearMesh,
-    Hyperboloid,
-    Nurbs,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
