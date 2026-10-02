@@ -5,8 +5,8 @@ use pbrt_r4::gpu::node::{
     complete_triangle_attributes, node_ref_to_json, prepare_triangle_meshes,
     remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params, Camera,
     CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
-    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
-    TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
+    ShapeComponent, SourceShape, SphereShape, Texture, TextureComponent, TextureKind,
+    TextureMapping, TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
 };
 use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{

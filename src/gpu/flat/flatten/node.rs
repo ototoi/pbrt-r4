@@ -1,8 +1,9 @@
 use super::{
-    append_area_light, flatten_light, geometry_index, multiply_transform, region_bounds,
-    register_material_source, register_medium, register_root_component, resolve_medium_name,
-    screen_window, viewport_resolution, Camera, Component, Film, FlatBuilder, Instance, NodeRef,
-    Output, Shape, Transform, Viewport, INVALID_INDEX,
+    append_area_light, flatten_light, geometry_index, identity_transform, multiply_transform,
+    region_bounds, register_material_source, register_medium, register_root_component,
+    resolve_medium_name, screen_window, transform_swaps_handedness, viewport_resolution, Camera,
+    Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport,
+    INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::util::error::PbrtError;
@@ -11,6 +12,7 @@ use std::sync::Arc;
 pub fn flatten_node_ref(
     node_ref: &NodeRef,
     parent_transform: &Transform,
+    shape_parent_transform: &Transform,
     builder: &mut FlatBuilder,
     stack: &mut Vec<usize>,
     material_kind: Option<&str>,
@@ -195,6 +197,7 @@ pub fn flatten_node_ref(
     };
 
     let world_transform = multiply_transform(parent_transform, &local_transform);
+    let shape_transform = multiply_transform(shape_parent_transform, &local_transform);
     for medium in &media {
         register_medium(medium, &world_transform, builder)?;
     }
@@ -348,16 +351,33 @@ pub fn flatten_node_ref(
             material_root,
             area_light: area_light_handle,
             reverse_orientation,
+            shape_transform_swaps_handedness: transform_swaps_handedness(shape_transform),
             inside_medium,
             outside_medium,
         });
     }
     for (target, instance_transform) in instances {
         let target_parent = multiply_transform(&world_transform, &instance_transform.matrix);
-        flatten_node_ref(&target, &target_parent, builder, stack, material_kind)?;
+        // v4 TransformedPrimitive transforms the interaction without applying
+        // the shape's orientation rule again.
+        flatten_node_ref(
+            &target,
+            &target_parent,
+            &identity_transform(),
+            builder,
+            stack,
+            material_kind,
+        )?;
     }
     for child in children {
-        flatten_node_ref(&child, &world_transform, builder, stack, material_kind)?;
+        flatten_node_ref(
+            &child,
+            &world_transform,
+            &shape_transform,
+            builder,
+            stack,
+            material_kind,
+        )?;
     }
 
     stack.pop();

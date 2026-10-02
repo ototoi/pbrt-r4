@@ -63,6 +63,7 @@ pub fn flatten_node_with_material_override(
     flatten_node_ref(
         &root,
         &identity_transform(),
+        &identity_transform(),
         &mut builder,
         &mut stack,
         material_kind,
