@@ -306,7 +306,14 @@ pub fn flatten_node_ref(
     for (component_index, shape, material, area_light, reverse_orientation, medium_interface) in
         shapes
     {
-        let geometry = geometry_index(node_key, component_index, &name, &shape, builder)?;
+        let geometry = geometry_index(
+            node_key,
+            component_index,
+            &name,
+            &shape,
+            reverse_orientation,
+            builder,
+        )?;
         let material_root = match &material {
             Some(material) => register_material_source(material, builder, material_kind)?,
             None => INVALID_INDEX,

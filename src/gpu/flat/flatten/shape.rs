@@ -1,6 +1,9 @@
 use super::{FlatBuilder, Geometry, Vertex};
 use crate::gpu::node::{TriangleMeshShape, Vec3f};
+use crate::shapes::TriangleMesh;
+use crate::util::base::Normal3f;
 use crate::util::error::PbrtError;
+use crate::util::transform::Transform;
 
 const MAX_TANGENT_NORMAL_COS: f32 = 0.8;
 
@@ -9,6 +12,7 @@ pub fn geometry_index(
     component_index: usize,
     node_name: &str,
     shape: &TriangleMeshShape,
+    reverse_orientation: bool,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
     let key = (node_key, component_index);
@@ -60,13 +64,22 @@ pub fn geometry_index(
     let first_index = u32::try_from(builder.indices.len()).map_err(|_| {
         PbrtError::error("The flattened GPU index buffer exceeds the u32 index range.")
     })?;
+    let identity = Transform::identity();
     for (index, position) in shape.positions.iter().enumerate() {
         builder.vertices.push(Vertex {
             position: position.0,
             normal: shape
                 .normals
                 .as_ref()
-                .map(|normals| normals[index].0)
+                .map(|normals| {
+                    let normal = normals[index].0;
+                    let normal = TriangleMesh::transform_normal(
+                        &identity,
+                        reverse_orientation,
+                        Normal3f::new(normal[0] as _, normal[1] as _, normal[2] as _),
+                    );
+                    [normal.x as f32, normal.y as f32, normal.z as f32]
+                })
                 .unwrap_or([0.0; 3]),
             tangent: shape
                 .tangents

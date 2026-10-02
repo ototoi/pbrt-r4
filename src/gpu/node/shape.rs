@@ -11,6 +11,7 @@ use crate::util::transform::Transform as CpuTransform;
 pub struct TriangleMeshShape {
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
+    /// Object-space normals before ReverseOrientation.
     pub normals: Option<Vec<Vec3f>>,
     pub tangents: Option<Vec<Vec3f>>,
     pub uvs: Option<Vec<Vec2f>>,
@@ -127,14 +128,15 @@ pub fn triangle_mesh_from_params(
 /// shared mesh once instead of creating one Node IR shape per face.
 pub fn loop_subdiv_mesh_from_params(
     params: &ParameterDictionary,
-    reverse_orientation: bool,
 ) -> Result<Option<TriangleMeshShape>, PbrtError> {
     let identity = CpuTransform::identity();
-    let triangles = LoopSubdiv::create(&identity, &identity, reverse_orientation, params)?;
-    let Some(CpuShape::Triangle(first_triangle)) = triangles.first() else {
+    // Node IR keeps normals before ReverseOrientation; flattening applies
+    // the actual shape flag through the shared CPU normal processing.
+    let triangles = LoopSubdiv::create(&identity, &identity, false, params)?;
+    let Some(CpuShape::Triangle(triangle)) = triangles.first() else {
         return Ok(None);
     };
-    let mesh = &first_triangle.mesh;
+    let mesh = &triangle.mesh;
     let positions = mesh
         .p
         .iter()
@@ -150,26 +152,18 @@ pub fn loop_subdiv_mesh_from_params(
     } else {
         None
     };
-    let tangents = if mesh.s.len() == mesh.p.len() {
-        Some(
-            mesh.s
-                .iter()
-                .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
-                .collect(),
-        )
-    } else {
-        None
-    };
-    let uvs = if mesh.uv.len() == mesh.p.len() {
-        Some(
-            mesh.uv
-                .iter()
-                .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
-                .collect(),
-        )
-    } else {
-        None
-    };
+    let tangents = (mesh.s.len() == mesh.p.len()).then(|| {
+        mesh.s
+            .iter()
+            .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
+            .collect()
+    });
+    let uvs = (mesh.uv.len() == mesh.p.len()).then(|| {
+        mesh.uv
+            .iter()
+            .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+            .collect()
+    });
     Ok(Some(TriangleMeshShape {
         positions,
         indices: mesh.vertex_indices.clone(),
@@ -279,7 +273,6 @@ pub fn complete_triangle_attributes(
             }
             normals = shape.normals.take().unwrap();
         }
-        align_normals_to_winding(&shape.positions, &shape.indices, &mut normals);
         shape.normals = Some(normals);
     }
 
@@ -450,39 +443,6 @@ fn compact_optional_attribute<T: Copy>(
     if let Some(values) = values {
         if values.len() == old_vertex_count {
             *values = compact_attribute(values, referenced);
-        }
-    }
-}
-
-/// Flips per-vertex shading normals that disagree with the mesh winding.
-///
-/// Subdivision limit normals (e.g. loopsubdiv's `Cross(S, T)` tangents) can
-/// wind opposite to the face orientation, which pbrt-v4 tolerates through its
-/// hemisphere-agnostic BxDF conventions. The GPU backend additionally aligns
-/// the shading normals with the geometric normals here so every downstream
-/// stage can rely on a consistent orientation. Each vertex accumulates the
-/// unnormalized (area-weighted) geometric normals of its incident triangles
-/// and is flipped when it points against that average.
-fn align_normals_to_winding(positions: &[Vec3f], indices: &[u32], normals: &mut [Vec3f]) {
-    let mut accumulated = vec![[0.0f32; 3]; normals.len()];
-    for triangle in indices.chunks_exact(3) {
-        let p0 = positions[triangle[0] as usize].0;
-        let p1 = positions[triangle[1] as usize].0;
-        let p2 = positions[triangle[2] as usize].0;
-        let face_normal = cross(sub(p1, p0), sub(p2, p0));
-        if !face_normal.iter().all(|value| value.is_finite()) {
-            continue;
-        }
-        for &corner in triangle {
-            let entry = &mut accumulated[corner as usize];
-            entry[0] += face_normal[0];
-            entry[1] += face_normal[1];
-            entry[2] += face_normal[2];
-        }
-    }
-    for (normal, average) in normals.iter_mut().zip(&accumulated) {
-        if dot(normal.0, *average) < 0.0 {
-            normal.0 = [-normal.0[0], -normal.0[1], -normal.0[2]];
         }
     }
 }
