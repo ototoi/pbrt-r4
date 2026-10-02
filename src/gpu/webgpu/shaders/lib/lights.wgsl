@@ -217,7 +217,9 @@ fn spot_falloff(light_index: u32, world_direction: vec3<f32>) -> f32 {
         set_render_error();
         return 0.0;
     }
-    let cosine = dot(normalize(load_light_direction(light_index)), local_w * inverseSqrt(local_length_squared));
+    // SpotLight::I evaluates CosTheta() after transforming the direction
+    // into light space, so the cone cosine is the local +Z component.
+    let cosine = (local_w * inverseSqrt(local_length_squared)).z;
     let falloff_start = load_light_scalar(light_index, 2u);
     let falloff_end = load_light_scalar(light_index, 3u);
     if (falloff_start == falloff_end) {
