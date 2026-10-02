@@ -104,13 +104,16 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let uv = uv0 * b0 + uv1 * b1 + uv2 * b2;
     surfaces[pixel_index].position_error = vec4<f32>(position_error, 0.0);
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
-    if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
+    if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
     }
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;
-    let transformed_normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
+    var transformed_normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
+    if (intersection_flips_vertex_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
+        transformed_normal = -transformed_normal;
+    }
     var normal = geometric_normal;
     if (dot(object_normal, object_normal) > 0.0) {
         normal = normalize(transformed_normal);
@@ -153,8 +156,15 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var dpdu = (instance.world_from_object * vec4<f32>(object_dpdu, 0.0)).xyz;
     var dpdv = (instance.world_from_object * vec4<f32>(object_dpdv, 0.0)).xyz;
-    let dndu = (instance.normal_from_object * vec4<f32>(object_dndu, 0.0)).xyz;
-    let dndv = (instance.normal_from_object * vec4<f32>(object_dndv, 0.0)).xyz;
+    var dndu = (instance.normal_from_object * vec4<f32>(object_dndu, 0.0)).xyz;
+    var dndv = (instance.normal_from_object * vec4<f32>(object_dndv, 0.0)).xyz;
+    // v4 SurfaceInteraction flips quadric normals, but not their derivatives.
+    // Undo ReverseOrientation already applied to the flattened vertex normals.
+    if (geometry.intersection_normal_kind == INTERSECTION_NORMAL_KIND_QUADRIC
+        && instance_orientation_is_reversed(instance.orientation_flags)) {
+        dndu = -dndu;
+        dndv = -dndv;
+    }
     let dp_dxy = approximate_position_differentials(position, geometric_normal);
     let uv_differentials = surface_uv_differentials(dpdu, dpdv, dp_dxy[0], dp_dxy[1]);
     let object_tangent = vertices[i0].tangent.xyz * b0

@@ -9,6 +9,7 @@ use crate::gpu::flat::texture::{
     MipmapLevel, MipmapLevelData, ProceduralOperation, TextureInstruction, TextureLibrary,
     TextureRoot, TextureValueType,
 };
+use crate::gpu::flat::SourceShape;
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
@@ -19,14 +20,15 @@ use super::abi::{
     AttributeRef, CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord,
     LightSamplingModel, LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform,
     MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, TextureNodeRecord, TextureRootRecord,
-    TriangleDistributionEntry, Vertex, ViewportUniform, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
-    LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
-    LIGHT_SAMPLER_KIND_BVH, TEXTURE_OPERATION_BILERP, TEXTURE_OPERATION_CHECKERBOARD,
-    TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX, TEXTURE_OPERATION_DOTS,
-    TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE, TEXTURE_OPERATION_MARBLE,
-    TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE, TEXTURE_OPERATION_WINDY,
-    TEXTURE_OPERATION_WRINKLED,
+    TriangleDistributionEntry, Vertex, ViewportUniform,
+    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INTERSECTION_NORMAL_KIND_QUADRIC,
+    INTERSECTION_NORMAL_KIND_TRIANGLE, INVALID_INDEX, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT,
+    LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
+    LIGHT_KIND_UNIFORM_INFINITE, LIGHT_SAMPLER_KIND_BVH, TEXTURE_OPERATION_BILERP,
+    TEXTURE_OPERATION_CHECKERBOARD, TEXTURE_OPERATION_CONSTANT, TEXTURE_OPERATION_DIRECTION_MIX,
+    TEXTURE_OPERATION_DOTS, TEXTURE_OPERATION_FBM, TEXTURE_OPERATION_IMAGE,
+    TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE,
+    TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
 };
 use super::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
 use super::acceleration::{self, Acceleration};
@@ -756,7 +758,11 @@ impl Scene {
                     orientation_flags: instance_orientation_flags(
                         instance.reverse_orientation,
                         flat::transform_swaps_handedness(instance.transform),
-                    ),
+                    ) | if instance.shape_transform_swaps_handedness {
+                        INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS
+                    } else {
+                        0
+                    },
                     medium_inside: instance.inside_medium,
                     medium_outside: instance.outside_medium,
                     padding: [0; 2],
@@ -1564,6 +1570,11 @@ fn convert_geometry(
             vertex_count: geometry.vertex_count,
             index_offset,
             index_count: geometry.index_count,
+            intersection_normal_kind: match geometry.source_shape {
+                SourceShape::Disk | SourceShape::Sphere => INTERSECTION_NORMAL_KIND_QUADRIC,
+                _ => INTERSECTION_NORMAL_KIND_TRIANGLE,
+            },
+            padding: [0; 3],
         });
     }
     Ok((vertices, geometries, local_indices))

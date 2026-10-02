@@ -1951,6 +1951,30 @@ fn flatten_preserves_source_shape_through_mesh_preparation() {
 }
 
 #[test]
+fn flatten_keeps_shape_handedness_separate_from_instance_handedness() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, ParameterDictionary::default());
+    let shape = triangle_node("mirrored-shape", "diffuse", [0.0; 3]);
+    shape.write().unwrap().transform.matrix[0] = -1.0;
+    let instance = instance_node("mirrored-instance", &shape, [0.0; 3]);
+    if let Component::Instance(component) = &mut instance.write().unwrap().components[0] {
+        component.instance.transform.matrix[0] = -1.0;
+    }
+    root.add_child(shape);
+    root.add_child(instance);
+    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(flat.instances.len(), 2);
+    assert!(flat.instances[0].shape_transform_swaps_handedness);
+    assert!(flat.instances[1].shape_transform_swaps_handedness);
+    assert!(pbrt_r4::gpu::flat::transform_swaps_handedness(
+        flat.instances[0].transform
+    ));
+    assert!(!pbrt_r4::gpu::flat::transform_swaps_handedness(
+        flat.instances[1].transform
+    ));
+}
+
+#[test]
 fn flatten_rejects_unknown_source_shape_name() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, ParameterDictionary::default());

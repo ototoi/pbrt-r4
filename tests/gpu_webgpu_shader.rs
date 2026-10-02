@@ -590,3 +590,12 @@ fn random_samples_are_independent_across_pixel_sample_and_depth() {
 fn common_shader() -> String {
     format!("{TYPES_SHADER}\n{}", common_library_source(true))
 }
+
+#[test]
+fn area_alpha_uses_sampling_normal_separately_from_intersection_normal() {
+    let alpha = include_str!("../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl");
+    let sample = include_str!("../src/gpu/webgpu/shaders/sample_direct_light.wgsl");
+    assert!(alpha.contains("instance.material_root, surface.uv, position, sampling_normal,"));
+    assert!(sample
+        .contains("light_payload, triangle_selection.primitive, b, light_position, light_normal,"));
+}

@@ -122,7 +122,7 @@ fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
         light_normal = triangle_geometric_normal(triangle);
         light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
         if (!alpha_area_sample_accept(
-            light_payload, triangle_selection.primitive, b, light_position,
+            light_payload, triangle_selection.primitive, b, light_position, light_normal,
         )) {
             return;
         }

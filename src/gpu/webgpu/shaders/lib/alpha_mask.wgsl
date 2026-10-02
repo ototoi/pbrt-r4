@@ -63,6 +63,7 @@ fn alpha_area_sample_accept(
     primitive: u32,
     barycentrics: vec3<f32>,
     position: vec3<f32>,
+    sampling_normal: vec3<f32>,
 ) -> bool {
     if (area_light_is_zero_alpha_sample_only(area_light)) { return true; }
     let instance_index = load_area_instance(area_light);
@@ -70,7 +71,7 @@ fn alpha_area_sample_accept(
     if (surface.valid == 0u) { return false; }
     let instance = instances[instance_index];
     let alpha = alpha_mask_value(
-        instance.material_root, surface.uv, position, surface.geometric_normal,
+        instance.material_root, surface.uv, position, sampling_normal,
     );
     return alpha_mask_point_accept(alpha, position);
 }
