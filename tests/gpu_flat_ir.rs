@@ -19,8 +19,11 @@ use pbrt_r4::gpu::node::{
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::paramdict::ParameterDictionary;
+use pbrt_r4::shapes::TriangleMesh;
+use pbrt_r4::util::base::{Normal3f, Point3f};
 use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use pbrt_r4::util::transform::Transform as CpuTransform;
 
 #[test]
 fn area_light_flags_use_named_encoders_and_decoders() {
@@ -617,6 +620,83 @@ fn flatten_node_preserves_shape_reverse_orientation() {
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
     assert!(scene.instances[0].reverse_orientation);
+}
+
+#[test]
+fn flattened_normals_match_cpu_mesh_under_transforms_and_orientation() {
+    for transform in [
+        CpuTransform::identity(),
+        CpuTransform::translate(1.0, 2.0, 3.0),
+        CpuTransform::rotate_y(37.0),
+        CpuTransform::scale(2.0, 3.0, 4.0),
+        CpuTransform::scale(-2.0, 3.0, 4.0),
+    ] {
+        for reverse_orientation in [false, true] {
+            // Deliberately oppose the winding, as LTE Orb's limit normals do.
+            let source_normal = Normal3f::new(0.0, 0.0, -1.0);
+            let cpu = TriangleMesh::new(
+                &transform,
+                reverse_orientation,
+                false,
+                vec![0, 1, 2],
+                vec![
+                    Point3f::new(0.0, 0.0, 0.0),
+                    Point3f::new(1.0, 0.0, 0.0),
+                    Point3f::new(0.0, 1.0, 0.0),
+                ],
+                Vec::new(),
+                vec![source_normal; 3],
+                Vec::new(),
+            );
+            let target = triangle_node("oriented", "diffuse", [0.0; 3]);
+            {
+                let mut node = target.write().unwrap();
+                node.transform.matrix = transform.m.m.map(|v| v as f32);
+                let Component::Shape(component) = &mut node.components[0] else {
+                    unreachable!()
+                };
+                component.reverse_orientation = reverse_orientation;
+                let Shape::TriangleMesh(mesh) = &mut component.shape else {
+                    unreachable!()
+                };
+                mesh.normals = Some(vec![Vec3f([0.0, 0.0, -1.0]); 3]);
+            }
+            let mut root = Node::new("root");
+            add_camera_and_film(&mut root, Default::default());
+            root.add_child(instance_node("first", &target, [0.0; 3]));
+            root.add_child(instance_node("second", &target, [1.0, 2.0, 3.0]));
+            let root = Arc::new(RwLock::new(root));
+            // Repeated preparation/flattening must not mutate shared mesh normals.
+            for _ in 0..2 {
+                prepare_triangle_meshes(&mut root.write().unwrap()).unwrap();
+                let flat = flatten_node(Arc::clone(&root)).unwrap();
+                assert_eq!(flat.geometries.len(), 1);
+                assert_eq!(flat.instances.len(), 2);
+                assert_eq!(flat.indices, vec![0, 1, 2]);
+                for vertex in &flat.vertices {
+                    let n = vertex.normal;
+                    let world =
+                        transform.transform_normal(&Normal3f::new(n[0] as _, n[1] as _, n[2] as _));
+                    assert!((world - cpu.n[0]).length() < 1e-6);
+                }
+                assert!(flat
+                    .instances
+                    .iter()
+                    .all(|instance| instance.reverse_orientation == reverse_orientation));
+                let target = target.read().unwrap();
+                let Component::Shape(component) = &target.components[0] else {
+                    unreachable!()
+                };
+                let Shape::TriangleMesh(mesh) = &component.shape else {
+                    unreachable!()
+                };
+                assert_eq!(
+                    mesh.normals.as_ref().unwrap(),
+                    &vec![Vec3f([0.0, 0.0, -1.0]); 3]
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -12,6 +12,8 @@ use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
     FileLoc, RenderFromObject, SceneBuilder, SceneEntity, ShapeSceneEntity,
 };
+use pbrt_r4::shapes::LoopSubdiv;
+use pbrt_r4::util::transform::Transform as CpuTransform;
 use tempfile::tempdir;
 
 #[test]
@@ -954,6 +956,29 @@ fn missing_tangents_are_left_for_shade_surface_even_with_smooth_normals() {
 }
 
 #[test]
+fn complete_triangle_attributes_preserves_shading_normal_orientation() {
+    let shape = TriangleMeshShape {
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([0.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2],
+        normals: Some(vec![Vec3f([0.0, 0.0, -1.0]); 3]),
+        tangents: None,
+        uvs: Some(vec![
+            Vec2f([0.0, 0.0]),
+            Vec2f([1.0, 0.0]),
+            Vec2f([0.0, 1.0]),
+        ]),
+    };
+
+    let completed = complete_triangle_attributes(shape, "opposed-shading-normal").unwrap();
+
+    assert_eq!(completed.normals.unwrap(), vec![Vec3f([0.0, 0.0, -1.0]); 3]);
+}
+
+#[test]
 fn triangles_with_irreparable_zero_normals_are_removed() {
     let mesh = TriangleMeshShape {
         positions: vec![
@@ -1071,6 +1096,73 @@ end_header
             })
     });
     assert_eq!(shape_node, Some((3, 3, true, true)));
+}
+
+#[test]
+fn loop_subdiv_node_ir_normals_are_unoriented_for_both_shape_flags() {
+    for reverse_orientation in [false, true] {
+        let reverse = if reverse_orientation {
+            "ReverseOrientation\n"
+        } else {
+            ""
+        };
+        let input = format!(
+            r#"WorldBegin
+{reverse}Shape "loopsubdiv" "integer levels" 1
+    "integer indices" [ 0 2 1 0 1 3 1 2 3 2 0 3 ]
+    "point3 P" [ 1 1 1 -1 -1 1 -1 1 -1 1 -1 -1 ]
+"#
+        );
+        let mut builder = SceneBuilder::new();
+        parse_string(&input, &mut builder).unwrap();
+        let identity = CpuTransform::identity();
+        let cpu_shapes =
+            LoopSubdiv::create(&identity, &identity, false, &builder.shapes[0].base.params)
+                .unwrap();
+        let Some(pbrt_r4::base::shape::Shape::Triangle(cpu_triangle)) = cpu_shapes.first() else {
+            panic!("CPU LoopSubdiv should produce triangles");
+        };
+        let root = builder.build_gpu_ir_node().unwrap();
+        let root = root.read().unwrap();
+        let (gpu_mesh, gpu_orientation) = root
+            .children
+            .iter()
+            .find_map(|child| {
+                let child = child.read().unwrap();
+                child
+                    .components
+                    .iter()
+                    .find_map(|component| match component {
+                        Component::Shape(ShapeComponent {
+                            shape: Shape::TriangleMesh(mesh),
+                            reverse_orientation,
+                            ..
+                        }) => Some((mesh.as_ref().clone(), *reverse_orientation)),
+                        _ => None,
+                    })
+            })
+            .expect("GPU LoopSubdiv mesh");
+        assert_eq!(gpu_orientation, reverse_orientation);
+        assert_eq!(gpu_mesh.indices, cpu_triangle.mesh.vertex_indices);
+        assert_eq!(
+            gpu_mesh.positions,
+            cpu_triangle
+                .mesh
+                .p
+                .iter()
+                .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            gpu_mesh.normals.unwrap(),
+            cpu_triangle
+                .mesh
+                .n
+                .iter()
+                .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
