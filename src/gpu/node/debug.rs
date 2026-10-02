@@ -205,6 +205,7 @@ fn shape_to_json(shape: &Shape) -> Value {
             json!({ "type": "Shape", "kind": "NURBS", "params": params_to_json(&shape.params) })
         }
         Shape::TriangleMesh(mesh) => json!({
+            "source_shape": format!("{:?}", mesh.source_shape),
             "type": "Shape",
             "kind": "TriangleMesh",
             "position_count": mesh.positions.len(),
