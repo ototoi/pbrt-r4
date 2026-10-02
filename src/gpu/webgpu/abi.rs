@@ -16,8 +16,12 @@ pub const LIGHT_KIND_PORTAL_IMAGE_INFINITE: u32 = 6;
 pub const LIGHT_SAMPLER_KIND_UNIFORM: u32 = 0;
 pub const LIGHT_SAMPLER_KIND_BVH: u32 = 1;
 pub const INVALID_INDEX: u32 = u32::MAX;
+pub const INTERSECTION_NORMAL_KIND_TRIANGLE: u32 = 0;
+pub const INTERSECTION_NORMAL_KIND_QUADRIC: u32 = 1;
+
 pub const INSTANCE_ORIENTATION_FLAG_REVERSED: u32 = 1 << 0;
 pub const INSTANCE_ORIENTATION_FLAG_TRANSFORM_SWAPS_HANDEDNESS: u32 = 1 << 1;
+pub const INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS: u32 = 1 << 2;
 
 pub fn instance_orientation_flags(
     reverse_orientation: bool,
@@ -139,6 +143,8 @@ pub struct Geometry {
     pub vertex_count: u32,
     pub index_offset: u32,
     pub index_count: u32,
+    pub intersection_normal_kind: u32,
+    pub padding: [u32; 3],
 }
 
 #[repr(C)]

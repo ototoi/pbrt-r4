@@ -1,3 +1,6 @@
+const INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS: u32 = 4u;
+const INTERSECTION_NORMAL_KIND_TRIANGLE: u32 = 0u;
+const INTERSECTION_NORMAL_KIND_QUADRIC: u32 = 1u;
 const RAY_T_MAX: f32 = 3.402823466e+38;
 const MACHINE_EPSILON: f32 = 1.1920929e-7;
 const PI: f32 = 3.141592653589793;
@@ -259,6 +262,10 @@ struct Geometry {
     vertex_count: u32,
     index_offset: u32,
     index_count: u32,
+    intersection_normal_kind: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
 };
 
 struct Instance {

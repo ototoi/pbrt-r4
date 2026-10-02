@@ -15,7 +15,8 @@ use pbrt_r4::gpu::node::{
     FilmComponent, Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator,
     IntegratorComponent, Light as NodeLight, LightComponent, Material, MaterialComponent,
     Medium as NodeMedium, MediumComponent, MediumInterface, Node, Output, OutputComponent,
-    Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, Transform, TriangleMeshShape,
+    Sampler as NodeSampler, SamplerComponent, Shape, ShapeComponent, SourceShape, Transform,
+    TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::paramdict::ParameterDictionary;
@@ -43,7 +44,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
     node.transform.matrix[11] = offset[2];
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+            source_shape: SourceShape::TriangleMesh,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -178,14 +179,14 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
         scene.geometries,
         vec![
             pbrt_r4::gpu::flat::Geometry {
-                source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+                source_shape: SourceShape::TriangleMesh,
                 first_vertex: 0,
                 vertex_count: 3,
                 first_index: 0,
                 index_count: 3,
             },
             pbrt_r4::gpu::flat::Geometry {
-                source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+                source_shape: SourceShape::TriangleMesh,
                 first_vertex: 3,
                 vertex_count: 3,
                 first_index: 3,
@@ -244,7 +245,7 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
     let mut shape_node = Node::new("gem");
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+            source_shape: SourceShape::TriangleMesh,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -335,7 +336,7 @@ fn flatten_node_allows_a_medium_interface_shape_with_no_material() {
     let mut shape_node = Node::new("boundary");
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+            source_shape: SourceShape::TriangleMesh,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -375,7 +376,7 @@ fn flatten_node_rejects_an_area_light_on_a_shape_with_no_material() {
     let mut shape_node = Node::new("boundary");
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
-            source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+            source_shape: SourceShape::TriangleMesh,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -1893,7 +1894,7 @@ fn node_ir_preparation_completes_missing_mesh_uvs_before_flattening() {
 #[test]
 fn missing_normals_are_left_for_shade_surface_to_recompute() {
     let mesh = TriangleMeshShape {
-        source_shape: pbrt_r4::gpu::node::SourceShape::TriangleMesh,
+        source_shape: SourceShape::TriangleMesh,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),
@@ -1915,7 +1916,7 @@ fn missing_normals_are_left_for_shade_surface_to_recompute() {
 
 #[test]
 fn flatten_preserves_source_shape_through_mesh_preparation() {
-    use pbrt_r4::gpu::node::{DiskShape, SourceShape, SphereShape};
+    use pbrt_r4::gpu::node::{DiskShape, SphereShape};
 
     for (source, shape) in [
         (
@@ -1947,4 +1948,28 @@ fn flatten_preserves_source_shape_through_mesh_preparation() {
         assert_eq!(flat.instances.len(), 2);
         assert_eq!(flat.instances[0].geometry, flat.instances[1].geometry);
     }
+}
+
+#[test]
+fn flatten_keeps_shape_handedness_separate_from_instance_handedness() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, ParameterDictionary::default());
+    let shape = triangle_node("mirrored-shape", "diffuse", [0.0; 3]);
+    shape.write().unwrap().transform.matrix[0] = -1.0;
+    let instance = instance_node("mirrored-instance", &shape, [0.0; 3]);
+    if let Component::Instance(component) = &mut instance.write().unwrap().components[0] {
+        component.instance.transform.matrix[0] = -1.0;
+    }
+    root.add_child(shape);
+    root.add_child(instance);
+    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(flat.instances.len(), 2);
+    assert!(flat.instances[0].shape_transform_swaps_handedness);
+    assert!(flat.instances[1].shape_transform_swaps_handedness);
+    assert!(pbrt_r4::gpu::flat::transform_swaps_handedness(
+        flat.instances[0].transform
+    ));
+    assert!(!pbrt_r4::gpu::flat::transform_swaps_handedness(
+        flat.instances[1].transform
+    ));
 }

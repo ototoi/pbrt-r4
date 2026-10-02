@@ -228,3 +228,73 @@ fn render_energy(scene: &Path, output: &Path, gpu: bool) -> f32 {
         .sum::<f32>()
         / (pixels.len() * 3) as f32
 }
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn quadric_emission_orientation_matches_cpu() {
+    let directory = tempfile::tempdir().unwrap();
+    for shape in ["disk", "sphere"] {
+        for (transform, swaps_handedness) in [
+            ("", false),
+            ("Rotate 35 0 0 1", false),
+            ("Scale 2 1 1", false),
+            ("Scale -1 1 1", true),
+            ("Scale -1 -1 1", false),
+        ] {
+            for reverse in [false, true] {
+                let scene = directory.path().join("quadric.pbrt");
+                std::fs::write(
+                    &scene,
+                    format!(
+                        r#"
+Integrator "path" "integer maxdepth" [ 0 ]
+Sampler "halton" "integer pixelsamples" [ 1 ]
+Film "rgb" "integer xresolution" [ 8 ] "integer yresolution" [ 8 ]
+LookAt 0 0 4  0 0 0  0 1 0
+Camera "perspective" "float fov" [ 10 ]
+WorldBegin
+{transform}
+{}
+AreaLightSource "diffuse" "rgb L" [ 1 1 1 ]
+Shape "{shape}" "float radius" [ 1 ]
+WorldEnd
+"#,
+                        if reverse { "ReverseOrientation" } else { "" }
+                    ),
+                )
+                .unwrap();
+                let cpu = render_energy(&scene, &directory.path().join("cpu.exr"), false);
+                let gpu = render_energy(&scene, &directory.path().join("gpu.exr"), true);
+                eprintln!("{shape} {transform:?} reverse={reverse}: CPU={cpu}, GPU={gpu}");
+                if reverse != swaps_handedness {
+                    assert_eq!(cpu, 0.0);
+                    assert_eq!(gpu, 0.0);
+                } else {
+                    assert!(cpu > 0.0 && gpu > 0.0);
+                    assert!((gpu - cpu).abs() / cpu < 0.03);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn disk_dielectric_orientation_matches_cpu() {
+    let directory = tempfile::tempdir().unwrap();
+    for reverse in [false, true] {
+        for mirrored in [false, true] {
+            let mut text = dielectric_scene("absent", reverse, mirrored);
+            let start = text.find("Shape \"trianglemesh\"").unwrap();
+            let end = text[start..].find("ObjectEnd").unwrap() + start;
+            text.replace_range(start..end, "Shape \"disk\" \"float radius\" [ 10 ]\n");
+            let scene = directory.path().join("disk-dielectric.pbrt");
+            std::fs::write(&scene, text).unwrap();
+            let cpu = render_energy(&scene, &directory.path().join("cpu.exr"), false);
+            let gpu = render_energy(&scene, &directory.path().join("gpu.exr"), true);
+            eprintln!("disk dielectric reverse={reverse} mirror={mirrored}: CPU={cpu}, GPU={gpu}");
+            assert!(cpu > 0.0 && gpu > 0.0);
+            assert!((gpu - cpu).abs() / cpu < 0.10);
+        }
+    }
+}
