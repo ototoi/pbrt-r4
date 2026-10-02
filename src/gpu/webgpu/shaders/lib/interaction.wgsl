@@ -11,6 +11,25 @@ fn instance_orientation_flips_geometric_normal(flags: u32) -> bool {
         != instance_orientation_swaps_handedness(flags);
 }
 
+// Quadric intersections flip in object space before the normal transform;
+// triangle cross products already include the transform's handedness.
+fn intersection_flips_geometric_normal(kind: u32, flags: u32) -> bool {
+    if (kind == INTERSECTION_NORMAL_KIND_QUADRIC) {
+        return instance_orientation_flips_geometric_normal(flags)
+            != instance_orientation_shape_swaps_handedness(flags);
+    }
+    return instance_orientation_flips_geometric_normal(flags);
+}
+
+fn instance_orientation_shape_swaps_handedness(flags: u32) -> bool {
+    return (flags & INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS) != 0u;
+}
+
+fn intersection_flips_vertex_normal(kind: u32, flags: u32) -> bool {
+    return kind == INTERSECTION_NORMAL_KIND_QUADRIC
+        && instance_orientation_shape_swaps_handedness(flags);
+}
+
 fn reconstruct_triangle_surface(
     instance_index: u32,
     primitive: u32,
@@ -52,7 +71,7 @@ fn reconstruct_triangle_surface(
         + hardware_intersection_error(p0, p1, p2);
     let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
-    if (instance_orientation_flips_geometric_normal(instance.orientation_flags)) {
+    if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
     }
     return TriangleSurfaceData(position, position_error, uv, geometric_normal, 1u);
