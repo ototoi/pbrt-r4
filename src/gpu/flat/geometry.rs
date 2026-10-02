@@ -1,8 +1,47 @@
 use super::Transform;
 use crate::util::error::PbrtError;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SourceShape {
+    #[default]
+    TriangleMesh,
+    PlyMesh,
+    LoopSubdiv,
+    Disk,
+    Sphere,
+    Cylinder,
+    Cone,
+    Paraboloid,
+    HeightField,
+    BilinearMesh,
+    Hyperboloid,
+    Nurbs,
+}
+impl SourceShape {
+    pub fn from_name(name: &str) -> Result<Self, PbrtError> {
+        match name {
+            "trianglemesh" => Ok(Self::TriangleMesh),
+            "plymesh" => Ok(Self::PlyMesh),
+            "loopsubdiv" => Ok(Self::LoopSubdiv),
+            "disk" => Ok(Self::Disk),
+            "sphere" => Ok(Self::Sphere),
+            "cylinder" => Ok(Self::Cylinder),
+            "cone" => Ok(Self::Cone),
+            "paraboloid" => Ok(Self::Paraboloid),
+            "heightfield" => Ok(Self::HeightField),
+            "bilinearmesh" => Ok(Self::BilinearMesh),
+            "hyperboloid" => Ok(Self::Hyperboloid),
+            "nurbs" => Ok(Self::Nurbs),
+            _ => Err(PbrtError::error(&format!(
+                "Unknown GPU source shape \"{name}\"."
+            ))),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Geometry {
+    pub source_shape: SourceShape,
     pub first_vertex: u32,
     pub vertex_count: u32,
     pub first_index: u32,
