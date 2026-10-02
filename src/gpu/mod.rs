@@ -1,6 +1,5 @@
 pub mod flat;
 pub mod node;
-pub mod shape;
 pub mod wavefront;
 
 #[cfg(feature = "cuda")]

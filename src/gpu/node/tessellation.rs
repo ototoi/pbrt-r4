@@ -6,7 +6,6 @@ use super::shape::{
     TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
-use crate::gpu::shape::SourceShape;
 use crate::util::error::PbrtError;
 
 pub const DEFAULT_SPHERE_PHI_SEGMENTS: usize = 32;
@@ -135,7 +134,7 @@ fn paraboloid_to_mesh(shape: &ParaboloidShape) -> Result<TriangleMeshShape, Pbrt
         }
     }
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::Paraboloid,
+        source_shape: "paraboloid".to_string(),
         positions,
         indices,
         normals: Some(normals),
@@ -178,7 +177,7 @@ fn heightfield_to_mesh(shape: &HeightFieldShape) -> Result<TriangleMeshShape, Pb
         }
     }
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::HeightField,
+        source_shape: "heightfield".to_string(),
         positions,
         indices,
         normals: None,
@@ -279,7 +278,7 @@ fn bilinear_to_mesh(shape: &BilinearMeshShape) -> Result<TriangleMeshShape, Pbrt
         }
     }
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::BilinearMesh,
+        source_shape: "bilinearmesh".to_string(),
         positions: tessellated_positions,
         indices,
         normals: Some(tessellated_normals),
@@ -335,7 +334,7 @@ fn hyperboloid_to_mesh(shape: &HyperboloidShape) -> Result<TriangleMeshShape, Pb
         }
     }
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::Hyperboloid,
+        source_shape: "hyperboloid".to_string(),
         positions,
         indices,
         normals: None,
@@ -376,7 +375,7 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
             .collect(),
     );
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::Nurbs,
+        source_shape: "nurbs".to_string(),
         positions,
         indices,
         normals,
@@ -425,7 +424,7 @@ fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtE
         indices.extend_from_slice(&[i, i + 3, i + 1, i, i + 2, i + 3]);
     }
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::Cylinder,
+        source_shape: "cylinder".to_string(),
         positions,
         indices,
         normals: Some(normals),
@@ -474,7 +473,7 @@ fn cone_to_mesh(cone: &ConeShape) -> Result<TriangleMeshShape, PbrtError> {
         indices.extend_from_slice(&[i, i + 3, i + 1, i, i + 2, i + 3]);
     }
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::Cone,
+        source_shape: "cone".to_string(),
         positions,
         indices,
         normals: Some(normals),
@@ -591,7 +590,7 @@ fn disk_to_mesh(disk: &DiskShape) -> Result<TriangleMeshShape, PbrtError> {
     }
 
     Ok(TriangleMeshShape {
-        source_shape: SourceShape::Disk,
+        source_shape: "disk".to_string(),
         positions,
         indices,
         normals: Some(normals),
@@ -680,7 +679,7 @@ fn sphere_to_mesh(sphere: &SphereShape) -> TriangleMeshShape {
         }
     }
     TriangleMeshShape {
-        source_shape: SourceShape::Sphere,
+        source_shape: "sphere".to_string(),
         positions,
         indices,
         normals: Some(normals),

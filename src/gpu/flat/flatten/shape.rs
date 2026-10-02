@@ -1,3 +1,4 @@
+use super::super::SourceShape;
 use super::{FlatBuilder, Geometry, Vertex};
 use crate::gpu::node::{TriangleMeshShape, Vec3f};
 use crate::shapes::TriangleMesh;
@@ -110,7 +111,7 @@ pub fn geometry_index(
         PbrtError::error("The flattened GPU geometry table exceeds the u32 index range.")
     })?;
     builder.geometries.push(Geometry {
-        source_shape: shape.source_shape,
+        source_shape: SourceShape::from_name(&shape.source_shape)?,
         first_vertex,
         vertex_count,
         first_index,
