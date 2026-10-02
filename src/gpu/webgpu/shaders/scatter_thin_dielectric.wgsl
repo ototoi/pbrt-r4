@@ -14,6 +14,7 @@ fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let normal = normalize(surface.normal.xyz);
     let tangent = surface.tangent.xyz;
     let wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
+    if (wo.z == 0.0) { return; }
     // ThinDielectricBxDF uses FrDielectric(AbsCosTheta(wo), eta): the sheet
     // always sees the same eta from either side of the interface.
     let r0 = dielectric_fresnel(abs(wo.z), eta);
