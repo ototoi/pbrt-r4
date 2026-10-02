@@ -1,8 +1,10 @@
 use super::Transform;
+use crate::gpu::node::SourceShape;
 use crate::util::error::PbrtError;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Geometry {
+    pub source_shape: SourceShape,
     pub first_vertex: u32,
     pub vertex_count: u32,
     pub first_index: u32,

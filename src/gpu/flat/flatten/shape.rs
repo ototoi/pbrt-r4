@@ -110,6 +110,7 @@ pub fn geometry_index(
         PbrtError::error("The flattened GPU geometry table exceeds the u32 index range.")
     })?;
     builder.geometries.push(Geometry {
+        source_shape: shape.source_shape,
         first_vertex,
         vertex_count,
         first_index,

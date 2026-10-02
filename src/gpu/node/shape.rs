@@ -7,8 +7,26 @@ use crate::util::error::PbrtError;
 use crate::util::mesh::TriQuadMesh;
 use crate::util::transform::Transform as CpuTransform;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SourceShape {
+    #[default]
+    TriangleMesh,
+    PlyMesh,
+    LoopSubdiv,
+    Disk,
+    Sphere,
+    Cylinder,
+    Cone,
+    Paraboloid,
+    HeightField,
+    BilinearMesh,
+    Hyperboloid,
+    Nurbs,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
+    pub source_shape: SourceShape,
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
     /// Object-space normals before ReverseOrientation.
@@ -113,6 +131,7 @@ pub fn triangle_mesh_from_params(
     };
 
     Ok(Some(TriangleMeshShape {
+        source_shape: SourceShape::TriangleMesh,
         positions,
         indices,
         normals: node_vec3_attribute(params, "N", vertex_count)?,
@@ -165,6 +184,7 @@ pub fn loop_subdiv_mesh_from_params(
             .collect()
     });
     Ok(Some(TriangleMeshShape {
+        source_shape: SourceShape::LoopSubdiv,
         positions,
         indices: mesh.vertex_indices.clone(),
         normals,
@@ -286,6 +306,7 @@ pub fn complete_triangle_attributes(
             .all(|tangent| length_squared(tangent.0) > 0.0)
     });
     Ok(TriangleMeshShape {
+        source_shape: shape.source_shape,
         positions: shape.positions,
         indices: shape.indices,
         normals: shape.normals,
@@ -547,6 +568,7 @@ fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
         None
     };
     Some(TriangleMeshShape {
+        source_shape: SourceShape::PlyMesh,
         positions,
         indices: mesh.tri_indices.clone(),
         normals,
