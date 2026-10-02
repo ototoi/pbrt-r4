@@ -2,10 +2,11 @@ use super::component::Component;
 use super::node::Node;
 use super::shape::{
     prepare_triangle_mesh, BilinearMeshShape, ConeShape, CylinderShape, DiskShape,
-    HeightFieldShape, HyperboloidShape, NurbsShape, ParaboloidShape, Shape, SourceShape,
-    SphereShape, TriangleMeshShape,
+    HeightFieldShape, HyperboloidShape, NurbsShape, ParaboloidShape, Shape, SphereShape,
+    TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
+use crate::gpu::shape::SourceShape;
 use crate::util::error::PbrtError;
 
 pub const DEFAULT_SPHERE_PHI_SEGMENTS: usize = 32;

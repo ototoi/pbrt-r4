@@ -1,3 +1,4 @@
+use pbrt_r4::gpu::shape::SourceShape;
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 
