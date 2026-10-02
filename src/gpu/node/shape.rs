@@ -1,7 +1,6 @@
 use super::types::Vec2f;
 use super::types::Vec3f;
 use crate::base::shape::Shape as CpuShape;
-use crate::gpu::shape::SourceShape;
 use crate::paramdict::ParameterDictionary;
 use crate::shapes::LoopSubdiv;
 use crate::util::error::PbrtError;
@@ -10,7 +9,7 @@ use crate::util::transform::Transform as CpuTransform;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
-    pub source_shape: SourceShape,
+    pub source_shape: String,
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
     /// Object-space normals before ReverseOrientation.
@@ -115,7 +114,7 @@ pub fn triangle_mesh_from_params(
     };
 
     Ok(Some(TriangleMeshShape {
-        source_shape: SourceShape::TriangleMesh,
+        source_shape: "trianglemesh".to_string(),
         positions,
         indices,
         normals: node_vec3_attribute(params, "N", vertex_count)?,
@@ -168,7 +167,7 @@ pub fn loop_subdiv_mesh_from_params(
             .collect()
     });
     Ok(Some(TriangleMeshShape {
-        source_shape: SourceShape::LoopSubdiv,
+        source_shape: "loopsubdiv".to_string(),
         positions,
         indices: mesh.vertex_indices.clone(),
         normals,
@@ -552,7 +551,7 @@ fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
         None
     };
     Some(TriangleMeshShape {
-        source_shape: SourceShape::PlyMesh,
+        source_shape: "plymesh".to_string(),
         positions,
         indices: mesh.tri_indices.clone(),
         normals,

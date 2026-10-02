@@ -9,7 +9,8 @@ use crate::gpu::flat::texture::{
     MipmapLevel, MipmapLevelData, ProceduralOperation, TextureInstruction, TextureLibrary,
     TextureRoot, TextureValueType,
 };
-use crate::gpu::node::{SourceShape, TextureMapping};
+use crate::gpu::flat::SourceShape;
+use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
