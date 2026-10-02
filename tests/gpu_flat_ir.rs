@@ -1001,6 +1001,36 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
 }
 
 #[test]
+fn flattened_spot_light_maps_its_axis_to_local_positive_z() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_point("point from", &[1.0, 2.0, 3.0]);
+    params.add_point("point to", &[2.0, 2.0, 3.0]);
+    let spot = light_node("spot", "spot", params);
+    spot.write().unwrap().transform.matrix = [
+        2.0, 0.5, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    root.add_child(spot);
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let model = &scene.light_sampling_models[scene.lights[0].sampling_model as usize];
+
+    // These render-space rays are the transformed cone axis and two rays
+    // at 45 degrees to it before the nonuniform scale and shear.
+    for (direction, expected_cosine) in [
+        ([2.0, 0.0, 0.0], 1.0),
+        ([2.5, 3.0, 0.0], std::f32::consts::FRAC_1_SQRT_2),
+        ([2.0, 0.0, 4.0], std::f32::consts::FRAC_1_SQRT_2),
+    ] {
+        let local = model
+            .world_to_light
+            .map(|row| row[0] * direction[0] + row[1] * direction[1] + row[2] * direction[2]);
+        let length = local.iter().map(|value| value * value).sum::<f32>().sqrt();
+        assert!((local[2] / length - expected_cosine).abs() < 1e-6);
+    }
+}
+
+#[test]
 fn flatten_node_classifies_infinite_light_variants() {
     let directory = tempfile::tempdir().unwrap();
     let image_path = directory.path().join("environment.png");
