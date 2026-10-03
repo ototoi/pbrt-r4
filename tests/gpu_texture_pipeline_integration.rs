@@ -314,3 +314,118 @@ fn image_energy(pixels: &[RGBSpectrum]) -> f32 {
         .map(|pixel| pixel.to_rgb().into_iter().sum::<f32>())
         .sum()
 }
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn conductor_remapped_roughness_matches_explicit_alpha() {
+    let directory = tempfile::tempdir().unwrap();
+    for material in ["eta-k", "reflectance"] {
+        for textured in [false, true] {
+            let mut images = Vec::new();
+            for (name, roughness, remap) in [
+                ("remapped", 0.01, ""),
+                ("alpha", 0.1, "\"bool remaproughness\" [ false ]"),
+            ] {
+                let texture = if textured {
+                    format!(
+                        r#"Texture "rough" "float" "bilerp"
+"float v00" [ {roughness} ] "float v01" [ {roughness} ]
+"float v10" [ {roughness} ] "float v11" [ {roughness} ]"#
+                    )
+                } else {
+                    String::new()
+                };
+                let rough = if textured {
+                    r#""texture roughness" [ "rough" ]"#.to_string()
+                } else {
+                    format!(r#""float roughness" [ {roughness} ]"#)
+                };
+                let optics = if material == "eta-k" {
+                    r#""rgb eta" [ 1 1 1 ] "rgb k" [ 2 2 2 ]"#
+                } else {
+                    r#""rgb reflectance" [ 0.5 0.5 0.5 ]"#
+                };
+                let scene = directory
+                    .path()
+                    .join(format!("{material}-{textured}-{name}.pbrt"));
+                std::fs::write(
+                    &scene,
+                    format!(
+                        r#"Integrator "path" "integer maxdepth" [ 1 ]
+Sampler "halton" "integer pixelsamples" [ 16 ]
+Film "rgb" "integer xresolution" [ 8 ] "integer yresolution" [ 8 ]
+LookAt 0 0 3  0 0 0  0 1 0
+Camera "perspective" "float fov" [ 35 ]
+WorldBegin
+{texture}
+LightSource "point" "point3 from" [ 0.3 0.3 3 ] "rgb I" [ 10 10 10 ]
+Material "conductor" {optics} {rough} {remap}
+Shape "trianglemesh" "point3 P" [ -2 -2 0  2 -2 0  2 2 0  -2 2 0 ]
+"integer indices" [ 0 1 2  0 2 3 ] "point2 uv" [ 0 0  1 0  1 1  0 1 ]
+"#
+                    ),
+                )
+                .unwrap();
+                images.push(render(
+                    &scene,
+                    directory.path(),
+                    &format!("{material}-{textured}-{name}.exr"),
+                    true,
+                ));
+            }
+            assert!(image_energy(&images[0]) > 0.0);
+            assert_same_image(
+                &images[0],
+                &images[1],
+                "conductor roughness remapping differs from explicit alpha",
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn negative_conductor_roughness_texture_matches_zero() {
+    let directory = tempfile::tempdir().unwrap();
+    for (material, optics) in [
+        ("eta-k", r#""rgb eta" [ 1 1 1 ] "rgb k" [ 2 2 2 ]"#),
+        ("reflectance", r#""rgb reflectance" [ 0.5 0.5 0.5 ]"#),
+    ] {
+        let mut images = Vec::new();
+        for (name, roughness) in [("negative", -0.01), ("zero", 0.0)] {
+            let scene = directory.path().join(format!("{material}-{name}.pbrt"));
+            std::fs::write(
+                &scene,
+                format!(
+                    r#"Integrator "path" "integer maxdepth" [ 2 ]
+Sampler "halton" "integer pixelsamples" [ 16 ]
+Film "rgb" "integer xresolution" [ 8 ] "integer yresolution" [ 8 ]
+LookAt 0 0 3  0 0 0  0 1 0
+Camera "perspective" "float fov" [ 35 ]
+WorldBegin
+Texture "rough" "float" "bilerp"
+"float v00" [ {roughness} ] "float v01" [ {roughness} ]
+"float v10" [ {roughness} ] "float v11" [ {roughness} ]
+LightSource "infinite" "rgb L" [ 1 1 1 ]
+Material "conductor" {optics} "texture roughness" [ "rough" ]
+Shape "trianglemesh" "point3 P" [ -2 -2 0  2 -2 0  2 2 0  -2 2 0 ]
+"integer indices" [ 0 1 2  0 2 3 ] "point2 uv" [ 0 0  1 0  1 1  0 1 ]
+"#
+                ),
+            )
+            .unwrap();
+            images.push(render(
+                &scene,
+                directory.path(),
+                &format!("{material}-{name}.exr"),
+                true,
+            ));
+        }
+        assert!(image_energy(&images[1]) > 0.0);
+        assert_same_image(
+            &images[0],
+            &images[1],
+            "negative conductor roughness differs from zero",
+        );
+    }
+}
