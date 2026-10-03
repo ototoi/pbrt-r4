@@ -79,10 +79,12 @@ fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), Pbr
             (0, flat::AttributeKind::Spectrum),
             (1, flat::AttributeKind::Spectrum),
             (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Scalar),
         ][..],
         "conductor_reflectance" => &[
             (0, flat::AttributeKind::Spectrum),
             (1, flat::AttributeKind::Scalar),
+            (2, flat::AttributeKind::Scalar),
         ][..],
         "mix" => &[(0, flat::AttributeKind::Scalar)][..],
         "coateddiffuse" => &[

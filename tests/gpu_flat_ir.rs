@@ -1733,7 +1733,7 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
         scene.material_nodes[material.child1 as usize]
             .attributes
             .len(),
-        2
+        3
     );
 }
 
@@ -1822,7 +1822,10 @@ fn flatten_node_extracts_conductor_attributes() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.material_nodes[0].kind, "conductor_eta_k");
-    assert_eq!(scene.material_nodes[0].attributes.len(), 3);
+    assert_eq!(scene.material_nodes[0].attributes.len(), 4);
+    let remap = &scene.material_nodes[0].attributes[3];
+    assert_eq!(remap.name, "remaproughness");
+    assert_eq!(scene.scalar_attributes[remap.index as usize], 1.0);
     for attribute in &scene.material_nodes[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
         assert!(
@@ -1853,7 +1856,10 @@ fn flatten_node_keeps_conductor_reflectance_layout_separate() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(scene.material_nodes[0].kind, "conductor_reflectance");
-    assert_eq!(scene.material_nodes[0].attributes.len(), 2);
+    assert_eq!(scene.material_nodes[0].attributes.len(), 3);
+    let remap = &scene.material_nodes[0].attributes[2];
+    assert_eq!(remap.name, "remaproughness");
+    assert_eq!(scene.scalar_attributes[remap.index as usize], 1.0);
     assert_eq!(scene.material_nodes[0].attributes[0].name, "reflectance");
     assert_eq!(scene.material_nodes[0].attributes[1].name, "roughness");
 }
@@ -1987,4 +1993,28 @@ fn flatten_rejects_unknown_source_shape_name() {
     root.add_child(child);
     let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
     assert!(error.to_string().contains("Unknown GPU source shape"));
+}
+
+#[test]
+fn flatten_node_preserves_disabled_conductor_roughness_remapping() {
+    for kind in ["conductor_eta_k", "conductor_reflectance"] {
+        let shape = triangle_node("triangle", kind, [0.0; 3]);
+        {
+            let mut node = shape.write().unwrap();
+            let Component::Material(material) = &mut node.components[1] else {
+                panic!("expected material component");
+            };
+            Arc::get_mut(&mut material.material)
+                .unwrap()
+                .params
+                .add_bool("bool remaproughness", false);
+        }
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(shape);
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        let remap = scene.material_nodes[0].attributes.last().unwrap();
+        assert_eq!(remap.name, "remaproughness");
+        assert_eq!(scene.scalar_attributes[remap.index as usize], 0.0);
+    }
 }
