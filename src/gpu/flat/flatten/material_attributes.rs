@@ -417,7 +417,13 @@ pub fn build_material_attributes(
                 }
                 push_scalar_attribute(builder, "roughness", roughness)?
             };
-            Ok(vec![eta_attribute, k_attribute, roughness_attribute])
+            let remap = source_material.params.get_one_bool("remaproughness", true);
+            Ok(vec![
+                eta_attribute,
+                k_attribute,
+                roughness_attribute,
+                push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
+            ])
         }
         "conductor_reflectance" => {
             reject_scalar_textures(source_material, &["uroughness", "vroughness"])?;
@@ -448,7 +454,12 @@ pub fn build_material_attributes(
                 }
                 push_scalar_attribute(builder, "roughness", value)?
             };
-            Ok(vec![reflectance, roughness])
+            let remap = source_material.params.get_one_bool("remaproughness", true);
+            Ok(vec![
+                reflectance,
+                roughness,
+                push_scalar_attribute(builder, "remaproughness", if remap { 1.0 } else { 0.0 })?,
+            ])
         }
         "diffusetransmission" => {
             let reflectance = spectrum_or_texture_alias(
