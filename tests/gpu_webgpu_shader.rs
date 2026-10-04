@@ -188,7 +188,7 @@ fn required_limits_are_derived_from_each_composed_stage() {
     let limits = required_limits_for_sources(&bindings, &[GENERATE_PRIMARY_RAYS_SHADER]).unwrap();
 
     assert_eq!(limits.storage_buffers_per_shader_stage, 9);
-    assert_eq!(limits.uniform_buffers_per_shader_stage, 3);
+    assert_eq!(limits.uniform_buffers_per_shader_stage, 4);
     assert_eq!(limits.bind_groups, 1);
 }
 
@@ -200,7 +200,7 @@ fn primary_and_path_samples_use_the_sampler_module() {
     assert!(primary.contains("var sampler_table: texture_2d<u32>;"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
-    assert!(common_shader().contains("let first_dimension = 6u + 8u * depth;"));
+    assert!(common_shader().contains("select(8u, 11u, material_table.have_subsurface != 0u)"));
     assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
 }
 

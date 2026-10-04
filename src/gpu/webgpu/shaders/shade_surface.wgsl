@@ -110,14 +110,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let object_normal = vertices[i0].normal.xyz * b0
         + vertices[i1].normal.xyz * b1
         + vertices[i2].normal.xyz * b2;
-    var transformed_normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
-    if (intersection_flips_vertex_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
-        transformed_normal = -transformed_normal;
-    }
-    var normal = geometric_normal;
-    if (dot(object_normal, object_normal) > 0.0) {
-        normal = normalize(transformed_normal);
-    }
+    var normal = triangle_shading_normal(instance, geometry, object_normal, geometric_normal);
     let duv02 = uv0 - uv2;
     let duv12 = uv1 - uv2;
     let object_dp02 = object_p0 - object_p2;

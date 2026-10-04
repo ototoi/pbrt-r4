@@ -1,5 +1,6 @@
 pub mod abi;
 pub mod acceleration;
+pub mod bssrdf;
 pub mod context;
 pub mod film;
 pub mod integrator;

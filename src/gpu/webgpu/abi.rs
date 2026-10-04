@@ -107,7 +107,8 @@ pub struct MaterialTableUniform {
     pub measured_texture_width: u32,
     pub measured_texture_height: u32,
     pub measured_texture_count: u32,
-    pub reserved: [u32; 9],
+    pub have_subsurface: u32,
+    pub reserved: [u32; 8],
 }
 
 #[repr(C)]
@@ -203,6 +204,8 @@ pub struct MaterialNode {
     pub child0: u32,
     pub child1: u32,
     pub displacement_texture_root: u32,
+    pub bssrdf_index: u32,
+    pub padding: [u32; 3],
 }
 
 #[repr(C)]
@@ -835,7 +838,8 @@ pub fn material_table_uniform(
         measured_texture_width: 0,
         measured_texture_height: 0,
         measured_texture_count: 0,
-        reserved: [0; 9],
+        have_subsurface: 0,
+        reserved: [0; 8],
     })
 }
 
@@ -946,4 +950,58 @@ pub fn row_major_to_tlas_transform(matrix: [f32; 16]) -> [f32; 12] {
         matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5], matrix[6], matrix[7],
         matrix[8], matrix[9], matrix[10], matrix[11],
     ]
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct BSSRDFTableRecord {
+    pub rho_offset: u32,
+    pub radius_offset: u32,
+    pub profile_offset: u32,
+    pub rho_eff_offset: u32,
+    pub cdf_offset: u32,
+    pub rho_count: u32,
+    pub radius_count: u32,
+    pub padding: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct BSSRDFProbeWorkItem {
+    pub position: [f32; 4],
+    pub normal: [f32; 4],
+    pub sigma_t: [f32; 4],
+    pub rho: [f32; 4],
+    pub sample: [f32; 4],
+    pub table_index: u32,
+    pub material_root: u32,
+    pub pixel_index: u32,
+    pub ray_index: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct BSSRDFProbeResult {
+    pub start: [f32; 4],
+    pub end: [f32; 4],
+    pub position: [f32; 4],
+    pub position_error: [f32; 4],
+    pub normal: [f32; 4],
+    pub barycentric: [f32; 4],
+    pub instance_index: u32,
+    pub primitive_index: u32,
+    pub candidate_count: u32,
+    pub valid: u32,
+    pub reservoir_probability: f32,
+    pub segment_valid: u32,
+    pub padding: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct BSSRDFMaterialRecord {
+    pub scale: f32,
+    pub eta: f32,
+    pub table_index: u32,
+    pub coefficient_kind: u32,
 }

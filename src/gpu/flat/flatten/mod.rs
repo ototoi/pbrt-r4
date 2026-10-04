@@ -5,8 +5,8 @@ use super::{
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
     Camera, DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput,
     LightGeometryKind, LightKind, LightSamplingModel, Medium, Output, PrimitiveDistributionMap,
-    Scene, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport,
-    INVALID_INDEX,
+    Scene, TabulatedBSSRDFTable, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy,
+    Vertex, Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
     Component, Integrator as NodeIntegrator, Material as NodeMaterial, NodeRef,
@@ -26,6 +26,7 @@ mod material;
 use material::{build_material_roots, register_material_source, MaterialSourceNode};
 mod material_attributes;
 mod medium;
+mod subsurface;
 use medium::{register_medium, resolve_medium_name};
 mod node;
 use node::flatten_node_ref;
@@ -133,6 +134,8 @@ pub fn flatten_node_with_material_override(
         media: builder.media,
         material_roots,
         material_nodes,
+        bssrdfs: builder.bssrdfs,
+        bssrdf_tables: builder.bssrdf_tables,
         scalar_attributes: builder.scalar_attributes,
         texture_library,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
@@ -270,6 +273,8 @@ struct FlatBuilder {
     instances: Vec<Instance>,
     media: Vec<Medium>,
     material_source_nodes: Vec<MaterialSourceNode>,
+    bssrdfs: Vec<BSSRDF>,
+    bssrdf_tables: Vec<TabulatedBSSRDFTable>,
     scalar_attributes: Vec<f32>,
     texture_root_specs: Vec<TextureRootSpec>,
     texture_roots_by_key: HashMap<(usize, u32), u32>,

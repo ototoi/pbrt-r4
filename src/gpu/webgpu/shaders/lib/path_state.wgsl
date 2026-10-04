@@ -46,7 +46,7 @@ fn store_ray_samples(pixel_index: u32, samples: RaySamples) {
 }
 
 fn generate_ray_samples(pixel_index: u32, depth: u32) -> RaySamples {
-    let first_dimension = 6u + 8u * depth;
+    let first_dimension = 6u + select(8u, 11u, material_table.have_subsurface != 0u) * depth;
     return RaySamples(
         vec4<f32>(
             sampler_get_1d(pixel_index, first_dimension),

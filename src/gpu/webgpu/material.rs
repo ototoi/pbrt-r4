@@ -15,6 +15,17 @@ impl MaterialTable {
             .material_nodes
             .iter()
             .map(|material| {
+                if material.kind == "subsurface" {
+                    if material.bssrdf_index as usize >= scene.bssrdfs.len() {
+                        return Err(PbrtError::error(
+                            "Subsurface material references an invalid BSSRDF.",
+                        ));
+                    }
+                } else if material.bssrdf_index != flat::INVALID_INDEX {
+                    return Err(PbrtError::error(
+                        "Only subsurface materials may reference a BSSRDF.",
+                    ));
+                }
                 validate_material_attributes(material)?;
                 let offset = attributes.len() as u32;
                 for attr in &material.attributes {
@@ -38,6 +49,8 @@ impl MaterialTable {
                     child0: material.child0,
                     child1: material.child1,
                     displacement_texture_root: material.displacement_texture_root,
+                    bssrdf_index: material.bssrdf_index,
+                    padding: [0; 3],
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
@@ -68,6 +81,14 @@ fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), Pbr
             (1, flat::AttributeKind::Scalar),
             (2, flat::AttributeKind::Scalar),
             (3, flat::AttributeKind::Scalar),
+        ][..],
+        "subsurface" => &[
+            (0, flat::AttributeKind::Spectrum),
+            (1, flat::AttributeKind::Scalar),
+            (2, flat::AttributeKind::Scalar),
+            (3, flat::AttributeKind::Scalar),
+            (4, flat::AttributeKind::Spectrum),
+            (5, flat::AttributeKind::Spectrum),
         ][..],
         "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
         "diffusetransmission" => &[
@@ -183,6 +204,7 @@ pub enum MaterialKind {
     CoatedConductor,
     Measured,
     AlphaMask,
+    Subsurface,
 }
 
 impl MaterialKind {
@@ -202,6 +224,7 @@ impl MaterialKind {
             Self::CoatedConductor => 9,
             Self::Measured => 10,
             Self::AlphaMask => 14,
+            Self::Subsurface => 15,
         }
     }
 
@@ -221,6 +244,7 @@ impl MaterialKind {
             "coatedconductor" => Ok(Self::CoatedConductor),
             "measured" => Ok(Self::Measured),
             "alphamask" => Ok(Self::AlphaMask),
+            "subsurface" => Ok(Self::Subsurface),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."
             ))),
