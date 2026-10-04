@@ -29,7 +29,6 @@
 //! currentMaterialIndex, areaLightName, inside/outside medium, etc.) is
 //! stacked.
 
-use super::path_resolver::make_absolute_path;
 use super::scene_entity::{
     InstanceDefinitionSceneEntity, InstanceSceneEntity, MediumInterfaceNames, RenderFromObject,
     ShapeSceneEntity,
@@ -286,7 +285,7 @@ impl SceneBuilder {
                 .get(&idx)
                 .cloned()
                 .ok_or_else(|| PbrtError::error("unnamed leaf float texture"))?;
-            let params = make_absolute_path(&tex.base.params, &self.seen_work_dirs);
+            let params = tex.base.params.clone();
             let tp = TextureParameterDictionary::new(&params, &empty_float, &empty_spectrum);
             let render_from_texture = render_from_world * tex.render_from_texture;
             let created = if tex.base.name == "imagemap" {
@@ -328,7 +327,7 @@ impl SceneBuilder {
                     Some(n) => n.clone(),
                     None => return Ok(Vec::new()),
                 };
-                let params = make_absolute_path(&tex.base.params, &self.seen_work_dirs);
+                let params = tex.base.params.clone();
                 let mut out = Vec::with_capacity(3);
                 if tex.base.name == "imagemap" {
                     let spectrum_types = [
@@ -413,7 +412,7 @@ impl SceneBuilder {
                 Some(n) => n.clone(),
                 None => continue,
             };
-            let params = make_absolute_path(&tex.base.params, &self.seen_work_dirs);
+            let params = tex.base.params.clone();
             let tp = TextureParameterDictionary::new(&params, &float_tex, &spectrum_tex);
             let render_from_texture = render_from_world * tex.render_from_texture;
             let created = if tex.base.name == "imagemap" {
@@ -440,7 +439,7 @@ impl SceneBuilder {
                 Some(n) => n.clone(),
                 None => continue,
             };
-            let params = make_absolute_path(&tex.base.params, &self.seen_work_dirs);
+            let params = tex.base.params.clone();
             if tex.base.name == "imagemap" {
                 let spectrum_types = [
                     canonical_spectrum_type(SPECTRUM_CLASS_ALBEDO).ok_or_else(|| {
@@ -506,7 +505,7 @@ impl SceneBuilder {
     fn realize_media(&self, render_from_world: &Transform) -> Result<MediumMap, PbrtError> {
         let mut out: MediumMap = HashMap::new();
         for (name, m) in &self.media {
-            let params = make_absolute_path(&m.base.params, &self.seen_work_dirs);
+            let params = m.base.params.clone();
             let t = params.get_one_string("type", "");
             if t.is_empty() {
                 return Err(PbrtError::error(&format!(
@@ -554,7 +553,7 @@ impl SceneBuilder {
         let mut named_materials: HashMap<String, Arc<Material>> = HashMap::new();
 
         for (idx, mat) in self.materials.iter().enumerate() {
-            let params = make_absolute_path(&mat.base.params, &self.seen_work_dirs);
+            let params = mat.base.params.clone();
             let tp = TextureParameterDictionary::new(&params, float_tex, spectrum_tex);
             let mat_arc =
                 build_material(&mat.base.name, &tp, &named_materials, &self.integrator_name)?;
@@ -962,17 +961,9 @@ impl SceneBuilder {
             object_to_world
         };
 
-        // Build the underlying Shape(s). For triangle/curve meshes, params may
-        // contain a relative filename which SceneBuilder's create_shapes
-        // selectively did NOT absolute-resolve. Match that exclusion list.
-        let params_resolved;
-        let params_ref: &ParameterDictionary =
-            if shape.base.name == "trianglemesh" || shape.base.name == "curve" {
-                &shape.base.params
-            } else {
-                params_resolved = make_absolute_path(&shape.base.params, &self.seen_work_dirs);
-                &params_resolved
-            };
+        // File parameters were resolved while parsing, before the shape entity
+        // was stored. trianglemesh and curve retain their original parameters.
+        let params_ref: &ParameterDictionary = &shape.base.params;
 
         // For area-light-bound shapes, force the "twosided" param along the
         // path used by SceneBuilder.make_shapes.
@@ -1104,7 +1095,7 @@ impl SceneBuilder {
         for s in shapes {
             if let Some(al_idx) = shape.area_light_index {
                 let al = &self.area_lights[al_idx];
-                let al_params = make_absolute_path(&al.base.params, &self.seen_work_dirs);
+                let al_params = al.base.params.clone();
                 let al_mi = build_medium_interface(&al.medium_interface, named_media);
                 let shared_shape = Arc::new(s);
                 let area_light = match Light::create_area(
@@ -1231,7 +1222,7 @@ impl SceneBuilder {
         let mut lights: Vec<Arc<Light>> = Vec::new();
         lights.append(area_lights);
         for l in &self.lights {
-            let params = make_absolute_path(&l.base.base.params, &self.seen_work_dirs);
+            let params = l.base.base.params.clone();
             let rfo = compose_with_render_from_world(&l.base.render_from_object, render_from_world);
             let transform = render_from_object_to_transform(&rfo);
             // Light entities have a single medium name; use it on both sides.
@@ -1282,8 +1273,13 @@ impl SceneBuilder {
         } else {
             None
         };
-        let params = make_absolute_path(&self.camera_params, &self.seen_work_dirs);
-        Camera::create(&self.camera_name, &params, &animated, film, &medium)
+        Camera::create(
+            &self.camera_name,
+            &self.camera_params,
+            &animated,
+            film,
+            &medium,
+        )
     }
 
     fn realize_sampler(&self, film: &Arc<RwLock<Film>>) -> Result<Arc<RwLock<Sampler>>, PbrtError> {

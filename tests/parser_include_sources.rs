@@ -74,6 +74,53 @@ fn include_sources_preserve_directive_order_and_work_directories() {
 }
 
 #[test]
+fn file_parameters_are_resolved_in_their_included_scene_before_entity_creation() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let root = directory.path().join("root.pbrt");
+    let first_dir = directory.path().join("first");
+    let second_dir = directory.path().join("second");
+    fs::create_dir(&first_dir).expect("first include directory should be created");
+    fs::create_dir(&second_dir).expect("second include directory should be created");
+
+    let first_asset = first_dir.join("shared.ply");
+    let second_asset = second_dir.join("shared.ply");
+    fs::write(&first_asset, "first").expect("first asset should be written");
+    fs::write(&second_asset, "second").expect("second asset should be written");
+    fs::write(
+        first_dir.join("first.pbrt"),
+        "Attribute \"shape\" \"string filename\" \"shared.ply\"\nShape \"plymesh\" \"string note\" \"shared.ply\"\n",
+    )
+    .expect("first include should be written");
+    fs::write(
+        second_dir.join("second.pbrt"),
+        "Shape \"plymesh\" \"string filename\" \"shared.ply\"\n",
+    )
+    .expect("second include should be written");
+    fs::write(
+        &root,
+        "WorldBegin\nInclude \"first/first.pbrt\"\nInclude \"second/second.pbrt\"\nWorldEnd\n",
+    )
+    .expect("root scene should be written");
+
+    let mut builder = SceneBuilder::new();
+    parse_file(root.to_str().unwrap(), &mut builder).expect("scene should parse");
+
+    assert_eq!(builder.shapes.len(), 2);
+    assert_eq!(
+        builder.shapes[0].base.params.get_one_string("filename", ""),
+        first_asset.to_string_lossy()
+    );
+    assert_eq!(
+        builder.shapes[1].base.params.get_one_string("filename", ""),
+        second_asset.to_string_lossy()
+    );
+    assert_eq!(
+        builder.shapes[0].base.params.get_one_string("note", ""),
+        "shared.ply"
+    );
+}
+
+#[test]
 fn gzipped_root_is_parsed_in_order() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let root = directory.path().join("root.pbrt.gz");

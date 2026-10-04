@@ -88,10 +88,6 @@ pub struct SceneBuilder {
     pub named_coordinate_systems: HashMap<String, TransformSet>,
     pub push_stack: Vec<PushKind>,
     pub work_dirs: Vec<String>,
-    /// Every directory ever pushed via `work_dir_begin`, in arrival
-    /// order. Reused at `build()` as the search path for
-    /// `SceneBuilder::get_filepath`.
-    pub seen_work_dirs: Vec<String>,
     /// While inside an `ObjectBegin "<name>"` scope, shapes are pushed
     /// to the matching `InstanceDefinitionSceneEntity` instead of the
     /// top-level scene.
@@ -159,7 +155,6 @@ impl SceneBuilder {
             named_coordinate_systems: HashMap::new(),
             push_stack: Vec::new(),
             work_dirs: Vec::new(),
-            seen_work_dirs: Vec::new(),
             current_instance_name: None,
             import_errors: Vec::new(),
             option_errors: Vec::new(),
