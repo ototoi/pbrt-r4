@@ -782,7 +782,29 @@ fn material_subsurface_spectrum_eta_uses_scalar_default_like_v4() {
 }
 
 #[test]
-fn material_subsurface_zero_coefficients_still_create_bssrdf() {
+fn material_subsurface_invalid_eta_falls_back_to_default() {
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let default_params = ParameterDictionary::new();
+    let mut invalid_params = ParameterDictionary::new();
+    invalid_params.add_float("eta", 0.0);
+    let f_tex: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
+    let default_tp = TextureParameterDictionary::new(&default_params, &f_tex, &s_tex);
+    let invalid_tp = TextureParameterDictionary::new(&invalid_params, &f_tex, &s_tex);
+    let default = Material::create("subsurface", &default_tp).unwrap();
+    let invalid = Material::create("subsurface", &invalid_tp).unwrap();
+    let si = surface_test_si();
+
+    assert!(
+        (sampled_transmission_eta(&default, &si, &lambda)
+            - sampled_transmission_eta(&invalid, &si, &lambda))
+        .abs()
+            < 1e-6
+    );
+}
+
+#[test]
+fn material_subsurface_zero_coefficients_continue_without_bssrdf() {
     let lambda = SampledWavelengths::sample_visible(0.5);
     let mut params = ParameterDictionary::new();
     params.add_spectrum("sigma_a", &Spectrum::zero());
@@ -792,16 +814,13 @@ fn material_subsurface_zero_coefficients_still_create_bssrdf() {
     let tp = TextureParameterDictionary::new(&params, &f_tex, &s_tex);
     let material = Material::create("subsurface", &tp).unwrap();
 
-    let bssrdf = material
+    assert!(material
         .test_get_bssrdf(&surface_test_si(), &lambda)
-        .expect("v4 constructs the BSSRDF even with zero coefficients");
-    assert!(bssrdf
-        .sample_sp(0.5, &Point2f::new(0.5, 0.5), &lambda)
         .is_none());
 }
 
 #[test]
-fn material_subsurface_roughness_above_one_is_not_clamped() {
+fn material_subsurface_roughness_above_one_is_clamped() {
     let lambda = SampledWavelengths::sample_visible(0.5);
     let mut params = ParameterDictionary::new();
     params.add_float("roughness", 1.5);
@@ -838,7 +857,7 @@ fn material_subsurface_roughness_above_one_is_not_clamped() {
             BXDF_ALL,
         )
         .unwrap();
-    assert_ne!(rough.wi, clamped.wi);
+    assert_eq!(rough.wi, clamped.wi);
 }
 
 #[test]

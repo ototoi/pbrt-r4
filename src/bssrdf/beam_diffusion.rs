@@ -72,8 +72,9 @@ pub fn subsurface_from_diffuse(
     let mut sigma_s = DenseSampledSpectrum::zero();
     for c in 0..DenseSampledSpectrum::N_SAMPLES {
         let rho = invert_catmull_rom(&table.rho_samples, &table.rho_eff, rho_eff[c]);
-        sigma_s[c] = rho / mfp[c];
-        sigma_a[c] = (1.0 - rho) / mfp[c];
+        let mfp_c = mfp[c].max(1e-6);
+        sigma_s[c] = rho / mfp_c;
+        sigma_a[c] = (1.0 - rho) / mfp_c;
     }
     (Spectrum::from(&sigma_a), Spectrum::from(&sigma_s))
 }
@@ -90,8 +91,9 @@ pub fn subsurface_from_diffuse_sampled(
     let mut sigma_s = [0.0; SampledSpectrum::N_SAMPLES];
     for c in 0..SampledSpectrum::N_SAMPLES {
         let rho = invert_catmull_rom(&table.rho_samples, &table.rho_eff, rho_eff[c]);
-        sigma_s[c] = rho / mfp[c];
-        sigma_a[c] = (1.0 - rho) / mfp[c];
+        let mfp_c = mfp[c].max(1e-6);
+        sigma_s[c] = rho / mfp_c;
+        sigma_a[c] = (1.0 - rho) / mfp_c;
     }
     (
         SampledSpectrum::from(sigma_a),

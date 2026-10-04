@@ -4,7 +4,7 @@ use pbrt_r4::bssrdf::{
 use pbrt_r4::util::spectrum::SampledSpectrum;
 
 #[test]
-fn subsurface_from_diffuse_preserves_zero_mfp_division_like_v4() {
+fn subsurface_from_diffuse_clamps_zero_mfp_to_finite_coefficients() {
     let mut table = BSSRDFTable::new(100, 64);
     compute_beam_diffusion_bssrdf(0.0, 1.33, &mut table);
     let (sigma_a, sigma_s) = subsurface_from_diffuse_sampled(
@@ -12,5 +12,6 @@ fn subsurface_from_diffuse_preserves_zero_mfp_division_like_v4() {
         &SampledSpectrum::new(0.5),
         &SampledSpectrum::zero(),
     );
-    assert!(!sigma_a.is_valid() || !sigma_s.is_valid());
+    assert!(sigma_a.is_valid());
+    assert!(sigma_s.is_valid());
 }

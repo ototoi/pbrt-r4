@@ -76,8 +76,12 @@ impl SubsurfaceMaterial {
         _lambda: &SampledWavelengths,
     ) -> DielectricBxDF {
         let texture_ctx = ctx.texture_context();
-        let mut u_rough = tex_eval.evaluate_float(self.u_roughness.as_ref(), texture_ctx);
-        let mut v_rough = tex_eval.evaluate_float(self.v_roughness.as_ref(), texture_ctx);
+        let mut u_rough = tex_eval
+            .evaluate_float(self.u_roughness.as_ref(), texture_ctx)
+            .clamp(0.0, 1.0);
+        let mut v_rough = tex_eval
+            .evaluate_float(self.v_roughness.as_ref(), texture_ctx)
+            .clamp(0.0, 1.0);
         if self.remap_roughness {
             u_rough = TrowbridgeReitzDistribution::roughness_to_alpha(u_rough);
             v_rough = TrowbridgeReitzDistribution::roughness_to_alpha(v_rough);
@@ -97,6 +101,10 @@ impl SubsurfaceMaterial {
         lambda: &SampledWavelengths,
     ) -> Option<TabulatedBSSRDF> {
         let (sigma_a, sigma_s) = self.evaluate_scattering(tex_eval, ctx, lambda);
+        if (sigma_a + sigma_s).is_black() {
+            return None;
+        }
+
         Some(TabulatedBSSRDF::new(
             ctx.texture_ctx.p,
             ctx.ns,
@@ -214,7 +222,14 @@ impl SubsurfaceMaterial {
             }
         };
 
-        let eta = mp.get_one_float("eta", 1.33);
+        let mut eta = mp.get_one_float("eta", 1.33);
+        if eta <= 0.0 {
+            log::warn!(
+                "Material \"subsurface\": invalid eta {}. Falling back to 1.33",
+                eta
+            );
+            eta = 1.33;
+        }
 
         let scale = mp.get_one_float("scale", 1.0);
         let roughness = mp.get_float_texture("roughness", 0.0)?;
