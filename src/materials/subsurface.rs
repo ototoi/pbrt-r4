@@ -222,13 +222,7 @@ impl SubsurfaceMaterial {
             }
         };
 
-        let mut eta = mp
-            .get_spectrum_or_null_typed("eta", SpectrumType::Unbounded)
-            .map(|eta_spec| {
-                let lambda = SampledWavelengths::sample_visible(0.5);
-                eta_from_spectrum(eta_spec.clamp_zero(), &lambda, 1.33)
-            })
-            .unwrap_or_else(|| mp.get_one_float("eta", 1.33));
+        let mut eta = mp.get_one_float("eta", 1.33);
         if eta <= 0.0 {
             log::warn!(
                 "Material \"subsurface\": invalid eta {}. Falling back to 1.33",
