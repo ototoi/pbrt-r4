@@ -73,6 +73,11 @@ pub enum ResourceId {
     NextMediumIndices,
     ActiveShadowIndices,
     NextShadowIndices,
+    BSSRDFMaterial,
+    BSSRDFTable,
+    BSSRDFValues,
+    BSSRDFWork,
+    BSSRDFResults,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -304,6 +309,8 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::ReadWrite,
     );
     for (binding, resource) in [
+        (69, ResourceId::BSSRDFWork),
+        (70, ResourceId::BSSRDFResults),
         (52, ResourceId::DirectEvalQueue),
         (53, ResourceId::ScatterDiffuseQueue),
         (54, ResourceId::ScatterDiffuseTransmissionQueue),
@@ -316,6 +323,9 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         push(binding, resource, BindingClass::Storage, Access::ReadWrite);
     }
     for (binding, resource) in [
+        (66, ResourceId::BSSRDFMaterial),
+        (67, ResourceId::BSSRDFTable),
+        (68, ResourceId::BSSRDFValues),
         (22, ResourceId::AttributeRef),
         (23, ResourceId::ScalarAttribute),
         (28, ResourceId::LightRecord),

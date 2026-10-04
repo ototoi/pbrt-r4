@@ -30,6 +30,8 @@ const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
 const MATERIAL_KIND_LAMBERT: u32 = 2u;
 const MATERIAL_KIND_DIELECTRIC: u32 = 3u;
+const MATERIAL_KIND_SUBSURFACE: u32 = 15u;
+const SURFACE_FLAG_SUBSURFACE_EXIT: u32 = 16u;
 const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;
 const MATERIAL_KIND_UNUSED_CONDUCTOR: u32 = 6u;
 const MATERIAL_KIND_CONDUCTOR_ETA_K: u32 = 11u;
@@ -79,6 +81,8 @@ struct MaterialNode {
     child0: u32,
     child1: u32,
     displacement_texture_root: u32,
+    bssrdf_index: u32,
+    _bssrdf_padding0: u32, _bssrdf_padding1: u32, _bssrdf_padding2: u32,
 };
 
 struct MeasuredBsdfRecord {
@@ -229,7 +233,7 @@ struct MaterialTableUniform {
     attributes_eval_stride: u32, texture_eval_stride: u32,
     measured_texture_base: u32, measured_texture_width: u32,
     measured_texture_height: u32, measured_texture_count: u32,
-    _reserved6: u32, _reserved7: u32,
+    have_subsurface: u32, _reserved7: u32,
     _reserved8: u32, _reserved9: u32, _reserved10: u32, _reserved11: u32,
     _reserved12: u32, _reserved13: u32, _reserved14: u32,
 };
@@ -527,3 +531,21 @@ struct DecodedLightBVHNode {
     payload: u32,
     is_leaf: bool,
 };
+
+struct BSSRDFTableRecord {
+    rho_offset: u32, radius_offset: u32, profile_offset: u32, rho_eff_offset: u32,
+    cdf_offset: u32, rho_count: u32, radius_count: u32, padding: u32,
+}
+struct BSSRDFProbeWorkItem {
+    position: vec4<f32>, normal: vec4<f32>, sigma_t: vec4<f32>, rho: vec4<f32>,
+    sample: vec4<f32>, table_index: u32, material_root: u32, pixel_index: u32, ray_index: u32,
+}
+struct BSSRDFProbeResult {
+    start: vec4<f32>, end: vec4<f32>, position: vec4<f32>, position_error: vec4<f32>,
+    normal: vec4<f32>, barycentric: vec4<f32>,
+    instance_index: u32, primitive_index: u32, candidate_count: u32, valid: u32,
+    reservoir_probability: f32, segment_valid: u32, padding: vec2<u32>,
+}
+struct BSSRDFProbeQueue { state: QueueState, items: array<BSSRDFProbeWorkItem>, }
+
+struct BSSRDFMaterialRecord { scale: f32, eta: f32, table_index: u32, coefficient_kind: u32, }

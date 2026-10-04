@@ -98,3 +98,32 @@ fn offset_ray_origin(position: vec3<f32>, error: vec3<f32>, normal: vec3<f32>, d
     }
     return result;
 }
+
+fn triangle_shading_normal(instance: Instance, geometry: Geometry, object_normal: vec3<f32>, geometric_normal: vec3<f32>) -> vec3<f32> {
+    if (dot(object_normal, object_normal) == 0.0) { return geometric_normal; }
+    var normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
+    if (intersection_flips_vertex_normal(geometry.intersection_normal_kind, instance.orientation_flags)) { normal = -normal; }
+    return normalize(normal);
+}
+fn reconstruct_triangle_shading_frame(instance_index: u32, primitive: u32, bary: vec3<f32>, geometric_normal: vec3<f32>) -> mat3x3<f32> {
+    let instance = instances[instance_index];
+    let geometry = geometries[instance.geometry];
+    let first = geometry.index_offset + primitive * 3u;
+    let v0 = vertices[geometry.vertex_offset + indices[first]];
+    let v1 = vertices[geometry.vertex_offset + indices[first + 1u]];
+    let v2 = vertices[geometry.vertex_offset + indices[first + 2u]];
+    let object_normal = v0.normal.xyz*bary.x + v1.normal.xyz*bary.y + v2.normal.xyz*bary.z;
+    let normal = triangle_shading_normal(instance, geometry, object_normal, geometric_normal);
+    var source = v0.tangent.xyz*bary.x + v1.tangent.xyz*bary.y + v2.tangent.xyz*bary.z;
+    if (dot(source, source) == 0.0) {
+        let duv02 = v0.uv - v2.uv;
+        let duv12 = v1.uv - v2.uv;
+        let det = duv02.x*duv12.y - duv02.y*duv12.x;
+        if (det != 0.0) { source = (duv12.y*(v0.position.xyz-v2.position.xyz) - duv02.y*(v1.position.xyz-v2.position.xyz)) / det; }
+    }
+    let tangent = (instance.world_from_object * vec4<f32>(source, 0.0)).xyz;
+    let bitangent = cross(normal, tangent);
+    var x = coordinate_system_x(normal);
+    if (dot(bitangent, bitangent) > 0.0) { x = normalize(cross(bitangent, normal)); }
+    return mat3x3<f32>(x, cross(normal, x), normal);
+}

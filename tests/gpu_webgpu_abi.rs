@@ -1,11 +1,11 @@
 use pbrt_r4::gpu::flat;
 use pbrt_r4::gpu::webgpu::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, validate_affine, AttributeRef,
-    CameraUniform, DenseSpectrum, DispatchIndirectArgs, FilmUniform, Geometry, Instance,
-    LightRecord, LightTableUniform, MaterialNode, MaterialTableUniform, MeasuredBsdfRecord,
-    MeasuredTableRecord, MediumRecord, PixelSampleState, QueueCounters, QueueState, RayWorkItem,
-    RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult, TriangleDistributionEntry,
-    Vertex, ViewportUniform, QUEUE_DISPATCH_SLOT_COUNT,
+    BSSRDFMaterialRecord, CameraUniform, DenseSpectrum, DispatchIndirectArgs, FilmUniform,
+    Geometry, Instance, LightRecord, LightTableUniform, MaterialNode, MaterialTableUniform,
+    MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, PixelSampleState, QueueCounters,
+    QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
+    TriangleDistributionEntry, Vertex, ViewportUniform, QUEUE_DISPATCH_SLOT_COUNT,
 };
 use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
 
@@ -41,7 +41,10 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(Geometry, intersection_normal_kind), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 160);
     assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
-    assert_eq!(std::mem::size_of::<MaterialNode>(), 32);
+    assert_eq!(std::mem::size_of::<MaterialNode>(), 48);
+    assert_eq!(std::mem::offset_of!(MaterialNode, bssrdf_index), 32);
+    assert_eq!(std::mem::size_of::<BSSRDFMaterialRecord>(), 16);
+    assert_eq!(std::mem::offset_of!(BSSRDFMaterialRecord, table_index), 8);
     assert_eq!(std::mem::size_of::<AttributeRef>(), 8);
     assert_eq!(std::mem::size_of::<MeasuredBsdfRecord>(), 32);
     assert_eq!(std::mem::size_of::<MeasuredTableRecord>(), 80);

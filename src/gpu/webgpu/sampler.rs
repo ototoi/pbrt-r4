@@ -17,7 +17,6 @@ use crate::util::lowdiscrepancy::DigitPermutation;
 use super::stages::ResourceId;
 
 const TABLE_WIDTH: u32 = 256;
-const HALTON_DIMENSION_COUNT: u32 = 6 + 8 * (MAX_GPU_RENDER_DEPTH + 1);
 const WORDS_PER_TEXEL: usize = 4;
 const HEADER_WORDS_PER_DIMENSION: usize = 4;
 const INVALID_OFFSET: u32 = u32::MAX;
@@ -81,6 +80,7 @@ enum SamplerParameters {
 
 #[derive(Clone, Copy, Debug)]
 struct SamplerConfiguration {
+    dimension_count: u32,
     kind: SamplerKind,
     randomization: SamplerRandomization,
     samples_per_pixel: u32,
@@ -153,7 +153,7 @@ impl SamplerConfiguration {
                 SamplerRandomization::Owen => SAMPLER_RANDOMIZATION_OWEN,
             },
             table_width: TABLE_WIDTH,
-            dimension_count: HALTON_DIMENSION_COUNT,
+            dimension_count: self.dimension_count,
             samples_per_pixel: self.samples_per_pixel,
             seed: self.seed,
             padding: [0; 2],
@@ -195,8 +195,19 @@ impl SamplerResources {
         settings: &RenderSettings,
         resolution: [u32; 2],
     ) -> Result<Self, PbrtError> {
+        Self::new_with_subsurface(device, queue, settings, resolution, false)
+    }
+
+    pub fn new_with_subsurface(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        settings: &RenderSettings,
+        resolution: [u32; 2],
+        have_subsurface: bool,
+    ) -> Result<Self, PbrtError> {
         let started = Instant::now();
-        let data = build_sampler_data(settings, resolution)?;
+        let data = build_sampler_data_with_subsurface(settings, resolution, have_subsurface)?;
+        let dimension_count = data.dimension_count();
         let uniform = data.configuration.encode();
         let texel_count = data.words.len().div_ceil(WORDS_PER_TEXEL).max(1);
         let height = u32::try_from(texel_count.div_ceil(TABLE_WIDTH as usize))
@@ -241,7 +252,7 @@ impl SamplerResources {
         log::info!(
             "GPU sampler resources: kind={:?}, dimensions={}, words={}, build+upload={:?}",
             settings.sampler_kind,
-            HALTON_DIMENSION_COUNT,
+            dimension_count,
             texels.len(),
             started.elapsed()
         );
@@ -266,7 +277,7 @@ impl SamplerData {
     }
 
     pub fn dimension_count(&self) -> u32 {
-        HALTON_DIMENSION_COUNT
+        self.configuration.dimension_count
     }
 }
 
@@ -274,6 +285,16 @@ pub fn build_sampler_data(
     settings: &RenderSettings,
     resolution: [u32; 2],
 ) -> Result<SamplerData, PbrtError> {
+    build_sampler_data_with_subsurface(settings, resolution, false)
+}
+
+pub fn build_sampler_data_with_subsurface(
+    settings: &RenderSettings,
+    resolution: [u32; 2],
+    have_subsurface: bool,
+) -> Result<SamplerData, PbrtError> {
+    let dimensions_per_depth = if have_subsurface { 13 } else { 8 };
+    let dimension_count = 6 + dimensions_per_depth * (MAX_GPU_RENDER_DEPTH + 1);
     if settings.samples_per_pixel == 0 {
         return Err(PbrtError::error(
             "GPU samples per pixel must be greater than zero.",
@@ -306,11 +327,7 @@ pub fn build_sampler_data(
                     "GPU Halton sample index exceeds the WebGPU u32 representation.",
                 ));
             }
-            words = pack_halton_table(
-                HALTON_DIMENSION_COUNT,
-                settings.randomization,
-                settings.seed,
-            );
+            words = pack_halton_table(dimension_count, settings.randomization, settings.seed);
             SamplerParameters::Halton {
                 base_scales: halton.base_scales.map(|value| value as u32),
                 base_exponents: halton.base_exponents.map(|value| value as u32),
@@ -325,7 +342,7 @@ pub fn build_sampler_data(
             let log2_scale = scale.ilog2();
             let log2_samples_per_pixel = settings.samples_per_pixel.ilog2();
             let n_base4_digits = log2_scale + log2_samples_per_pixel.div_ceil(2);
-            let sobol_offset = append_sobol_matrices(&mut words, HALTON_DIMENSION_COUNT)?;
+            let sobol_offset = append_sobol_matrices(&mut words, dimension_count)?;
             let (vdc_offset, vdc_inverse_offset) = if settings.sampler_kind == SamplerKind::Sobol {
                 if log2_scale > VDC_SOBOL_MATRICES.len() as u32 {
                     return Err(PbrtError::error(
@@ -380,6 +397,7 @@ pub fn build_sampler_data(
         },
     };
     let configuration = SamplerConfiguration {
+        dimension_count,
         kind: settings.sampler_kind,
         randomization: settings.randomization,
         samples_per_pixel: settings.samples_per_pixel,
