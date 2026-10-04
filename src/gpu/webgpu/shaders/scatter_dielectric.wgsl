@@ -54,8 +54,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
             var sigma_s = max(vec4<f32>(0.0), material.scale * evaluated.values[5]);
             if (material.coefficient_kind == 1u) {
                 let reflectance = clamp(evaluated.values[4], vec4<f32>(0.0), vec4<f32>(1.0));
-                let mfp = max(vec4<f32>(1e-6),
-                    max(vec4<f32>(0.0), material.scale * evaluated.values[5]));
+                let mfp = max(vec4<f32>(1e-6), material.scale * evaluated.values[5]);
                 for (var i = 0u; i < 4u; i++) {
                     let rho = bssrdf_invert_reflectance(bssrdf_tables[material.table_index], reflectance[i]);
                     sigma_s[i] = rho / mfp[i];
