@@ -42,10 +42,54 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
     if (bs.valid == 0u || bs.pdf <= 0.0 || bs.wi.z == 0.0) { return; }
     let direction = normalize(scattering_world_frame(bs.wi, tangent, normal));
-    let next_beta = ray.beta * bs.f * abs(bs.wi.z) / bs.pdf;
+    var next_beta = ray.beta * bs.f * abs(bs.wi.z) / bs.pdf;
     var eta_scale = ray.eta_scale;
     if (bs.transmission != 0u) {
         eta_scale = eta_scale * bs.etap * bs.etap;
+    }
+    if (evaluated.bxdf_kind == MATERIAL_KIND_SUBSURFACE) {
+        if (bs.transmission != 0u) {
+            let material = bssrdf_materials[material_nodes[evaluated.material_node].bssrdf_index];
+            var sigma_a = max(vec4<f32>(0.0), material.scale * evaluated.values[4]);
+            var sigma_s = max(vec4<f32>(0.0), material.scale * evaluated.values[5]);
+            if (material.coefficient_kind == 1u) {
+                let reflectance = clamp(evaluated.values[4], vec4<f32>(0.0), vec4<f32>(1.0));
+                let mfp = max(vec4<f32>(0.0), material.scale * evaluated.values[5]);
+                for (var i = 0u; i < 4u; i++) {
+                    let rho = bssrdf_invert_reflectance(bssrdf_tables[material.table_index], reflectance[i]);
+                    sigma_s[i] = rho / mfp[i];
+                    sigma_a[i] = (1.0 - rho) / mfp[i];
+                }
+            }
+            let sigma_t = sigma_a + sigma_s;
+            var rho = vec4<f32>(0.0);
+            for (var i = 0u; i < 4u; i++) {
+                if (sigma_t[i] != 0.0) { rho[i] = sigma_s[i] / sigma_t[i]; }
+            }
+            let dimension = 6u + 13u * ray.depth + 8u;
+            let sample = vec4<f32>(sampler_get_1d(pixel_index, dimension),
+                sampler_get_2d(pixel_index, dimension + 1u), material.eta);
+            let index = atomicAdd(&bssrdf_work.state.count, 1u);
+            if (index >= bssrdf_work.state.capacity) {
+                atomicStore(&bssrdf_work.state.overflow, 1u); set_render_error(); return;
+            }
+            bssrdf_work.items[index] = BSSRDFProbeWorkItem(surface.position,
+                vec4<f32>(normal, 0.0), sigma_t, rho, sample, material.table_index,
+                surface.material_root, pixel_index, ray_index);
+            var entry_ray = ray;
+            entry_ray.beta = next_beta;
+            entry_ray.eta_scale = eta_scale;
+            store_current_ray(ray_index, entry_ray);
+            return;
+        }
+        let average_r_u = dot(ray.r_u, vec4<f32>(0.25));
+        let rr_beta = next_beta * eta_scale / average_r_u;
+        let rr_max = max(max(rr_beta.x, rr_beta.y), max(rr_beta.z, rr_beta.w));
+        if (ray.depth >= 1u && rr_max < 1.0) {
+            let q = max(0.0, 1.0 - rr_max);
+            if (samples.indirect.w < q) { return; }
+            next_beta /= 1.0 - q;
+        }
     }
     let next_ray = RayWorkItem(
         vec4<f32>(offset_ray_origin(surface.position.xyz, surface.position_error.xyz, surface.geometric_normal.xyz, direction), 1.0),

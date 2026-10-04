@@ -17,6 +17,7 @@ pub struct MaterialSourceNode {
     pub attributes: Vec<AttributeRef>,
     pub children: Vec<u32>,
     pub displacement_texture_root: u32,
+    pub bssrdf_index: u32,
 }
 
 pub fn build_material_roots(
@@ -52,6 +53,7 @@ pub fn build_material_roots(
             child0: INVALID_INDEX,
             child1: INVALID_INDEX,
             displacement_texture_root: source.displacement_texture_root,
+            bssrdf_index: source.bssrdf_index,
         });
         if source.children.len() > 2 {
             return Err(PbrtError::error(
@@ -163,9 +165,11 @@ pub fn register_material_source(
             | "coateddiffuse"
             | "coatedconductor"
             | "measured"
+            | "subsurface"
     );
     let texture_fallback = if requested_kind != "diffusetransmission"
         && requested_kind != "alphamask"
+        && requested_kind != "subsurface"
         && supported
         && has_texture_attribute(source_material)
     {
@@ -269,6 +273,13 @@ pub fn register_material_source(
             )
         }
     };
+    let bssrdf_index = if kind == "subsurface" {
+        let index = super::subsurface::register_subsurface(source_material, builder)?;
+        attributes.extend(builder.bssrdfs[index as usize].coefficients.iter().cloned());
+        index
+    } else {
+        INVALID_INDEX
+    };
     let displacement_texture_root = if let Some((_, texture_node)) = source_material
         .texture_attributes
         .iter()
@@ -299,7 +310,11 @@ pub fn register_material_source(
         INVALID_INDEX
     };
     for (name, texture_node) in &source_material.texture_attributes {
-        if name == "displacement" {
+        if name == "displacement"
+            || kind == "subsurface"
+            || (kind == "dielectric"
+                && matches!(name.as_str(), "roughness" | "uroughness" | "vroughness"))
+        {
             continue;
         }
         if kind == "diffusetransmission" {
@@ -394,6 +409,7 @@ pub fn register_material_source(
         attributes: attributes.clone(),
         children: material_children,
         displacement_texture_root,
+        bssrdf_index,
     });
     builder.source_materials.push(Arc::clone(source_material));
     Ok(index)

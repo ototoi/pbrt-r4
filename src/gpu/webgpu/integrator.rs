@@ -11,6 +11,7 @@ use crate::gpu::flat::texture::{ProceduralOperation, TextureInstruction};
 use crate::util::error::PbrtError;
 use crate::util::misc::ProgressReporter;
 
+use super::abi::{BSSRDFProbeResult, BSSRDFProbeWorkItem, QueueState};
 use super::abi::{
     DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_CURRENT_RAY, QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
     QUEUE_DISPATCH_SLOT_ESCAPED, QUEUE_DISPATCH_SLOT_HIT_AREA, QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
@@ -20,6 +21,7 @@ use super::abi::{
     QUEUE_DISPATCH_SLOT_SCATTER_MEASURED, QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
     QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
+use super::bssrdf::BSSRDFProbePipeline;
 use super::context::Context;
 use super::film::Film;
 use super::material::MaterialKind;
@@ -108,6 +110,8 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/scatter_diffuse_transmission.wgsl"),
     include_str!("shaders/scatter_conductor.wgsl"),
     include_str!("shaders/scatter_dielectric.wgsl"),
+    include_str!("shaders/prepare_subsurface_exit.wgsl"),
+    include_str!("shaders/scatter_subsurface_exit.wgsl"),
     include_str!("shaders/scatter_thin_dielectric.wgsl"),
     include_str!("shaders/scatter_measured.wgsl"),
     include_str!("shaders/scatter_coated.wgsl"),
@@ -134,6 +138,9 @@ pub struct WavefrontPathIntegrator {
     tile_width: u32,
     tile_height: u32,
     has_interface_only_instances: bool,
+    bssrdf_work: wgpu::Buffer,
+    _bssrdf_results: wgpu::Buffer,
+    bssrdf_probe: Option<(BSSRDFProbePipeline, wgpu::BindGroup)>,
 }
 
 impl WavefrontPathIntegrator {
@@ -254,6 +261,45 @@ impl WavefrontPathIntegrator {
             attributes_eval_stride,
             texture_eval_stride,
         )?;
+        let bssrdf_capacity = if scene.material_table.have_subsurface != 0 {
+            tile_pixel_count
+        } else {
+            1
+        };
+        let work_size = 16 + bssrdf_capacity * std::mem::size_of::<BSSRDFProbeWorkItem>() as u64;
+        let result_size = bssrdf_capacity * std::mem::size_of::<BSSRDFProbeResult>() as u64;
+        let storage_limit = u64::from(device.limits().max_storage_buffer_binding_size);
+        if work_size > storage_limit || result_size > storage_limit {
+            return Err(PbrtError::error(
+                "BSSRDF queues exceed device storage limits.",
+            ));
+        }
+        let bssrdf_work = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("BSSRDF probe work"),
+            size: work_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bssrdf_results = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("BSSRDF probe results"),
+            size: result_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let bssrdf_probe = if scene.material_table.have_subsurface != 0 {
+            let pipeline = BSSRDFProbePipeline::new(device)?;
+            let bindings = pipeline.bind_group(
+                device,
+                &scene,
+                &scene.bssrdf_tables,
+                &bssrdf_work,
+                &bssrdf_results,
+                &queues.render_error,
+            )?;
+            Some((pipeline, bindings))
+        } else {
+            None
+        };
         let noise_resources = NoiseRuntimeResources::new(device, queue);
         log::info!("GPU create: queues and film resources ready");
         let film = Film::new(
@@ -289,6 +335,11 @@ impl WavefrontPathIntegrator {
                 ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
                 ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
                 ResourceId::Medium => scene.medium_buffer.as_entire_binding(),
+                ResourceId::BSSRDFMaterial => scene.bssrdf_material_buffer.as_entire_binding(),
+                ResourceId::BSSRDFTable => scene.bssrdf_tables.records.as_entire_binding(),
+                ResourceId::BSSRDFValues => scene.bssrdf_tables.values.as_entire_binding(),
+                ResourceId::BSSRDFWork => bssrdf_work.as_entire_binding(),
+                ResourceId::BSSRDFResults => bssrdf_results.as_entire_binding(),
                 ResourceId::ActiveMediumIndices => queues.active_medium_indices.as_entire_binding(),
                 ResourceId::NextMediumIndices => queues.next_medium_indices.as_entire_binding(),
                 ResourceId::ActiveShadowIndices => queues.active_shadow_indices.as_entire_binding(),
@@ -401,6 +452,16 @@ impl WavefrontPathIntegrator {
             })
         };
         let bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]> = [
+            (
+                "prepare_subsurface_exit",
+                &pipeline.prepare_subsurface_exit,
+                include_str!("shaders/prepare_subsurface_exit.wgsl"),
+            ),
+            (
+                "scatter_subsurface_exit",
+                &pipeline.scatter_subsurface_exit,
+                include_str!("shaders/scatter_subsurface_exit.wgsl"),
+            ),
             (
                 "prepare_sample",
                 &pipeline.prepare_sample,
@@ -558,7 +619,88 @@ impl WavefrontPathIntegrator {
             tile_width,
             tile_height,
             has_interface_only_instances,
+            bssrdf_work,
+            _bssrdf_results: bssrdf_results,
+            bssrdf_probe,
         })
+    }
+
+    fn trace_shadow_rays(&self) -> Result<(), PbrtError> {
+        self.queues.reset_shadow_active(&self.context.queue);
+        let mut initialize_shadow_encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("pbrt-r4 initialize shadow segment encoder"),
+                });
+        dispatch_indirect(
+            &mut initialize_shadow_encoder,
+            &self.pipeline.initialize_shadow_segments.pipeline,
+            self.bind_groups("initialize_shadow_segments"),
+            &self.queues.queue_dispatch_args,
+            QUEUE_DISPATCH_SLOT_SHADOW,
+        );
+        self.context
+            .queue
+            .submit(Some(initialize_shadow_encoder.finish()));
+        let mut active_shadow_count = None;
+        loop {
+            self.queues.reset_shadow_continuation(&self.context.queue);
+            let mut shadow_encoder =
+                self.context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("pbrt-r4 shadow segment encoder"),
+                    });
+            if let Some(count) = active_shadow_count {
+                dispatch_count(
+                    &mut shadow_encoder,
+                    &self.pipeline.intersect_shadow.pipeline,
+                    self.bind_groups("intersect_shadow"),
+                    count,
+                );
+            } else {
+                dispatch_indirect(
+                    &mut shadow_encoder,
+                    &self.pipeline.intersect_shadow.pipeline,
+                    self.bind_groups("intersect_shadow"),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SHADOW,
+                );
+            }
+            if self.has_interface_only_instances {
+                self.queues.copy_state_to_readback(&mut shadow_encoder);
+            }
+            self.context.queue.submit(Some(shadow_encoder.finish()));
+            if !self.has_interface_only_instances {
+                break;
+            }
+            self.context.wait()?;
+            if self.queues.read_error(&self.context.device)? {
+                return Err(PbrtError::error(
+                    "WebGPU wavefront rendering reported an error.",
+                ));
+            }
+            let continuation_count = self
+                .queues
+                .read_shadow_continuation_count(&self.context.device)?;
+            if continuation_count == 0 {
+                break;
+            }
+            let mut copy_encoder =
+                self.context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("pbrt-r4 shadow segment queue copy"),
+                    });
+            self.queues
+                .copy_shadow_continuations(&mut copy_encoder, continuation_count);
+            self.context.queue.submit(Some(copy_encoder.finish()));
+            self.queues
+                .set_shadow_active_count(&self.context.queue, continuation_count);
+            active_shadow_count = Some(continuation_count);
+        }
+        Ok(())
     }
 
     fn bind_groups(&self, name: &'static str) -> &[wgpu::BindGroup; 2] {
@@ -673,6 +815,18 @@ impl WavefrontPathIntegrator {
                 );
                 self.context.queue.submit(Some(sample_encoder.finish()));
                 for depth in 0..=self.scene.render_settings.max_depth {
+                    if self.bssrdf_probe.is_some() {
+                        self.context.queue.write_buffer(
+                            &self.bssrdf_work,
+                            0,
+                            bytes_of(&QueueState {
+                                count: 0,
+                                capacity: self.tile_width * self.tile_height,
+                                overflow: 0,
+                                padding: 0,
+                            }),
+                        );
+                    }
                     if depth != 0 {
                         let mut reset_encoder = self.context.device.create_command_encoder(
                             &wgpu::CommandEncoderDescriptor {
@@ -928,77 +1082,64 @@ impl WavefrontPathIntegrator {
                             1,
                         );
                         self.context.queue.submit(Some(encoder.finish()));
-                        self.queues.reset_shadow_active(&self.context.queue);
-                        let mut initialize_shadow_encoder = self
-                            .context
-                            .device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("pbrt-r4 initialize shadow segment encoder"),
-                            });
-                        dispatch_indirect(
-                            &mut initialize_shadow_encoder,
-                            &self.pipeline.initialize_shadow_segments.pipeline,
-                            self.bind_groups("initialize_shadow_segments"),
-                            &self.queues.queue_dispatch_args,
-                            QUEUE_DISPATCH_SLOT_SHADOW,
-                        );
-                        self.context
-                            .queue
-                            .submit(Some(initialize_shadow_encoder.finish()));
-                        let mut active_shadow_count = None;
-                        loop {
-                            self.queues.reset_shadow_continuation(&self.context.queue);
-                            let mut shadow_encoder = self.context.device.create_command_encoder(
+                        self.trace_shadow_rays()?;
+                        if let Some((probe, bindings)) = &self.bssrdf_probe {
+                            let mut sss_encoder = self.context.device.create_command_encoder(
                                 &wgpu::CommandEncoderDescriptor {
-                                    label: Some("pbrt-r4 shadow segment encoder"),
+                                    label: Some("subsurface scattering"),
                                 },
                             );
-                            if let Some(count) = active_shadow_count {
-                                dispatch_count(
-                                    &mut shadow_encoder,
-                                    &self.pipeline.intersect_shadow.pipeline,
-                                    self.bind_groups("intersect_shadow"),
-                                    count,
-                                );
-                            } else {
-                                dispatch_indirect(
-                                    &mut shadow_encoder,
-                                    &self.pipeline.intersect_shadow.pipeline,
-                                    self.bind_groups("intersect_shadow"),
-                                    &self.queues.queue_dispatch_args,
-                                    QUEUE_DISPATCH_SLOT_SHADOW,
-                                );
-                            }
-                            if self.has_interface_only_instances {
-                                self.queues.copy_state_to_readback(&mut shadow_encoder);
-                            }
-                            self.context.queue.submit(Some(shadow_encoder.finish()));
-                            if !self.has_interface_only_instances {
-                                break;
-                            }
-                            self.context.wait()?;
-                            if self.queues.read_error(&self.context.device)? {
-                                return Err(PbrtError::error(
-                                    "WebGPU wavefront rendering reported an error.",
-                                ));
-                            }
-                            let continuation_count = self
-                                .queues
-                                .read_shadow_continuation_count(&self.context.device)?;
-                            if continuation_count == 0 {
-                                break;
-                            }
-                            let mut copy_encoder = self.context.device.create_command_encoder(
-                                &wgpu::CommandEncoderDescriptor {
-                                    label: Some("pbrt-r4 shadow segment queue copy"),
-                                },
+                            dispatch(
+                                &mut sss_encoder,
+                                &self.pipeline.reset_shadow_queue.pipeline,
+                                self.bind_groups("reset_shadow_queue"),
+                                1,
+                                1,
                             );
-                            self.queues
-                                .copy_shadow_continuations(&mut copy_encoder, continuation_count);
-                            self.context.queue.submit(Some(copy_encoder.finish()));
-                            self.queues
-                                .set_shadow_active_count(&self.context.queue, continuation_count);
-                            active_shadow_count = Some(continuation_count);
+                            dispatch(
+                                &mut sss_encoder,
+                                &self.pipeline.reset_classification_queues.pipeline,
+                                self.bind_groups("reset_classification_queues"),
+                                1,
+                                1,
+                            );
+                            let capacity = self.tile_width * self.tile_height;
+                            probe.encode(&mut sss_encoder, bindings, capacity);
+                            dispatch_count(
+                                &mut sss_encoder,
+                                &self.pipeline.prepare_subsurface_exit.pipeline,
+                                self.bind_groups("prepare_subsurface_exit"),
+                                capacity,
+                            );
+                            dispatch(
+                                &mut sss_encoder,
+                                &self.pipeline.prepare_queue_dispatch.pipeline,
+                                self.bind_groups("prepare_queue_dispatch"),
+                                1,
+                                1,
+                            );
+                            dispatch_indirect(
+                                &mut sss_encoder,
+                                &self.pipeline.sample_direct_light.pipeline,
+                                self.bind_groups("sample_direct_light"),
+                                &self.queues.queue_dispatch_args,
+                                QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
+                            );
+                            dispatch_count(
+                                &mut sss_encoder,
+                                &self.pipeline.scatter_subsurface_exit.pipeline,
+                                self.bind_groups("scatter_subsurface_exit"),
+                                capacity,
+                            );
+                            dispatch(
+                                &mut sss_encoder,
+                                &self.pipeline.prepare_queue_dispatch.pipeline,
+                                self.bind_groups("prepare_queue_dispatch"),
+                                1,
+                                1,
+                            );
+                            self.context.queue.submit(Some(sss_encoder.finish()));
+                            self.trace_shadow_rays()?;
                         }
                         let mut next_encoder = self.context.device.create_command_encoder(
                             &wgpu::CommandEncoderDescriptor {

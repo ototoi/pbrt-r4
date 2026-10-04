@@ -36,7 +36,8 @@ fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
             light_sample_offset_direction,
         ),
         surface.position.xyz,
-        material_kind == MATERIAL_KIND_DIELECTRIC,
+        (material_kind == MATERIAL_KIND_DIELECTRIC || material_kind == MATERIAL_KIND_SUBSURFACE)
+            && (surface.flags & SURFACE_FLAG_SUBSURFACE_EXIT) == 0u,
     );
     let light_selection = sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz);
     if (light_selection.pmf <= 0.0 || light_selection.index == 0xffffffffu) {

@@ -4,7 +4,7 @@ use super::{
     Camera, DenseSpectrum, Film, Geometry, Instance, Light, LightBVH, LightBounds,
     LightGeometryKind, LightKind, LightSamplingModel, MaterialNode, MaterialRoot,
     MeasuredBsdfResources, Medium, Output, PrimitiveDistributionMap, RenderSettings,
-    TriangleDistributionEntry, Vertex, Viewport, INVALID_INDEX,
+    TabulatedBSSRDFTable, TriangleDistributionEntry, Vertex, Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::util::error::PbrtError;
 
@@ -29,6 +29,8 @@ pub struct Scene {
     pub media: Vec<Medium>,
     pub material_roots: Vec<MaterialRoot>,
     pub material_nodes: Vec<MaterialNode>,
+    pub bssrdfs: Vec<BSSRDF>,
+    pub bssrdf_tables: Vec<TabulatedBSSRDFTable>,
     pub scalar_attributes: Vec<f32>,
     /// Typed, backend-independent texture programs and shared image resources.
     pub texture_library: TextureLibrary,

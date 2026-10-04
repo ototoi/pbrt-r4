@@ -26,7 +26,7 @@ fn classify_surface_scatter(@builtin(global_invocation_id) global_id: vec3<u32>)
         // `alpha < 1e-3` (Specular); scatter_conductor's indirect-bounce
         // threshold matches this, so SampleLd only applies at alpha >= 1e-3.
         supports_direct = evaluated.values[2].x >= 1e-3;
-    } else if (root_kind == MATERIAL_KIND_DIELECTRIC) {
+    } else if (root_kind == MATERIAL_KIND_DIELECTRIC || root_kind == MATERIAL_KIND_SUBSURFACE) {
         append_scatter_dielectric(ray_index);
         // pbrt-v4 DielectricBxDF::Flags(): a rough (non-EffectivelySmooth)
         // interface is Glossy, so SampleLd applies; eta == 1 or a smooth

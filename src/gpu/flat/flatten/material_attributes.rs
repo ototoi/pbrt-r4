@@ -303,8 +303,11 @@ pub fn build_material_attributes(
                 &reflectance,
             )?])
         }
-        "dielectric" | "thindielectric" => {
-            let eta_attribute = if let Some(attribute) =
+        "dielectric" | "thindielectric" | "subsurface" => {
+            let eta_attribute = if kind == "subsurface" {
+                let eta = source_material.params.get_one_float("eta", 1.33);
+                push_spectrum_attribute(builder, "eta", &Spectrum::from(eta))?
+            } else if let Some(attribute) =
                 texture_attribute_ref_unbounded(source_material, "eta", builder)?
             {
                 attribute
@@ -329,31 +332,10 @@ pub fn build_material_attributes(
             if kind == "thindielectric" {
                 return Ok(vec![eta_attribute]);
             }
-            let roughness_value = source_material.params.get_one_float("roughness", 0.0);
-            let u_roughness_value = source_material
-                .params
-                .get_one_float("uroughness", roughness_value);
-            let v_roughness_value = source_material
-                .params
-                .get_one_float("vroughness", roughness_value);
-            let u_roughness = u_roughness_value as f32;
-            let v_roughness = v_roughness_value as f32;
             let u_roughness_attribute =
-                texture_attribute_ref(source_material, "uroughness", builder)?
-                    .or(texture_attribute_ref(
-                        source_material,
-                        "roughness",
-                        builder,
-                    )?)
-                    .unwrap_or(push_scalar_attribute(builder, "uroughness", u_roughness)?);
+                surface_roughness_attribute(source_material, "uroughness", builder)?;
             let v_roughness_attribute =
-                texture_attribute_ref(source_material, "vroughness", builder)?
-                    .or(texture_attribute_ref(
-                        source_material,
-                        "roughness",
-                        builder,
-                    )?)
-                    .unwrap_or(push_scalar_attribute(builder, "vroughness", v_roughness)?);
+                surface_roughness_attribute(source_material, "vroughness", builder)?;
             let remap = source_material.params.get_one_bool("remaproughness", true);
             Ok(vec![
                 eta_attribute,
@@ -512,4 +494,36 @@ fn spectrum_or_texture_alias(
         }
     }
     push_spectrum_attribute(builder, canonical_name, default)
+}
+
+fn surface_roughness_attribute(
+    material: &NodeMaterial,
+    axis: &str,
+    builder: &mut FlatBuilder,
+) -> Result<AttributeRef, PbrtError> {
+    let has_axis = material.params.get_keys().iter().any(|key| {
+        material.params.get_key_name(key) == axis
+            && matches!(
+                material.params.get_key_type(key).as_str(),
+                "float" | "texture"
+            )
+    }) || material
+        .texture_attributes
+        .iter()
+        .any(|(name, _)| name == axis);
+    let key = if has_axis { axis } else { "roughness" };
+    if let Some(attribute) = texture_attribute_ref(material, key, builder)? {
+        return Ok(attribute);
+    }
+    if material.params.get_keys().iter().any(|stored| {
+        material.params.get_key_name(stored) == key
+            && material.params.get_key_type(stored) == "texture"
+    }) {
+        return Err(PbrtError::error(&format!(
+            "Material \"{}\" has an unresolved roughness texture \"{key}\".",
+            material.name
+        )));
+    }
+    let value = material.params.get_one_float(key, 0.0) as f32;
+    push_scalar_attribute(builder, axis, value)
 }
