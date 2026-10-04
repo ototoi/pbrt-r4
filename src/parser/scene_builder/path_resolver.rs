@@ -23,9 +23,8 @@ pub fn resolve_file_paths(
     params: &ParameterDictionary,
     work_dirs: &[String],
 ) -> ParameterDictionary {
-    let mut n_params = params.clone();
+    let n_params = params.clone();
     let keys = params.get_keys();
-    let mut replaces = Vec::new();
     for key in &keys {
         let (parameter_type, name) = split_type_and_key(key);
         let is_spectrum_file = parameter_type == "spectrum";
@@ -37,15 +36,14 @@ pub fn resolve_file_paths(
             continue;
         }
         if let Some(names) = params.get_strings_ref(key) {
-            for name in names.iter() {
-                if let Some(path) = resolve_filepath(name, work_dirs) {
-                    replaces.push((key.clone(), path));
+            if let Some(mut resolved_names) = n_params.get_strings_mut(key) {
+                for (index, name) in names.iter().enumerate() {
+                    if let Some(path) = resolve_filepath(name, work_dirs) {
+                        resolved_names[index] = path;
+                    }
                 }
             }
         }
-    }
-    for (key, value) in replaces {
-        n_params.replace_one_string(&key, &value);
     }
 
     n_params
@@ -100,4 +98,37 @@ fn split_type_and_key(s: &str) -> (&str, &str) {
 
 fn param_type(s: &str) -> &str {
     split_type_and_key(s).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_absolute_path;
+    use crate::paramdict::ParameterDictionary;
+
+    #[test]
+    fn spectrum_file_arrays_resolve_each_element_without_reordering() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let first_file = directory.path().join("first.spd");
+        let second_file = directory.path().join("second.spd");
+        std::fs::write(&first_file, "400 1 700 1").expect("first spectrum should be written");
+        std::fs::write(&second_file, "400 2 700 2").expect("second spectrum should be written");
+
+        let mut params = ParameterDictionary::new();
+        params.add_owned_strings_typed(
+            "spectrum",
+            "I",
+            vec!["first.spd".to_string(), "second.spd".to_string()],
+        );
+        let work_dirs = vec![directory.path().to_string_lossy().to_string()];
+
+        let resolved = make_absolute_path(&params, &work_dirs);
+
+        assert_eq!(
+            resolved.get_strings("spectrum I"),
+            vec![
+                first_file.to_string_lossy().to_string(),
+                second_file.to_string_lossy().to_string(),
+            ]
+        );
+    }
 }
