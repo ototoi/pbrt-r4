@@ -30,6 +30,8 @@ pub struct Pipeline {
     pub scatter_thin_dielectric: StagePipeline,
     pub scatter_measured: StagePipeline,
     pub scatter_coated: StagePipeline,
+    pub prepare_subsurface_exit: StagePipeline,
+    pub scatter_subsurface_exit: StagePipeline,
     pub intersect_shadow: StagePipeline,
     pub swap_ray_queues: StagePipeline,
     pub reset_next_ray_queue: StagePipeline,
@@ -223,6 +225,16 @@ impl Pipeline {
                 "pbrt-r4 scatter coated",
                 include_str!("shaders/scatter_coated.wgsl"),
                 "scatter_coated",
+            ),
+            prepare_subsurface_exit: compute(
+                "prepare_subsurface_exit",
+                include_str!("shaders/prepare_subsurface_exit.wgsl"),
+                "prepare_subsurface_exit",
+            ),
+            scatter_subsurface_exit: compute(
+                "scatter_subsurface_exit",
+                include_str!("shaders/scatter_subsurface_exit.wgsl"),
+                "scatter_subsurface_exit",
             ),
             intersect_shadow: compute(
                 "pbrt-r4 intersect shadow",

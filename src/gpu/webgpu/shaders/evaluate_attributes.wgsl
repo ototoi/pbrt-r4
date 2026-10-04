@@ -23,7 +23,7 @@ fn evaluate_material_attributes(material_node: u32, lambda: vec4<f32>) -> Attrib
         e.values[1] = 2.0 * sqrt(r) / sqrt(max(vec4<f32>(1.0) - r, vec4<f32>(1e-7)));
         e.values[2].x = load_conductor_reflectance_roughness(material_node);
         if (load_material_scalar(material_node, 2u) != 0.0) { e.values[2].x = sqrt(max(e.values[2].x, 0.0)); }
-    } else if (e.bxdf_kind == MATERIAL_KIND_DIELECTRIC) {
+    } else if (e.bxdf_kind == MATERIAL_KIND_DIELECTRIC || e.bxdf_kind == MATERIAL_KIND_SUBSURFACE) {
         e.values[0] = load_dielectric_eta(material_node, lambda); e.values[1].x = load_material_scalar(material_node, 1u); e.values[2].x = load_material_scalar(material_node, 2u); e.values[3].x = load_material_scalar(material_node, 3u);
     } else if (e.bxdf_kind == MATERIAL_KIND_THIN_DIELECTRIC) {
         e.values[0] = load_dielectric_eta(material_node, lambda);
@@ -31,6 +31,10 @@ fn evaluate_material_attributes(material_node: u32, lambda: vec4<f32>) -> Attrib
         e.values[0].x = load_material_scalar(material_node, 0u); e.values[1] = clamp(load_material_spectrum(material_node, 1u, lambda), vec4<f32>(0.0), vec4<f32>(1.0)); e.values[2].x = clamp(load_material_scalar(material_node, 2u), -1.0, 1.0); e.values[3].x = load_material_scalar(material_node, 3u); e.values[4].x = load_material_scalar(material_node, 4u);
         if (e.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) { e.values[5] = clamp(load_material_spectrum(material_node, 5u, lambda), vec4<f32>(0.0), vec4<f32>(1.0)); }
         else { e.values[5].x = load_material_scalar(material_node, 12u); }
+    }
+    if (e.bxdf_kind == MATERIAL_KIND_SUBSURFACE) {
+        e.values[4] = load_material_spectrum(material_node, 4u, lambda);
+        e.values[5] = load_material_spectrum(material_node, 5u, lambda);
     }
     return e;
 }

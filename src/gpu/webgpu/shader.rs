@@ -23,11 +23,17 @@ const TEXTURE_NOISE_BRANCH_END: &str = "// TEXTURE_NOISE_BRANCH_END";
 pub const COMMON_LIBRARY: &[(&str, &str)] = &[
     ("float", include_str!("shaders/lib/float.wgsl")),
     ("vecmath", include_str!("shaders/lib/vecmath.wgsl")),
+    ("hash_u32", include_str!("shaders/lib/hash_u32.wgsl")),
     ("hash", include_str!("shaders/lib/hash.wgsl")),
     ("color", include_str!("shaders/lib/color.wgsl")),
     ("path_state", include_str!("shaders/lib/path_state.wgsl")),
     ("work_queues", include_str!("shaders/lib/work_queues.wgsl")),
     ("interaction", include_str!("shaders/lib/interaction.wgsl")),
+    ("bssrdf", include_str!("shaders/lib/bssrdf.wgsl")),
+    (
+        "bssrdf_scattering",
+        include_str!("shaders/lib/bssrdf_scattering.wgsl"),
+    ),
     ("alpha_mask", include_str!("shaders/lib/alpha_mask.wgsl")),
     ("materials", include_str!("shaders/lib/materials.wgsl")),
     ("textures", include_str!("shaders/lib/textures.wgsl")),

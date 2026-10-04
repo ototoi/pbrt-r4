@@ -14,6 +14,7 @@ use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
+use super::abi::BSSRDFMaterialRecord;
 use super::abi::{
     camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
@@ -32,6 +33,7 @@ use super::abi::{
 };
 use super::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
 use super::acceleration::{self, Acceleration};
+use super::bssrdf::{BSSRDFTableData, BSSRDFTableResources};
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
@@ -671,6 +673,8 @@ pub struct Scene {
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub medium_buffer: wgpu::Buffer,
+    pub bssrdf_material_buffer: wgpu::Buffer,
+    pub bssrdf_tables: BSSRDFTableResources,
     pub material_root_buffer: wgpu::Buffer,
     pub material_node_buffer: wgpu::Buffer,
     pub attribute_ref_buffer: wgpu::Buffer,
@@ -969,11 +973,12 @@ impl Scene {
             .collect::<Vec<_>>();
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
-        let sampler = SamplerResources::new(
+        let sampler = SamplerResources::new_with_subsurface(
             device,
             queue,
             &flat.render_settings,
             flat.viewport.resolution,
+            !flat.bssrdfs.is_empty(),
         )?;
         let film = film_uniform(&flat.film);
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
@@ -1237,7 +1242,42 @@ impl Scene {
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
+        let table_data = BSSRDFTableData::from_flat(&flat.bssrdf_tables)?;
+        let bssrdf_tables = table_data.upload(device)?;
+        if flat
+            .bssrdfs
+            .iter()
+            .any(|b| b.table_index as usize >= flat.bssrdf_tables.len())
+        {
+            return Err(PbrtError::error(
+                "BSSRDF material references an invalid table.",
+            ));
+        }
+        let bssrdf_materials = flat
+            .bssrdfs
+            .iter()
+            .map(|b| BSSRDFMaterialRecord {
+                scale: b.scale,
+                eta: b.eta,
+                table_index: b.table_index,
+                coefficient_kind: match b.coefficient_kind {
+                    flat::BSSRDFCoefficientKind::Sigma => 0,
+                    flat::BSSRDFCoefficientKind::ReflectanceMfp => 1,
+                },
+            })
+            .collect::<Vec<_>>();
+        if !bssrdf_materials.is_empty() && !flat.media.is_empty() {
+            return Err(PbrtError::error(
+                "WebGPU subsurface with participating media is not supported yet.",
+            ));
+        }
+        let bssrdf_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("BSSRDF materials"),
+            contents: buffer_contents(&bssrdf_materials),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let mut material_table = material_table_uniform(material_nodes.len())?;
+        material_table.have_subsurface = u32::from(!bssrdf_materials.is_empty());
         material_table.measured_texture_base = measured_texture_binding_base;
         material_table.measured_texture_width = flat::MEASURED_ATLAS_WIDTH;
         material_table.measured_texture_height = flat::MEASURED_ATLAS_HEIGHT;
@@ -1321,6 +1361,8 @@ impl Scene {
             geometry_buffer,
             instance_buffer,
             medium_buffer,
+            bssrdf_material_buffer,
+            bssrdf_tables,
             material_root_buffer,
             material_node_buffer,
             attribute_ref_buffer,

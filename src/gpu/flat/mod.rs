@@ -1,4 +1,5 @@
 pub mod attribute;
+pub mod bssrdf;
 pub mod camera;
 pub mod film;
 pub mod flatten;
@@ -21,6 +22,7 @@ pub mod vertex;
 pub mod viewport;
 
 pub use attribute::*;
+pub use bssrdf::*;
 pub use camera::*;
 pub use film::*;
 pub use flatten::*;

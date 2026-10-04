@@ -1560,7 +1560,7 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
 fn flatten_node_names_unsupported_gpu_material() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
-    let shape = triangle_node("triangle", "subsurface", [0.0, 0.0, 0.0]);
+    let shape = triangle_node("triangle", "unsupported-material", [0.0, 0.0, 0.0]);
     {
         let mut node = shape.write().unwrap();
         let material = node
@@ -1578,7 +1578,7 @@ fn flatten_node_names_unsupported_gpu_material() {
     let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
     let message = error.to_string();
     assert!(message.contains("unsupported-substrate"), "{message}");
-    assert!(message.contains("subsurface"), "{message}");
+    assert!(message.contains("unsupported-material"), "{message}");
 }
 
 #[test]
@@ -2017,4 +2017,304 @@ fn flatten_node_preserves_disabled_conductor_roughness_remapping() {
         assert_eq!(remap.name, "remaproughness");
         assert_eq!(scene.scalar_attributes[remap.index as usize], 0.0);
     }
+}
+
+fn subsurface_test_scene(
+    materials: Vec<Arc<Material>>,
+) -> Result<FlatScene, pbrt_r4::util::error::PbrtError> {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for (index, material) in materials.into_iter().enumerate() {
+        let shape = triangle_node("sss", "subsurface", [index as f32, 0.0, 0.0]);
+        for component in &mut shape.write().unwrap().components {
+            if let Component::Material(component) = component {
+                component.material = material.clone();
+            }
+        }
+        root.add_child(shape);
+    }
+    flatten_node(Arc::new(RwLock::new(root)))
+}
+
+fn subsurface_test_material(params: ParameterDictionary) -> Arc<Material> {
+    Arc::new(Material {
+        name: "sss".to_string(),
+        kind: "subsurface".to_string(),
+        params,
+        material_attributes: Vec::new(),
+        texture_attributes: Vec::new(),
+    })
+}
+
+#[test]
+fn flatten_subsurface_preserves_all_coefficient_variants() {
+    use pbrt_r4::gpu::flat::BSSRDFCoefficientKind;
+    let mut preset = ParameterDictionary::default();
+    preset.add_string("string name", "Apple");
+    preset.add_float("float g", 0.5);
+    let mut sigma = ParameterDictionary::default();
+    sigma.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
+    sigma.add_rgb("rgb sigma_s", &[1.0, 2.0, 3.0]);
+    sigma.add_float("float scale", 2.0);
+    let mut diffuse = ParameterDictionary::default();
+    diffuse.add_rgb("rgb reflectance", &[0.4, 0.5, 0.6]);
+    let scene = subsurface_test_scene(vec![
+        subsurface_test_material(preset),
+        subsurface_test_material(sigma),
+        subsurface_test_material(diffuse),
+        subsurface_test_material(Default::default()),
+    ])
+    .unwrap();
+    assert_eq!(scene.bssrdfs.len(), 4);
+    assert_eq!(scene.bssrdf_tables.len(), 1);
+    assert_eq!(scene.bssrdfs[0].g, 0.0);
+    assert_eq!(scene.bssrdfs[1].scale, 2.0);
+    for (index, expected) in [
+        (0, BSSRDFCoefficientKind::Sigma),
+        (1, BSSRDFCoefficientKind::Sigma),
+        (2, BSSRDFCoefficientKind::ReflectanceMfp),
+        (3, BSSRDFCoefficientKind::Sigma),
+    ] {
+        let bssrdf = &scene.bssrdfs[index];
+        assert_eq!(bssrdf.coefficient_kind, expected);
+        assert_eq!(bssrdf.table_index, 0);
+        assert_eq!(bssrdf.eta, 1.33);
+        let node = &scene.material_nodes[index];
+        assert_eq!(node.kind, "subsurface");
+        assert_eq!(node.source_kind, "subsurface");
+        assert_eq!(node.bssrdf_index, index as u32);
+        assert_eq!(&node.attributes[4..], &bssrdf.coefficients);
+    }
+    let sample = |index: usize, slot: usize, lambda: f32| {
+        evaluate_dense_spectrum(
+            &scene.spectrum_attributes,
+            scene.bssrdfs[index].coefficients[slot].index,
+            lambda,
+        )
+        .unwrap()
+    };
+    let (apple_a, apple_s) = pbrt_r4::media::get_medium_scattering_properties("Apple").unwrap();
+    for lambda in [400.0, 550.0, 700.0] {
+        assert!((sample(0, 0, lambda) - apple_a.sample_at(lambda as _) as f32).abs() < 1e-5);
+        assert!((sample(0, 1, lambda) - apple_s.sample_at(lambda as _) as f32).abs() < 1e-5);
+        let specified_s = Spectrum::from([1.0, 2.0, 3.0]);
+        assert!((sample(1, 1, lambda) - specified_s.sample_at(lambda as _) as f32).abs() < 1e-5);
+        assert_eq!(sample(2, 1, lambda), 1.0);
+        let default_a = Spectrum::from([0.0011, 0.0024, 0.014]);
+        assert!((sample(3, 0, lambda) - default_a.sample_at(lambda as _) as f32).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn flatten_subsurface_rejects_missing_pair_and_unknown_preset() {
+    for key in ["sigma_a", "sigma_s"] {
+        let mut params = ParameterDictionary::default();
+        params.add_rgb(&format!("rgb {key}"), &[0.1, 0.2, 0.3]);
+        let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+        assert!(error.to_string().contains("required together"));
+    }
+    let mut params = ParameterDictionary::default();
+    params.add_string("string name", "unknown-sss-preset");
+    let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+    assert!(error.to_string().contains("unknown-sss-preset"));
+}
+
+#[test]
+fn flatten_subsurface_shares_material_identity_and_tables_by_g_eta() {
+    let shared = subsurface_test_material(Default::default());
+    let mut other_g = ParameterDictionary::default();
+    other_g.add_float("float g", 0.2);
+    let mut other_eta = ParameterDictionary::default();
+    other_eta.add_float("float eta", 1.5);
+    let scene = subsurface_test_scene(vec![
+        shared.clone(),
+        shared,
+        subsurface_test_material(Default::default()),
+        subsurface_test_material(other_g),
+        subsurface_test_material(other_eta),
+    ])
+    .unwrap();
+    assert_eq!(
+        scene.instances[0].material_root,
+        scene.instances[1].material_root
+    );
+    assert_ne!(
+        scene.instances[0].material_root,
+        scene.instances[2].material_root
+    );
+    assert_eq!(scene.bssrdfs.len(), 4);
+    assert_eq!(scene.bssrdf_tables.len(), 3);
+    assert_eq!(scene.bssrdfs[0].table_index, scene.bssrdfs[1].table_index);
+    assert_ne!(scene.bssrdfs[0].table_index, scene.bssrdfs[2].table_index);
+    assert_ne!(scene.bssrdfs[0].table_index, scene.bssrdfs[3].table_index);
+    let table = &scene.bssrdf_tables[0];
+    assert_eq!(table.rho_samples.len(), 100);
+    assert_eq!(table.radius_samples.len(), 64);
+    assert_eq!(table.profile.len(), 6400);
+    assert_eq!(table.profile_cdf.len(), 6400);
+    assert_eq!(table.rho_eff.len(), 100);
+    assert!(table.profile.iter().all(|v| v.is_finite()));
+    assert!(table.rho_eff.windows(2).all(|v| v[0] <= v[1]));
+}
+
+#[test]
+fn flatten_subsurface_texture_coefficients_keep_spectrum_types() {
+    use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureNode};
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb reflectance", &[0.3, 0.4, 0.5]);
+    let mut material = subsurface_test_material(params);
+    let material_mut = Arc::get_mut(&mut material).unwrap();
+    for key in ["reflectance", "mfp"] {
+        let mut texture_params = ParameterDictionary::default();
+        texture_params.add_rgb("rgb value", &[0.4, 0.5, 0.6]);
+        let mut node = TextureNode::new(key);
+        node.components.push(TextureComponent::Texture(Texture {
+            name: "constant".to_string(),
+            kind: TextureKind::Spectrum,
+            params: texture_params,
+        }));
+        material_mut
+            .texture_attributes
+            .push((key.to_string(), Arc::new(node)));
+    }
+    let scene = subsurface_test_scene(vec![material]).unwrap();
+    let coefficients = &scene.bssrdfs[0].coefficients;
+    assert!(coefficients
+        .iter()
+        .all(|attribute| attribute.kind == AttributeKind::Texture));
+    assert_eq!(scene.texture_library.roots.len(), 2);
+    for (slot, expected) in [SpectrumType::Albedo, SpectrumType::Unbounded]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(matches!(
+            &scene.texture_library.roots[coefficients[slot].index as usize],
+            pbrt_r4::gpu::flat::texture::TextureRoot::Spectrum { spectrum_type, .. } if *spectrum_type == expected
+        ));
+    }
+    assert_eq!(
+        pbrt_r4::gpu::flat::max_texture_eval_results_per_surface(&scene).unwrap(),
+        2
+    );
+}
+
+#[cfg(feature = "webgpu")]
+#[test]
+fn webgpu_subsurface_preserves_bssrdf_index_and_dielectric_attributes() {
+    let scene = subsurface_test_scene(vec![subsurface_test_material(Default::default())]).unwrap();
+    let table = pbrt_r4::gpu::webgpu::material::MaterialTable::from_flat(&scene).unwrap();
+    let material = table.nodes.iter().find(|m| m.kind == 15).unwrap();
+    assert_eq!(material.bssrdf_index, 0);
+    assert_eq!(material.attribute_count, 6);
+}
+
+#[test]
+fn flatten_subsurface_keeps_scalar_eta_and_surface_roughness() {
+    let mut params = ParameterDictionary::default();
+    params.add_float("float eta", 1.4);
+    params.add_float("float roughness", 0.2);
+    params.add_float("float uroughness", 0.3);
+    params.add_bool("bool remaproughness", false);
+    let scene = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap();
+    let attributes = &scene.material_nodes[0].attributes;
+    assert_eq!(scene.bssrdfs[0].eta, 1.4);
+    assert_eq!(
+        evaluate_dense_spectrum(&scene.spectrum_attributes, attributes[0].index, 550.0).unwrap(),
+        1.4
+    );
+    assert_eq!(scene.scalar_attributes[attributes[1].index as usize], 0.3);
+    assert_eq!(scene.scalar_attributes[attributes[2].index as usize], 0.2);
+    assert_eq!(scene.scalar_attributes[attributes[3].index as usize], 0.0);
+}
+
+#[test]
+fn flatten_subsurface_rejects_unresolved_coefficient_texture() {
+    let mut params = ParameterDictionary::default();
+    params.add_string("texture reflectance", "missing-reflectance");
+    let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+    assert!(error.to_string().contains("unresolved subsurface texture"));
+}
+
+#[test]
+fn flatten_surface_roughness_prefers_axis_constants_over_common_texture() {
+    use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureNode};
+    for kind in ["subsurface", "dielectric"] {
+        for axes in [
+            vec!["uroughness"],
+            vec!["vroughness"],
+            vec!["uroughness", "vroughness"],
+        ] {
+            let mut params = ParameterDictionary::default();
+            for axis in &axes {
+                params.add_float(&format!("float {axis}"), 0.3);
+            }
+            let mut material = subsurface_test_material(params);
+            let material_mut = Arc::get_mut(&mut material).unwrap();
+            material_mut.kind = kind.to_string();
+            let mut texture_params = ParameterDictionary::default();
+            texture_params.add_float("float value", 0.8);
+            let mut texture = TextureNode::new("roughness");
+            texture.components.push(TextureComponent::Texture(Texture {
+                name: "constant".to_string(),
+                kind: TextureKind::Float,
+                params: texture_params,
+            }));
+            material_mut
+                .texture_attributes
+                .push(("roughness".to_string(), Arc::new(texture)));
+            let scene = subsurface_test_scene(vec![material]).unwrap();
+            let attributes = &scene.material_nodes[0].attributes;
+            for (slot, axis) in [(1, "uroughness"), (2, "vroughness")] {
+                if axes.contains(&axis) {
+                    assert_eq!(attributes[slot].kind, AttributeKind::Scalar);
+                    assert_eq!(
+                        scene.scalar_attributes[attributes[slot].index as usize],
+                        0.3
+                    );
+                } else {
+                    assert_eq!(attributes[slot].kind, AttributeKind::Texture);
+                }
+            }
+            assert_eq!(
+                scene.texture_library.roots.len(),
+                usize::from(axes.len() == 1)
+            );
+            if kind == "dielectric" {
+                assert_eq!(attributes.len(), 4);
+                #[cfg(feature = "webgpu")]
+                assert!(pbrt_r4::gpu::webgpu::material::MaterialTable::from_flat(&scene).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn flatten_subsurface_generates_finite_tables_across_eta_one() {
+    for eta in [0.9, 1.0, 1.33] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("float eta", eta);
+        let scene = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap();
+        let table = &scene.bssrdf_tables[0];
+        assert!(table
+            .profile
+            .iter()
+            .chain(&table.profile_cdf)
+            .chain(&table.rho_eff)
+            .all(|v| v.is_finite()));
+        assert!(table.rho_eff.last().unwrap() > &0.0);
+    }
+}
+
+#[test]
+fn flatten_subsurface_rejects_normal_maps_instead_of_ignoring_them() {
+    let mut params = ParameterDictionary::default();
+    params.add_string("string normalmap", "surface-normals.png");
+    let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("subsurface normal maps are not supported"));
+
+    let mut empty = ParameterDictionary::default();
+    empty.add_string("string normalmap", "");
+    assert!(subsurface_test_scene(vec![subsurface_test_material(empty)]).is_ok());
 }

@@ -1,5 +1,5 @@
 use pbrt_r4::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization};
-use pbrt_r4::gpu::webgpu::sampler::build_sampler_data;
+use pbrt_r4::gpu::webgpu::sampler::{build_sampler_data, build_sampler_data_with_subsurface};
 use pbrt_r4::util::lowdiscrepancy::primes::PRIMES;
 use pbrt_r4::util::lowdiscrepancy::DigitPermutation;
 
@@ -59,4 +59,22 @@ fn pmj02bn_rejects_sample_counts_beyond_its_table() {
     settings.sampler_kind = SamplerKind::Pmj02Bn;
     settings.randomization = SamplerRandomization::None;
     assert!(build_sampler_data(&settings, [320, 180]).is_err());
+}
+
+#[test]
+fn subsurface_allocates_extra_dimensions_without_changing_existing_permutations() {
+    let settings = halton_settings(16);
+    let regular = build_sampler_data(&settings, [320, 180]).unwrap();
+    let subsurface = build_sampler_data_with_subsurface(&settings, [320, 180], true).unwrap();
+    assert!(subsurface.dimension_count() > regular.dimension_count());
+    for dimension in 0..regular.dimension_count() as usize {
+        let header = dimension * 4;
+        let a = regular.table_words();
+        let b = subsurface.table_words();
+        assert_eq!(&a[header..header + 2], &b[header..header + 2]);
+        let count = (a[header] * a[header + 1]) as usize;
+        let ao = a[header + 2] as usize;
+        let bo = b[header + 2] as usize;
+        assert_eq!(&a[ao..ao + count], &b[bo..bo + count]);
+    }
 }
