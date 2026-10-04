@@ -33,6 +33,8 @@ fn evaluate_material_attributes(material_node: u32, lambda: vec4<f32>) -> Attrib
         else { e.values[5].x = load_material_scalar(material_node, 12u); }
     }
     if (e.bxdf_kind == MATERIAL_KIND_SUBSURFACE) {
+        e.values[1].x = clamp(e.values[1].x, 0.0, 1.0);
+        e.values[2].x = clamp(e.values[2].x, 0.0, 1.0);
         e.values[4] = load_material_spectrum(material_node, 4u, lambda);
         e.values[5] = load_material_spectrum(material_node, 5u, lambda);
     }
