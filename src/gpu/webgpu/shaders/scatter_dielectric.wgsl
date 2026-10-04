@@ -54,7 +54,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
             var sigma_s = max(vec4<f32>(0.0), material.scale * evaluated.values[5]);
             if (material.coefficient_kind == 1u) {
                 let reflectance = clamp(evaluated.values[4], vec4<f32>(0.0), vec4<f32>(1.0));
-                let mfp = max(vec4<f32>(0.0), material.scale * evaluated.values[5]);
+                let mfp = max(vec4<f32>(1e-6), material.scale * evaluated.values[5]);
                 for (var i = 0u; i < 4u; i++) {
                     let rho = bssrdf_invert_reflectance(bssrdf_tables[material.table_index], reflectance[i]);
                     sigma_s[i] = rho / mfp[i];
@@ -66,21 +66,23 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
             for (var i = 0u; i < 4u; i++) {
                 if (sigma_t[i] != 0.0) { rho[i] = sigma_s[i] / sigma_t[i]; }
             }
-            let dimension = 6u + 13u * ray.depth + 8u;
-            let sample = vec4<f32>(sampler_get_1d(pixel_index, dimension),
-                sampler_get_2d(pixel_index, dimension + 1u), material.eta);
-            let index = atomicAdd(&bssrdf_work.state.count, 1u);
-            if (index >= bssrdf_work.state.capacity) {
-                atomicStore(&bssrdf_work.state.overflow, 1u); set_render_error(); return;
+            if (any(sigma_t > vec4<f32>(0.0))) {
+                let dimension = 6u + 13u * ray.depth + 8u;
+                let sample = vec4<f32>(sampler_get_1d(pixel_index, dimension),
+                    sampler_get_2d(pixel_index, dimension + 1u), material.eta);
+                let index = atomicAdd(&bssrdf_work.state.count, 1u);
+                if (index >= bssrdf_work.state.capacity) {
+                    atomicStore(&bssrdf_work.state.overflow, 1u); set_render_error(); return;
+                }
+                bssrdf_work.items[index] = BSSRDFProbeWorkItem(surface.position,
+                    vec4<f32>(normal, 0.0), sigma_t, rho, sample, material.table_index,
+                    surface.material_root, pixel_index, ray_index);
+                var entry_ray = ray;
+                entry_ray.beta = next_beta;
+                entry_ray.eta_scale = eta_scale;
+                store_current_ray(ray_index, entry_ray);
+                return;
             }
-            bssrdf_work.items[index] = BSSRDFProbeWorkItem(surface.position,
-                vec4<f32>(normal, 0.0), sigma_t, rho, sample, material.table_index,
-                surface.material_root, pixel_index, ray_index);
-            var entry_ray = ray;
-            entry_ray.beta = next_beta;
-            entry_ray.eta_scale = eta_scale;
-            store_current_ray(ray_index, entry_ray);
-            return;
         }
         let average_r_u = dot(ray.r_u, vec4<f32>(0.25));
         let rr_beta = next_beta * eta_scale / average_r_u;

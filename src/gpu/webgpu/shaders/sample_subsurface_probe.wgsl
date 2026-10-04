@@ -51,7 +51,7 @@ fn sample_subsurface_probe(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let next_origin = offset_ray_origin(surface.position, surface.position_error, surface.geometric_normal, segment.end - surface.position);
         if (dot(segment.end - next_origin, direction) <= 0.0) { break; }
-        if (all(next_origin == origin)) { set_render_error(); break; }
+        if (dot(next_origin - origin, direction) <= 0.0) { break; }
         origin = next_origin;
     }
     if (result.valid != 0u) { result.reservoir_probability = 1.0 / f32(result.candidate_count); }
