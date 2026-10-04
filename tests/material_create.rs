@@ -760,6 +760,88 @@ fn material_subsurface_get_bsdf_and_bssrdf_returns_interface_scattering() {
 }
 
 #[test]
+fn material_subsurface_spectrum_eta_uses_scalar_default_like_v4() {
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let default_params = ParameterDictionary::new();
+    let mut spectrum_eta_params = ParameterDictionary::new();
+    spectrum_eta_params.add_spectrum("eta", &Spectrum::from(1.5));
+    let f_tex: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
+    let default_tp = TextureParameterDictionary::new(&default_params, &f_tex, &s_tex);
+    let spectrum_eta_tp = TextureParameterDictionary::new(&spectrum_eta_params, &f_tex, &s_tex);
+    let default = Material::create("subsurface", &default_tp).unwrap();
+    let spectrum_eta = Material::create("subsurface", &spectrum_eta_tp).unwrap();
+    let si = surface_test_si();
+
+    assert!(
+        (sampled_transmission_eta(&default, &si, &lambda)
+            - sampled_transmission_eta(&spectrum_eta, &si, &lambda))
+        .abs()
+            < 1e-6
+    );
+}
+
+#[test]
+fn material_subsurface_zero_coefficients_still_create_bssrdf() {
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let mut params = ParameterDictionary::new();
+    params.add_spectrum("sigma_a", &Spectrum::zero());
+    params.add_spectrum("sigma_s", &Spectrum::zero());
+    let f_tex: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
+    let tp = TextureParameterDictionary::new(&params, &f_tex, &s_tex);
+    let material = Material::create("subsurface", &tp).unwrap();
+
+    let bssrdf = material
+        .test_get_bssrdf(&surface_test_si(), &lambda)
+        .expect("v4 constructs the BSSRDF even with zero coefficients");
+    assert!(bssrdf
+        .sample_sp(0.5, &Point2f::new(0.5, 0.5), &lambda)
+        .is_none());
+}
+
+#[test]
+fn material_subsurface_roughness_above_one_is_not_clamped() {
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let mut params = ParameterDictionary::new();
+    params.add_float("roughness", 1.5);
+    params.add_bool("remaproughness", false);
+    let f_tex: HashMap<String, Arc<FloatTexture>> = HashMap::new();
+    let s_tex: HashMap<String, Arc<SpectrumTexture>> = HashMap::new();
+    let tp = TextureParameterDictionary::new(&params, &f_tex, &s_tex);
+    let material = Material::create("subsurface", &tp).unwrap();
+    let si = surface_test_si();
+    let wo = Vector3f::new(0.0, 0.0, 1.0);
+    let rough = material
+        .test_get_bxdf(&si, &lambda)
+        .sample_f(
+            &wo,
+            0.99,
+            &Point2f::new(0.2, 0.7),
+            TransportMode::Radiance,
+            BXDF_ALL,
+        )
+        .unwrap();
+
+    let mut unit_roughness_params = ParameterDictionary::new();
+    unit_roughness_params.add_float("roughness", 1.0);
+    unit_roughness_params.add_bool("remaproughness", false);
+    let tp = TextureParameterDictionary::new(&unit_roughness_params, &f_tex, &s_tex);
+    let clamped_material = Material::create("subsurface", &tp).unwrap();
+    let clamped = clamped_material
+        .test_get_bxdf(&si, &lambda)
+        .sample_f(
+            &wo,
+            0.99,
+            &Point2f::new(0.2, 0.7),
+            TransportMode::Radiance,
+            BXDF_ALL,
+        )
+        .unwrap();
+    assert_ne!(rough.wi, clamped.wi);
+}
+
+#[test]
 fn material_create_measured_requires_filename() {
     let mut lambda = SampledWavelengths::sample_visible(0.5);
     let geom_params = ParameterDictionary::new();
