@@ -293,7 +293,7 @@ pub fn build_sampler_data_with_subsurface(
     resolution: [u32; 2],
     have_subsurface: bool,
 ) -> Result<SamplerData, PbrtError> {
-    let dimensions_per_depth = if have_subsurface { 11 } else { 8 };
+    let dimensions_per_depth = if have_subsurface { 13 } else { 8 };
     let dimension_count = 6 + dimensions_per_depth * (MAX_GPU_RENDER_DEPTH + 1);
     if settings.samples_per_pixel == 0 {
         return Err(PbrtError::error(

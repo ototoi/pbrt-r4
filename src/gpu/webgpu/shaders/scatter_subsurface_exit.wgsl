@@ -18,13 +18,14 @@ fn scatter_subsurface_exit(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     let samples = load_ray_samples(work.pixel_index);
-    let wi = bssrdf_sample_cosine(samples.indirect.yz);
+    let exit_dimension = 6u + 13u * ray.depth + 11u;
+    let wi = bssrdf_sample_cosine(sampler_get_2d(work.pixel_index, exit_dimension));
     let pdf = wi.z / PI;
     if (pdf <= 0.0) { return; }
     var beta = ray.beta * bssrdf_normalized_fresnel(wi.z, eta) * wi.z / pdf;
     let rr_beta = beta * ray.eta_scale / dot(ray.r_u, vec4<f32>(0.25));
     let rr_max = max(max(rr_beta.x, rr_beta.y), max(rr_beta.z, rr_beta.w));
-    if (ray.depth > 1u && rr_max < 1.0) {
+    if (ray.depth >= 1u && rr_max < 1.0) {
         let q = max(0.0, 1.0 - rr_max);
         if (samples.indirect.w < q) { return; }
         beta /= 1.0 - q;

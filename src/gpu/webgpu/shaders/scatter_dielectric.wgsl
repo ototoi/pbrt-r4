@@ -48,14 +48,6 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         eta_scale = eta_scale * bs.etap * bs.etap;
     }
     if (evaluated.bxdf_kind == MATERIAL_KIND_SUBSURFACE) {
-        let average_r_u = dot(ray.r_u, vec4<f32>(0.25));
-        let rr_beta = next_beta * eta_scale / average_r_u;
-        let rr_max = max(max(rr_beta.x, rr_beta.y), max(rr_beta.z, rr_beta.w));
-        if (ray.depth >= 1u && rr_max < 1.0) {
-            let q = max(0.0, 1.0 - rr_max);
-            if (samples.indirect.w < q) { return; }
-            next_beta /= 1.0 - q;
-        }
         if (bs.transmission != 0u) {
             let material = bssrdf_materials[material_nodes[evaluated.material_node].bssrdf_index];
             var sigma_a = max(vec4<f32>(0.0), material.scale * evaluated.values[4]);
@@ -74,7 +66,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
             for (var i = 0u; i < 4u; i++) {
                 if (sigma_t[i] != 0.0) { rho[i] = sigma_s[i] / sigma_t[i]; }
             }
-            let dimension = 6u + 11u * ray.depth + 8u;
+            let dimension = 6u + 13u * ray.depth + 8u;
             let sample = vec4<f32>(sampler_get_1d(pixel_index, dimension),
                 sampler_get_2d(pixel_index, dimension + 1u), material.eta);
             let index = atomicAdd(&bssrdf_work.state.count, 1u);
@@ -89,6 +81,14 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
             entry_ray.eta_scale = eta_scale;
             store_current_ray(ray_index, entry_ray);
             return;
+        }
+        let average_r_u = dot(ray.r_u, vec4<f32>(0.25));
+        let rr_beta = next_beta * eta_scale / average_r_u;
+        let rr_max = max(max(rr_beta.x, rr_beta.y), max(rr_beta.z, rr_beta.w));
+        if (ray.depth >= 1u && rr_max < 1.0) {
+            let q = max(0.0, 1.0 - rr_max);
+            if (samples.indirect.w < q) { return; }
+            next_beta /= 1.0 - q;
         }
     }
     let next_ray = RayWorkItem(
