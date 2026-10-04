@@ -26,6 +26,8 @@ const SCATTER_DIFFUSE_TRANSMISSION_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/scatter_diffuse_transmission.wgsl");
 const SCATTER_DIELECTRIC_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/scatter_dielectric.wgsl");
+const SAMPLE_SUBSURFACE_PROBE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_subsurface_probe.wgsl");
 const SCATTER_THIN_DIELECTRIC_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/scatter_thin_dielectric.wgsl");
 const SCATTER_CONDUCTOR_SHADER: &str =
@@ -202,6 +204,16 @@ fn primary_and_path_samples_use_the_sampler_module() {
     assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
     assert!(common_shader().contains("select(8u, 13u, material_table.have_subsurface != 0u)"));
     assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
+}
+
+#[test]
+fn subsurface_gpu_path_clamps_unsafe_inputs_and_skips_black_probe() {
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("e.values[1].x = clamp(e.values[1].x, 0.0, 1.0);"));
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("e.values[2].x = clamp(e.values[2].x, 0.0, 1.0);"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("max(vec4<f32>(1e-6)"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("if (any(sigma_t > vec4<f32>(0.0)))"));
+    assert!(SAMPLE_SUBSURFACE_PROBE_SHADER
+        .contains("if (dot(next_origin - origin, direction) <= 0.0) { break; }"));
 }
 
 #[test]
