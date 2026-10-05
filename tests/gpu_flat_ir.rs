@@ -353,6 +353,46 @@ fn flatten_node_keeps_distinct_same_named_media_separate() {
 }
 
 #[test]
+fn flatten_node_preserves_medium_references_across_object_instances() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut medium_transform = Transform::default();
+    medium_transform.matrix[3] = 2.0;
+    let medium = Arc::new(NodeMedium {
+        name: "object-medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: {
+            let mut params = ParameterDictionary::default();
+            params.add_string("string type", "homogeneous");
+            params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+            params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+            params
+        },
+        transform: medium_transform,
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::clone(&medium)],
+            ..Default::default()
+        },
+    }));
+
+    let definition = Arc::new(RwLock::new(Node::new("object")));
+    let shape = triangle_node("object-shape", "diffuse", [0.0; 3]);
+    set_medium_interface(&shape, MediumInterface::new(Some(medium), None));
+    definition.write().unwrap().add_child(shape);
+    root.add_child(instance_node("object-use", &definition, [10.0, 0.0, 0.0]));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
+    assert_eq!(scene.instances[0].transform[3], 10.0);
+    assert_eq!(scene.media[0].transform[3], 2.0);
+}
+
+#[test]
 fn flatten_node_requires_one_medium_component_per_shape_node() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());

@@ -163,6 +163,30 @@ Shape "sphere"
 }
 
 #[test]
+fn gpu_node_builder_keeps_rejecting_light_medium_references() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+MakeNamedMedium "fog" "string type" "homogeneous"
+    "rgb sigma_a" [0.1 0.1 0.1] "rgb sigma_s" [0 0 0]
+MediumInterface "fog" ""
+LightSource "point" "point3 from" [0 0 1] "rgb I" [1 1 1]
+"#,
+        &mut builder,
+    )
+    .expect("scene syntax should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("nonempty light media should remain unsupported"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("does not support light Medium references yet"));
+}
+
+#[test]
 fn gpu_texture_checkerboard3d_uses_point_transform_mapping() {
     let mut builder = SceneBuilder::new();
     parse_string(
