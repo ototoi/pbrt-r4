@@ -9,8 +9,8 @@ use super::{
     Vertex, Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
-    Component, Integrator as NodeIntegrator, Material as NodeMaterial, NodeRef,
-    Sampler as NodeSampler, Shape,
+    Component, Integrator as NodeIntegrator, Material as NodeMaterial, Medium as NodeMedium,
+    NodeRef, Sampler as NodeSampler, Shape,
 };
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
@@ -272,8 +272,9 @@ struct FlatBuilder {
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     media: Vec<Medium>,
-    medium_refs: Vec<Arc<crate::gpu::node::Medium>>,
-    media_indices_by_node: HashMap<usize, u32>,
+    // Keep Node IR media alive while their pointer identities are keys below.
+    medium_refs: Vec<Arc<NodeMedium>>,
+    media_indices_by_node: HashMap<*const NodeMedium, u32>,
     material_source_nodes: Vec<MaterialSourceNode>,
     bssrdfs: Vec<BSSRDF>,
     bssrdf_tables: Vec<TabulatedBSSRDFTable>,

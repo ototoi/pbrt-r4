@@ -4,8 +4,8 @@ use std::sync::RwLock;
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, node_ref_to_json, prepare_triangle_meshes,
     remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params, Camera,
-    CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
-    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
+    CameraComponent, Component, DiskShape, Material, MaterialComponent, MediumComponent, Node,
+    Shape, ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
     TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
 };
 use pbrt_r4::parser::parse_string;
@@ -113,6 +113,28 @@ fn image_texture_node_keeps_only_the_resolved_image_reference() {
         .expect("image texture should be present");
 
     assert_eq!(texture.image_path(), Some(path));
+}
+
+#[test]
+fn gpu_node_builder_rejects_undefined_medium_names() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+MediumInterface "missing-medium" ""
+Shape "sphere"
+"#,
+        &mut builder,
+    )
+    .expect("scene syntax should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("undefined media should fail during Node IR construction"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("Medium \"missing-medium\" is not defined"));
 }
 
 #[test]
@@ -655,8 +677,12 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
     }));
+    root.add_component(Component::Medium(MediumComponent {
+        medium_interface: Default::default(),
+    }));
 
     tessellate_shapes(&mut root).unwrap();
+    prepare_triangle_meshes(&mut root).unwrap();
 
     let Component::Shape(shape) = &root.components[0] else {
         panic!("expected shape component");
@@ -676,6 +702,10 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     assert!(mesh.normals.is_some());
     assert!(mesh.tangents.is_some());
     assert!(mesh.uvs.is_some());
+    assert!(root
+        .components
+        .iter()
+        .any(|component| matches!(component, Component::Medium(_))));
 }
 
 #[test]
