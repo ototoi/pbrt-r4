@@ -58,6 +58,30 @@ fn node_components_wrap_declarative_resources() {
 }
 
 #[test]
+fn medium_interface_detects_transitions_by_arc_identity() {
+    let medium = Arc::new(NodeMedium {
+        name: "medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
+    let other_medium = Arc::new(NodeMedium {
+        name: "medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
+
+    assert!(!MediumInterface::default().is_medium_transition());
+    assert!(MediumInterface::new(Some(Arc::clone(&medium)), None).is_medium_transition());
+    assert!(
+        !MediumInterface::new(Some(Arc::clone(&medium)), Some(Arc::clone(&medium)))
+            .is_medium_transition()
+    );
+    assert!(MediumInterface::new(Some(medium), Some(other_medium)).is_medium_transition());
+}
+
+#[test]
 fn texture_node_keeps_mapping_separate_from_texture_data() {
     let mut node = TextureNode::new("albedo");
     node.components.push(TextureComponent::Texture(Texture {
