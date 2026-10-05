@@ -64,7 +64,7 @@ fn plane_scene(context: &Context) -> Scene {
         camera: Camera {
             kind: "perspective".into(),
             params: Default::default(),
-            medium: String::new(),
+            medium: None,
         },
     }));
     let mut film_params = ParameterDictionary::default();
@@ -109,7 +109,9 @@ fn plane_scene(context: &Context) -> Scene {
                 uvs: Some(vec![Vec2f([0.0, 0.0]); 3]),
             })),
             reverse_orientation: false,
-            medium_interface: Default::default(),
+        }));
+        plane.add_component(Component::Medium(MediumComponent {
+            medium_interface: MediumInterface::default(),
         }));
         root.add_child(Arc::new(RwLock::new(plane)));
     }

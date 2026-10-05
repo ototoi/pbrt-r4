@@ -875,6 +875,7 @@ mod tests {
                 name: "alpha".to_string(),
             }],
             children: vec![],
+            bssrdf_index: super::INVALID_INDEX,
             displacement_texture_root: super::INVALID_INDEX,
         });
 

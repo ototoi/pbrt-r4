@@ -5,19 +5,16 @@ use crate::util::error::PbrtError;
 use crate::util::spectrum::{
     spectrum_to_photometric, DenselySampledSpectrum, Spectrum, SpectrumType,
 };
+use std::sync::Arc;
 
 pub fn register_medium(
-    medium: &NodeMedium,
+    medium: &Arc<NodeMedium>,
     world_transform: &Transform,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
-    if let Some(index) = builder
-        .media
-        .iter()
-        .position(|registered| registered.name == medium.name)
-    {
-        return u32::try_from(index)
-            .map_err(|_| PbrtError::error("Flat medium table exceeds u32."));
+    let medium_key = Arc::as_ptr(medium) as usize;
+    if let Some(index) = builder.media_indices_by_node.get(&medium_key) {
+        return Ok(*index);
     }
     if medium.kind != "homogeneous" {
         return Err(PbrtError::error(&format!(
@@ -97,23 +94,28 @@ pub fn register_medium(
         g: g as f32,
         transform: multiply_transform(world_transform, &medium.transform.matrix),
     });
+    builder.media_indices_by_node.insert(medium_key, index);
+    builder.medium_refs.push(Arc::clone(medium));
     Ok(index)
 }
 
-/// Resolves a `MediumInterface`/`medium` name to an index into
-/// `builder.media`. An empty name means vacuum (`INVALID_INDEX`); any
-/// other name must already have been registered by `register_medium`
-/// (Node IR always attaches `Component::Medium` before the shapes/camera
-/// that reference it, since media are collected on the root node, which
-/// is visited first).
-pub fn resolve_medium_name(name: &str, builder: &FlatBuilder) -> Result<u32, PbrtError> {
-    if name.is_empty() {
+/// Returns the flat table index of a Node IR medium reference. Vacuum maps to
+/// `INVALID_INDEX`; every other medium must have been registered from Scene.
+pub fn resolve_medium_reference(
+    medium: &Option<Arc<NodeMedium>>,
+    builder: &FlatBuilder,
+) -> Result<u32, PbrtError> {
+    let Some(medium) = medium else {
         return Ok(INVALID_INDEX);
-    }
+    };
     builder
-        .media
-        .iter()
-        .position(|registered| registered.name == name)
-        .map(|index| index as u32)
-        .ok_or_else(|| PbrtError::error(&format!("Medium \"{name}\" is not defined.")))
+        .media_indices_by_node
+        .get(&(Arc::as_ptr(medium) as usize))
+        .copied()
+        .ok_or_else(|| {
+            PbrtError::error(&format!(
+                "Medium \"{}\" is not in Scene.media.",
+                medium.name
+            ))
+        })
 }

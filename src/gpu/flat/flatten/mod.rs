@@ -27,7 +27,7 @@ use material::{build_material_roots, register_material_source, MaterialSourceNod
 mod material_attributes;
 mod medium;
 mod subsurface;
-use medium::{register_medium, resolve_medium_name};
+use medium::{register_medium, resolve_medium_reference};
 mod node;
 use node::flatten_node_ref;
 
@@ -272,6 +272,8 @@ struct FlatBuilder {
     geometries_by_shape: HashMap<(usize, usize), u32>,
     instances: Vec<Instance>,
     media: Vec<Medium>,
+    medium_refs: Vec<Arc<crate::gpu::node::Medium>>,
+    media_indices_by_node: HashMap<usize, u32>,
     material_source_nodes: Vec<MaterialSourceNode>,
     bssrdfs: Vec<BSSRDF>,
     bssrdf_tables: Vec<TabulatedBSSRDFTable>,

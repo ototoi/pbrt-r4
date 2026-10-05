@@ -83,9 +83,27 @@ impl SceneBuilder {
         self.check_gpu_medium_support()?;
         let texture_nodes = self.build_texture_resources()?;
         let texture_lookup = texture_node_lookup(&texture_nodes);
+        let mut named_media = HashMap::new();
+        let mut media = Vec::with_capacity(self.media.len());
+        let mut sorted_media: Vec<_> = self.media.iter().collect();
+        sorted_media.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (name, medium) in sorted_media {
+            let params = medium.base.params.clone();
+            let medium = Arc::new(Medium {
+                name: medium.base.name.clone(),
+                kind: params.get_one_string("type", ""),
+                params,
+                transform: node_transform(&medium.render_from_medium.primary()),
+            });
+            named_media.insert(name.clone(), Arc::clone(&medium));
+            media.push(medium);
+        }
         let mut root_node = Node::new("root");
         root_node.add_component(Component::Scene(SceneComponent {
-            scene: Scene { texture_nodes },
+            scene: Scene {
+                texture_nodes,
+                media,
+            },
         }));
         root_node.add_component(Component::Output(OutputComponent {
             output: Output {
@@ -121,33 +139,27 @@ impl SceneBuilder {
         self.populate_gpu_material_references(&mut materials)?;
         let named_materials = self.build_named_material_resources(&materials);
 
-        let mut named_media: Vec<_> = self.media.iter().collect();
-        named_media.sort_by(|(a, _), (b, _)| a.cmp(b));
-        for (_, medium) in named_media {
-            let params = medium.base.params.clone();
-            root_node.add_component(Component::Medium(MediumComponent {
-                medium: Medium {
-                    name: medium.base.name.clone(),
-                    kind: params.get_one_string("type", ""),
-                    params,
-                    transform: node_transform(&medium.render_from_medium.primary()),
-                },
-            }));
-        }
-
-        root_node.add_child(self.build_camera_node());
+        root_node.add_child(self.build_camera_node(&named_media)?);
 
         for shape in &self.shapes {
-            if let Some(node) =
-                self.realize_gpu_shape(shape, &materials, &named_materials, &texture_lookup)?
-            {
+            if let Some(node) = self.realize_gpu_shape(
+                shape,
+                &materials,
+                &named_materials,
+                &named_media,
+                &texture_lookup,
+            )? {
                 root_node.add_child(node);
             }
         }
         for shape in &self.animated_shapes {
-            if let Some(node) =
-                self.realize_gpu_shape(shape, &materials, &named_materials, &texture_lookup)?
-            {
+            if let Some(node) = self.realize_gpu_shape(
+                shape,
+                &materials,
+                &named_materials,
+                &named_media,
+                &texture_lookup,
+            )? {
                 root_node.add_child(node);
             }
         }
@@ -160,14 +172,18 @@ impl SceneBuilder {
                     name: light.base.base.name.clone(),
                     params,
                     transform: node_transform(&light.base.render_from_object.primary()),
-                    medium: light.medium.clone(),
+                    medium: None,
                 },
             }));
             root_node.add_child(Arc::new(RwLock::new(node)));
         }
 
-        let definitions =
-            self.build_instance_definitions(&materials, &named_materials, &texture_lookup)?;
+        let definitions = self.build_instance_definitions(
+            &materials,
+            &named_materials,
+            &named_media,
+            &texture_lookup,
+        )?;
         for instance in &self.instance_uses {
             root_node.add_child(self.build_instance_node(instance, &definitions)?);
         }
@@ -252,7 +268,10 @@ impl SceneBuilder {
         Ok(())
     }
 
-    fn build_camera_node(&self) -> NodeRef {
+    fn build_camera_node(
+        &self,
+        named_media: &HashMap<String, Arc<Medium>>,
+    ) -> Result<NodeRef, PbrtError> {
         let mut node = Node::new("camera");
         // `camera_to_world` is historically named but stores pbrt's
         // cameraFromWorld transform. GPU Node IR stores the camera-to-world
@@ -263,7 +282,7 @@ impl SceneBuilder {
             camera: Camera {
                 kind: self.camera_name.clone(),
                 params: self.camera_params.clone(),
-                medium: self.camera_medium.clone(),
+                medium: resolve_node_medium(&self.camera_medium, named_media)?,
             },
         }));
         let mut film_params = self.film_params.clone();
@@ -274,7 +293,7 @@ impl SceneBuilder {
                 params: film_params,
             },
         }));
-        Arc::new(RwLock::new(node))
+        Ok(Arc::new(RwLock::new(node)))
     }
 
     fn build_material_resources(
@@ -373,6 +392,7 @@ impl SceneBuilder {
         shape: &ShapeSceneEntity,
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
+        named_media: &HashMap<String, Arc<Medium>>,
         texture_lookup: &HashMap<(NodeTextureKind, String), Arc<TextureNode>>,
     ) -> Result<Option<NodeRef>, PbrtError> {
         let has_alpha_texture = shape.base.params.get_textures_ref("alpha").is_some();
@@ -426,9 +446,11 @@ impl SceneBuilder {
         node.add_component(Component::Shape(ShapeComponent {
             shape: shape_value,
             reverse_orientation: shape.reverse_orientation,
+        }));
+        node.add_component(Component::Medium(MediumComponent {
             medium_interface: MediumInterface::new(
-                shape.medium_interface.inside_medium.clone(),
-                shape.medium_interface.outside_medium.clone(),
+                resolve_node_medium(&shape.medium_interface.inside_medium, named_media)?,
+                resolve_node_medium(&shape.medium_interface.outside_medium, named_media)?,
             ),
         }));
 
@@ -526,22 +548,31 @@ impl SceneBuilder {
         &self,
         materials: &[Arc<Material>],
         named_materials: &HashMap<String, Arc<Material>>,
+        named_media: &HashMap<String, Arc<Medium>>,
         texture_lookup: &HashMap<(NodeTextureKind, String), Arc<TextureNode>>,
     ) -> Result<HashMap<String, NodeRef>, PbrtError> {
         let mut definitions = HashMap::new();
         for (name, definition) in &self.instance_definitions {
             let definition_node = Arc::new(RwLock::new(Node::new(name)));
             for shape in &definition.shapes {
-                if let Some(child) =
-                    self.realize_gpu_shape(shape, materials, named_materials, texture_lookup)?
-                {
+                if let Some(child) = self.realize_gpu_shape(
+                    shape,
+                    materials,
+                    named_materials,
+                    named_media,
+                    texture_lookup,
+                )? {
                     definition_node.write().unwrap().add_child(child);
                 }
             }
             for shape in &definition.animated_shapes {
-                if let Some(child) =
-                    self.realize_gpu_shape(shape, materials, named_materials, texture_lookup)?
-                {
+                if let Some(child) = self.realize_gpu_shape(
+                    shape,
+                    materials,
+                    named_materials,
+                    named_media,
+                    texture_lookup,
+                )? {
                     definition_node.write().unwrap().add_child(child);
                 }
             }
@@ -608,6 +639,20 @@ fn node_transform(transform: &crate::util::transform::Transform) -> Transform {
     Transform {
         matrix: transform.m.m.map(|value| value as f32),
     }
+}
+
+fn resolve_node_medium(
+    name: &str,
+    named_media: &HashMap<String, Arc<Medium>>,
+) -> Result<Option<Arc<Medium>>, PbrtError> {
+    if name.is_empty() {
+        return Ok(None);
+    }
+    named_media
+        .get(name)
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| PbrtError::error(&format!("Medium \"{name}\" is not defined.")))
 }
 
 fn texture_node(
