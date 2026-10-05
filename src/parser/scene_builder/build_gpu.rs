@@ -19,7 +19,6 @@ use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
 
-use super::path_resolver::make_absolute_path;
 use super::SceneBuilder;
 
 use std::collections::HashMap;
@@ -125,7 +124,7 @@ impl SceneBuilder {
         let mut named_media: Vec<_> = self.media.iter().collect();
         named_media.sort_by(|(a, _), (b, _)| a.cmp(b));
         for (_, medium) in named_media {
-            let params = make_absolute_path(&medium.base.params, &self.seen_work_dirs);
+            let params = medium.base.params.clone();
             root_node.add_component(Component::Medium(MediumComponent {
                 medium: Medium {
                     name: medium.base.name.clone(),
@@ -155,7 +154,7 @@ impl SceneBuilder {
 
         for light in &self.lights {
             let mut node = Node::new(&light.base.base.name);
-            let params = make_absolute_path(&light.base.base.params, &self.seen_work_dirs);
+            let params = light.base.base.params.clone();
             node.add_component(Component::Light(LightComponent {
                 light: Light {
                     name: light.base.base.name.clone(),
@@ -286,7 +285,7 @@ impl SceneBuilder {
             .iter()
             .map(|material| {
                 let texture_attributes = texture_attributes_for_material(material, texture_lookup)?;
-                let params = make_absolute_path(&material.base.params, &self.seen_work_dirs);
+                let params = material.base.params.clone();
                 let kind = specialize_gpu_material_kind(
                     &material.base.name,
                     &params,
@@ -319,7 +318,6 @@ impl SceneBuilder {
                 NodeTextureKind::Float,
                 &texture.base.params,
                 &texture.render_from_texture,
-                &self.seen_work_dirs,
             )?);
         }
         for (index, texture) in self.spectrum_textures.iter().enumerate() {
@@ -333,7 +331,6 @@ impl SceneBuilder {
                 NodeTextureKind::Spectrum,
                 &texture.base.params,
                 &texture.render_from_texture,
-                &self.seen_work_dirs,
             )?);
         }
         let mut lookup = HashMap::new();
@@ -383,13 +380,7 @@ impl SceneBuilder {
         if !has_alpha_texture && alpha <= 0.0 && shape.area_light_index.is_none() {
             return Ok(None);
         }
-        let resolved_params;
-        let params = if shape.base.name == "plymesh" {
-            resolved_params = make_absolute_path(&shape.base.params, &self.seen_work_dirs);
-            &resolved_params
-        } else {
-            &shape.base.params
-        };
+        let params = &shape.base.params;
         let shape_value = match shape.base.name.as_str() {
             "sphere" => Shape::Sphere(Box::new(SphereShape {
                 params: shape.base.params.clone(),
@@ -625,9 +616,8 @@ fn texture_node(
     kind: NodeTextureKind,
     source_params: &crate::paramdict::ParameterDictionary,
     render_from_texture: &crate::util::transform::Transform,
-    work_dirs: &[String],
 ) -> Result<TextureNode, PbrtError> {
-    let params = make_absolute_path(source_params, work_dirs);
+    let params = source_params.clone();
     if !matches!(
         implementation_name,
         "constant"

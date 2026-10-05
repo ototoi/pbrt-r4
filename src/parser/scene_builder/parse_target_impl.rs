@@ -7,6 +7,7 @@
 //!
 //! Design notes: see `docs/scene_loader_refactor_ja.md`.
 
+use super::path_resolver::{make_absolute_path, resolve_file_paths};
 use super::scene_entity::{
     AreaLightSceneEntity, InstanceDefinitionSceneEntity, InstanceSceneEntity, LightSceneEntity,
     MaterialSceneEntity, MediumSceneEntity, SceneEntity, ShapeSceneEntity, TextureKind,
@@ -302,7 +303,8 @@ impl ParseTarget for SceneBuilder {
     fn camera(&mut self, name: &str, params: ParsedParameterVector) {
         self.verify_options("Camera");
         self.camera_name = name.to_string();
-        self.camera_params = into_parameter_dictionary(params);
+        let params = into_parameter_dictionary(params);
+        self.camera_params = make_absolute_path(&params, &self.work_dirs);
         self.camera_medium = self.top_graphics_state().current_outside_medium.clone();
         // pbrt's `LookAt` accumulates `cameraFromWorld` into the CTM, so
         // the active transform at the `Camera` directive is actually the
@@ -325,6 +327,7 @@ impl ParseTarget for SceneBuilder {
         }
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().medium_attributes);
+        let params = make_absolute_path(&params, &self.work_dirs);
         let entity = MediumSceneEntity {
             base: SceneEntity::new(name, params, self.current_file_loc()),
             render_from_medium: self.render_from_object(),
@@ -355,6 +358,7 @@ impl ParseTarget for SceneBuilder {
 
     fn attribute(&mut self, target: &str, params: ParsedParameterVector) {
         let params = into_parameter_dictionary(params);
+        let params = resolve_file_paths(&params, &self.work_dirs);
         self.verify_world("Attribute");
         let gs = self.top_graphics_state_mut();
         let dict = match target {
@@ -431,6 +435,7 @@ impl ParseTarget for SceneBuilder {
         self.verify_world("Texture");
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().texture_attributes);
+        let params = make_absolute_path(&params, &self.work_dirs);
         let entity_base = SceneEntity::new(tex_name, params, self.current_file_loc());
         let render_from_texture = self.top_transform().to_transform();
         match type_name {
@@ -473,6 +478,7 @@ impl ParseTarget for SceneBuilder {
         } else {
             let params =
                 self.params_with_attributes(params, &self.top_graphics_state().material_attributes);
+            let params = make_absolute_path(&params, &self.work_dirs);
             let idx = self.materials.len();
             self.materials.push(MaterialSceneEntity {
                 base: SceneEntity::new(name, params, self.current_file_loc()),
@@ -496,6 +502,7 @@ impl ParseTarget for SceneBuilder {
         }
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().material_attributes);
+        let params = make_absolute_path(&params, &self.work_dirs);
         let idx = self.materials.len();
         self.materials.push(MaterialSceneEntity {
             base: SceneEntity::new(&type_name, params, self.current_file_loc()),
@@ -523,6 +530,7 @@ impl ParseTarget for SceneBuilder {
         };
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().light_attributes);
+        let params = make_absolute_path(&params, &self.work_dirs);
         self.lights.push(LightSceneEntity {
             base: TransformedSceneEntity {
                 base: SceneEntity::new(name, params, self.current_file_loc()),
@@ -539,6 +547,7 @@ impl ParseTarget for SceneBuilder {
         // `shape()`.
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().light_attributes);
+        let params = make_absolute_path(&params, &self.work_dirs);
         let gs = self.top_graphics_state_mut();
         gs.area_light_name = name.to_string();
         gs.area_light_params = params;
@@ -581,6 +590,11 @@ impl ParseTarget for SceneBuilder {
 
         let params =
             self.params_with_attributes(params, &self.top_graphics_state().shape_attributes);
+        let params = if name == "trianglemesh" || name == "curve" {
+            params
+        } else {
+            make_absolute_path(&params, &self.work_dirs)
+        };
         let gs = self.top_graphics_state();
         let entity = ShapeSceneEntity {
             base: SceneEntity::new(name, params, self.current_file_loc()),
@@ -714,9 +728,6 @@ impl ParseTarget for SceneBuilder {
 
     fn work_dir_begin(&mut self, path: &str) {
         self.work_dirs.push(path.to_string());
-        if !self.seen_work_dirs.iter().any(|d| d == path) {
-            self.seen_work_dirs.push(path.to_string());
-        }
     }
 
     fn work_dir_end(&mut self) {

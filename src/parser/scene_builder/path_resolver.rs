@@ -1,12 +1,8 @@
-//! Resolve relative paths inside a `ParameterDictionary` against the
-//! current `work_dirs`. Equivalent logic to SceneBuilder's
-//! `make_absolute_path`, exposed as a free function so SceneBuilder
-//! can reuse it without depending on SceneBuilder.
+//! Resolve file parameters before they are stored in a `SceneEntity`.
 //!
-//! - `spectrum`-typed string params → read the SPD file and add a
-//!   sampled spectrum.
-//! - `filename` / `emissionfilename` / `mapname` / `bsdffile` / `lensfile` / `normalmap` string params →
-//!   replace with an absolute path.
+//! - `spectrum`-typed string params → resolve and load SPD files.
+//! - File-valued `string` params with recognized names → replace with
+//!   absolute paths.
 
 use crate::paramdict::ParameterDictionary;
 use crate::util::spectrum::composite::Spectrum;
@@ -14,66 +10,65 @@ use crate::util::spectrum::source::spectrum_from_file;
 
 use std::path::Path;
 
+const STRING_FILE_PATH_KEYS: [&str; 6] = [
+    "filename",
+    "emissionfilename",
+    "mapname",
+    "bsdffile",
+    "lensfile",
+    "normalmap",
+];
+
+pub fn resolve_file_paths(
+    params: &ParameterDictionary,
+    work_dirs: &[String],
+) -> ParameterDictionary {
+    let n_params = params.clone();
+    let keys = params.get_keys();
+    for key in &keys {
+        let (parameter_type, name) = split_type_and_key(key);
+        let is_spectrum_file = parameter_type == "spectrum";
+        let is_named_string_path = parameter_type == "string"
+            && STRING_FILE_PATH_KEYS
+                .iter()
+                .any(|path_key| *path_key == name);
+        if !is_spectrum_file && !is_named_string_path {
+            continue;
+        }
+        if let Some(names) = params.get_strings_ref(key) {
+            if let Some(mut resolved_names) = n_params.get_strings_mut(key) {
+                for (index, name) in names.iter().enumerate() {
+                    if let Some(path) = resolve_filepath(name, work_dirs) {
+                        resolved_names[index] = path;
+                    }
+                }
+            }
+        }
+    }
+
+    n_params
+}
+
 pub fn make_absolute_path(
     params: &ParameterDictionary,
     work_dirs: &[String],
 ) -> ParameterDictionary {
-    let mut n_params = params.clone();
-    let keys = params.get_keys();
-
-    // 1) "spectrum"-typed string params → load the SPD file and turn it
-    //    into a sampled spectrum on the dictionary.
+    let mut n_params = resolve_file_paths(params, work_dirs);
+    for key in params
+        .get_keys()
+        .iter()
+        .filter(|key| param_type(key) == "spectrum")
     {
-        let target_keys: Vec<_> = keys
-            .iter()
-            .filter(|k| param_type(k) == "spectrum")
-            .collect();
-        for key in target_keys {
-            if let Some(names) = params.get_strings_ref(key) {
-                for name in names.iter() {
-                    if let Some(path) = resolve_filepath(name, work_dirs) {
-                        if let Some(Spectrum::PiecewiseLinear(pls)) = spectrum_from_file(&path) {
-                            n_params.add_sampled_spectrum_no_key(name, &pls.lambda, &pls.values);
-                        }
-                    }
-                }
+        let names = n_params
+            .get_strings_ref(key)
+            .map(|names| names.to_vec())
+            .unwrap_or_default();
+        for name in names {
+            if let Some(Spectrum::PiecewiseLinear(pls)) = spectrum_from_file(&name) {
+                n_params.add_sampled_spectrum_no_key(&name, &pls.lambda, &pls.values);
             }
         }
     }
-
-    // 2) filename / emissionfilename / mapname / bsdffile / lensfile / normalmap → replace with an
-    //    absolute path.
-    {
-        let file_path_keys = [
-            "filename",
-            "emissionfilename",
-            "mapname",
-            "bsdffile",
-            "lensfile",
-            "normalmap",
-        ];
-        let target_keys: Vec<_> = keys
-            .iter()
-            .filter(|k| {
-                let bare = param_key(k);
-                file_path_keys.iter().any(|f| *f == bare)
-            })
-            .collect();
-        let mut replaces = Vec::new();
-        for key in target_keys {
-            if let Some(names) = params.get_strings_ref(key) {
-                for name in names.iter() {
-                    if let Some(path) = resolve_filepath(name, work_dirs) {
-                        replaces.push((key.clone(), path));
-                    }
-                }
-            }
-        }
-        for (key, value) in replaces.iter() {
-            n_params.replace_one_string(key, value);
-        }
-    }
-
     n_params
 }
 
@@ -103,8 +98,4 @@ fn split_type_and_key(s: &str) -> (&str, &str) {
 
 fn param_type(s: &str) -> &str {
     split_type_and_key(s).0
-}
-
-fn param_key(s: &str) -> &str {
-    split_type_and_key(s).1
 }

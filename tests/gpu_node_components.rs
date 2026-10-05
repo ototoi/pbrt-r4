@@ -1066,11 +1066,8 @@ end_header
     std::fs::write(&path, ply).unwrap();
 
     let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
-    params.add_string("string filename", &filename);
+    params.add_string("string filename", path.to_str().unwrap());
     let mut builder = SceneBuilder::new();
-    builder
-        .seen_work_dirs
-        .push(directory.to_string_lossy().into_owned());
     builder.shapes.push(ShapeSceneEntity {
         base: SceneEntity::new("plymesh", params, FileLoc::default()),
         child_params: Vec::new(),
