@@ -4,9 +4,10 @@ use std::sync::RwLock;
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, node_ref_to_json, prepare_triangle_meshes,
     remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params, Camera,
-    CameraComponent, Component, DiskShape, Material, MaterialComponent, Node, Shape,
-    ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
-    TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
+    CameraComponent, Component, DiskShape, Material, MaterialComponent, Medium as NodeMedium,
+    MediumComponent, MediumInterface, Node, Shape, ShapeComponent, SphereShape, Texture,
+    TextureComponent, TextureKind, TextureMapping, TextureNode, Transform, TriangleMeshShape,
+    Vec2f, Vec3f,
 };
 use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
@@ -30,7 +31,7 @@ fn node_components_wrap_declarative_resources() {
         camera: Camera {
             kind: "perspective".to_string(),
             params: Default::default(),
-            medium: String::new(),
+            medium: None,
         },
     });
     let mut sphere_params = pbrt_r4::paramdict::ParameterDictionary::default();
@@ -42,7 +43,6 @@ fn node_components_wrap_declarative_resources() {
             params: sphere_params,
         })),
         reverse_orientation: false,
-        medium_interface: Default::default(),
     });
     let material_component = Component::Material(MaterialComponent {
         material: Arc::clone(&material),
@@ -55,6 +55,30 @@ fn node_components_wrap_declarative_resources() {
         Component::Material(MaterialComponent { .. })
     ));
     assert_eq!(Arc::strong_count(&material), 2);
+}
+
+#[test]
+fn medium_interface_detects_transitions_by_arc_identity() {
+    let medium = Arc::new(NodeMedium {
+        name: "medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
+    let other_medium = Arc::new(NodeMedium {
+        name: "medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
+
+    assert!(!MediumInterface::default().is_medium_transition());
+    assert!(MediumInterface::new(Some(Arc::clone(&medium)), None).is_medium_transition());
+    assert!(
+        !MediumInterface::new(Some(Arc::clone(&medium)), Some(Arc::clone(&medium)))
+            .is_medium_transition()
+    );
+    assert!(MediumInterface::new(Some(medium), Some(other_medium)).is_medium_transition());
 }
 
 #[test]
@@ -114,6 +138,52 @@ fn image_texture_node_keeps_only_the_resolved_image_reference() {
         .expect("image texture should be present");
 
     assert_eq!(texture.image_path(), Some(path));
+}
+
+#[test]
+fn gpu_node_builder_rejects_undefined_medium_names() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+MediumInterface "missing-medium" ""
+Shape "sphere"
+"#,
+        &mut builder,
+    )
+    .expect("scene syntax should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("undefined media should fail during Node IR construction"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("Medium \"missing-medium\" is not defined"));
+}
+
+#[test]
+fn gpu_node_builder_keeps_rejecting_light_medium_references() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+MakeNamedMedium "fog" "string type" "homogeneous"
+    "rgb sigma_a" [0.1 0.1 0.1] "rgb sigma_s" [0 0 0]
+MediumInterface "fog" ""
+LightSource "point" "point3 from" [0 0 1] "rgb I" [1 1 1]
+"#,
+        &mut builder,
+    )
+    .expect("scene syntax should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("nonempty light media should remain unsupported"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("does not support light Medium references yet"));
 }
 
 #[test]
@@ -652,13 +722,22 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     params.add_int("integer udiv", 4);
     params.add_int("integer vdiv", 1);
     let mut root = Node::new("root");
+    let medium = Arc::new(NodeMedium {
+        name: "disk-medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
-        medium_interface: Default::default(),
+    }));
+    root.add_component(Component::Medium(MediumComponent {
+        medium_interface: MediumInterface::new(Some(Arc::clone(&medium)), None),
     }));
 
     tessellate_shapes(&mut root).unwrap();
+    prepare_triangle_meshes(&mut root).unwrap();
 
     let Component::Shape(shape) = &root.components[0] else {
         panic!("expected shape component");
@@ -678,6 +757,15 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     assert!(mesh.normals.is_some());
     assert!(mesh.tangents.is_some());
     assert!(mesh.uvs.is_some());
+    let retained_medium = root
+        .components
+        .iter()
+        .find_map(|component| match component {
+            Component::Medium(component) => component.medium_interface.inside.as_ref(),
+            _ => None,
+        })
+        .expect("medium interface should survive shape preparation");
+    assert!(Arc::ptr_eq(retained_medium, &medium));
 }
 
 #[test]
@@ -692,7 +780,6 @@ fn disk_ring_uses_radial_segments_and_preserves_seam_vertices() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
-        medium_interface: Default::default(),
     }));
 
     tessellate_shapes(&mut root).unwrap();
@@ -717,7 +804,6 @@ fn disk_rejects_invalid_parameters_during_tessellation() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
-        medium_interface: Default::default(),
     }));
 
     assert!(tessellate_shapes(&mut root).is_err());
@@ -728,7 +814,6 @@ fn disk_rejects_invalid_parameters_during_tessellation() {
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
-        medium_interface: Default::default(),
     }));
     assert!(tessellate_shapes(&mut root).is_err());
 }
@@ -744,7 +829,6 @@ fn sphere_is_normalized_to_triangle_mesh_in_node_ir() {
                 params: Default::default(),
             })),
             reverse_orientation: false,
-            medium_interface: Default::default(),
         }));
     let mut root = Node::new("root");
     root.add_child(child);
@@ -778,7 +862,6 @@ fn sphere_tessellation_does_not_emit_degenerate_triangles() {
                 params: Default::default(),
             })),
             reverse_orientation: false,
-            medium_interface: Default::default(),
         }));
     let mut root = Node::new("root");
     root.add_child(child);
@@ -826,7 +909,6 @@ fn node_ir_preparation_removes_invalid_triangles_before_attribute_completion() {
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(mesh)),
         reverse_orientation: false,
-        medium_interface: Default::default(),
     }));
 
     prepare_triangle_meshes(&mut node).unwrap();
@@ -1010,7 +1092,6 @@ fn triangles_with_irreparable_zero_normals_are_removed() {
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(mesh)),
         reverse_orientation: false,
-        medium_interface: Default::default(),
     }));
 
     prepare_triangle_meshes(&mut node).unwrap();

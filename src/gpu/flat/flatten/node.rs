@@ -1,8 +1,8 @@
 use super::{
     append_area_light, flatten_light, geometry_index, identity_transform, multiply_transform,
     region_bounds, register_material_source, register_medium, register_root_component,
-    resolve_medium_name, screen_window, transform_swaps_handedness, viewport_resolution, Camera,
-    Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport,
+    resolve_medium_reference, screen_window, transform_swaps_handedness, viewport_resolution,
+    Camera, Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport,
     INVALID_INDEX,
 };
 use crate::film::PixelSensor;
@@ -52,6 +52,29 @@ pub fn flatten_node_ref(
         let mut shapes = Vec::new();
         let mut instances = Vec::new();
         let mut media = Vec::new();
+        let mut shape_medium_interfaces = Vec::new();
+        let shape_count = node
+            .components
+            .iter()
+            .filter(|component| matches!(component, Component::Shape(_)))
+            .count();
+        for component in &node.components {
+            if let Component::Medium(component) = component {
+                shape_medium_interfaces.push(component.medium_interface.clone());
+            }
+        }
+        if shape_count > 0 && shape_medium_interfaces.len() != 1 {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" must have exactly one MediumComponent.",
+                node.name
+            )));
+        }
+        if shape_count == 0 && !shape_medium_interfaces.is_empty() {
+            return Err(PbrtError::error(&format!(
+                "Node \"{}\" has a MediumComponent but no ShapeComponent.",
+                node.name
+            )));
+        }
         let camera = node
             .components
             .iter()
@@ -165,7 +188,7 @@ pub fn flatten_node_ref(
                         material.clone(),
                         area_light.clone(),
                         component.reverse_orientation,
-                        component.medium_interface.clone(),
+                        shape_medium_interfaces[0].clone(),
                     ));
                 }
                 Component::Instance(component) => {
@@ -174,8 +197,13 @@ pub fn flatten_node_ref(
                         component.instance.transform.clone(),
                     ));
                 }
-                Component::Medium(component) => {
-                    media.push(component.medium.clone());
+                Component::Scene(component) => {
+                    if stack.len() != 1 {
+                        return Err(PbrtError::error(
+                            "Scene component must be attached to the GPU root node.",
+                        ));
+                    }
+                    media.extend(component.scene.media.iter().cloned());
                 }
                 _ => {}
             }
@@ -290,7 +318,7 @@ pub fn flatten_node_ref(
         let viewport = builder.viewport.as_ref().ok_or_else(|| {
             PbrtError::error("A camera must be attached to a node with a film component.")
         })?;
-        let medium = resolve_medium_name(&camera.medium, builder)?;
+        let medium = resolve_medium_reference(&camera.medium, builder)?;
         builder.camera = Some(Camera {
             camera_to_world: world_transform,
             kind: camera.kind.clone(),
@@ -343,8 +371,8 @@ pub fn flatten_node_ref(
         } else {
             INVALID_INDEX
         };
-        let inside_medium = resolve_medium_name(&medium_interface.inside_medium, builder)?;
-        let outside_medium = resolve_medium_name(&medium_interface.outside_medium, builder)?;
+        let inside_medium = resolve_medium_reference(&medium_interface.inside, builder)?;
+        let outside_medium = resolve_medium_reference(&medium_interface.outside, builder)?;
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
