@@ -7,7 +7,7 @@ use super::instance::Instance;
 use super::integrator::Integrator;
 use super::light::Light;
 use super::material::Material;
-use super::medium::{Medium, MediumInterface};
+use super::medium::MediumInterface;
 use super::output::Output;
 use super::sampler::Sampler;
 use super::scene::Scene;
@@ -59,7 +59,6 @@ pub struct CameraComponent {
 pub struct ShapeComponent {
     pub shape: Shape,
     pub reverse_orientation: bool,
-    pub medium_interface: MediumInterface,
 }
 
 #[derive(Clone)]
@@ -74,7 +73,7 @@ pub struct LightComponent {
 
 #[derive(Clone)]
 pub struct MediumComponent {
-    pub medium: Medium,
+    pub medium_interface: MediumInterface,
 }
 
 #[derive(Clone)]
