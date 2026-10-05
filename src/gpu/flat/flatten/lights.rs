@@ -846,11 +846,11 @@ fn area_light_has_constant_zero_alpha(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{area_light_has_constant_zero_alpha, FlatBuilder, INVALID_INDEX};
     use crate::gpu::flat::flatten::material::MaterialSourceNode;
     use crate::gpu::flat::texture::TextureRootSpec;
     use crate::gpu::flat::{AttributeKind, AttributeRef};
-    use crate::gpu::node::{Texture, TextureNode};
+    use crate::gpu::node::{Texture, TextureComponent, TextureKind, TextureNode};
     use crate::paramdict::ParameterDictionary;
     use std::sync::Arc;
 
@@ -875,8 +875,8 @@ mod tests {
                 name: "alpha".to_string(),
             }],
             children: vec![],
-            bssrdf_index: super::INVALID_INDEX,
-            displacement_texture_root: super::INVALID_INDEX,
+            bssrdf_index: INVALID_INDEX,
+            displacement_texture_root: INVALID_INDEX,
         });
 
         assert!(!area_light_has_constant_zero_alpha(0, &builder).unwrap());
