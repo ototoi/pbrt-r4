@@ -121,6 +121,36 @@ fn file_parameters_are_resolved_in_their_included_scene_before_entity_creation()
 }
 
 #[test]
+fn spectrum_file_arrays_resolve_each_element_without_reordering() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let root = directory.path().join("root.pbrt");
+    let first_file = directory.path().join("first.spd");
+    let second_file = directory.path().join("second.spd");
+    fs::write(&first_file, "400 1 700 1").expect("first spectrum should be written");
+    fs::write(&second_file, "400 2 700 2").expect("second spectrum should be written");
+    fs::write(
+        &root,
+        "WorldBegin\nMaterial \"diffuse\" \"spectrum value\" [\"first.spd\" \"second.spd\"]\nWorldEnd\n",
+    )
+    .expect("scene should be written");
+
+    let mut builder = SceneBuilder::new();
+    parse_file(root.to_str().unwrap(), &mut builder).expect("scene should parse");
+
+    assert_eq!(builder.materials.len(), 1);
+    assert_eq!(
+        builder.materials[0]
+            .base
+            .params
+            .get_strings("spectrum value"),
+        vec![
+            first_file.to_string_lossy().to_string(),
+            second_file.to_string_lossy().to_string(),
+        ]
+    );
+}
+
+#[test]
 fn gzipped_root_is_parsed_in_order() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let root = directory.path().join("root.pbrt.gz");
