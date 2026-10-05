@@ -4,9 +4,10 @@ use std::sync::RwLock;
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, node_ref_to_json, prepare_triangle_meshes,
     remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params, Camera,
-    CameraComponent, Component, DiskShape, Material, MaterialComponent, MediumComponent, Node,
-    Shape, ShapeComponent, SphereShape, Texture, TextureComponent, TextureKind, TextureMapping,
-    TextureNode, Transform, TriangleMeshShape, Vec2f, Vec3f,
+    CameraComponent, Component, DiskShape, Material, MaterialComponent, Medium as NodeMedium,
+    MediumComponent, MediumInterface, Node, Shape, ShapeComponent, SphereShape, Texture,
+    TextureComponent, TextureKind, TextureMapping, TextureNode, Transform, TriangleMeshShape,
+    Vec2f, Vec3f,
 };
 use pbrt_r4::parser::parse_string;
 use pbrt_r4::parser::scene_builder::{
@@ -673,12 +674,18 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     params.add_int("integer udiv", 4);
     params.add_int("integer vdiv", 1);
     let mut root = Node::new("root");
+    let medium = Arc::new(NodeMedium {
+        name: "disk-medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
     root.add_component(Component::Shape(ShapeComponent {
         shape: Shape::Disk(Box::new(DiskShape { params })),
         reverse_orientation: false,
     }));
     root.add_component(Component::Medium(MediumComponent {
-        medium_interface: Default::default(),
+        medium_interface: MediumInterface::new(Some(Arc::clone(&medium)), None),
     }));
 
     tessellate_shapes(&mut root).unwrap();
@@ -702,10 +709,15 @@ fn disk_is_tessellated_as_a_non_degenerate_triangle_fan() {
     assert!(mesh.normals.is_some());
     assert!(mesh.tangents.is_some());
     assert!(mesh.uvs.is_some());
-    assert!(root
+    let retained_medium = root
         .components
         .iter()
-        .any(|component| matches!(component, Component::Medium(_))));
+        .find_map(|component| match component {
+            Component::Medium(component) => component.medium_interface.inside.as_ref(),
+            _ => None,
+        })
+        .expect("medium interface should survive shape preparation");
+    assert!(Arc::ptr_eq(retained_medium, &medium));
 }
 
 #[test]
