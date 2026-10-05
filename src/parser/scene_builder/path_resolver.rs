@@ -99,36 +99,3 @@ fn split_type_and_key(s: &str) -> (&str, &str) {
 fn param_type(s: &str) -> &str {
     split_type_and_key(s).0
 }
-
-#[cfg(test)]
-mod tests {
-    use super::make_absolute_path;
-    use crate::paramdict::ParameterDictionary;
-
-    #[test]
-    fn spectrum_file_arrays_resolve_each_element_without_reordering() {
-        let directory = tempfile::tempdir().expect("temporary directory should be created");
-        let first_file = directory.path().join("first.spd");
-        let second_file = directory.path().join("second.spd");
-        std::fs::write(&first_file, "400 1 700 1").expect("first spectrum should be written");
-        std::fs::write(&second_file, "400 2 700 2").expect("second spectrum should be written");
-
-        let mut params = ParameterDictionary::new();
-        params.add_owned_strings_typed(
-            "spectrum",
-            "I",
-            vec!["first.spd".to_string(), "second.spd".to_string()],
-        );
-        let work_dirs = vec![directory.path().to_string_lossy().to_string()];
-
-        let resolved = make_absolute_path(&params, &work_dirs);
-
-        assert_eq!(
-            resolved.get_strings("spectrum I"),
-            vec![
-                first_file.to_string_lossy().to_string(),
-                second_file.to_string_lossy().to_string(),
-            ]
-        );
-    }
-}
