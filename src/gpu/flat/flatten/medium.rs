@@ -12,7 +12,7 @@ pub fn register_medium(
     world_transform: &Transform,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
-    let medium_key = Arc::as_ptr(medium) as usize;
+    let medium_key = Arc::as_ptr(medium);
     if let Some(index) = builder.media_indices_by_node.get(&medium_key) {
         return Ok(*index);
     }
@@ -110,7 +110,7 @@ pub fn resolve_medium_reference(
     };
     builder
         .media_indices_by_node
-        .get(&(Arc::as_ptr(medium) as usize))
+        .get(&Arc::as_ptr(medium))
         .copied()
         .ok_or_else(|| {
             PbrtError::error(&format!(

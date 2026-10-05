@@ -172,7 +172,7 @@ impl SceneBuilder {
                     name: light.base.base.name.clone(),
                     params,
                     transform: node_transform(&light.base.render_from_object.primary()),
-                    medium: None,
+                    medium: resolve_node_medium(&light.medium, &named_media)?,
                 },
             }));
             root_node.add_child(Arc::new(RwLock::new(node)));
@@ -192,8 +192,9 @@ impl SceneBuilder {
     }
 
     /// Rejects medium references whose data is not represented in the GPU IR.
-    /// Homogeneous shape and camera media are preserved and validated during
-    /// flattening; lights still lack an initial-medium field in Flat IR.
+    /// Homogeneous shape and camera media are preserved in Node IR and
+    /// validated during flattening; lights still lack an initial-medium field
+    /// in Flat IR.
     fn check_gpu_medium_support(&self) -> Result<(), PbrtError> {
         let mut light_media: Vec<String> = self
             .lights

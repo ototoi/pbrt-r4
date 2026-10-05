@@ -77,6 +77,30 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
     Arc::new(RwLock::new(node))
 }
 
+fn homogeneous_medium(name: &str) -> Arc<NodeMedium> {
+    let mut params = ParameterDictionary::default();
+    params.add_string("string type", "homogeneous");
+    params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+    Arc::new(NodeMedium {
+        name: name.to_string(),
+        kind: "homogeneous".to_string(),
+        params,
+        transform: Transform::default(),
+    })
+}
+
+fn set_medium_interface(node: &Arc<RwLock<Node>>, medium_interface: MediumInterface) {
+    let mut node = node.write().unwrap();
+    for component in &mut node.components {
+        if let Component::Medium(component) = component {
+            component.medium_interface = medium_interface;
+            return;
+        }
+    }
+    panic!("triangle fixture must have a MediumComponent");
+}
+
 fn add_camera_and_film(root: &mut Node, camera_params: ParameterDictionary) {
     add_camera_and_named_film(root, camera_params, "rgb");
 }
@@ -216,6 +240,7 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 #[test]
 fn flatten_node_resolves_medium_interface_and_camera_medium() {
     let mut root = Node::new("root");
+    root.transform.matrix[3] = 7.0;
     let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
     add_camera_and_film(&mut root, camera_params);
@@ -293,10 +318,88 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
     assert_eq!(scene.media[0].name, "blue");
     assert_eq!(scene.media[1].name, "amber");
     assert_eq!(scene.media[0].kind, "homogeneous");
+    assert_eq!(scene.media[0].transform[3], 7.0);
     assert_eq!(scene.instances.len(), 1);
     assert_eq!(scene.instances[0].inside_medium, 0);
     assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
     assert_eq!(scene.camera.medium, 0);
+}
+
+#[test]
+fn flatten_node_keeps_distinct_same_named_media_separate() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let first = homogeneous_medium("same-name");
+    let second = homogeneous_medium("same-name");
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::clone(&first), Arc::clone(&second)],
+            ..Default::default()
+        },
+    }));
+    let first_shape = triangle_node("first", "diffuse", [0.0; 3]);
+    let second_shape = triangle_node("second", "diffuse", [0.0; 3]);
+    set_medium_interface(&first_shape, MediumInterface::new(Some(first), None));
+    set_medium_interface(&second_shape, MediumInterface::new(Some(second), None));
+    root.add_child(first_shape);
+    root.add_child(second_shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.media.len(), 2);
+    assert_eq!(scene.media[0].name, scene.media[1].name);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[1].inside_medium, 1);
+}
+
+#[test]
+fn flatten_node_requires_one_medium_component_per_shape_node() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("shape", "diffuse", [0.0; 3]);
+    shape
+        .write()
+        .unwrap()
+        .components
+        .retain(|component| !matches!(component, Component::Medium(_)));
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("exactly one MediumComponent"));
+
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("shape", "diffuse", [0.0; 3]);
+    shape
+        .write()
+        .unwrap()
+        .add_component(Component::Medium(MediumComponent {
+            medium_interface: MediumInterface::default(),
+        }));
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("exactly one MediumComponent"));
+}
+
+#[test]
+fn flatten_node_rejects_medium_references_missing_from_scene_media() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![homogeneous_medium("registered")],
+            ..Default::default()
+        },
+    }));
+    let shape = triangle_node("shape", "diffuse", [0.0; 3]);
+    set_medium_interface(
+        &shape,
+        MediumInterface::new(Some(homogeneous_medium("unregistered")), None),
+    );
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+
+    assert!(error.to_string().contains("not in Scene.media"));
 }
 
 #[test]
