@@ -37,6 +37,19 @@ fn component_to_json(component: &Component) -> Value {
                 .iter()
                 .map(|texture| texture_node_to_json(texture))
                 .collect::<Vec<_>>(),
+            "media": component
+                .scene
+                .media
+                .iter()
+                .map(|medium| {
+                    json!({
+                        "name": medium.name,
+                        "kind": medium.kind,
+                        "params": params_to_json(&medium.params),
+                        "transform": medium.transform.matrix,
+                    })
+                })
+                .collect::<Vec<_>>(),
         }),
         Component::Sampler(component) => named_params_to_json(
             "Sampler",
@@ -58,7 +71,7 @@ fn component_to_json(component: &Component) -> Value {
         }
         Component::Camera(component) => json!({
             "type": "Camera",
-            "medium": component.camera.medium,
+            "medium": component.camera.medium.as_ref().map(|medium| medium.name.clone()),
             "params": params_to_json(&component.camera.params),
         }),
         Component::Film(component) => {
@@ -93,7 +106,7 @@ fn component_to_json(component: &Component) -> Value {
         Component::Light(component) => json!({
             "type": "Light",
             "name": component.light.name,
-            "medium": component.light.medium,
+            "medium": component.light.medium.as_ref().map(|medium| medium.name.clone()),
             "params": params_to_json(&component.light.params),
             "transform": component.light.transform.matrix,
         }),
@@ -103,10 +116,9 @@ fn component_to_json(component: &Component) -> Value {
             "params": params_to_json(&component.area_light.params),
         }),
         Component::Medium(component) => json!({
-            "type": "Medium",
-            "name": component.medium.name,
-            "params": params_to_json(&component.medium.params),
-            "transform": component.medium.transform.matrix,
+            "type": "MediumInterface",
+            "inside": component.medium_interface.inside.as_ref().map(|medium| medium.name.clone()),
+            "outside": component.medium_interface.outside.as_ref().map(|medium| medium.name.clone()),
         }),
         Component::Instance(component) => json!({
             "type": "Instance",
