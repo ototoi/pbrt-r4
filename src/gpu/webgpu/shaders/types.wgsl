@@ -24,7 +24,8 @@ const QUEUE_DISPATCH_SLOT_ESCAPED: u32 = 10u;
 const QUEUE_DISPATCH_SLOT_HIT_AREA: u32 = 11u;
 const QUEUE_DISPATCH_SLOT_SHADOW: u32 = 12u;
 const QUEUE_DISPATCH_SLOT_NEXT_RAY: u32 = 13u;
-const QUEUE_DISPATCH_SLOT_COUNT: u32 = 14u;
+const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u32 = 14u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 15u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
@@ -206,6 +207,7 @@ struct ViewportUniform {
     max_depth: u32,
     seed: u32,
     disable_wavelength_jitter: u32,
+    medium_scattering_enabled: u32,
 };
 
 struct SamplerUniform {
@@ -471,6 +473,7 @@ struct QueueCounters {
     shadow_continuation: QueueState,
     medium_active: QueueState,
     shadow_active: QueueState,
+    medium_scatter: QueueState,
 };
 
 struct DispatchIndirectArgs {

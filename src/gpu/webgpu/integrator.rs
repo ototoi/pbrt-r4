@@ -15,11 +15,11 @@ use super::abi::{BSSRDFProbeResult, BSSRDFProbeWorkItem, QueueState};
 use super::abi::{
     DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_CURRENT_RAY, QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
     QUEUE_DISPATCH_SLOT_ESCAPED, QUEUE_DISPATCH_SLOT_HIT_AREA, QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
-    QUEUE_DISPATCH_SLOT_NEXT_RAY, QUEUE_DISPATCH_SLOT_SCATTER_COATED,
-    QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR, QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
-    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
-    QUEUE_DISPATCH_SLOT_SCATTER_MEASURED, QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
-    QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
+    QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER, QUEUE_DISPATCH_SLOT_NEXT_RAY,
+    QUEUE_DISPATCH_SLOT_SCATTER_COATED, QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
+    QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
+    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION, QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
+    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
 use super::bssrdf::BSSRDFProbePipeline;
 use super::context::Context;
@@ -106,6 +106,7 @@ const DEPLOYED_STAGE_SOURCES: &[&str] = &[
     include_str!("shaders/evaluate_attributes.wgsl"),
     include_str!("shaders/classify_surface_scatter.wgsl"),
     include_str!("shaders/sample_direct_light.wgsl"),
+    include_str!("shaders/scatter_medium.wgsl"),
     include_str!("shaders/scatter_diffuse.wgsl"),
     include_str!("shaders/scatter_diffuse_transmission.wgsl"),
     include_str!("shaders/scatter_conductor.wgsl"),
@@ -200,6 +201,12 @@ impl WavefrontPathIntegrator {
                 )
             })
         });
+        let medium_scattering_enabled = flat_scene.media.iter().any(|medium| {
+            flat_scene
+                .spectrum_attributes
+                .get(medium.sigma_s as usize)
+                .is_some_and(|spectrum| spectrum.samples.iter().any(|sample| *sample != 0.0))
+        });
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );
@@ -213,6 +220,7 @@ impl WavefrontPathIntegrator {
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
         let mut scene = Scene::from_flat(device, queue, flat_scene)?;
+        scene.viewport.medium_scattering_enabled = u32::from(medium_scattering_enabled);
         log::info!("GPU create: WebGPU scene resources ready");
         if let Some(kind) = debug_material {
             scene.replace_material_kind(kind);
@@ -344,6 +352,7 @@ impl WavefrontPathIntegrator {
                 ResourceId::NextMediumIndices => queues.next_medium_indices.as_entire_binding(),
                 ResourceId::ActiveShadowIndices => queues.active_shadow_indices.as_entire_binding(),
                 ResourceId::NextShadowIndices => queues.next_shadow_indices.as_entire_binding(),
+                ResourceId::MediumScatterQueue => queues.medium_scatter_indices.as_entire_binding(),
                 ResourceId::FilmParams => film_params_buffer.as_entire_binding(),
                 ResourceId::Surface => queues.surfaces.as_entire_binding(),
                 ResourceId::Film => film.framebuffer.as_entire_binding(),
@@ -541,6 +550,11 @@ impl WavefrontPathIntegrator {
                 "sample_direct_light",
                 &pipeline.sample_direct_light,
                 include_str!("shaders/sample_direct_light.wgsl"),
+            ),
+            (
+                "scatter_medium",
+                &pipeline.scatter_medium,
+                include_str!("shaders/scatter_medium.wgsl"),
             ),
             (
                 "scatter_diffuse",
@@ -815,6 +829,7 @@ impl WavefrontPathIntegrator {
                 );
                 self.context.queue.submit(Some(sample_encoder.finish()));
                 for depth in 0..=self.scene.render_settings.max_depth {
+                    self.queues.reset_medium_scatter(&self.context.queue);
                     if self.bssrdf_probe.is_some() {
                         self.context.queue.write_buffer(
                             &self.bssrdf_work,
@@ -1022,6 +1037,13 @@ impl WavefrontPathIntegrator {
                             self.bind_groups("sample_direct_light"),
                             &self.queues.queue_dispatch_args,
                             QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
+                        );
+                        dispatch_indirect(
+                            &mut encoder,
+                            &self.pipeline.scatter_medium.pipeline,
+                            self.bind_groups("scatter_medium"),
+                            &self.queues.queue_dispatch_args,
+                            QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
                         );
                         dispatch_indirect(
                             &mut encoder,

@@ -443,7 +443,7 @@ fn flatten_node_rejects_medium_references_missing_from_scene_media() {
 }
 
 #[test]
-fn flatten_node_rejects_homogeneous_scattering_until_phase_support_exists() {
+fn flatten_node_accepts_homogeneous_scattering() {
     let mut root = Node::new("root");
     let mut camera_params = ParameterDictionary::default();
     camera_params.add_float("float fov", 60.0);
@@ -466,9 +466,42 @@ fn flatten_node_rejects_homogeneous_scattering_until_phase_support_exists() {
         },
     }));
 
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.media.len(), 1);
+    let medium = &scene.media[0];
+    assert_eq!(medium.name, "scattering-medium");
+    assert!(scene.spectrum_attributes[medium.sigma_s as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample > 0.0));
+    assert!(scene.spectrum_attributes[medium.le as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample == 0.0));
+}
+
+#[test]
+fn flatten_node_still_rejects_emission_in_a_scattering_medium() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    params.add_floats("rgb sigma_s", &[0.2, 0.2, 0.2]);
+    params.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "emitting-fog".to_string(),
+                kind: "homogeneous".to_string(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
     let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(format!("{error:?}").contains("supports homogeneous absorption only"));
-    assert!(format!("{error:?}").contains("scattering-medium"));
+    assert!(error.to_string().contains("does not support nonzero Le"));
+    assert!(error.to_string().contains("emitting-fog"));
 }
 
 #[test]
@@ -2016,9 +2049,14 @@ fn flatten_node_keeps_conductor_reflectance_layout_separate() {
     let shape = triangle_node("triangle", "conductor_reflectance", [0.0, 0.0, 0.0]);
     {
         let mut node = shape.write().unwrap();
-        let Component::Material(material) = &mut node.components[1] else {
-            panic!("expected material component");
-        };
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(material) => Some(material),
+                _ => None,
+            })
+            .expect("expected material component");
         Arc::get_mut(&mut material.material)
             .expect("test material should be uniquely owned")
             .params
@@ -2175,9 +2213,14 @@ fn flatten_node_preserves_disabled_conductor_roughness_remapping() {
         let shape = triangle_node("triangle", kind, [0.0; 3]);
         {
             let mut node = shape.write().unwrap();
-            let Component::Material(material) = &mut node.components[1] else {
-                panic!("expected material component");
-            };
+            let material = node
+                .components
+                .iter_mut()
+                .find_map(|component| match component {
+                    Component::Material(material) => Some(material),
+                    _ => None,
+                })
+                .expect("expected material component");
             Arc::get_mut(&mut material.material)
                 .unwrap()
                 .params

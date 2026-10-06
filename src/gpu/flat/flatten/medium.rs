@@ -49,16 +49,26 @@ pub fn register_medium(
     let le_scale = medium.params.get_one_float("Lescale", 1.0)
         / if photometric > 0.0 { photometric } else { 1.0 };
     let g = medium.params.get_one_float("g", 0.0);
+    let g_gpu = g as f32;
 
     let mut sigma_a_dense = DenselySampledSpectrum::from_spectrum(&sigma_a);
-    sigma_a_dense.scale(scale);
     let mut sigma_s_dense = DenselySampledSpectrum::from_spectrum(&sigma_s);
+    if (0..crate::gpu::flat::DENSE_SAMPLE_COUNT)
+        .any(|index| sigma_a_dense[index] < 0.0 || sigma_s_dense[index] < 0.0)
+    {
+        return Err(PbrtError::error(&format!(
+            "GPU medium \"{}\" requires non-negative sigma_a and sigma_s.",
+            medium.name
+        )));
+    }
+    sigma_a_dense.scale(scale);
     sigma_s_dense.scale(scale);
     let mut le_dense = DenselySampledSpectrum::from_spectrum(&le);
     le_dense.scale(le_scale);
 
     if !scale.is_finite()
         || !g.is_finite()
+        || !g_gpu.is_finite()
         || !sigma_a_dense.is_valid()
         || !sigma_s_dense.is_valid()
         || !le_dense.is_valid()
@@ -68,9 +78,23 @@ pub fn register_medium(
             medium.name
         )));
     }
-    if sigma_s_dense.max_value() != 0.0 || le_dense.max_value() != 0.0 {
+    if scale < 0.0 {
         return Err(PbrtError::error(&format!(
-            "GPU medium \"{}\" supports homogeneous absorption only (sigma_s and Le must be zero).",
+            "GPU medium \"{}\" requires a non-negative scale.",
+            medium.name
+        )));
+    }
+    if (0..crate::gpu::flat::DENSE_SAMPLE_COUNT)
+        .any(|index| sigma_a_dense[index] < 0.0 || sigma_s_dense[index] < 0.0)
+    {
+        return Err(PbrtError::error(&format!(
+            "GPU medium \"{}\" has negative sigma_a or sigma_s after scale.",
+            medium.name
+        )));
+    }
+    if (0..crate::gpu::flat::DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0) {
+        return Err(PbrtError::error(&format!(
+            "GPU medium \"{}\" does not support nonzero Le.",
             medium.name
         )));
     }
@@ -91,7 +115,7 @@ pub fn register_medium(
         sigma_a: sigma_a_index,
         sigma_s: sigma_s_index,
         le: le_index,
-        g: g as f32,
+        g: g_gpu,
         transform: multiply_transform(world_transform, &medium.transform.matrix),
     });
     builder.media_indices_by_node.insert(medium_key, index);

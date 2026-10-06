@@ -55,6 +55,10 @@ pub const COMMON_LIBRARY: &[(&str, &str)] = &[
         "light_samplers",
         include_str!("shaders/lib/light_samplers.wgsl"),
     ),
+    (
+        "light_sampling",
+        include_str!("shaders/lib/light_sampling.wgsl"),
+    ),
 ];
 
 pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> wgpu::ShaderModule {
