@@ -1,170 +1,28 @@
 @compute @workgroup_size(64, 1, 1)
 fn sample_direct_light(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
-    if (queue_index >= direct_eval_count()) {
-        return;
-    }
+    if (queue_index >= direct_eval_count()) { return; }
     let ray_index = load_direct_eval_ray(queue_index);
     let ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
-    direct_light_samples[pixel_index].valid = 0u;
     let surface = surfaces[pixel_index];
-    let lambda = load_sample_lambda(pixel_index);
-    let samples = load_ray_samples(pixel_index);
-    // classify_surface_scatter only enqueues surfaces that are hit and whose
-    // resolved leaf kind supports direct lighting, so the kind check here is
-    // just which offset direction to use, not an eligibility filter.
-    let material_kind = resolve_attributes_eval_work_item(surface.attributes_eval_work_item).bxdf_kind;
     let wo = -ray.direction.xyz;
-    // pbrt-v4 SampleLd() only nudges the light-sampling point when the BSDF
-    // is purely reflective or purely transmissive (IsReflective XOR
-    // IsTransmissive); a BSDF with both components (rough dielectric reaches
-    // here only when non-specular, per classify_surface_scatter) samples
-    // from the raw, unoffset interaction point instead. Flat IR represents
-    // the currently supported non-specular `is_diffuse && is_transmission`
-    // combination as DiffuseTransmission, which is transmission-only here.
-    let light_sample_offset_direction = select(
-        wo,
-        -wo,
-        material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION,
-    );
+    let material_kind = resolve_attributes_eval_work_item(surface.attributes_eval_work_item).bxdf_kind;
+    let offset_direction = select(wo, -wo, material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION);
     let light_sample_origin = select(
         offset_ray_origin(
-            surface.position.xyz,
-            surface.position_error.xyz,
-            surface.geometric_normal.xyz,
-            light_sample_offset_direction,
+            surface.position.xyz, surface.position_error.xyz,
+            surface.geometric_normal.xyz, offset_direction,
         ),
         surface.position.xyz,
         (material_kind == MATERIAL_KIND_DIELECTRIC || material_kind == MATERIAL_KIND_SUBSURFACE)
             && (surface.flags & SURFACE_FLAG_SUBSURFACE_EXIT) == 0u,
     );
-    let light_selection = sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz);
-    if (light_selection.pmf <= 0.0 || light_selection.index == 0xffffffffu) {
-        return;
-    }
-    let light_index = light_selection.index;
-    let light_kind = load_light_kind(light_index);
-    let light_payload = load_light_payload(light_index);
-    var light_position = vec3<f32>(0.0);
-    var light_error = vec3<f32>(0.0);
-    var light_normal = vec3<f32>(0.0);
-    var light_radiance = vec4<f32>(0.0);
-    var sampled_light_pdf = light_selection.pmf;
-    var wi = vec3<f32>(0.0);
-    var distance_squared = 1.0;
-    if (light_kind == LIGHT_KIND_POINT) {
-        light_position = load_point_position(light_index);
-        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
-    } else if (light_kind == LIGHT_KIND_SPOT) {
-        light_position = load_point_position(light_index);
-        let spot_w = normalize(light_sample_origin - light_position);
-        let falloff = spot_falloff(light_index, spot_w);
-        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index) * falloff;
-    } else if (light_kind == LIGHT_KIND_DISTANT) {
-        wi = normalize(load_light_direction(light_index));
-        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
-    } else if (is_infinite_light_kind(light_kind)) {
-        if (light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
-            // Selecting and sampling the portal here, in the same
-            // invocation that selected it, avoids re-deriving the same
-            // light_selection from samples.direct.x in a separate stage.
-            let model = light_sampling_models[light_payload];
-            if (model.geometry_kind != 3u || model.geometry_index >= arrayLength(&portal_infinite_lights)) {
-                set_render_error();
-                return;
-            }
-            let portal = portal_infinite_lights[model.geometry_index];
-            if (portal.width == 0u || portal.height == 0u) {
-                set_render_error();
-                return;
-            }
-            let bounds = portal_image_bounds(portal, surface.position.xyz);
-            let portal_sample = sample_portal_distribution(
-                portal, vec2<f32>(samples.direct.y, samples.direct.z), bounds,
-            );
-            if (portal_sample.valid == 0u) { return; }
-            let direction = portal_render_from_image(portal, portal_sample.uv);
-            if (direction.valid == 0u || direction.duv_dw <= 0.0) { return; }
-            let portal_pdf = sampled_light_pdf * portal_sample.pdf / direction.duv_dw;
-            if (!portal_finite(portal_pdf) || portal_pdf == 0.0) { return; }
-            wi = direction.wi;
-            sampled_light_pdf = portal_pdf;
-            light_radiance = load_portal_image_spectrum(
-                light_index, portal_sample.uv, lambda,
-            ) * load_light_scale(light_index);
-        } else {
-            wi = sample_uniform_infinite_direction(samples.direct.yz);
-            sampled_light_pdf = sampled_light_pdf / (4.0 * PI);
-            if (light_kind == LIGHT_KIND_IMAGE_INFINITE) {
-            light_radiance = load_light_image_spectrum(light_index, wi, lambda) * load_light_scale(light_index);
-            } else {
-                light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
-            }
-        }
-    } else if (light_kind == LIGHT_KIND_AREA) {
-        let total_area = load_area_total(light_payload);
-        let distribution_count = load_area_distribution_count(light_payload);
-        if (total_area <= 0.0 || distribution_count == 0u) {
-            return;
-        }
-        let triangle_selection = select_area_triangle(light_payload, samples.direct.y);
-        let triangle = load_area_triangle(light_payload, triangle_selection.primitive);
-        let triangle_sample = sample_uniform_triangle_for_context(
-            triangle,
-            light_sample_origin,
-            vec2<f32>(triangle_selection.u_remapped, samples.direct.z),
-            triangle_selection.area,
-        );
-        if (triangle_sample.w <= 0.0) {
-            return;
-        }
-        let b = triangle_sample.xyz;
-        light_normal = triangle_geometric_normal(triangle);
-        light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
-        if (!alpha_area_sample_accept(
-            light_payload, triangle_selection.primitive, b, light_position, light_normal,
-        )) {
-            return;
-        }
-        light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
-        light_error = (abs(triangle.p0.xyz * b.x) + abs(triangle.p1.xyz * b.y)
-            + abs(triangle.p2.xyz * b.z)) * gamma(6.0)
-            + hardware_intersection_error(triangle.p0.xyz, triangle.p1.xyz, triangle.p2.xyz);
-        let area_wi = normalize(light_position - light_sample_origin);
-        let cosine_light = dot(light_normal, -area_wi);
-        if (area_light_is_two_sided(light_payload)) {
-            if (abs(cosine_light) == 0.0) {
-                return;
-            }
-        } else if (cosine_light <= 0.0) {
-            return;
-        }
-        sampled_light_pdf = sampled_light_pdf * triangle_selection.pmf * triangle_sample.w;
-    } else {
-        return;
-    }
-    if (light_kind != LIGHT_KIND_DISTANT && !is_infinite_light_kind(light_kind)) {
-        let to_light = light_position - light_sample_origin;
-        distance_squared = dot(to_light, to_light);
-        if (distance_squared <= 0.0) {
-            return;
-        }
-        wi = to_light / sqrt(distance_squared);
-    }
-    if (light_kind == LIGHT_KIND_POINT || light_kind == LIGHT_KIND_SPOT) {
-        light_radiance = light_radiance / distance_squared;
-    }
-    let use_mis = (light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))
-        || is_infinite_light_kind(light_kind);
-    direct_light_samples[pixel_index] = DirectLightSample(
-        vec4<f32>(wi, sampled_light_pdf),
-        light_radiance,
-        light_position,
-        light_kind,
-        light_error,
-        u32(use_mis),
-        light_normal,
-        1u,
+    direct_light_samples[pixel_index] = sample_direct_light_at(
+        surface.position.xyz,
+        surface.normal.xyz,
+        light_sample_origin,
+        load_sample_lambda(pixel_index),
+        load_ray_samples(pixel_index),
     );
 }

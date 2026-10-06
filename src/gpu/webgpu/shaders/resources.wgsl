@@ -133,3 +133,4 @@ var<storage, read_write> next_shadow_indices: array<u32>;
 @group(0) @binding(68) var<storage, read> bssrdf_values: array<f32>;
 @group(0) @binding(69) var<storage, read_write> bssrdf_work: BSSRDFProbeQueue;
 @group(0) @binding(70) var<storage, read_write> bssrdf_results: array<BSSRDFProbeResult>;
+@group(0) @binding(71) var<storage, read_write> medium_scatter_indices: array<u32>;

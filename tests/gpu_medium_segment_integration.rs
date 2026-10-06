@@ -408,3 +408,66 @@ AttributeEnd
         "two independent 0.5-unit absorption segments should retain about exp(-1.5) energy; observed ratio={ratio}"
     );
 }
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn homogeneous_scattering_lights_a_bounded_medium_and_matches_cpu() {
+    let directory = tempfile::tempdir().unwrap();
+    let render = |scattering: bool, gpu: bool| {
+        let scene = directory
+            .path()
+            .join(format!("medium-{scattering}-{gpu}.pbrt"));
+        let output = scene.with_extension("exr");
+        let input = r#"MakeNamedMedium "fog" "string type" "homogeneous"
+    "rgb sigma_a" [0.1 0.1 0.1] "rgb sigma_s" [SIGMA_S SIGMA_S SIGMA_S]
+    "float g" [0.4]
+MediumInterface "" "fog"
+LookAt 0 0 0  0 0 1  0 1 0
+Camera "perspective" "float fov" [40]
+Film "rgb" "integer xresolution" [8] "integer yresolution" [8]
+Sampler "independent" "integer pixelsamples" [512]
+Integrator "volpath" "integer maxdepth" [4]
+WorldBegin
+AttributeBegin
+    MediumInterface "" ""
+    Translate 0 0 3
+    LightSource "point" "rgb I" [10 10 10]
+AttributeEnd
+Material ""
+MediumInterface "fog" ""
+Shape "sphere" "float radius" [1]
+AttributeBegin
+    MediumInterface "" ""
+    Translate 1000 0 0
+    Material "diffuse" "rgb reflectance" [0 0 0]
+    Shape "sphere" "float radius" [0.1]
+AttributeEnd
+"#
+        .replace("SIGMA_S", if scattering { "1" } else { "0" });
+        std::fs::write(&scene, input).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
+        command
+            .arg("--quiet")
+            .arg("--outfile")
+            .arg(&output)
+            .arg(&scene);
+        if gpu {
+            command.arg("--use-gpu");
+        }
+        assert!(command.status().unwrap().success());
+        let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+        assert_eq!([resolution.x, resolution.y], [8, 8]);
+        assert!(pixels
+            .iter()
+            .all(|pixel| pixel.to_rgb().iter().all(|v| v.is_finite() && *v >= 0.0)));
+        pixels.iter().map(|pixel| pixel.y() as f64).sum::<f64>() / pixels.len() as f64
+    };
+    assert_eq!(render(false, true), 0.0);
+    let cpu = render(true, false);
+    let gpu = render(true, true);
+    assert!(
+        cpu > 0.0 && gpu > 0.0,
+        "scattering must receive point-light radiance: CPU={cpu}, GPU={gpu}"
+    );
+    assert!((gpu / cpu - 1.0).abs() < 0.15, "CPU={cpu}, GPU={gpu}");
+}

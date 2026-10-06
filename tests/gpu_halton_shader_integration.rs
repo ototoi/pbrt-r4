@@ -277,6 +277,7 @@ fn compare_sampler_case(
         max_depth: 5,
         seed,
         disable_wavelength_jitter: 0,
+        medium_scattering_enabled: 0,
     };
 
     cpu.start_pixel_sample(pixel, sample_index, 0);

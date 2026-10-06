@@ -20,6 +20,11 @@ fn write_dispatch_args(slot: u32, count: u32, capacity: u32) {
 @compute @workgroup_size(1)
 fn prepare_queue_dispatch() {
     write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
+        medium_scatter_count(),
+        queue_counters.medium_scatter.capacity,
+    );
+    write_dispatch_args(
         QUEUE_DISPATCH_SLOT_MATERIAL_EVAL, material_eval_count(), queue_counters.material.capacity,
     );
     write_dispatch_args(

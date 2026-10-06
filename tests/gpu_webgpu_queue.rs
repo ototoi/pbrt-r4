@@ -11,6 +11,7 @@ fn typed_queue_sizes_follow_the_host_abi() {
     assert_eq!(sizes.shadow_rays, 3 * 176);
     assert_eq!(sizes.active_medium_indices, 3 * 4);
     assert_eq!(sizes.next_medium_indices, 3 * 4);
+    assert_eq!(sizes.medium_scatter_indices, 3 * 4);
     assert_eq!(sizes.active_shadow_indices, 3 * 4);
     assert_eq!(sizes.next_shadow_indices, 3 * 4);
     assert_eq!(sizes.material_ray_indices, 3 * 4);
