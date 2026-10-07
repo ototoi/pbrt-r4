@@ -1,6 +1,7 @@
 const INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS: u32 = 4u;
 const INTERSECTION_NORMAL_KIND_TRIANGLE: u32 = 0u;
 const INTERSECTION_NORMAL_KIND_QUADRIC: u32 = 1u;
+const LIGHT_GEOMETRY_KIND_IMAGE_INFINITE: u32 = 4u;
 const RAY_T_MAX: f32 = 3.402823466e+38;
 const MACHINE_EPSILON: f32 = 1.1920929e-7;
 const PI: f32 = 3.141592653589793;
@@ -420,6 +421,21 @@ struct PortalImageInfiniteRecord {
 struct PortalDistributionTexel {
     function: f32,
     summed_area: f32,
+};
+
+struct ImageInfiniteSamplingRecord {
+    distribution_offset: u32,
+    row_cdf_offset: u32,
+    width: u32,
+    height: u32,
+    light_to_render0: vec4<f32>,
+    light_to_render1: vec4<f32>,
+    light_to_render2: vec4<f32>,
+};
+
+struct ImageInfiniteDistributionTexel {
+    weight: f32,
+    conditional_cdf: f32,
 };
 
 struct DirectLightSample {

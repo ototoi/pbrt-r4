@@ -31,7 +31,10 @@ use super::abi::{
     TEXTURE_OPERATION_MARBLE, TEXTURE_OPERATION_MIX, TEXTURE_OPERATION_SCALE,
     TEXTURE_OPERATION_WINDY, TEXTURE_OPERATION_WRINKLED,
 };
-use super::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
+use super::abi::{
+    ImageInfiniteDistributionTexel, ImageInfiniteSamplingRecord, PortalDistributionTexel,
+    PortalImageInfiniteRecord,
+};
 use super::acceleration::{self, Acceleration};
 use super::bssrdf::{BSSRDFTableData, BSSRDFTableResources};
 use super::light_bvh::pack_light_bvh;
@@ -696,6 +699,9 @@ pub struct Scene {
     pub distribution_buffer: wgpu::Buffer,
     pub portal_image_buffer: wgpu::Buffer,
     pub portal_distribution_buffer: wgpu::Buffer,
+    pub image_infinite_sampling_buffer: wgpu::Buffer,
+    pub image_infinite_distribution_buffer: wgpu::Buffer,
+    pub image_infinite_row_cdf_buffer: wgpu::Buffer,
     pub light_bvh_header_buffer: wgpu::Buffer,
     pub light_bvh_node_buffer: wgpu::Buffer,
     pub light_leaf_buffer: wgpu::Buffer,
@@ -933,6 +939,7 @@ impl Scene {
                     flat::LightGeometryKind::Instance => 1,
                     flat::LightGeometryKind::Direction => 2,
                     flat::LightGeometryKind::Portal => 3,
+                    flat::LightGeometryKind::ImageInfinite => 4,
                 },
                 geometry_index: model.geometry_index,
                 direction_index: model.direction_index,
@@ -1239,6 +1246,43 @@ impl Scene {
                 contents: buffer_contents(&portal_distribution),
                 usage: wgpu::BufferUsages::STORAGE,
             });
+        let image_infinite_sampling_records = flat
+            .image_infinite_lights
+            .iter()
+            .map(|image| ImageInfiniteSamplingRecord {
+                distribution_offset: image.distribution_offset,
+                row_cdf_offset: image.row_cdf_offset,
+                width: image.resolution[0],
+                height: image.resolution[1],
+                light_to_render: image.light_to_render,
+            })
+            .collect::<Vec<_>>();
+        let image_infinite_sampling_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 image infinite sampling records SBO"),
+                contents: buffer_contents(&image_infinite_sampling_records),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let image_infinite_distribution = flat
+            .image_infinite_distribution
+            .iter()
+            .map(|texel| ImageInfiniteDistributionTexel {
+                weight: texel.weight,
+                conditional_cdf: texel.conditional_cdf,
+            })
+            .collect::<Vec<_>>();
+        let image_infinite_distribution_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 image infinite distribution SBO"),
+                contents: buffer_contents(&image_infinite_distribution),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let image_infinite_row_cdf_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 image infinite row CDF SBO"),
+                contents: buffer_contents(&flat.image_infinite_row_cdf),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
@@ -1384,6 +1428,9 @@ impl Scene {
             distribution_buffer,
             portal_image_buffer,
             portal_distribution_buffer,
+            image_infinite_sampling_buffer,
+            image_infinite_distribution_buffer,
+            image_infinite_row_cdf_buffer,
             light_bvh_header_buffer,
             light_bvh_node_buffer,
             light_leaf_buffer,
