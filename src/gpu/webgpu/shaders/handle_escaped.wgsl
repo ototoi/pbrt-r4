@@ -49,9 +49,19 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     dot(model.world_to_light2.xyz, ray.direction.xyz),
                 )));
                 let map_pdf = image_infinite_distribution_pdf(image, map_uv);
+                let local_direction = normalize(vec3<f32>(
+                    dot(model.world_to_light0.xyz, ray.direction.xyz),
+                    dot(model.world_to_light1.xyz, ray.direction.xyz),
+                    dot(model.world_to_light2.xyz, ray.direction.xyz),
+                ));
+                let jacobian = image_infinite_direction_jacobian(image, local_direction);
+                if (!(jacobian > 0.0)) {
+                    set_render_error();
+                    continue;
+                }
                 light_pdf = light_pmf_for_handle(
                     light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
-                ) * map_pdf / (4.0 * PI);
+                ) * map_pdf / (4.0 * PI * jacobian);
             } else {
                 light_radiance = load_light_spectrum(light_index, 0u, lambda)
                     * load_light_scale(light_index);

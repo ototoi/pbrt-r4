@@ -30,6 +30,24 @@ fn image_infinite_distribution_pdf(
     return image_infinite_distribution[index].weight / integral;
 }
 
+fn image_infinite_direction_jacobian(
+    image: ImageInfiniteSamplingRecord,
+    w_light: vec3<f32>,
+) -> f32 {
+    let row0 = image.light_to_render0.xyz;
+    let row1 = image.light_to_render1.xyz;
+    let row2 = image.light_to_render2.xyz;
+    let determinant = dot(row0, cross(row1, row2));
+    let transformed = vec3<f32>(dot(row0, w_light), dot(row1, w_light), dot(row2, w_light));
+    let transformed_length = length(transformed);
+    if (!(abs(determinant) > 0.0) || !(transformed_length > 0.0)
+        || determinant != determinant || transformed_length != transformed_length) {
+        return 0.0;
+    }
+    // Solid angle changes by |det(A)| / |A w|^3 under normalized A*w.
+    return abs(determinant) / (transformed_length * transformed_length * transformed_length);
+}
+
 fn sample_image_infinite_distribution(
     image: ImageInfiniteSamplingRecord,
     u: vec2<f32>,

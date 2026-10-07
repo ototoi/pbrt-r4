@@ -79,12 +79,15 @@ fn sample_direct_light_at(
             );
             if (image_sample.valid == 0u) { return invalid_direct_light_sample(); }
             let w_light = image_infinite_equal_area_square_to_sphere(image_sample.uv);
-            wi = vec3<f32>(
+            let transformed = vec3<f32>(
                 dot(image.light_to_render0.xyz, w_light),
                 dot(image.light_to_render1.xyz, w_light),
                 dot(image.light_to_render2.xyz, w_light),
             );
-            sampled_light_pdf = sampled_light_pdf * image_sample.pdf / (4.0 * PI);
+            let jacobian = image_infinite_direction_jacobian(image, w_light);
+            if (!(jacobian > 0.0)) { return invalid_direct_light_sample(); }
+            wi = normalize(transformed);
+            sampled_light_pdf = sampled_light_pdf * image_sample.pdf / (4.0 * PI * jacobian);
             if (!(sampled_light_pdf > 0.0) || sampled_light_pdf != sampled_light_pdf) {
                 return invalid_direct_light_sample();
             }

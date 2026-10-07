@@ -60,6 +60,24 @@ struct TextureBindingPlan {
 
 const INFINITE_IMAGE_BINDING_MASK: u32 = 0x0fff_ffff;
 
+fn validate_image_infinite_buffer_size(
+    label: &str,
+    byte_size: usize,
+    limits: &wgpu::Limits,
+) -> Result<(), PbrtError> {
+    let byte_size = u64::try_from(byte_size)
+        .map_err(|_| PbrtError::error("Image infinite light buffer size exceeds u64."))?;
+    if byte_size > limits.max_buffer_size
+        || byte_size > u64::from(limits.max_storage_buffer_binding_size)
+    {
+        return Err(PbrtError::error(&format!(
+            "Image infinite light {label} buffer ({byte_size} bytes) exceeds WebGPU buffer limits (max buffer {}, max storage binding {}).",
+            limits.max_buffer_size, limits.max_storage_buffer_binding_size
+        )));
+    }
+    Ok(())
+}
+
 fn infinite_image_payload(binding: usize, color_space: ColorSpace) -> Result<u32, PbrtError> {
     let binding = u32::try_from(binding)
         .map_err(|_| PbrtError::error("Infinite light image binding exceeds u32."))?;
@@ -1257,6 +1275,12 @@ impl Scene {
                 light_to_render: image.light_to_render,
             })
             .collect::<Vec<_>>();
+        let limits = device.limits();
+        validate_image_infinite_buffer_size(
+            "sampling records",
+            buffer_contents(&image_infinite_sampling_records).len(),
+            &limits,
+        )?;
         let image_infinite_sampling_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 image infinite sampling records SBO"),
@@ -1271,12 +1295,22 @@ impl Scene {
                 conditional_cdf: texel.conditional_cdf,
             })
             .collect::<Vec<_>>();
+        validate_image_infinite_buffer_size(
+            "distribution",
+            buffer_contents(&image_infinite_distribution).len(),
+            &limits,
+        )?;
         let image_infinite_distribution_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 image infinite distribution SBO"),
                 contents: buffer_contents(&image_infinite_distribution),
                 usage: wgpu::BufferUsages::STORAGE,
             });
+        validate_image_infinite_buffer_size(
+            "row CDF",
+            buffer_contents(&flat.image_infinite_row_cdf).len(),
+            &limits,
+        )?;
         let image_infinite_row_cdf_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 image infinite row CDF SBO"),
@@ -1671,11 +1705,33 @@ fn convert_geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::{lower_texture_instruction, mip_level_rgba, texture_binding_plan};
+    use super::{
+        lower_texture_instruction, mip_level_rgba, texture_binding_plan,
+        validate_image_infinite_buffer_size,
+    };
     use crate::gpu::flat::texture::{
         ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding,
         MipmapLevel, MipmapLevelData, TextureInstruction, TextureValueType,
     };
+
+    #[test]
+    fn image_infinite_buffers_are_checked_against_webgpu_limits() {
+        let limits = wgpu::Limits {
+            max_buffer_size: 1024,
+            max_storage_buffer_binding_size: 512,
+            ..wgpu::Limits::default()
+        };
+
+        assert!(validate_image_infinite_buffer_size("test", 512, &limits).is_ok());
+        assert!(validate_image_infinite_buffer_size("test", 513, &limits)
+            .unwrap_err()
+            .to_string()
+            .contains("max storage binding 512"));
+        assert!(validate_image_infinite_buffer_size("test", 1025, &limits)
+            .unwrap_err()
+            .to_string()
+            .contains("max buffer 1024"));
+    }
 
     #[test]
     fn upload_rejects_unprojected_spectrum_mipmap() {

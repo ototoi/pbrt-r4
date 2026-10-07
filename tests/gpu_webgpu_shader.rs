@@ -284,7 +284,9 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     assert!(sample.contains("sample_image_infinite_distribution("));
     assert!(sample.contains("image_infinite_equal_area_square_to_sphere("));
     assert!(sample.contains("load_light_image_spectrum_uv("));
-    assert!(sample.contains("image_sample.pdf / (4.0 * PI)"));
+    assert!(sample.contains("image_sample.pdf / (4.0 * PI * jacobian)"));
+    assert!(sample.contains("wi = normalize(transformed)"));
+    assert!(sample.contains("image_infinite_direction_jacobian(image, w_light)"));
     assert!(sample.contains("model.flags >> 28u"));
     assert!(sample.contains(
         "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
@@ -302,6 +304,7 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     ));
     assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
     assert!(escaped.contains("image_infinite_distribution_pdf(image, map_uv)"));
+    assert!(escaped.contains("map_pdf / (4.0 * PI * jacobian)"));
     assert!(escaped.contains("fn equal_area_sphere_to_square("));
     assert!(escaped.contains("dot(model.world_to_light0.xyz, direction)"));
     assert!(escaped.contains("ray.beta * radiance"));
