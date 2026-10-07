@@ -7,8 +7,9 @@ fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let pixel_index = ray.pixel_index;
     let surface = surfaces[pixel_index];
     let evaluated = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
-    let eta_attribute = load_material_attribute(evaluated.material_node, 0u);
-    if (eta_attribute.kind != 1u) { terminate_secondary_wavelengths(pixel_index); }
+    if (!material_spectrum_attribute_is_constant(evaluated.material_node, 0u)) {
+        terminate_secondary_wavelengths(pixel_index);
+    }
     var eta = evaluated.values[0].x;
     if (eta == 0.0) { eta = 1.0; }
     let normal = normalize(surface.normal.xyz);

@@ -165,4 +165,7 @@ fn sample_dielectric_interface_importance(
 
 fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>) -> vec4<f32> { return load_material_spectrum(material_node, 0u, lambda); }
 
-fn dielectric_eta_is_constant(material_node: u32) -> bool { return spectrum_is_constant(load_material_attribute(material_node, 0u).index); }
+fn material_spectrum_attribute_is_constant(material_node: u32, ordinal: u32) -> bool {
+    let attr_ref = load_material_attribute(material_node, ordinal);
+    return attr_ref.kind == 1u && spectrum_is_constant(attr_ref.index);
+}
