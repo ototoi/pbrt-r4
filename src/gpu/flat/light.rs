@@ -50,6 +50,15 @@ pub enum LightGeometryKind {
     Instance,
     Direction,
     Portal,
+    ImageInfinite,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageInfiniteSamplingRecord {
+    pub distribution_offset: u32,
+    pub row_cdf_offset: u32,
+    pub resolution: [u32; 2],
+    pub light_to_render: [[f32; 4]; 3],
 }
 
 #[derive(Clone, Debug, PartialEq)]

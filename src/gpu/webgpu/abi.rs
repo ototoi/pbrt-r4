@@ -406,6 +406,23 @@ pub struct PortalDistributionTexel {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ImageInfiniteSamplingRecord {
+    pub distribution_offset: u32,
+    pub row_cdf_offset: u32,
+    pub width: u32,
+    pub height: u32,
+    pub light_to_render: [[f32; 4]; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ImageInfiniteDistributionTexel {
+    pub weight: f32,
+    pub conditional_cdf: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct DirectLightSample {
     pub direction_pdf: [f32; 4],
     pub radiance: [f32; 4],

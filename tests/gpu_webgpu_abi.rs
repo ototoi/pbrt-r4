@@ -226,6 +226,8 @@ fn webgpu_rust_struct_sizes_match_wgsl_types() {
         LightSamplingModel,
         PortalImageInfiniteRecord,
         PortalDistributionTexel,
+        ImageInfiniteSamplingRecord,
+        ImageInfiniteDistributionTexel,
         DirectLightSample,
         TriangleDistributionEntry,
         QueueState,

@@ -134,3 +134,6 @@ var<storage, read_write> next_shadow_indices: array<u32>;
 @group(0) @binding(69) var<storage, read_write> bssrdf_work: BSSRDFProbeQueue;
 @group(0) @binding(70) var<storage, read_write> bssrdf_results: array<BSSRDFProbeResult>;
 @group(0) @binding(71) var<storage, read_write> medium_scatter_indices: array<u32>;
+@group(0) @binding(72) var<storage, read> image_infinite_sampling_records: array<ImageInfiniteSamplingRecord>;
+@group(0) @binding(73) var<storage, read> image_infinite_distribution: array<ImageInfiniteDistributionTexel>;
+@group(0) @binding(74) var<storage, read> image_infinite_row_cdf: array<f32>;
