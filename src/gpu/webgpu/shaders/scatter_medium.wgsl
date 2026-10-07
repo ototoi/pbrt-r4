@@ -21,10 +21,9 @@ fn scatter_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (p_phase > 0.0 && p_phase == p_phase) {
             let light_pdf = light_sample.direction_pdf.w;
             let direct = ray.beta * p_phase * light_sample.radiance;
-            let delta = light_sample.light_kind == LIGHT_KIND_POINT
-                || light_sample.light_kind == LIGHT_KIND_SPOT
-                || light_sample.light_kind == LIGHT_KIND_DISTANT;
-            let r_u = select(ray.r_u * p_phase, vec4<f32>(0.0), delta);
+            let r_u = select(
+                vec4<f32>(0.0), ray.r_u * p_phase, light_sample.use_mis != 0u,
+            );
             let r_l = ray.r_u * light_pdf;
             if (any(direct != direct) || any(r_u != r_u) || any(r_l != r_l)
                 || any(abs(direct) > vec4<f32>(RAY_T_MAX)) || any(abs(r_u) > vec4<f32>(RAY_T_MAX))
