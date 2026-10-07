@@ -33,7 +33,7 @@ fn webgpu_affine_validation_accepts_f32_roundoff_but_rejects_projective_rows() {
 #[test]
 fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<CameraUniform>(), 256);
-    assert_eq!(std::mem::size_of::<ViewportUniform>(), 56);
+    assert_eq!(std::mem::size_of::<ViewportUniform>(), 60);
     assert_eq!(std::mem::size_of::<MaterialTableUniform>(), 72);
     assert_eq!(std::mem::size_of::<LightTableUniform>(), 48);
     assert_eq!(std::mem::size_of::<Vertex>(), 64);
@@ -61,7 +61,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
         80
     );
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
-    assert_eq!(std::mem::size_of::<QueueCounters>(), 288);
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 304);
     assert_eq!(
         std::mem::offset_of!(QueueCounters, medium_continuation),
         224
@@ -72,6 +72,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     );
     assert_eq!(std::mem::offset_of!(QueueCounters, medium_active), 256);
     assert_eq!(std::mem::offset_of!(QueueCounters, shadow_active), 272);
+    assert_eq!(std::mem::offset_of!(QueueCounters, medium_scatter), 288);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, endpoint), 32);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, transmittance), 112);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, segment_index), 164);
@@ -79,7 +80,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, x), 0);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, y), 4);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, z), 8);
-    assert_eq!(QUEUE_DISPATCH_SLOT_COUNT, 14);
+    assert_eq!(QUEUE_DISPATCH_SLOT_COUNT, 15);
     assert_eq!(std::mem::size_of::<RenderError>(), 16);
     assert_eq!(std::mem::offset_of!(RenderError, value), 0);
     assert_eq!(std::mem::offset_of!(RenderError, padding), 4);

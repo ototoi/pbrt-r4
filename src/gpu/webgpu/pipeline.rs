@@ -23,6 +23,7 @@ pub struct Pipeline {
     pub evaluate_attributes: StagePipeline,
     pub classify_surface_scatter: StagePipeline,
     pub sample_direct_light: StagePipeline,
+    pub scatter_medium: StagePipeline,
     pub scatter_diffuse: StagePipeline,
     pub scatter_diffuse_transmission: StagePipeline,
     pub scatter_conductor: StagePipeline,
@@ -190,6 +191,11 @@ impl Pipeline {
                 "pbrt-r4 sample direct light",
                 include_str!("shaders/sample_direct_light.wgsl"),
                 "sample_direct_light",
+            ),
+            scatter_medium: compute(
+                "pbrt-r4 scatter homogeneous medium",
+                include_str!("shaders/scatter_medium.wgsl"),
+                "scatter_medium",
             ),
             scatter_diffuse: compute(
                 "pbrt-r4 scatter diffuse",

@@ -93,6 +93,7 @@ pub struct ViewportUniform {
     pub max_depth: u32,
     pub seed: u32,
     pub disable_wavelength_jitter: u32,
+    pub medium_scattering_enabled: u32,
 }
 
 #[repr(C)]
@@ -480,6 +481,7 @@ pub struct QueueCounters {
     pub shadow_continuation: QueueState,
     pub medium_active: QueueState,
     pub shadow_active: QueueState,
+    pub medium_scatter: QueueState,
 }
 
 /// Indirect dispatch arguments, laid out identically to `wgpu::util::DispatchIndirectArgs`.
@@ -497,7 +499,8 @@ pub const QUEUE_DISPATCH_SLOT_ESCAPED: u64 = 10;
 pub const QUEUE_DISPATCH_SLOT_HIT_AREA: u64 = 11;
 pub const QUEUE_DISPATCH_SLOT_SHADOW: u64 = 12;
 pub const QUEUE_DISPATCH_SLOT_NEXT_RAY: u64 = 13;
-pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 14;
+pub const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u64 = 14;
+pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 15;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -818,6 +821,7 @@ pub fn viewport_uniform(
         max_depth: settings.max_depth,
         seed: settings.seed,
         disable_wavelength_jitter: u32::from(settings.disable_wavelength_jitter),
+        medium_scattering_enabled: 0,
     })
 }
 

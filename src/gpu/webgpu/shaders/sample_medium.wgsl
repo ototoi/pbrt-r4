@@ -8,6 +8,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let infinite = surface.hit == 0u;
     let distance = select(surface.t * length(ray.direction.xyz), 0.0, infinite);
+    let segment_distance = select(distance, RAY_T_MAX, infinite);
     var weight = vec4<f32>(1.0);
 
     if (ray.medium_id != 0xffffffffu) {
@@ -22,27 +23,73 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         let lambda = load_sample_lambda(pixel_index);
         let sigma_a = evaluate_spectrum(medium.sigma_a, lambda);
-        if (sigma_a.x > 0.0) {
-        if (infinite) {
-            ray.beta = vec4<f32>(0.0);
-            store_current_ray(ray_index, ray);
+        let sigma_s = evaluate_spectrum(medium.sigma_s, lambda);
+        let sigma_t = sigma_a + sigma_s;
+        if (any(sigma_a < vec4<f32>(0.0)) || any(sigma_s < vec4<f32>(0.0))
+            || any(sigma_t != sigma_t) || any(abs(sigma_t) > vec4<f32>(RAY_T_MAX))) {
+            set_render_error();
             return;
         }
-        let u = random01(pixel_index, 16384u + ray.medium_segment_index, ray.depth);
-        let event_distance = -log(1.0 - u) / sigma_a.x;
-        if (event_distance < distance) {
-            ray.beta = vec4<f32>(0.0);
-            surfaces[pixel_index].hit = 0u;
-            store_current_ray(ray_index, ray);
-            return;
-        }
-        weight = exp((vec4<f32>(sigma_a.x) - sigma_a) * distance);
-        } else if (sigma_a.x == 0.0) {
-        if (infinite) {
-            weight = select(vec4<f32>(0.0), vec4<f32>(1.0), sigma_a == vec4<f32>(0.0));
-        } else {
-            weight = exp(-distance * sigma_a);
-        }
+        if (sigma_t.x > 0.0) {
+            let u_distance = select(
+                random01(pixel_index, 16384u + ray.medium_segment_index, ray.depth),
+                random_medium(pixel_index, ray.medium_segment_index, ray.depth, 0u),
+                viewport.medium_scattering_enabled != 0u,
+            );
+            let event_distance = -log(1.0 - u_distance) / sigma_t.x;
+            if (event_distance < segment_distance) {
+                let u_event = random_medium(pixel_index, ray.medium_segment_index, ray.depth, 2u);
+                let p_absorb = sigma_a.x / sigma_t.x;
+                let p_scatter = sigma_s.x / sigma_t.x;
+                let p_null = max(0.0, 1.0 - p_absorb - p_scatter);
+                let probability_sum = p_absorb + p_scatter + p_null;
+                var event_sample = u_event * probability_sum;
+                if (event_sample == probability_sum) {
+                    event_sample = next_float_down(event_sample);
+                }
+                if (event_sample < p_absorb
+                    || event_sample >= p_absorb + p_scatter
+                    || ray.depth >= viewport.max_depth) {
+                    ray.beta = vec4<f32>(0.0);
+                    surfaces[pixel_index].hit = 0u;
+                    store_current_ray(ray_index, ray);
+                    return;
+                }
+                let scatter_weight = (sigma_s / sigma_s.x)
+                    * exp((vec4<f32>(sigma_t.x) - sigma_t) * event_distance);
+                ray.beta *= scatter_weight;
+                ray.r_u *= scatter_weight;
+                if (any(ray.beta != ray.beta) || any(ray.r_u != ray.r_u)
+                    || any(abs(ray.beta) > vec4<f32>(RAY_T_MAX)) || any(abs(ray.r_u) > vec4<f32>(RAY_T_MAX))) {
+                    set_render_error();
+                    return;
+                }
+                let event_position = ray.origin.xyz
+                    + normalize(ray.direction.xyz) * event_distance;
+                if (any(event_position != event_position)
+                    || any(abs(event_position) > vec3<f32>(RAY_T_MAX))) {
+                    set_render_error();
+                    return;
+                }
+                ray.origin = vec4<f32>(event_position, 1.0);
+                surfaces[pixel_index].hit = 0u;
+                store_current_ray(ray_index, ray);
+                if (any(ray.beta != vec4<f32>(0.0)) && any(ray.r_u != vec4<f32>(0.0))) {
+                    append_medium_scatter(ray_index);
+                }
+                return;
+            }
+            if (infinite) {
+                weight = vec4<f32>(0.0);
+            } else {
+                weight = exp((vec4<f32>(sigma_t.x) - sigma_t) * distance);
+            }
+        } else if (sigma_t.x == 0.0) {
+            if (infinite) {
+                weight = select(vec4<f32>(0.0), vec4<f32>(1.0), sigma_t == vec4<f32>(0.0));
+            } else {
+                weight = exp(-distance * sigma_t);
+            }
         } else {
             set_render_error();
             return;
@@ -50,6 +97,12 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.beta *= weight;
         ray.r_u *= weight;
         ray.r_l *= weight;
+        if (any(ray.beta != ray.beta) || any(ray.r_u != ray.r_u) || any(ray.r_l != ray.r_l)
+            || any(abs(ray.beta) > vec4<f32>(RAY_T_MAX)) || any(abs(ray.r_u) > vec4<f32>(RAY_T_MAX))
+            || any(abs(ray.r_l) > vec4<f32>(RAY_T_MAX))) {
+            set_render_error();
+            return;
+        }
     }
 
     if (!any(ray.beta != vec4<f32>(0.0))) {

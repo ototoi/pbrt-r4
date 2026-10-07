@@ -41,6 +41,7 @@ pub struct TypedQueueSizes {
     pub next_medium_indices: u64,
     pub active_shadow_indices: u64,
     pub next_shadow_indices: u64,
+    pub medium_scatter_indices: u64,
 }
 
 impl TypedQueueSizes {
@@ -127,6 +128,7 @@ impl TypedQueueSizes {
             next_medium_indices: bytes(std::mem::size_of::<u32>(), "next medium queue")?,
             active_shadow_indices: bytes(std::mem::size_of::<u32>(), "active shadow queue")?,
             next_shadow_indices: bytes(std::mem::size_of::<u32>(), "next shadow queue")?,
+            medium_scatter_indices: bytes(std::mem::size_of::<u32>(), "medium scatter queue")?,
         })
     }
 }
@@ -157,6 +159,7 @@ pub struct Queues {
     pub next_medium_indices: wgpu::Buffer,
     pub active_shadow_indices: wgpu::Buffer,
     pub next_shadow_indices: wgpu::Buffer,
+    pub medium_scatter_indices: wgpu::Buffer,
     pub queue_dispatch_args: wgpu::Buffer,
     state_readback: wgpu::Buffer,
     capacity: u32,
@@ -197,6 +200,7 @@ impl Queues {
             shadow_continuation: state,
             medium_active: state,
             shadow_active: state,
+            medium_scatter: state,
         };
         let storage = |label: &'static str, size: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -304,6 +308,10 @@ impl Queues {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
+            medium_scatter_indices: storage(
+                "pbrt-r4 medium scatter indices",
+                sizes.medium_scatter_indices,
+            ),
             queue_dispatch_args: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 queue dispatch args"),
                 size: QUEUE_DISPATCH_ARGS_BYTES,
@@ -350,6 +358,14 @@ impl Queues {
 
     pub fn reset_medium_active(&self, queue: &wgpu::Queue) {
         self.write_count(queue, std::mem::offset_of!(QueueCounters, medium_active), 0);
+    }
+
+    pub fn reset_medium_scatter(&self, queue: &wgpu::Queue) {
+        self.write_count(
+            queue,
+            std::mem::offset_of!(QueueCounters, medium_scatter),
+            0,
+        );
     }
 
     pub fn reset_shadow_active(&self, queue: &wgpu::Queue) {
