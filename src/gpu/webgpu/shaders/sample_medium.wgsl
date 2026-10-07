@@ -8,6 +8,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let infinite = surface.hit == 0u;
     let distance = select(surface.t * length(ray.direction.xyz), 0.0, infinite);
+    let segment_distance = select(distance, RAY_T_MAX, infinite);
     var weight = vec4<f32>(1.0);
 
     if (ray.medium_id != 0xffffffffu) {
@@ -36,7 +37,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 viewport.medium_scattering_enabled != 0u,
             );
             let event_distance = -log(1.0 - u_distance) / sigma_t.x;
-            if (event_distance < distance) {
+            if (event_distance < segment_distance) {
                 let u_event = random_medium(pixel_index, ray.medium_segment_index, ray.depth, 2u);
                 let p_absorb = sigma_a.x / sigma_t.x;
                 let p_scatter = sigma_s.x / sigma_t.x;
