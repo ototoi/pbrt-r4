@@ -45,29 +45,41 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             set_render_error();
             return;
         }
-        let sigma_a = evaluate_spectrum(medium.sigma_a, load_sample_lambda(shadow.pixel_index));
+        let lambda = load_sample_lambda(shadow.pixel_index);
+        let sigma_a = evaluate_spectrum(medium.sigma_a, lambda);
+        let sigma_s = evaluate_spectrum(medium.sigma_s, lambda);
+        let sigma_t = sigma_a + sigma_s;
         var weight = vec4<f32>(1.0);
-        if (sigma_a.x > 0.0) {
-            if (shadow.infinite_distance != 0u && !hit) {
-                shadow.transmittance = vec4<f32>(0.0);
-                shadow_rays[ray_index] = shadow;
-                return;
-            }
-            let u = random01_stream(
-                shadow.pixel_index, 16384u + shadow.segment_index, shadow.depth, 1u,
+        if (any(sigma_a < vec4<f32>(0.0)) || any(sigma_s < vec4<f32>(0.0))
+            || any(sigma_t != sigma_t) || any(abs(sigma_t) > vec4<f32>(RAY_T_MAX))) {
+            set_render_error();
+            return;
+        }
+        let infinite_segment = shadow.infinite_distance != 0u && !hit;
+        if (sigma_t.x > 0.0) {
+            let u_distance = select(
+                random01_stream(
+                    shadow.pixel_index, 16384u + shadow.segment_index, shadow.depth, 1u,
+                ),
+                random_medium(shadow.pixel_index, shadow.segment_index, shadow.depth, 1u),
+                viewport.medium_scattering_enabled != 0u,
             );
-            let event_distance = -log(1.0 - u) / sigma_a.x;
+            let event_distance = -log(1.0 - u_distance) / sigma_t.x;
             if (event_distance < segment_distance) {
                 shadow.transmittance = vec4<f32>(0.0);
                 shadow_rays[ray_index] = shadow;
                 return;
             }
-            weight = exp((vec4<f32>(sigma_a.x) - sigma_a) * segment_distance);
-        } else if (sigma_a.x == 0.0) {
-            if (shadow.infinite_distance != 0u && !hit) {
-                weight = select(vec4<f32>(0.0), vec4<f32>(1.0), sigma_a == vec4<f32>(0.0));
+            if (infinite_segment) {
+                weight = vec4<f32>(0.0);
             } else {
-                weight = exp(-segment_distance * sigma_a);
+                weight = exp((vec4<f32>(sigma_t.x) - sigma_t) * segment_distance);
+            }
+        } else if (sigma_t.x == 0.0) {
+            if (infinite_segment) {
+                weight = select(vec4<f32>(0.0), vec4<f32>(1.0), sigma_t == vec4<f32>(0.0));
+            } else {
+                weight = exp(-segment_distance * sigma_t);
             }
         } else {
             set_render_error();
@@ -76,6 +88,15 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         shadow.transmittance *= weight;
         shadow.inv_w_u *= weight;
         shadow.inv_w_l *= weight;
+        if (any(shadow.transmittance != shadow.transmittance)
+            || any(shadow.inv_w_u != shadow.inv_w_u)
+            || any(shadow.inv_w_l != shadow.inv_w_l)
+            || any(abs(shadow.transmittance) > vec4<f32>(RAY_T_MAX))
+            || any(abs(shadow.inv_w_u) > vec4<f32>(RAY_T_MAX))
+            || any(abs(shadow.inv_w_l) > vec4<f32>(RAY_T_MAX))) {
+            set_render_error();
+            return;
+        }
     }
 
     if (hit) {
@@ -122,6 +143,10 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let denom = average_spectrum(shadow.r_u * shadow.inv_w_u + shadow.r_l * shadow.inv_w_l);
+    if (denom != denom || abs(denom) > RAY_T_MAX) {
+        set_render_error();
+        return;
+    }
     if (denom > 0.0 && any(shadow.transmittance != vec4<f32>(0.0))) {
         store_sample_radiance(
             shadow.pixel_index,

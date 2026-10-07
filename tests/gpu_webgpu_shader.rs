@@ -76,11 +76,11 @@ fn dense_spectrum_module_declares_one_structured_table() {
 }
 
 #[test]
-fn homogeneous_absorption_stage_tracks_path_medium_and_spectral_weights() {
+fn homogeneous_medium_stage_tracks_path_medium_and_spectral_weights() {
     let stage = include_str!("../src/gpu/webgpu/shaders/sample_medium.wgsl");
     let source = compose_source(stage);
     assert!(source.contains("var<storage, read> media: array<MediumRecord>;"));
-    assert!(source.contains("let event_distance = -log(1.0 - u) / sigma_a.x;"));
+    assert!(source.contains("let event_distance = -log(1.0 - u_distance) / sigma_t.x;"));
     assert!(source.contains("ray.beta *= weight;"));
     assert!(source.contains("ray.r_u *= weight;"));
     assert!(source.contains("ray.r_l *= weight;"));
@@ -373,10 +373,8 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
 #[test]
 fn wavefront_stages_use_persisted_sample_dimensions() {
     let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
-    assert!(sample.contains("let samples = load_ray_samples(pixel_index);"));
-    assert!(sample.contains(
-        "sample_scene_light(samples.direct.x, surface.position.xyz, surface.normal.xyz)"
-    ));
+    assert!(sample.contains("load_ray_samples(pixel_index)"));
+    assert!(sample.contains("sample_scene_light(samples.direct.x, position, normal)"));
     assert!(sample.contains("let finite_selection = sample_light_bvh("));
     assert!(sample.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
@@ -606,7 +604,7 @@ fn common_shader() -> String {
 #[test]
 fn area_alpha_uses_sampling_normal_separately_from_intersection_normal() {
     let alpha = include_str!("../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl");
-    let sample = include_str!("../src/gpu/webgpu/shaders/sample_direct_light.wgsl");
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
     assert!(alpha.contains("instance.material_root, surface.uv, position, sampling_normal,"));
     assert!(sample
         .contains("light_payload, triangle_selection.primitive, b, light_position, light_normal,"));

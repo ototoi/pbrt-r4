@@ -11,6 +11,23 @@ fn append_medium_continuation(ray_index: u32) {
     }
 }
 
+fn append_medium_scatter(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.medium_scatter.count, 1u);
+    if (index >= queue_counters.medium_scatter.capacity) {
+        atomicStore(&queue_counters.medium_scatter.overflow, 1u);
+    } else {
+        medium_scatter_indices[index] = ray_index;
+    }
+}
+
+fn medium_scatter_count() -> u32 {
+    return atomicLoad(&queue_counters.medium_scatter.count);
+}
+
+fn load_medium_scatter_ray(index: u32) -> u32 {
+    return medium_scatter_indices[index];
+}
+
 fn append_shadow_continuation(ray_index: u32) {
     let index = atomicAdd(&queue_counters.shadow_continuation.count, 1u);
     if (index >= queue_counters.shadow_continuation.capacity) {
