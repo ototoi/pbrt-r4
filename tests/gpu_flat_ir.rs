@@ -1914,6 +1914,43 @@ fn flatten_node_extracts_dielectric_eta() {
             .abs()
             < 1e-5
     );
+    assert_eq!(
+        scene.spectrum_attributes[attribute.index as usize].flags
+            & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
+        pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT
+    );
+}
+
+#[test]
+fn flatten_dielectric_named_eta_keeps_nonconstant_spectrum_flag() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .unwrap()
+            .params
+            .add_string("spectrum eta", "glass-BAF10");
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let eta = &scene.material_nodes[0].attributes[0];
+    assert_eq!(eta.name, "eta");
+    assert_eq!(
+        scene.spectrum_attributes[eta.index as usize].flags
+            & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
+        0
+    );
 }
 
 #[test]
@@ -2009,6 +2046,46 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
             .len(),
         3
     );
+}
+
+#[test]
+fn flatten_coated_materials_keep_nonconstant_interface_eta_flags() {
+    for (kind, parameter, ordinal, name) in [
+        ("coateddiffuse", "eta", 6, "eta"),
+        ("coatedconductor", "interface.eta", 5, "interface.eta"),
+    ] {
+        let shape = triangle_node("coated", kind, [0.0; 3]);
+        {
+            let mut node = shape.write().unwrap();
+            let material = node
+                .components
+                .iter_mut()
+                .find_map(|component| match component {
+                    Component::Material(component) => Some(&mut component.material),
+                    _ => None,
+                })
+                .unwrap();
+            Arc::get_mut(material)
+                .unwrap()
+                .params
+                .add_string(&format!("spectrum {parameter}"), "glass-BAF10");
+        }
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(shape);
+
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        let layout = scene.material_roots[scene.instances[0].material_root as usize];
+        let material = &scene.material_nodes[layout.node_offset as usize];
+        let eta = &material.attributes[ordinal];
+        assert_eq!(material.kind, kind);
+        assert_eq!(eta.name, name);
+        assert_eq!(
+            scene.spectrum_attributes[eta.index as usize].flags
+                & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
+            0
+        );
+    }
 }
 
 #[test]

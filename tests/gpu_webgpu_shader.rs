@@ -482,6 +482,42 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
 }
 
 #[test]
+fn dielectric_scatter_terminates_secondary_wavelengths_for_nonconstant_eta() {
+    let common = common_shader();
+    assert!(common.contains("return attr_ref.kind == 1u && spectrum_is_constant(attr_ref.index);"));
+    for shader in [SCATTER_DIELECTRIC_SHADER, SCATTER_THIN_DIELECTRIC_SHADER] {
+        assert!(shader.contains(
+            "if (!material_spectrum_attribute_is_constant(evaluated.material_node, 0u))"
+        ));
+        let source = compose_source(shader);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    assert!(SCATTER_COATED_SHADER.contains(
+        "if (!material_spectrum_attribute_is_constant(root.material_node, eta_ordinal))"
+    ));
+    assert!(
+        SCATTER_COATED_SHADER.contains("select(6u, 5u, kind == MATERIAL_KIND_COATED_CONDUCTOR)")
+    );
+    let source = compose_source(SCATTER_COATED_SHADER);
+    let module = wgpu::naga::front::wgsl::parse_str(&source)
+        .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+    wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
 fn dielectric_transmission_updates_eta_scale_for_russian_roulette() {
     // v4 VolPathIntegrator::Li: `if bs.is_transmission() { eta_scale *= bs.eta * bs.eta; }`,
     // consumed later by RR as `beta * eta_scale / r_u.Average()`. Reflection
