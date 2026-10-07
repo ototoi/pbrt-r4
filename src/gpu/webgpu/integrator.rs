@@ -406,6 +406,15 @@ impl WavefrontPathIntegrator {
                 ResourceId::PortalDistribution => {
                     scene.portal_distribution_buffer.as_entire_binding()
                 }
+                ResourceId::ImageInfiniteSampling => {
+                    scene.image_infinite_sampling_buffer.as_entire_binding()
+                }
+                ResourceId::ImageInfiniteDistribution => {
+                    scene.image_infinite_distribution_buffer.as_entire_binding()
+                }
+                ResourceId::ImageInfiniteRowCdf => {
+                    scene.image_infinite_row_cdf_buffer.as_entire_binding()
+                }
                 ResourceId::DirectLightSample => queues.direct_light_samples.as_entire_binding(),
                 ResourceId::DirectEvalQueue => queues.direct_eval_ray_indices.as_entire_binding(),
                 ResourceId::ScatterDiffuseQueue => {

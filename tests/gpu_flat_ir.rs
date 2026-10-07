@@ -1276,9 +1276,76 @@ fn flatten_node_classifies_infinite_light_variants() {
         assert_eq!(scene.light_sampling_models.len(), 1);
         assert_eq!(
             scene.light_sampling_models[0].geometry_kind,
-            pbrt_r4::gpu::flat::LightGeometryKind::Direction
+            if expected_kind == pbrt_r4::gpu::flat::LightKind::ImageInfinite {
+                pbrt_r4::gpu::flat::LightGeometryKind::ImageInfinite
+            } else {
+                pbrt_r4::gpu::flat::LightGeometryKind::Direction
+            }
         );
+        if expected_kind == pbrt_r4::gpu::flat::LightKind::ImageInfinite {
+            assert_eq!(scene.image_infinite_lights.len(), 1);
+            assert_eq!(scene.image_infinite_lights[0].resolution, [2, 2]);
+            assert_eq!(scene.image_infinite_distribution.len(), 4);
+            assert_eq!(scene.image_infinite_row_cdf.len(), 2);
+        }
     }
+}
+
+#[test]
+fn flattened_image_infinite_lights_keep_distinct_cdfs_and_light_transforms() {
+    let directory = tempfile::tempdir().unwrap();
+    let first_path = directory.path().join("first.png");
+    let second_path = directory.path().join("second.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(2, 2, Rgb([32, 64, 128]))
+        .save(&first_path)
+        .unwrap();
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(2, 2, Rgb([255, 128, 32]))
+        .save(&second_path)
+        .unwrap();
+
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for (name, path) in [("first", first_path), ("second", second_path)] {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", path.to_str().unwrap());
+        params.add_string("string encoding", "linear");
+        let light = light_node(name, "infinite", params);
+        if name == "first" {
+            light.write().unwrap().transform.matrix = [
+                0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ];
+        }
+        root.add_child(light);
+    }
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.image_infinite_lights.len(), 2);
+    assert_eq!(scene.image_infinite_distribution.len(), 8);
+    assert_eq!(scene.image_infinite_row_cdf.len(), 4);
+    assert_eq!(scene.image_infinite_lights[0].distribution_offset, 0);
+    assert_eq!(scene.image_infinite_lights[0].row_cdf_offset, 0);
+    assert_eq!(scene.image_infinite_lights[1].distribution_offset, 4);
+    assert_eq!(scene.image_infinite_lights[1].row_cdf_offset, 2);
+    assert_eq!(scene.light_sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.light_sampling_models[1].geometry_index, 1);
+    assert_eq!(
+        scene.image_infinite_lights[0].light_to_render,
+        [
+            [0.0, -1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    );
+    let local_x = [1.0, 0.0, 0.0];
+    let render_direction = scene.image_infinite_lights[0]
+        .light_to_render
+        .map(|row| row[0] * local_x[0] + row[1] * local_x[1] + row[2] * local_x[2]);
+    assert_eq!(render_direction, [0.0, 1.0, 0.0]);
+    let recovered_local = scene.light_sampling_models[0].world_to_light.map(|row| {
+        row[0] * render_direction[0] + row[1] * render_direction[1] + row[2] * render_direction[2]
+    });
+    assert_eq!(recovered_local, local_x);
 }
 
 #[test]

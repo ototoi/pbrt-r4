@@ -68,6 +68,9 @@ pub enum ResourceId {
     SamplerTable,
     PortalInfiniteLight,
     PortalDistribution,
+    ImageInfiniteSampling,
+    ImageInfiniteDistribution,
+    ImageInfiniteRowCdf,
     Medium,
     ActiveMediumIndices,
     NextMediumIndices,
@@ -309,6 +312,13 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::Storage,
         Access::Read,
     );
+    for (binding, resource) in [
+        (72, ResourceId::ImageInfiniteSampling),
+        (73, ResourceId::ImageInfiniteDistribution),
+        (74, ResourceId::ImageInfiniteRowCdf),
+    ] {
+        push(binding, resource, BindingClass::Storage, Access::Read);
+    }
     push(
         51,
         ResourceId::DirectLightSample,

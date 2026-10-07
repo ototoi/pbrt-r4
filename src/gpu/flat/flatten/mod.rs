@@ -1,12 +1,13 @@
+use super::image_infinite::ImageInfiniteDistributionTexel;
 use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
 use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
-    Camera, DenseSpectrumBuilder, Film, Geometry, Instance, Light, LightBoundInput,
-    LightGeometryKind, LightKind, LightSamplingModel, Medium, Output, PrimitiveDistributionMap,
-    Scene, TabulatedBSSRDFTable, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy,
-    Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    Camera, DenseSpectrumBuilder, Film, Geometry, ImageInfiniteSamplingRecord, Instance, Light,
+    LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Medium, Output,
+    PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform, TriangleDistributionEntry,
+    UnsupportedTexturePolicy, Vertex, Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
     Component, Integrator as NodeIntegrator, Material as NodeMaterial, Medium as NodeMedium,
@@ -146,6 +147,9 @@ pub fn flatten_node_with_material_override(
         },
         portal_infinite_lights: builder.portal_infinite_lights,
         portal_distribution: builder.portal_distribution,
+        image_infinite_lights: builder.image_infinite_lights,
+        image_infinite_distribution: builder.image_infinite_distribution,
+        image_infinite_row_cdf: builder.image_infinite_row_cdf,
     };
     let mut scene = scene;
     scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
@@ -296,5 +300,8 @@ struct FlatBuilder {
     infinite_light_image_decoder: super::texture::ImageDecoder,
     portal_infinite_lights: Vec<PortalImageInfiniteLight>,
     portal_distribution: Vec<PortalDistributionTexel>,
+    image_infinite_lights: Vec<ImageInfiniteSamplingRecord>,
+    image_infinite_distribution: Vec<ImageInfiniteDistributionTexel>,
+    image_infinite_row_cdf: Vec<f32>,
     measured_bsdf_library: super::MeasuredBsdfLibrary,
 }
