@@ -2,9 +2,10 @@ use super::super::area_light_flags;
 use super::{
     dot3, inverse_linear_transform, multiply_transform, push_scalar_attribute,
     push_spectrum_attribute, scale3, transform_point, transform_swaps_handedness, transform_vector,
-    triangle_area, triangle_geometric_normal, AreaTriangleInput, FlatBuilder, Light,
-    LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Transform,
-    TriangleDistributionEntry, IDENTITY_LINEAR_TRANSFORM, INVALID_INDEX,
+    triangle_area, triangle_geometric_normal, AreaTriangleInput, FlatBuilder,
+    ImageInfiniteSamplingRecord, Light, LightBoundInput, LightGeometryKind, LightKind,
+    LightSamplingModel, Transform, TriangleDistributionEntry, IDENTITY_LINEAR_TRANSFORM,
+    INVALID_INDEX,
 };
 use crate::gpu::node::{
     AreaLight as NodeAreaLight, Light as NodeLight, TextureComponent, TextureKind,
@@ -17,6 +18,7 @@ use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, ACES2065_1, DCI_P3, 
 use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 use crate::util::vecmath::Frame;
 
+use super::super::image_infinite::ImageInfiniteDistribution;
 use super::super::portal::{prepare_portal_image, PortalImageInfiniteLight};
 use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, Mipmap, MipmapLevelData};
 
@@ -499,6 +501,66 @@ pub fn flatten_light(
                         resolution: prepared.resolution,
                     });
                 (prepared.mipmap, LightGeometryKind::Portal, geometry_index)
+            } else if kind == LightKind::ImageInfinite {
+                let distribution = ImageInfiniteDistribution::from_mipmap(&mipmap)?;
+                let distribution_offset = u32::try_from(builder.image_infinite_distribution.len())
+                    .map_err(|_| {
+                        PbrtError::error("Image infinite distribution offset exceeds u32.")
+                    })?;
+                let row_cdf_offset = u32::try_from(builder.image_infinite_row_cdf.len())
+                    .map_err(|_| PbrtError::error("Image infinite row CDF offset exceeds u32."))?;
+                builder
+                    .image_infinite_distribution
+                    .len()
+                    .checked_add(distribution.texels.len())
+                    .and_then(|end| u32::try_from(end).ok())
+                    .ok_or_else(|| {
+                        PbrtError::error("Image infinite distribution table exceeds u32.")
+                    })?;
+                builder
+                    .image_infinite_row_cdf
+                    .len()
+                    .checked_add(distribution.row_cdf.len())
+                    .and_then(|end| u32::try_from(end).ok())
+                    .ok_or_else(|| PbrtError::error("Image infinite row CDF table exceeds u32."))?;
+                builder
+                    .image_infinite_distribution
+                    .extend_from_slice(&distribution.texels);
+                builder
+                    .image_infinite_row_cdf
+                    .extend_from_slice(&distribution.row_cdf);
+                let geometry_index =
+                    u32::try_from(builder.image_infinite_lights.len()).map_err(|_| {
+                        PbrtError::error("Image infinite sampling record table exceeds u32.")
+                    })?;
+                builder
+                    .image_infinite_lights
+                    .push(ImageInfiniteSamplingRecord {
+                        distribution_offset,
+                        row_cdf_offset,
+                        resolution: distribution.resolution,
+                        light_to_render: [
+                            [
+                                light_transform[0],
+                                light_transform[1],
+                                light_transform[2],
+                                0.0,
+                            ],
+                            [
+                                light_transform[4],
+                                light_transform[5],
+                                light_transform[6],
+                                0.0,
+                            ],
+                            [
+                                light_transform[8],
+                                light_transform[9],
+                                light_transform[10],
+                                0.0,
+                            ],
+                        ],
+                    });
+                (mipmap, LightGeometryKind::ImageInfinite, geometry_index)
             } else {
                 (mipmap, LightGeometryKind::Direction, INVALID_INDEX)
             };

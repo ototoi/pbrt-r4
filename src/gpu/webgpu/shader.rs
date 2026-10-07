@@ -52,6 +52,10 @@ pub const COMMON_LIBRARY: &[(&str, &str)] = &[
     ),
     ("lights", include_str!("shaders/lib/lights.wgsl")),
     (
+        "image_infinite_sampling",
+        include_str!("shaders/lib/image_infinite_sampling.wgsl"),
+    ),
+    (
         "light_samplers",
         include_str!("shaders/lib/light_samplers.wgsl"),
     ),

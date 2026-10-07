@@ -165,6 +165,16 @@ fn load_light_image_spectrum(index: u32, direction: vec3<f32>, lambda: vec4<f32>
         dot(model.world_to_light2.xyz, direction),
     ));
     let uv = equal_area_sphere_to_square(d);
+    return load_light_image_spectrum_uv(index, uv, lambda);
+}
+
+fn load_light_image_spectrum_uv(index: u32, uv: vec2<f32>, lambda: vec4<f32>) -> vec4<f32> {
+    let image_index = load_light_image_index(index);
+    if (image_index == 0xffffffffu) {
+        return load_light_spectrum(index, 0u, lambda);
+    }
+    let record = light_records[index];
+    let model = light_sampling_models[record.sampling_model];
     let rgb = textureSampleLevel(texture_images[image_index], texture_samplers[0], uv, 0.0).rgb;
     let color_space = model.flags >> 28u;
     let illuminant = load_light_spectrum(index, 2u, lambda);

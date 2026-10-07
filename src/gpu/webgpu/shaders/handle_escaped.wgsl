@@ -36,9 +36,32 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
             } else if (light_kind == LIGHT_KIND_IMAGE_INFINITE) {
                 light_radiance = load_light_image_spectrum(light_index, ray.direction.xyz, lambda)
                     * load_light_scale(light_index);
+                let model = light_sampling_models[load_light_payload(light_index)];
+                if (model.geometry_kind != LIGHT_GEOMETRY_KIND_IMAGE_INFINITE
+                    || model.geometry_index >= arrayLength(&image_infinite_sampling_records)) {
+                    set_render_error();
+                    continue;
+                }
+                let image = image_infinite_sampling_records[model.geometry_index];
+                let map_uv = equal_area_sphere_to_square(normalize(vec3<f32>(
+                    dot(model.world_to_light0.xyz, ray.direction.xyz),
+                    dot(model.world_to_light1.xyz, ray.direction.xyz),
+                    dot(model.world_to_light2.xyz, ray.direction.xyz),
+                )));
+                let map_pdf = image_infinite_distribution_pdf(image, map_uv);
+                let local_direction = normalize(vec3<f32>(
+                    dot(model.world_to_light0.xyz, ray.direction.xyz),
+                    dot(model.world_to_light1.xyz, ray.direction.xyz),
+                    dot(model.world_to_light2.xyz, ray.direction.xyz),
+                ));
+                let jacobian = image_infinite_direction_jacobian(image, local_direction);
+                if (!(jacobian > 0.0)) {
+                    set_render_error();
+                    continue;
+                }
                 light_pdf = light_pmf_for_handle(
                     light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
-                ) / (4.0 * PI);
+                ) * map_pdf / (4.0 * PI * jacobian);
             } else {
                 light_radiance = load_light_spectrum(light_index, 0u, lambda)
                     * load_light_scale(light_index);

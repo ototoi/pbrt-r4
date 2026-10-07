@@ -269,7 +269,7 @@ fn light_sampling_uses_record_models_and_separate_infinite_probability() {
 }
 
 #[test]
-fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
+fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     // Light selection and its MIS weight are computed once in
     // sample_direct_light and handed to evaluate_materials as
     // DirectLightSample.use_mis.
@@ -281,8 +281,12 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
         "let use_mis = (light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))"
     ));
     assert!(sample.contains("|| is_infinite_light_kind(light_kind);"));
-    assert!(sample.contains("fn equal_area_sphere_to_square("));
-    assert!(sample.contains("dot(model.world_to_light0.xyz, direction)"));
+    assert!(sample.contains("sample_image_infinite_distribution("));
+    assert!(sample.contains("image_infinite_equal_area_square_to_sphere("));
+    assert!(sample.contains("load_light_image_spectrum_uv("));
+    assert!(sample.contains("image_sample.pdf / (4.0 * PI * jacobian)"));
+    assert!(sample.contains("wi = normalize(transformed)"));
+    assert!(sample.contains("image_infinite_direction_jacobian(image, w_light)"));
     assert!(sample.contains("model.flags >> 28u"));
     assert!(sample.contains(
         "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
@@ -299,9 +303,24 @@ fn infinite_lights_use_uniform_sphere_sampling_and_environment_misses() {
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
     ));
     assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
+    assert!(escaped.contains("image_infinite_distribution_pdf(image, map_uv)"));
+    assert!(escaped.contains("map_pdf / (4.0 * PI * jacobian)"));
+    assert!(escaped.contains("fn equal_area_sphere_to_square("));
+    assert!(escaped.contains("dot(model.world_to_light0.xyz, direction)"));
     assert!(escaped.contains("ray.beta * radiance"));
     assert!(escaped.contains("radiance += light_radiance / denom;"));
     assert!(!escaped.contains("mis_weight"));
+
+    for source in [sample, escaped] {
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
 }
 
 #[test]
