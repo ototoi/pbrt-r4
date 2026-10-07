@@ -8,6 +8,10 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let surface = surfaces[pixel_index];
     let root = resolve_attributes_eval_work_item(surface.attributes_eval_work_item);
     let kind = root.bxdf_kind;
+    let eta_ordinal = select(6u, 5u, kind == MATERIAL_KIND_COATED_CONDUCTOR);
+    if (!material_spectrum_attribute_is_constant(root.material_node, eta_ordinal)) {
+        terminate_secondary_wavelengths(pixel_index);
+    }
     let tangent = surface.tangent.xyz;
 
     // Direct lighting.
