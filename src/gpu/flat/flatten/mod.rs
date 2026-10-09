@@ -4,7 +4,7 @@ use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
-    Camera, DenseSpectrumBuilder, Film, Geometry, ImageInfiniteSamplingRecord,
+    Camera, DenseSpectrumBuilder, Film, Geometry, GeometryResources, ImageInfiniteSamplingRecord,
     InfiniteLightResources, Instance, Light, LightBoundInput, LightGeometryKind, LightKind,
     LightResources, LightSamplingModel, MaterialResources, Medium, Output,
     PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform, TriangleDistributionEntry,
@@ -142,9 +142,11 @@ pub fn flatten_node_with_material_override(
                 image_row_cdf: builder.image_infinite_row_cdf,
             },
         },
-        vertices: builder.vertices,
-        indices: builder.indices,
-        geometries: builder.geometries,
+        geometry: GeometryResources {
+            vertices: builder.vertices,
+            indices: builder.indices,
+            geometries: builder.geometries,
+        },
         instances: builder.instances,
         media: builder.media,
         materials: MaterialResources {
@@ -235,6 +237,7 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
                 ))
             })?;
         let geometry = scene
+            .geometry
             .geometries
             .get(instance.geometry as usize)
             .ok_or_else(|| {

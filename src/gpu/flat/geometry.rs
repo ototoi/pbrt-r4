@@ -1,4 +1,4 @@
-use super::Transform;
+use super::{Transform, Vertex};
 use crate::util::error::PbrtError;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,10 +42,20 @@ impl SourceShape {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Geometry {
     pub source_shape: SourceShape,
+    /// Range in `GeometryResources::vertices`.
     pub first_vertex: u32,
     pub vertex_count: u32,
+    /// Range in `GeometryResources::indices`; each index addresses the full vertex array.
     pub first_index: u32,
     pub index_count: u32,
+}
+
+/// Packed vertex and index arrays with ranges describing each geometry.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GeometryResources {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub geometries: Vec<Geometry>,
 }
 
 pub fn triangle_area(positions: [[f32; 3]; 3]) -> f32 {

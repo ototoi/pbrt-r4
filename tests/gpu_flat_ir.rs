@@ -193,8 +193,8 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.vertices.len(), 6);
-    assert_eq!(scene.indices, vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(scene.geometry.vertices.len(), 6);
+    assert_eq!(scene.geometry.indices, vec![0, 1, 2, 3, 4, 5]);
     assert_eq!(scene.spectrum_attributes.len(), 5);
     assert_eq!(scene.film.sensor_response, [0, 1, 2]);
     assert_eq!(scene.film.imaging_ratio, 1.0);
@@ -203,7 +203,7 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.materials.nodes[0].attributes.len(), 1);
     assert_eq!(scene.materials.nodes[1].attributes.len(), 4);
     assert_eq!(
-        scene.geometries,
+        scene.geometry.geometries,
         vec![
             pbrt_r4::gpu::flat::Geometry {
                 source_shape: SourceShape::TriangleMesh,
@@ -804,9 +804,9 @@ fn flatten_node_shares_geometry_across_instances() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.vertices.len(), 3);
-    assert_eq!(scene.indices, vec![0, 1, 2]);
-    assert_eq!(scene.geometries.len(), 1);
+    assert_eq!(scene.geometry.vertices.len(), 3);
+    assert_eq!(scene.geometry.indices, vec![0, 1, 2]);
+    assert_eq!(scene.geometry.geometries.len(), 1);
     assert_eq!(scene.instances.len(), 2);
     assert_eq!(scene.instances[0].geometry, 0);
     assert_eq!(scene.instances[1].geometry, 0);
@@ -885,10 +885,10 @@ fn flattened_normals_match_cpu_mesh_under_transforms_and_orientation() {
             for _ in 0..2 {
                 prepare_triangle_meshes(&mut root.write().unwrap()).unwrap();
                 let flat = flatten_node(Arc::clone(&root)).unwrap();
-                assert_eq!(flat.geometries.len(), 1);
+                assert_eq!(flat.geometry.geometries.len(), 1);
                 assert_eq!(flat.instances.len(), 2);
-                assert_eq!(flat.indices, vec![0, 1, 2]);
-                for vertex in &flat.vertices {
+                assert_eq!(flat.geometry.indices, vec![0, 1, 2]);
+                for vertex in &flat.geometry.vertices {
                     let n = vertex.normal;
                     let world =
                         transform.transform_normal(&Normal3f::new(n[0] as _, n[1] as _, n[2] as _));
@@ -2345,15 +2345,15 @@ fn node_ir_preparation_completes_missing_mesh_uvs_before_flattening() {
     prepare_triangle_meshes(&mut root).unwrap();
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.vertices.len(), 3);
-    assert_eq!(scene.vertices[0].uv, [0.0, 0.0]);
-    assert_eq!(scene.vertices[1].uv, [1.0, 0.0]);
-    assert_eq!(scene.vertices[2].uv, [0.0, 1.0]);
+    assert_eq!(scene.geometry.vertices.len(), 3);
+    assert_eq!(scene.geometry.vertices[0].uv, [0.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[1].uv, [1.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[2].uv, [0.0, 1.0]);
     // Missing normal/tangent are left zero: shade_surface.wgsl recomputes a
     // fresh per-triangle geometric normal / dpdu whenever the interpolated
     // vertex value is zero, so there is nothing to precompute here.
-    assert_eq!(scene.vertices[0].normal, [0.0, 0.0, 0.0]);
-    assert_eq!(scene.vertices[0].tangent, [0.0, 0.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[0].normal, [0.0, 0.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[0].tangent, [0.0, 0.0, 0.0]);
 }
 
 #[test]
@@ -2408,8 +2408,8 @@ fn flatten_preserves_source_shape_through_mesh_preparation() {
         tessellate_shapes(&mut root).unwrap();
         prepare_triangle_meshes(&mut root).unwrap();
         let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-        assert_eq!(flat.geometries.len(), 1);
-        assert_eq!(flat.geometries[0].source_shape, source);
+        assert_eq!(flat.geometry.geometries.len(), 1);
+        assert_eq!(flat.geometry.geometries[0].source_shape, source);
         assert_eq!(flat.instances.len(), 2);
         assert_eq!(flat.instances[0].geometry, flat.instances[1].geometry);
     }

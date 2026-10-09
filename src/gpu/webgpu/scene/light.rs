@@ -108,6 +108,7 @@ pub fn validate_instance_area_lights(
         return Ok(());
     }
     let geometry = flat
+        .geometry
         .geometries
         .get(instance.geometry as usize)
         .ok_or_else(|| PbrtError::error("Flat area-light instance has an invalid geometry."))?;
