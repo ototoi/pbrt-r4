@@ -541,19 +541,19 @@ pub fn intern_texture_root(
             },
         },
     );
-    if let Some(&index) = builder.texture_roots_by_key.get(&key) {
+    if let Some(&index) = builder.textures.roots_by_key.get(&key) {
         return Ok(index);
     }
-    let index = u32::try_from(builder.texture_root_specs.len())
+    let index = u32::try_from(builder.textures.root_specs.len())
         .map_err(|_| PbrtError::error("Flat texture root table exceeds u32."))?;
-    builder.texture_root_specs.push(match texture.kind {
+    builder.textures.root_specs.push(match texture.kind {
         TextureKind::Float => TextureRootSpec::Float { node: texture_node },
         TextureKind::Spectrum => TextureRootSpec::Spectrum {
             node: texture_node,
             spectrum_type,
         },
     });
-    builder.texture_roots_by_key.insert(key, index);
+    builder.textures.roots_by_key.insert(key, index);
     Ok(index)
 }
 
@@ -650,9 +650,9 @@ mod tests {
         let (_, flat_nodes, _) =
             build_material_roots(&builder.materials.source_nodes, &[source_index]).unwrap();
         assert_eq!(flat_nodes[0].displacement_texture_root, 0);
-        assert_eq!(builder.texture_root_specs.len(), 1);
+        assert_eq!(builder.textures.root_specs.len(), 1);
         assert!(matches!(
-            builder.texture_root_specs[0],
+            builder.textures.root_specs[0],
             TextureRootSpec::Float { .. }
         ));
     }

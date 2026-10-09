@@ -904,7 +904,8 @@ fn area_light_has_constant_zero_alpha(
         }
         super::AttributeKind::Texture => {
             let root = builder
-                .texture_root_specs
+                .textures
+                .root_specs
                 .get(alpha.index as usize)
                 .ok_or_else(|| PbrtError::error("Area-light alpha texture root is missing."))?;
             let super::TextureRootSpec::Float { node } = root else {
@@ -950,7 +951,7 @@ mod tests {
             params: ParameterDictionary::default(),
         }));
         let mut builder = FlatBuilder::default();
-        builder.texture_root_specs.push(TextureRootSpec::Float {
+        builder.textures.root_specs.push(TextureRootSpec::Float {
             node: Arc::new(texture),
         });
         builder.materials.source_nodes.push(MaterialSourceNode {
