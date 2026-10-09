@@ -9,11 +9,10 @@ use super::abi::{
     camera_uniform, film_uniform, light_table_uniform, material_table_uniform, viewport_uniform,
     CameraUniform, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
     LightTableUniform, MaterialNode, MaterialTableUniform, ViewportUniform, INVALID_INDEX,
-    LIGHT_SAMPLER_KIND_BVH,
 };
 use super::acceleration::{self, Acceleration};
 use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
-use super::light_bvh::pack_light_bvh;
+use super::light_bvh::{pack_light_bvh, LightBvhUploadData};
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
 use super::material::MaterialTable;
@@ -427,53 +426,28 @@ impl Scene {
         material_table.measured_texture_count =
             u32::try_from(flat.measured_bsdfs.atlas_pages.len())
                 .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?;
-        let mut light_table =
-            light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
+        let light_table = light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
         material_table.debug_material_kind = INVALID_INDEX;
-        if let Some(packed) = &packed_light_bvh {
-            if light_sampler_kind == LightSamplerKind::Bvh {
-                light_table.light_sampler_kind = LIGHT_SAMPLER_KIND_BVH;
-            }
-            light_table.light_sampler_data_offset = 0;
-            light_table.light_bvh_node_offset = 0;
-            light_table.light_bvh_node_count =
-                u32::try_from(packed.node_words.len()).map_err(|_| {
-                    PbrtError::error("WebGPU Light BVH node count does not fit in u32.")
-                })?;
-            light_table.light_leaf_offset = 0;
-            light_table.light_leaf_count =
-                u32::try_from(packed.handle_to_leaf.len()).map_err(|_| {
-                    PbrtError::error("WebGPU Light BVH leaf count does not fit in u32.")
-                })?;
-        }
-        let (light_bvh_header, light_bvh_nodes, light_leaf) = packed_light_bvh
-            .as_ref()
-            .map(|packed| {
-                (
-                    packed.header_words.to_vec(),
-                    packed
-                        .node_words
-                        .iter()
-                        .flat_map(|node| node.iter().copied())
-                        .collect::<Vec<_>>(),
-                    packed.handle_to_leaf.clone(),
-                )
-            })
-            .unwrap_or_default();
+        let light_bvh_data = LightBvhUploadData::from_packed(
+            packed_light_bvh.as_ref(),
+            light_sampler_kind,
+            light_table,
+        )?;
+        let light_table = light_bvh_data.table;
         let light_bvh_header_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 light BVH header SBO"),
-                contents: buffer_contents(&light_bvh_header),
+                contents: buffer_contents(&light_bvh_data.header_words),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         let light_bvh_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light BVH node SBO"),
-            contents: buffer_contents(&light_bvh_nodes),
+            contents: buffer_contents(&light_bvh_data.node_words),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let light_leaf_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light BVH leaf SBO"),
-            contents: buffer_contents(&light_leaf),
+            contents: buffer_contents(&light_bvh_data.handle_to_leaf),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let acceleration = acceleration::build(

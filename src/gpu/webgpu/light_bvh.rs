@@ -1,6 +1,9 @@
 use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
+use super::abi::{LightTableUniform, LIGHT_SAMPLER_KIND_BVH};
+use super::light_sampler::LightSamplerKind;
+
 pub const LIGHT_BVH_NODE_WORDS: usize = 8;
 pub const LIGHT_BVH_HEADER_WORDS: usize = 8;
 pub const LIGHT_BVH_INDEX_MAX: u32 = 0x7fff_ffff;
@@ -10,6 +13,57 @@ pub struct PackedLightBVH {
     pub header_words: [u32; LIGHT_BVH_HEADER_WORDS],
     pub node_words: Vec<[u32; LIGHT_BVH_NODE_WORDS]>,
     pub handle_to_leaf: Vec<u32>,
+}
+
+pub struct LightBvhUploadData {
+    pub table: LightTableUniform,
+    pub header_words: Vec<u32>,
+    pub node_words: Vec<u32>,
+    pub handle_to_leaf: Vec<u32>,
+}
+
+impl LightBvhUploadData {
+    pub fn from_packed(
+        packed_bvh: Option<&PackedLightBVH>,
+        light_sampler_kind: LightSamplerKind,
+        mut light_table: LightTableUniform,
+    ) -> Result<Self, PbrtError> {
+        if let Some(packed) = packed_bvh {
+            if light_sampler_kind == LightSamplerKind::Bvh {
+                light_table.light_sampler_kind = LIGHT_SAMPLER_KIND_BVH;
+            }
+            light_table.light_sampler_data_offset = 0;
+            light_table.light_bvh_node_offset = 0;
+            light_table.light_bvh_node_count =
+                u32::try_from(packed.node_words.len()).map_err(|_| {
+                    PbrtError::error("WebGPU Light BVH node count does not fit in u32.")
+                })?;
+            light_table.light_leaf_offset = 0;
+            light_table.light_leaf_count =
+                u32::try_from(packed.handle_to_leaf.len()).map_err(|_| {
+                    PbrtError::error("WebGPU Light BVH leaf count does not fit in u32.")
+                })?;
+        }
+        let (light_bvh_header, light_bvh_nodes, light_leaf) = packed_bvh
+            .map(|packed| {
+                (
+                    packed.header_words.to_vec(),
+                    packed
+                        .node_words
+                        .iter()
+                        .flat_map(|node| node.iter().copied())
+                        .collect::<Vec<_>>(),
+                    packed.handle_to_leaf.clone(),
+                )
+            })
+            .unwrap_or_default();
+        Ok(Self {
+            table: light_table,
+            header_words: light_bvh_header,
+            node_words: light_bvh_nodes,
+            handle_to_leaf: light_leaf,
+        })
+    }
 }
 
 pub fn pack_light_bvh(bvh: &flat::LightBVH) -> Result<Option<PackedLightBVH>, PbrtError> {
