@@ -16,7 +16,9 @@ use super::super::noise::NoiseRuntimeResources;
 use super::super::pipeline::{Pipeline, StagePipeline};
 use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
-use super::super::shader::{compose_source_with_noise, required_limits_for_sources, resource_bindings};
+use super::super::shader::{
+    compose_source_with_noise, required_limits_for_sources, resource_bindings,
+};
 use super::super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
 use super::tiles::DEFAULT_GPU_TILE_SIZE;
 
@@ -556,5 +558,4 @@ impl super::WavefrontPathIntegrator {
             bssrdf_probe,
         })
     }
-
 }

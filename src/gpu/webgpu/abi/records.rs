@@ -326,7 +326,6 @@ pub struct QueueState {
     pub padding: u32,
 }
 
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct QueueCounters {

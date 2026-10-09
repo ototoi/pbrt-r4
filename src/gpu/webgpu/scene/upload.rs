@@ -211,9 +211,7 @@ pub(super) fn upload_measured_atlas(
 mod tests {
     use super::mip_level_rgba;
 
-    use crate::gpu::flat::texture::{
-        ImageValueType, MipmapEncoding, MipmapLevel, MipmapLevelData,
-    };
+    use crate::gpu::flat::texture::{ImageValueType, MipmapEncoding, MipmapLevel, MipmapLevelData};
 
     #[test]
     fn upload_rejects_unprojected_spectrum_mipmap() {

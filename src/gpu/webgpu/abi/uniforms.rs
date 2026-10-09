@@ -83,7 +83,6 @@ pub struct LightTableUniform {
     pub reserved: [u32; 2],
 }
 
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct FilmUniform {
@@ -108,7 +107,6 @@ pub fn film_uniform(film: &flat::Film) -> FilmUniform {
         padding: 0,
     }
 }
-
 
 pub fn viewport_uniform(
     viewport: &flat::Viewport,
@@ -209,4 +207,3 @@ pub fn light_table_uniform(
         reserved: [0; 2],
     })
 }
-
