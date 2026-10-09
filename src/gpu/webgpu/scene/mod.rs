@@ -8,7 +8,7 @@ use crate::util::error::PbrtError;
 
 use super::abi::{
     camera_uniform, film_uniform, light_table_uniform, material_table_uniform, viewport_uniform,
-    CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
+    CameraUniform, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
     LightTableUniform, MaterialNode, MaterialTableUniform, ViewportUniform, INVALID_INDEX,
     LIGHT_SAMPLER_KIND_BVH,
 };
@@ -28,6 +28,7 @@ mod geometry;
 pub mod instance;
 pub mod light;
 pub mod medium;
+pub mod spectrum;
 mod texture;
 mod upload;
 
@@ -37,6 +38,7 @@ use geometry::convert_geometry;
 use instance::convert_instances;
 use light::{convert_lights, LightSamplingData};
 use medium::convert_media;
+use spectrum::convert_spectra;
 use texture::{
     infinite_image_payload, lower_texture_library, scene_texture_views, texture_binding_plan,
     validate_image_infinite_buffer_size,
@@ -344,15 +346,7 @@ impl Scene {
                 })
                 .collect()
         };
-        flat::validate_dense_spectra(&flat.spectrum_attributes)?;
-        let spectrum_attributes = flat
-            .spectrum_attributes
-            .iter()
-            .map(|spectrum| DenseSpectrum {
-                samples: spectrum.samples,
-                flags: spectrum.flags,
-            })
-            .collect::<Vec<_>>();
+        let spectrum_attributes = convert_spectra(&flat.spectrum_attributes)?;
         let spectrum_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 dense spectra SBO"),
