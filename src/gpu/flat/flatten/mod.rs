@@ -143,9 +143,9 @@ pub fn flatten_node_with_material_override(
             },
         },
         geometry: GeometryResources {
-            vertices: builder.vertices,
-            indices: builder.indices,
-            geometries: builder.geometries,
+            vertices: builder.geometry.vertices,
+            indices: builder.geometry.indices,
+            geometries: builder.geometry.geometries,
         },
         instances: builder.instances,
         media: builder.media,
@@ -285,10 +285,7 @@ struct FlatBuilder {
     camera: Option<Camera>,
     viewport: Option<Viewport>,
     film: Option<Film>,
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
-    geometries: Vec<Geometry>,
-    geometries_by_shape: HashMap<(usize, usize), u32>,
+    geometry: GeometryBuilder,
     instances: Vec<Instance>,
     media: Vec<Medium>,
     // Keep Node IR media alive while their pointer identities are keys below.
@@ -319,4 +316,12 @@ struct FlatBuilder {
     image_infinite_distribution: Vec<ImageInfiniteDistributionTexel>,
     image_infinite_row_cdf: Vec<f32>,
     measured_bsdf_library: super::MeasuredBsdfLibrary,
+}
+
+#[derive(Default)]
+struct GeometryBuilder {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+    geometries: Vec<Geometry>,
+    geometries_by_shape: HashMap<(usize, usize), u32>,
 }
