@@ -7,6 +7,7 @@ use crate::util::geometry::Bounds2i;
 use crate::util::imageio::write_image;
 
 use super::output::Output;
+use super::stages::ResourceId;
 
 pub struct Film {
     pub resolution: [u32; 2],
@@ -68,6 +69,13 @@ impl Film {
             scale,
             display_mode,
         })
+    }
+
+    pub fn binding_resource(&self, resource: ResourceId) -> Option<wgpu::BindingResource<'_>> {
+        match resource {
+            ResourceId::Film => Some(self.framebuffer.as_entire_binding()),
+            _ => None,
+        }
     }
 
     pub fn add_display(&mut self, display: &Arc<RwLock<dyn Display>>) {

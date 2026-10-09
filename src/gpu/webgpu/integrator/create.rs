@@ -212,148 +212,66 @@ impl super::WavefrontPathIntegrator {
         let texture_image_views: Vec<&wgpu::TextureView> =
             scene.texture_image_views.iter().collect();
         let texture_samplers: Vec<&wgpu::Sampler> = scene.texture_samplers.iter().collect();
-        let make_entry = |binding: BindingSpec| wgpu::BindGroupEntry {
-            binding: binding.binding,
-            resource: match binding.resource {
-                ResourceId::CameraParams => camera_buffer.as_entire_binding(),
-                ResourceId::SampleParams => viewport_buffer.as_entire_binding(),
-                ResourceId::Tlas => {
-                    wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas)
-                }
-                ResourceId::Vertex => scene.vertex_buffer.as_entire_binding(),
-                ResourceId::Index => scene.index_buffer.as_entire_binding(),
-                ResourceId::Geometry => scene.geometry_buffer.as_entire_binding(),
-                ResourceId::Instance => scene.instance_buffer.as_entire_binding(),
-                ResourceId::Medium => scene.medium_buffer.as_entire_binding(),
-                ResourceId::BSSRDFMaterial => scene.bssrdf_material_buffer.as_entire_binding(),
-                ResourceId::BSSRDFTable => scene.bssrdf_tables.records.as_entire_binding(),
-                ResourceId::BSSRDFValues => scene.bssrdf_tables.values.as_entire_binding(),
-                ResourceId::BSSRDFWork => bssrdf_work.as_entire_binding(),
-                ResourceId::BSSRDFResults => bssrdf_results.as_entire_binding(),
-                ResourceId::ActiveMediumIndices => queues.active_medium_indices.as_entire_binding(),
-                ResourceId::NextMediumIndices => queues.next_medium_indices.as_entire_binding(),
-                ResourceId::ActiveShadowIndices => queues.active_shadow_indices.as_entire_binding(),
-                ResourceId::NextShadowIndices => queues.next_shadow_indices.as_entire_binding(),
-                ResourceId::MediumScatterQueue => queues.medium_scatter_indices.as_entire_binding(),
-                ResourceId::FilmParams => film_params_buffer.as_entire_binding(),
-                ResourceId::Surface => queues.surfaces.as_entire_binding(),
-                ResourceId::Film => film.framebuffer.as_entire_binding(),
-                ResourceId::QueueCounters => queues.counters.as_entire_binding(),
-                ResourceId::RenderError => queues.render_error.as_entire_binding(),
-                ResourceId::PixelSampleState => queues.pixel_sample_states.as_entire_binding(),
-                ResourceId::CurrentRay => queues.current_rays.as_entire_binding(),
-                ResourceId::NextRay => queues.next_rays.as_entire_binding(),
-                ResourceId::ShadowQueue => queues.shadow_rays.as_entire_binding(),
-                ResourceId::MaterialRayQueue => queues.material_ray_indices.as_entire_binding(),
-                ResourceId::AttributesEvalWorkItems => {
-                    queues.attributes_eval_work_items.as_entire_binding()
-                }
-                ResourceId::TextureEvalResult => queues.texture_eval_results.as_entire_binding(),
-                ResourceId::HitAreaRayQueue => queues.hit_area_ray_indices.as_entire_binding(),
-                ResourceId::EscapedRayQueue => queues.escaped_ray_indices.as_entire_binding(),
-                ResourceId::MaterialTable => material_table_buffer.as_entire_binding(),
-                ResourceId::LightSamplingParams => light_table_buffer.as_entire_binding(),
-                ResourceId::SamplerParams | ResourceId::SamplerTable => scene
-                    .sampler
-                    .bindings()
-                    .resource(binding.resource)
-                    .expect("sampler resource binding"),
-                ResourceId::MaterialRoot => scene.material_root_buffer.as_entire_binding(),
-                ResourceId::MaterialNode => scene.material_node_buffer.as_entire_binding(),
-                ResourceId::AttributeRef => scene.attribute_ref_buffer.as_entire_binding(),
-                ResourceId::ScalarAttribute => scene.scalar_attribute_buffer.as_entire_binding(),
-                ResourceId::SpectrumAttribute => {
-                    scene.spectrum_attribute_buffer.as_entire_binding()
-                }
-                ResourceId::MeasuredBsdf => scene.measured_bsdf_buffer.as_entire_binding(),
-                ResourceId::MeasuredTable => scene.measured_table_buffer.as_entire_binding(),
-                ResourceId::TextureNode => scene.texture_node_buffer.as_entire_binding(),
-                ResourceId::TextureRoot => scene.texture_root_buffer.as_entire_binding(),
-                ResourceId::TextureChild => scene.texture_child_buffer.as_entire_binding(),
-                ResourceId::RgbSpectrumTable => scene.rgb_spectrum_table_buffer.as_entire_binding(),
-                ResourceId::TextureImageArray => {
-                    wgpu::BindingResource::TextureViewArray(&texture_image_views)
-                }
-                ResourceId::TextureSamplerArray => {
-                    wgpu::BindingResource::SamplerArray(&texture_samplers)
-                }
-                ResourceId::NoiseTable => wgpu::BindingResource::TextureView(&noise_resources.view),
-                ResourceId::LightRecord => scene.light_record_buffer.as_entire_binding(),
-                ResourceId::LightSamplingModel => {
-                    scene.light_sampling_model_buffer.as_entire_binding()
-                }
-                ResourceId::LightPosition => scene.light_position_buffer.as_entire_binding(),
-                ResourceId::TriangleDistribution => scene.distribution_buffer.as_entire_binding(),
-                ResourceId::PortalInfiniteLight => scene.portal_image_buffer.as_entire_binding(),
-                ResourceId::PortalDistribution => {
-                    scene.portal_distribution_buffer.as_entire_binding()
-                }
-                ResourceId::ImageInfiniteSampling => {
-                    scene.image_infinite_sampling_buffer.as_entire_binding()
-                }
-                ResourceId::ImageInfiniteDistribution => {
-                    scene.image_infinite_distribution_buffer.as_entire_binding()
-                }
-                ResourceId::ImageInfiniteRowCdf => {
-                    scene.image_infinite_row_cdf_buffer.as_entire_binding()
-                }
-                ResourceId::DirectLightSample => queues.direct_light_samples.as_entire_binding(),
-                ResourceId::DirectEvalQueue => queues.direct_eval_ray_indices.as_entire_binding(),
-                ResourceId::ScatterDiffuseQueue => {
-                    queues.scatter_diffuse_ray_indices.as_entire_binding()
-                }
-                ResourceId::ScatterDiffuseTransmissionQueue => queues
-                    .scatter_diffuse_transmission_ray_indices
-                    .as_entire_binding(),
-                ResourceId::ScatterConductorQueue => {
-                    queues.scatter_conductor_ray_indices.as_entire_binding()
-                }
-                ResourceId::ScatterDielectricQueue => {
-                    queues.scatter_dielectric_ray_indices.as_entire_binding()
-                }
-                ResourceId::ScatterThinDielectricQueue => queues
-                    .scatter_thin_dielectric_ray_indices
-                    .as_entire_binding(),
-                ResourceId::ScatterMeasuredQueue => {
-                    queues.scatter_measured_ray_indices.as_entire_binding()
-                }
-                ResourceId::ScatterCoatedQueue => {
-                    queues.scatter_coated_ray_indices.as_entire_binding()
-                }
-                ResourceId::QueueDispatchArgs => queues.queue_dispatch_args.as_entire_binding(),
-                ResourceId::LightBvhHeader => scene.light_bvh_header_buffer.as_entire_binding(),
-                ResourceId::LightBvhNode => scene.light_bvh_node_buffer.as_entire_binding(),
-                ResourceId::LightLeaf => scene.light_leaf_buffer.as_entire_binding(),
-                resource => {
-                    panic!("resource {resource:?} is not part of canonical wavefront layout")
-                }
-            },
-        };
-        let make_bind_group = |stage_spec: &ComputeStageSpec| -> [wgpu::BindGroup; 2] {
-            let stage_pipeline = pipeline.stage(stage_spec.id);
-            std::array::from_fn(|group| {
-                let entries = canonical_bindings
-                    .iter()
-                    .filter(|binding| {
-                        binding.group == group as u32
-                            && stage_pipeline
-                                .used_bindings()
-                                .contains(&(binding.group, binding.binding))
-                    })
-                    .copied()
-                    .map(make_entry)
-                    .collect::<Vec<_>>();
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(stage_spec.label),
-                    layout: &stage_pipeline.bind_group_layouts[group],
-                    entries: &entries,
+        let make_entry = |binding: BindingSpec| -> Result<wgpu::BindGroupEntry<'_>, PbrtError> {
+            let resource = scene
+                .binding_resource(binding.resource)
+                .or_else(|| queues.binding_resource(binding.resource))
+                .or_else(|| film.binding_resource(binding.resource))
+                .or_else(|| noise_resources.binding_resource(binding.resource))
+                .or_else(|| match binding.resource {
+                    ResourceId::CameraParams => Some(camera_buffer.as_entire_binding()),
+                    ResourceId::SampleParams => Some(viewport_buffer.as_entire_binding()),
+                    ResourceId::FilmParams => Some(film_params_buffer.as_entire_binding()),
+                    ResourceId::MaterialTable => Some(material_table_buffer.as_entire_binding()),
+                    ResourceId::LightSamplingParams => Some(light_table_buffer.as_entire_binding()),
+                    ResourceId::TextureImageArray => Some(wgpu::BindingResource::TextureViewArray(
+                        &texture_image_views,
+                    )),
+                    ResourceId::TextureSamplerArray => {
+                        Some(wgpu::BindingResource::SamplerArray(&texture_samplers))
+                    }
+                    ResourceId::BSSRDFWork => Some(bssrdf_work.as_entire_binding()),
+                    ResourceId::BSSRDFResults => Some(bssrdf_results.as_entire_binding()),
+                    _ => None,
                 })
+                .ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "No WebGPU resource is registered for {:?}.",
+                        binding.resource
+                    ))
+                })?;
+            Ok(wgpu::BindGroupEntry {
+                binding: binding.binding,
+                resource,
             })
         };
+        let make_bind_group =
+            |stage_spec: &ComputeStageSpec| -> Result<[wgpu::BindGroup; 2], PbrtError> {
+                let stage_pipeline = pipeline.stage(stage_spec.id);
+                let create_group = |group: usize| -> Result<wgpu::BindGroup, PbrtError> {
+                    let entries = canonical_bindings
+                        .iter()
+                        .filter(|binding| {
+                            binding.group == group as u32
+                                && stage_pipeline
+                                    .used_bindings()
+                                    .contains(&(binding.group, binding.binding))
+                        })
+                        .copied()
+                        .map(make_entry)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(stage_spec.label),
+                        layout: &stage_pipeline.bind_group_layouts[group],
+                        entries: &entries,
+                    }))
+                };
+                Ok([create_group(0)?, create_group(1)?])
+            };
         let bind_groups = COMPUTE_STAGES
             .iter()
-            .map(|stage| (stage.id, make_bind_group(stage)))
-            .collect::<HashMap<_, _>>();
+            .map(|stage| Ok((stage.id, make_bind_group(stage)?)))
+            .collect::<Result<HashMap<_, _>, PbrtError>>()?;
         log::info!("GPU create: bind groups ready");
         Ok(Self {
             context,

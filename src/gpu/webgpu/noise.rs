@@ -2,12 +2,21 @@
 
 use crate::textures::noise::noise_permutation;
 
+use super::stages::ResourceId;
+
 pub struct NoiseRuntimeResources {
     _texture: wgpu::Texture,
     pub view: wgpu::TextureView,
 }
 
 impl NoiseRuntimeResources {
+    pub fn binding_resource(&self, resource: ResourceId) -> Option<wgpu::BindingResource<'_>> {
+        match resource {
+            ResourceId::NoiseTable => Some(wgpu::BindingResource::TextureView(&self.view)),
+            _ => None,
+        }
+    }
+
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         const WIDTH: u32 = 256;
         const HEIGHT: u32 = 257;
