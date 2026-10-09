@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::gpu::node::{TextureComponent, TextureKind, TextureMapping, TextureNode};
+use crate::gpu::node::{
+    TextureComponent, TextureKind, TextureMapping as NodeTextureMapping, TextureNode,
+};
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
@@ -11,6 +13,7 @@ use crate::util::spectrum::Spectrum;
 use super::image::{
     ColorSpace, ImageDecoder, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
 };
+use super::mapping::{TextureMapping, UvMapping};
 use super::optimize::optimize_texture_program;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -424,7 +427,24 @@ fn texture_mapping(node: &TextureNode) -> Option<TextureMapping> {
     node.components
         .iter()
         .find_map(|component| match component {
-            TextureComponent::Mapping(mapping) => Some(mapping.clone()),
+            TextureComponent::Mapping(mapping) => Some(match mapping {
+                NodeTextureMapping::Uv(uv) => TextureMapping::Uv(UvMapping {
+                    uscale: uv.uscale,
+                    vscale: uv.vscale,
+                    udelta: uv.udelta,
+                    vdelta: uv.vdelta,
+                }),
+                NodeTextureMapping::Planar(transform) => TextureMapping::Planar(transform.matrix),
+                NodeTextureMapping::Spherical(transform) => {
+                    TextureMapping::Spherical(transform.matrix)
+                }
+                NodeTextureMapping::Cylindrical(transform) => {
+                    TextureMapping::Cylindrical(transform.matrix)
+                }
+                NodeTextureMapping::PointTransform(transform) => {
+                    TextureMapping::PointTransform(transform.matrix)
+                }
+            }),
             TextureComponent::Texture(_) => None,
         })
 }

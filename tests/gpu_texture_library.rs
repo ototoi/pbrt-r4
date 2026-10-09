@@ -5,8 +5,9 @@ use pbrt_r4::gpu::flat::texture::{
     compile_texture_library, evaluate_texture_root, evaluate_texture_root_at,
     evaluate_texture_root_with_context, ColorSpace, ImageCompiler, ImageDecoder, ImageFilterMode,
     ImageOptimizationPolicy, ImageValueType, ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel,
-    MipmapLevelData, TextureEvaluationContext, TextureInstruction, TextureRoot, TextureRootSpec,
-    TextureValue, TextureValueType,
+    MipmapLevelData, TextureEvaluationContext, TextureInstruction,
+    TextureMapping as FlatTextureMapping, TextureRoot, TextureRootSpec, TextureValue,
+    TextureValueType, UvMapping as FlatUvMapping,
 };
 use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{
@@ -578,7 +579,7 @@ fn image_instruction_keeps_sampling_interpretation() {
     assert!(matches!(
         &library.programs[0].instructions[0],
         TextureInstruction::SampleImage {
-            mapping: Some(TextureMapping::Uv(UvMapping { uscale: 2.0, .. })),
+            mapping: Some(FlatTextureMapping::Uv(FlatUvMapping { uscale: 2.0, .. })),
             ..
         }
     ));
@@ -965,4 +966,101 @@ fn spectrum_bilerp(name: &str, value: [f32; 3]) -> Arc<TextureNode> {
             .push(spectrum_constant(&format!("{name}:{slot}"), value));
     }
     Arc::new(node)
+}
+
+#[test]
+fn compiled_mappings_preserve_values_through_webgpu_lowering() {
+    let matrix = [
+        2.0, 0.25, -0.0, 3.0, 0.5, 4.0, 0.75, 5.0, 1.25, 1.5, 6.0, 7.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    let transform = Transform { matrix };
+    let uv = UvMapping {
+        uscale: 2.0,
+        vscale: 3.0,
+        udelta: 0.125,
+        vdelta: -0.25,
+    };
+    let uv_matrix = [
+        2.0, 0.0, 0.0, 0.125, 0.0, 3.0, 0.0, -0.25, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    let cases = [
+        (
+            TextureMapping::Uv(uv),
+            FlatTextureMapping::Uv(FlatUvMapping {
+                uscale: uv.uscale,
+                vscale: uv.vscale,
+                udelta: uv.udelta,
+                vdelta: uv.vdelta,
+            }),
+            0,
+            uv_matrix,
+        ),
+        (
+            TextureMapping::Planar(transform.clone()),
+            FlatTextureMapping::Planar(matrix),
+            1,
+            matrix,
+        ),
+        (
+            TextureMapping::Spherical(transform.clone()),
+            FlatTextureMapping::Spherical(matrix),
+            2,
+            matrix,
+        ),
+        (
+            TextureMapping::Cylindrical(transform.clone()),
+            FlatTextureMapping::Cylindrical(matrix),
+            3,
+            matrix,
+        ),
+        (
+            TextureMapping::PointTransform(transform),
+            FlatTextureMapping::PointTransform(matrix),
+            4,
+            matrix,
+        ),
+    ];
+    for (source, expected, kind, expected_matrix) in cases {
+        let mut root = TextureNode::new("mapped-bilerp");
+        root.components.push(TextureComponent::Texture(Texture {
+            name: "bilerp".to_string(),
+            kind: TextureKind::Float,
+            params: ParameterDictionary::default(),
+        }));
+        root.components.push(TextureComponent::Mapping(source));
+        root.children.extend([
+            float_constant("v00", 0.0),
+            float_constant("v01", 1.0),
+            float_constant("v10", 2.0),
+            float_constant("v11", 3.0),
+        ]);
+        let library = compile_texture_library(&[TextureRootSpec::Float {
+            node: Arc::new(root),
+        }])
+        .unwrap();
+        let actual = library.programs[0]
+            .instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                TextureInstruction::Procedural { mapping, .. } => *mapping,
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(actual, expected);
+        let (records, _, _) =
+            pbrt_r4::gpu::webgpu::scene::lower_texture_library_records(&library).unwrap();
+        let record = records
+            .iter()
+            .find(|record| record.operation == pbrt_r4::gpu::webgpu::abi::TEXTURE_OPERATION_BILERP)
+            .unwrap();
+        assert_eq!(record.mapping_kind, kind);
+        for column in 0..4 {
+            for row in 0..4 {
+                assert_eq!(
+                    record.mapping[column][row].to_bits(),
+                    expected_matrix[row * 4 + column].to_bits()
+                );
+            }
+        }
+    }
 }
