@@ -13,11 +13,12 @@ impl MaterialTable {
     pub fn from_flat(scene: &flat::Scene) -> Result<Self, PbrtError> {
         let mut attributes = Vec::new();
         let nodes = scene
-            .material_nodes
+            .materials
+            .nodes
             .iter()
             .map(|material| {
                 if material.kind == "subsurface" {
-                    if material.bssrdf_index as usize >= scene.bssrdfs.len() {
+                    if material.bssrdf_index as usize >= scene.materials.bssrdfs.len() {
                         return Err(PbrtError::error(
                             "Subsurface material references an invalid BSSRDF.",
                         ));
@@ -56,7 +57,8 @@ impl MaterialTable {
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
         let roots = scene
-            .material_roots
+            .materials
+            .roots
             .iter()
             .map(|layout| MaterialRoot {
                 node_offset: layout.node_offset,
