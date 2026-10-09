@@ -1,7 +1,7 @@
 use super::texture::TextureLibrary;
 use super::{
-    Camera, DenseSpectrum, Film, Geometry, Instance, LightGeometryKind, LightKind, LightResources,
-    MaterialResources, Medium, Output, RenderSettings, Vertex, Viewport, INVALID_INDEX,
+    Camera, DenseSpectrum, Film, GeometryResources, Instance, LightGeometryKind, LightKind,
+    LightResources, MaterialResources, Medium, Output, RenderSettings, Viewport, INVALID_INDEX,
 };
 use crate::util::error::PbrtError;
 
@@ -13,9 +13,8 @@ pub struct Scene {
     pub output: Output,
     pub render_settings: RenderSettings,
     pub lights: LightResources,
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-    pub geometries: Vec<Geometry>,
+    /// Packed geometry arrays addressed by `Instance::geometry`.
+    pub geometry: GeometryResources,
     pub instances: Vec<Instance>,
     pub media: Vec<Medium>,
     pub materials: MaterialResources,
