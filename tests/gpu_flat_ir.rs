@@ -195,11 +195,11 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
 
     assert_eq!(scene.geometry.vertices.len(), 6);
     assert_eq!(scene.geometry.indices, vec![0, 1, 2, 3, 4, 5]);
-    assert_eq!(scene.spectrum_attributes.len(), 5);
+    assert_eq!(scene.attributes.spectra.len(), 5);
     assert_eq!(scene.film.sensor_response, [0, 1, 2]);
     assert_eq!(scene.film.imaging_ratio, 1.0);
-    validate_dense_spectra(&scene.spectrum_attributes).unwrap();
-    assert_eq!(scene.scalar_attributes.len(), 3);
+    validate_dense_spectra(&scene.attributes.spectra).unwrap();
+    assert_eq!(scene.attributes.scalars.len(), 3);
     assert_eq!(scene.materials.nodes[0].attributes.len(), 1);
     assert_eq!(scene.materials.nodes[1].attributes.len(), 4);
     assert_eq!(
@@ -470,11 +470,11 @@ fn flatten_node_accepts_homogeneous_scattering() {
     assert_eq!(scene.media.len(), 1);
     let medium = &scene.media[0];
     assert_eq!(medium.name, "scattering-medium");
-    assert!(scene.spectrum_attributes[medium.sigma_s as usize]
+    assert!(scene.attributes.spectra[medium.sigma_s as usize]
         .samples
         .iter()
         .all(|sample| *sample > 0.0));
-    assert!(scene.spectrum_attributes[medium.le as usize]
+    assert!(scene.attributes.spectra[medium.le as usize]
         .samples
         .iter()
         .all(|sample| *sample == 0.0));
@@ -682,7 +682,7 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
     assert_eq!(scene.lights.primitive_distribution_map.entries, vec![0, 1]);
     let scale = &scene.lights.lights[0].attributes[1];
     let expected = 1.0 / spectrum_to_photometric(&Spectrum::from(1.0));
-    assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
+    assert!((scene.attributes.scalars[scale.index as usize] - expected).abs() < 1e-6);
 }
 
 #[test]
@@ -1015,7 +1015,7 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     let scale = &scene.lights.lights[0].attributes[1];
     let intensity = Spectrum::from_rgb(&[2.0, 2.0, 2.0], SpectrumType::Illuminant);
     let expected = 1.0 / spectrum_to_photometric(&intensity);
-    assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
+    assert!((scene.attributes.scalars[scale.index as usize] - expected).abs() < 1e-6);
 }
 
 #[test]
@@ -1209,11 +1209,11 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
         ]
     );
 
-    let cos_start = scene.scalar_attributes[scene.lights.lights[0].attributes[2].index as usize];
-    let cos_end = scene.scalar_attributes[scene.lights.lights[0].attributes[3].index as usize];
+    let cos_start = scene.attributes.scalars[scene.lights.lights[0].attributes[2].index as usize];
+    let cos_end = scene.attributes.scalars[scene.lights.lights[0].attributes[3].index as usize];
     assert!((cos_start - 30.0_f32.to_radians().cos()).abs() < 1e-6);
     assert!((cos_end - 40.0_f32.to_radians().cos()).abs() < 1e-6);
-    let scale = scene.scalar_attributes[scene.lights.lights[0].attributes[1].index as usize];
+    let scale = scene.attributes.scalars[scene.lights.lights[0].attributes[1].index as usize];
     let intensity = Spectrum::from(1.0);
     let k_e = 2.0 * PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
     let expected_scale = 10.0 / (spectrum_to_photometric(&intensity) * k_e);
@@ -1791,7 +1791,7 @@ fn flatten_node_prepares_equal_area_infinite_image_and_transform() {
     assert_eq!(light.attributes.len(), 3);
     assert_eq!(light.attributes[2].name, "image-illuminant");
     let actual =
-        evaluate_dense_spectrum(&scene.spectrum_attributes, light.attributes[2].index, 450.0)
+        evaluate_dense_spectrum(&scene.attributes.spectra, light.attributes[2].index, 450.0)
             .unwrap();
     assert!((actual - SRGB.illuminant.sample_at(450.0)).abs() < 1e-6);
 }
@@ -1850,7 +1850,7 @@ fn flatten_node_uses_color_space_illuminant_for_default_light_spectra() {
     let expected = ACES2065_1.illuminant.sample_at(450.0);
     for light in [&scene.lights.lights[0], &scene.lights.infinite_lights[0]] {
         let actual =
-            evaluate_dense_spectrum(&scene.spectrum_attributes, light.attributes[0].index, 450.0)
+            evaluate_dense_spectrum(&scene.attributes.spectra, light.attributes[0].index, 450.0)
                 .unwrap();
         assert!((actual - expected).abs() < 1e-6);
     }
@@ -1906,7 +1906,7 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
     let attribute = &scene.materials.nodes[0].attributes[0];
     let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
     assert!(
-        scene.spectrum_attributes[attribute.index as usize].samples[..3]
+        scene.attributes.spectra[attribute.index as usize].samples[..3]
             .iter()
             .all(|v| v.is_finite())
     );
@@ -1952,7 +1952,7 @@ fn flatten_node_extracts_diffuse_transmission_attributes() {
     assert_eq!(material.attributes[1].name, "transmittance");
     assert_eq!(material.attributes[2].name, "scale");
     assert_eq!(
-        scene.scalar_attributes[material.attributes[2].index as usize],
+        scene.attributes.scalars[material.attributes[2].index as usize],
         1.0
     );
 }
@@ -1994,13 +1994,13 @@ fn flatten_node_extracts_dielectric_eta() {
     );
     let attribute = &scene.materials.nodes[0].attributes[0];
     assert!(
-        (evaluate_dense_spectrum(&scene.spectrum_attributes, attribute.index, 550.0).unwrap()
+        (evaluate_dense_spectrum(&scene.attributes.spectra, attribute.index, 550.0).unwrap()
             - 1.33)
             .abs()
             < 1e-5
     );
     assert_eq!(
-        scene.spectrum_attributes[attribute.index as usize].flags
+        scene.attributes.spectra[attribute.index as usize].flags
             & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
         pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT
     );
@@ -2032,7 +2032,7 @@ fn flatten_dielectric_named_eta_keeps_nonconstant_spectrum_flag() {
     let eta = &scene.materials.nodes[0].attributes[0];
     assert_eq!(eta.name, "eta");
     assert_eq!(
-        scene.spectrum_attributes[eta.index as usize].flags
+        scene.attributes.spectra[eta.index as usize].flags
             & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
         0
     );
@@ -2118,7 +2118,7 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
     assert_eq!(material.attributes[13].name, "reflectance");
     assert_eq!(material.attributes[14].name, "use_reflectance");
     assert_eq!(
-        scene.scalar_attributes[material.attributes[14].index as usize],
+        scene.attributes.scalars[material.attributes[14].index as usize],
         1.0,
     );
     assert_eq!(
@@ -2166,7 +2166,7 @@ fn flatten_coated_materials_keep_nonconstant_interface_eta_flags() {
         assert_eq!(material.kind, kind);
         assert_eq!(eta.name, name);
         assert_eq!(
-            scene.spectrum_attributes[eta.index as usize].flags
+            scene.attributes.spectra[eta.index as usize].flags
                 & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
             0
         );
@@ -2279,16 +2279,16 @@ fn flatten_node_extracts_conductor_attributes() {
     assert_eq!(scene.materials.nodes[0].attributes.len(), 4);
     let remap = &scene.materials.nodes[0].attributes[3];
     assert_eq!(remap.name, "remaproughness");
-    assert_eq!(scene.scalar_attributes[remap.index as usize], 1.0);
+    assert_eq!(scene.attributes.scalars[remap.index as usize], 1.0);
     for attribute in &scene.materials.nodes[0].attributes[..2] {
         let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
         assert!(
-            scene.spectrum_attributes[attribute.index as usize].samples[..3]
+            scene.attributes.spectra[attribute.index as usize].samples[..3]
                 .iter()
                 .all(|v| v.is_finite() && *v > 0.0)
         );
     }
-    assert_eq!(scene.scalar_attributes[0], 0.0);
+    assert_eq!(scene.attributes.scalars[0], 0.0);
 }
 
 #[test]
@@ -2318,7 +2318,7 @@ fn flatten_node_keeps_conductor_reflectance_layout_separate() {
     assert_eq!(scene.materials.nodes[0].attributes.len(), 3);
     let remap = &scene.materials.nodes[0].attributes[2];
     assert_eq!(remap.name, "remaproughness");
-    assert_eq!(scene.scalar_attributes[remap.index as usize], 1.0);
+    assert_eq!(scene.attributes.scalars[remap.index as usize], 1.0);
     assert_eq!(scene.materials.nodes[0].attributes[0].name, "reflectance");
     assert_eq!(scene.materials.nodes[0].attributes[1].name, "roughness");
 }
@@ -2479,7 +2479,7 @@ fn flatten_node_preserves_disabled_conductor_roughness_remapping() {
         let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
         let remap = scene.materials.nodes[0].attributes.last().unwrap();
         assert_eq!(remap.name, "remaproughness");
-        assert_eq!(scene.scalar_attributes[remap.index as usize], 0.0);
+        assert_eq!(scene.attributes.scalars[remap.index as usize], 0.0);
     }
 }
 
@@ -2551,7 +2551,7 @@ fn flatten_subsurface_preserves_all_coefficient_variants() {
     }
     let sample = |index: usize, slot: usize, lambda: f32| {
         evaluate_dense_spectrum(
-            &scene.spectrum_attributes,
+            &scene.attributes.spectra,
             scene.materials.bssrdfs[index].coefficients[slot].index,
             lambda,
         )
@@ -2692,12 +2692,12 @@ fn flatten_subsurface_keeps_scalar_eta_and_surface_roughness() {
     let attributes = &scene.materials.nodes[0].attributes;
     assert_eq!(scene.materials.bssrdfs[0].eta, 1.4);
     assert_eq!(
-        evaluate_dense_spectrum(&scene.spectrum_attributes, attributes[0].index, 550.0).unwrap(),
+        evaluate_dense_spectrum(&scene.attributes.spectra, attributes[0].index, 550.0).unwrap(),
         1.4
     );
-    assert_eq!(scene.scalar_attributes[attributes[1].index as usize], 0.3);
-    assert_eq!(scene.scalar_attributes[attributes[2].index as usize], 0.2);
-    assert_eq!(scene.scalar_attributes[attributes[3].index as usize], 0.0);
+    assert_eq!(scene.attributes.scalars[attributes[1].index as usize], 0.3);
+    assert_eq!(scene.attributes.scalars[attributes[2].index as usize], 0.2);
+    assert_eq!(scene.attributes.scalars[attributes[3].index as usize], 0.0);
 }
 
 #[test]
@@ -2741,7 +2741,7 @@ fn flatten_surface_roughness_prefers_axis_constants_over_common_texture() {
                 if axes.contains(&axis) {
                     assert_eq!(attributes[slot].kind, AttributeKind::Scalar);
                     assert_eq!(
-                        scene.scalar_attributes[attributes[slot].index as usize],
+                        scene.attributes.scalars[attributes[slot].index as usize],
                         0.3
                     );
                 } else {

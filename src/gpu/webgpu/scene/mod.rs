@@ -117,14 +117,14 @@ impl Scene {
             ));
         }
         let instances = convert_instances(&flat, geometries.len())?;
-        let media = convert_media(&flat.media, flat.spectrum_attributes.len())?;
+        let media = convert_media(&flat.media, flat.attributes.spectra.len())?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
         let measured_records = MeasuredBsdfRecords::from_flat(&flat.materials.measured_bsdfs);
         let measured_bsdfs = measured_records.bsdfs;
         let measured_tables = measured_records.tables;
         flat.texture_library.validate()?;
-        let scalar_attributes = flat.scalar_attributes.clone();
+        let scalar_attributes = flat.attributes.scalars.clone();
         // Keep the infinite-image sampler first. pbrt-v4 uses nearest lookup
         // for ImageInfiniteLight after equal-area sphere-to-square mapping.
         let (texture_views, material_view_offset) = scene_texture_views(&flat);
@@ -318,7 +318,7 @@ impl Scene {
                 })
                 .collect()
         };
-        let spectrum_attributes = convert_spectra(&flat.spectrum_attributes)?;
+        let spectrum_attributes = convert_spectra(&flat.attributes.spectra)?;
         let spectrum_attribute_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 dense spectra SBO"),
