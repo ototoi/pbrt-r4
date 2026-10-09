@@ -31,6 +31,7 @@ use super::material::MaterialTable;
 use super::output::Output;
 use super::render_settings::RenderSettings;
 use super::sampler::SamplerResources;
+use super::stages::ResourceId;
 
 mod geometry;
 mod texture;
@@ -843,6 +844,63 @@ impl Scene {
             render_settings: RenderSettings::from_flat(flat.render_settings),
             acceleration,
         })
+    }
+
+    pub fn binding_resource(&self, resource: ResourceId) -> Option<wgpu::BindingResource<'_>> {
+        match resource {
+            ResourceId::Tlas => Some(wgpu::BindingResource::AccelerationStructure(
+                &self.acceleration.tlas,
+            )),
+            ResourceId::Vertex => Some(self.vertex_buffer.as_entire_binding()),
+            ResourceId::Index => Some(self.index_buffer.as_entire_binding()),
+            ResourceId::Geometry => Some(self.geometry_buffer.as_entire_binding()),
+            ResourceId::Instance => Some(self.instance_buffer.as_entire_binding()),
+            ResourceId::Medium => Some(self.medium_buffer.as_entire_binding()),
+            ResourceId::BSSRDFMaterial => Some(self.bssrdf_material_buffer.as_entire_binding()),
+            ResourceId::BSSRDFTable => Some(self.bssrdf_tables.records.as_entire_binding()),
+            ResourceId::BSSRDFValues => Some(self.bssrdf_tables.values.as_entire_binding()),
+            ResourceId::SamplerParams | ResourceId::SamplerTable => {
+                self.sampler.bindings().resource(resource)
+            }
+            ResourceId::MaterialRoot => Some(self.material_root_buffer.as_entire_binding()),
+            ResourceId::MaterialNode => Some(self.material_node_buffer.as_entire_binding()),
+            ResourceId::AttributeRef => Some(self.attribute_ref_buffer.as_entire_binding()),
+            ResourceId::ScalarAttribute => Some(self.scalar_attribute_buffer.as_entire_binding()),
+            ResourceId::SpectrumAttribute => {
+                Some(self.spectrum_attribute_buffer.as_entire_binding())
+            }
+            ResourceId::MeasuredBsdf => Some(self.measured_bsdf_buffer.as_entire_binding()),
+            ResourceId::MeasuredTable => Some(self.measured_table_buffer.as_entire_binding()),
+            ResourceId::TextureRoot => Some(self.texture_root_buffer.as_entire_binding()),
+            ResourceId::TextureNode => Some(self.texture_node_buffer.as_entire_binding()),
+            ResourceId::TextureChild => Some(self.texture_child_buffer.as_entire_binding()),
+            ResourceId::RgbSpectrumTable => {
+                Some(self.rgb_spectrum_table_buffer.as_entire_binding())
+            }
+            ResourceId::LightRecord => Some(self.light_record_buffer.as_entire_binding()),
+            ResourceId::LightSamplingModel => {
+                Some(self.light_sampling_model_buffer.as_entire_binding())
+            }
+            ResourceId::LightPosition => Some(self.light_position_buffer.as_entire_binding()),
+            ResourceId::TriangleDistribution => Some(self.distribution_buffer.as_entire_binding()),
+            ResourceId::PortalInfiniteLight => Some(self.portal_image_buffer.as_entire_binding()),
+            ResourceId::PortalDistribution => {
+                Some(self.portal_distribution_buffer.as_entire_binding())
+            }
+            ResourceId::ImageInfiniteSampling => {
+                Some(self.image_infinite_sampling_buffer.as_entire_binding())
+            }
+            ResourceId::ImageInfiniteDistribution => {
+                Some(self.image_infinite_distribution_buffer.as_entire_binding())
+            }
+            ResourceId::ImageInfiniteRowCdf => {
+                Some(self.image_infinite_row_cdf_buffer.as_entire_binding())
+            }
+            ResourceId::LightBvhHeader => Some(self.light_bvh_header_buffer.as_entire_binding()),
+            ResourceId::LightBvhNode => Some(self.light_bvh_node_buffer.as_entire_binding()),
+            ResourceId::LightLeaf => Some(self.light_leaf_buffer.as_entire_binding()),
+            _ => None,
+        }
     }
 
     pub fn replace_material_kind(&mut self, kind: MaterialKind) {
