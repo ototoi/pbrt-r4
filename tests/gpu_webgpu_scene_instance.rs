@@ -56,7 +56,7 @@ fn instance() -> flat::Instance {
 fn preserves_instance_order_matrices_indices_and_orientation_bits() {
     let mut scene = empty_flat_scene();
     scene.geometries = vec![flat::Geometry::default(); 2];
-    scene.material_roots = vec![
+    scene.materials.roots = vec![
         flat::MaterialRoot {
             node_offset: 0,
             node_count: 1

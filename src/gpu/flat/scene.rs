@@ -1,8 +1,7 @@
 use super::texture::TextureLibrary;
 use super::{
     Camera, DenseSpectrum, Film, Geometry, Instance, LightGeometryKind, LightKind, LightResources,
-    MaterialNode, MaterialRoot, MeasuredBsdfResources, Medium, Output, RenderSettings,
-    TabulatedBSSRDFTable, Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    MaterialResources, Medium, Output, RenderSettings, Vertex, Viewport, INVALID_INDEX,
 };
 use crate::util::error::PbrtError;
 
@@ -19,15 +18,11 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub media: Vec<Medium>,
-    pub material_roots: Vec<MaterialRoot>,
-    pub material_nodes: Vec<MaterialNode>,
-    pub bssrdfs: Vec<BSSRDF>,
-    pub bssrdf_tables: Vec<TabulatedBSSRDFTable>,
+    pub materials: MaterialResources,
     pub scalar_attributes: Vec<f32>,
     /// Typed, backend-independent texture programs and shared image resources.
     pub texture_library: TextureLibrary,
     pub spectrum_attributes: Vec<DenseSpectrum>,
-    pub measured_bsdfs: MeasuredBsdfResources,
 }
 
 impl LightResources {

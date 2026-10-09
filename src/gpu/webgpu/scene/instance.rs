@@ -31,7 +31,7 @@ pub fn convert_instances(
                 }
             }
             if instance.material_root != INVALID_INDEX
-                && instance.material_root as usize >= flat.material_roots.len()
+                && instance.material_root as usize >= flat.materials.roots.len()
             {
                 return Err(PbrtError::error(&format!(
                     "Flat instance {index} references an invalid material."
