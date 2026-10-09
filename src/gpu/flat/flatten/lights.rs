@@ -375,14 +375,14 @@ pub fn flatten_light(
 ) -> Result<(), PbrtError> {
     if light.name == "distant" {
         let (direction, intensity, scale) = distant_light(&light, &world_transform, &name)?;
-        let direction_index = u32::try_from(builder.light_positions.len()).map_err(|_| {
+        let direction_index = u32::try_from(builder.lights.positions.len()).map_err(|_| {
             PbrtError::error("The flattened GPU light direction table exceeds u32.")
         })?;
-        builder.light_positions.push(direction);
-        let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+        builder.lights.positions.push(direction);
+        let sampling_model = u32::try_from(builder.lights.sampling_models.len()).map_err(|_| {
             PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
         })?;
-        builder.light_sampling_models.push(LightSamplingModel {
+        builder.lights.sampling_models.push(LightSamplingModel {
             kind: LightKind::Distant,
             geometry_kind: LightGeometryKind::Direction,
             geometry_index: direction_index,
@@ -395,7 +395,7 @@ pub fn flatten_light(
         });
         let i_attr = push_spectrum_attribute(builder, "L", &intensity)?;
         let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
-        builder.infinite_lights.push(Light {
+        builder.lights.infinite_records.push(Light {
             kind: LightKind::Distant,
             attributes: vec![i_attr, scale_attr],
             sampling_model,
@@ -430,7 +430,9 @@ pub fn flatten_light(
                 )?
             } else {
                 builder
-                    .infinite_light_image_decoder
+                    .lights
+                    .infinite_resources
+                    .image_decoder
                     .decode_linear_rgb(std::path::Path::new(&filename), &encoding)?
             };
             let base_level = mipmap.levels.first().ok_or_else(|| {
@@ -485,15 +487,21 @@ pub fn flatten_light(
                     ]
                 });
                 let prepared = prepare_portal_image(&mipmap, portal, world_to_light)?;
-                let distribution_offset = u32::try_from(builder.portal_distribution.len())
-                    .map_err(|_| PbrtError::error("Portal distribution offset exceeds u32."))?;
+                let distribution_offset =
+                    u32::try_from(builder.lights.infinite_resources.portal_distribution.len())
+                        .map_err(|_| PbrtError::error("Portal distribution offset exceeds u32."))?;
                 builder
+                    .lights
+                    .infinite_resources
                     .portal_distribution
                     .extend_from_slice(&prepared.distribution);
-                let geometry_index = u32::try_from(builder.portal_infinite_lights.len())
-                    .map_err(|_| PbrtError::error("Portal image table exceeds u32."))?;
+                let geometry_index =
+                    u32::try_from(builder.lights.infinite_resources.portal_records.len())
+                        .map_err(|_| PbrtError::error("Portal image table exceeds u32."))?;
                 builder
-                    .portal_infinite_lights
+                    .lights
+                    .infinite_resources
+                    .portal_records
                     .push(PortalImageInfiniteLight {
                         portal: prepared.portal,
                         world_to_portal: prepared.world_to_portal,
@@ -503,14 +511,19 @@ pub fn flatten_light(
                 (prepared.mipmap, LightGeometryKind::Portal, geometry_index)
             } else if kind == LightKind::ImageInfinite {
                 let distribution = ImageInfiniteDistribution::from_mipmap(&mipmap)?;
-                let distribution_offset = u32::try_from(builder.image_infinite_distribution.len())
-                    .map_err(|_| {
-                        PbrtError::error("Image infinite distribution offset exceeds u32.")
-                    })?;
-                let row_cdf_offset = u32::try_from(builder.image_infinite_row_cdf.len())
-                    .map_err(|_| PbrtError::error("Image infinite row CDF offset exceeds u32."))?;
+                let distribution_offset =
+                    u32::try_from(builder.lights.infinite_resources.image_distribution.len())
+                        .map_err(|_| {
+                            PbrtError::error("Image infinite distribution offset exceeds u32.")
+                        })?;
+                let row_cdf_offset = u32::try_from(
+                    builder.lights.infinite_resources.image_row_cdf.len(),
+                )
+                .map_err(|_| PbrtError::error("Image infinite row CDF offset exceeds u32."))?;
                 builder
-                    .image_infinite_distribution
+                    .lights
+                    .infinite_resources
+                    .image_distribution
                     .len()
                     .checked_add(distribution.texels.len())
                     .and_then(|end| u32::try_from(end).ok())
@@ -518,23 +531,31 @@ pub fn flatten_light(
                         PbrtError::error("Image infinite distribution table exceeds u32.")
                     })?;
                 builder
-                    .image_infinite_row_cdf
+                    .lights
+                    .infinite_resources
+                    .image_row_cdf
                     .len()
                     .checked_add(distribution.row_cdf.len())
                     .and_then(|end| u32::try_from(end).ok())
                     .ok_or_else(|| PbrtError::error("Image infinite row CDF table exceeds u32."))?;
                 builder
-                    .image_infinite_distribution
+                    .lights
+                    .infinite_resources
+                    .image_distribution
                     .extend_from_slice(&distribution.texels);
                 builder
-                    .image_infinite_row_cdf
+                    .lights
+                    .infinite_resources
+                    .image_row_cdf
                     .extend_from_slice(&distribution.row_cdf);
                 let geometry_index =
-                    u32::try_from(builder.image_infinite_lights.len()).map_err(|_| {
-                        PbrtError::error("Image infinite sampling record table exceeds u32.")
-                    })?;
+                    u32::try_from(builder.lights.infinite_resources.image_records.len()).map_err(
+                        |_| PbrtError::error("Image infinite sampling record table exceeds u32."),
+                    )?;
                 builder
-                    .image_infinite_lights
+                    .lights
+                    .infinite_resources
+                    .image_records
                     .push(ImageInfiniteSamplingRecord {
                         distribution_offset,
                         row_cdf_offset,
@@ -564,9 +585,9 @@ pub fn flatten_light(
             } else {
                 (mipmap, LightGeometryKind::Direction, INVALID_INDEX)
             };
-            let index = u32::try_from(builder.infinite_light_mipmaps.len())
+            let index = u32::try_from(builder.lights.infinite_resources.mipmaps.len())
                 .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
-            builder.infinite_light_mipmaps.push(mipmap);
+            builder.lights.infinite_resources.mipmaps.push(mipmap);
             (
                 index,
                 Some(illuminant),
@@ -583,10 +604,10 @@ pub fn flatten_light(
                 INVALID_INDEX,
             )
         };
-        let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+        let sampling_model = u32::try_from(builder.lights.sampling_models.len()).map_err(|_| {
             PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
         })?;
-        builder.light_sampling_models.push(LightSamplingModel {
+        builder.lights.sampling_models.push(LightSamplingModel {
             kind,
             geometry_kind,
             geometry_index,
@@ -633,7 +654,7 @@ pub fn flatten_light(
                 &illuminant,
             )?);
         }
-        builder.infinite_lights.push(Light {
+        builder.lights.infinite_records.push(Light {
             kind,
             attributes,
             sampling_model,
@@ -672,19 +693,19 @@ pub fn flatten_light(
                 )))
             }
         };
-        let position_index = u32::try_from(builder.light_positions.len())
+        let position_index = u32::try_from(builder.lights.positions.len())
             .map_err(|_| PbrtError::error("The flattened GPU light position table exceeds u32."))?;
-        builder.light_positions.push(position);
+        builder.lights.positions.push(position);
         let direction_index = if light.name == "spot" {
-            let index = u32::try_from(builder.light_positions.len()).map_err(|_| {
+            let index = u32::try_from(builder.lights.positions.len()).map_err(|_| {
                 PbrtError::error("The flattened GPU light direction table exceeds u32.")
             })?;
-            builder.light_positions.push(direction);
+            builder.lights.positions.push(direction);
             index
         } else {
             INVALID_INDEX
         };
-        let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+        let sampling_model = u32::try_from(builder.lights.sampling_models.len()).map_err(|_| {
             PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
         })?;
         let kind = if light.name == "spot" {
@@ -692,7 +713,7 @@ pub fn flatten_light(
         } else {
             LightKind::Point
         };
-        builder.light_sampling_models.push(LightSamplingModel {
+        builder.lights.sampling_models.push(LightSamplingModel {
             kind,
             geometry_kind: LightGeometryKind::Position,
             geometry_index: position_index,
@@ -703,8 +724,8 @@ pub fn flatten_light(
             flags: 0,
             world_to_light,
         });
-        builder.light_bound_inputs.push(LightBoundInput::Point {
-            handle: u32::try_from(builder.lights.len())
+        builder.lights.bound_inputs.push(LightBoundInput::Point {
+            handle: u32::try_from(builder.lights.records.len())
                 .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
             world_position: position,
             intensity_max,
@@ -721,7 +742,7 @@ pub fn flatten_light(
             )?);
             attributes.push(push_scalar_attribute(builder, "cos_falloff_end", cos_end)?);
         }
-        builder.lights.push(Light {
+        builder.lights.records.push(Light {
             kind,
             attributes,
             sampling_model,
@@ -740,7 +761,7 @@ pub fn append_area_light(
     reverse_orientation: bool,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
-    let light_handle = u32::try_from(builder.lights.len())
+    let light_handle = u32::try_from(builder.lights.records.len())
         .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
     let triangle_count = shape.indices.len() / 3;
     if triangle_count == 0 {
@@ -749,7 +770,7 @@ pub fn append_area_light(
         )));
     }
     let (emission, emission_max, scale, two_sided) = area_light_record(&area_light, &name)?;
-    let distribution_offset = u32::try_from(builder.triangle_distributions.len())
+    let distribution_offset = u32::try_from(builder.lights.triangle_distributions.len())
         .map_err(|_| PbrtError::error("The flattened GPU distribution table exceeds u32."))?;
     let mut total_area = 0.0;
     let mut bound_triangles = Vec::with_capacity(triangle_count);
@@ -801,6 +822,7 @@ pub fn append_area_light(
                     )));
         }
         builder
+            .lights
             .triangle_distributions
             .push(TriangleDistributionEntry {
                 primitive,
@@ -809,14 +831,14 @@ pub fn append_area_light(
             });
         previous_cdf = cumulative;
     }
-    if let Some(last) = builder.triangle_distributions.last_mut() {
+    if let Some(last) = builder.lights.triangle_distributions.last_mut() {
         last.cdf = 1.0;
     }
-    let sampling_model = u32::try_from(builder.light_sampling_models.len()).map_err(|_| {
+    let sampling_model = u32::try_from(builder.lights.sampling_models.len()).map_err(|_| {
         PbrtError::error("The flattened GPU light sampling model table exceeds u32.")
     })?;
     let alpha_zero_light = area_light_has_constant_zero_alpha(material_source, builder)?;
-    builder.light_sampling_models.push(LightSamplingModel {
+    builder.lights.sampling_models.push(LightSamplingModel {
         kind: LightKind::Area,
         geometry_kind: LightGeometryKind::Instance,
         geometry_index: instance_index,
@@ -831,19 +853,22 @@ pub fn append_area_light(
     });
     let emission_attr = push_spectrum_attribute(builder, "L", &emission)?;
     let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
-    builder.lights.push(Light {
+    builder.lights.records.push(Light {
         kind: LightKind::Area,
         attributes: vec![emission_attr, scale_attr],
         sampling_model,
         image_index: INVALID_INDEX,
     });
-    builder.light_bound_inputs.push(LightBoundInput::AreaGroup {
-        handle: light_handle,
-        triangles: bound_triangles,
-        emission_max,
-        scale,
-        two_sided,
-    });
+    builder
+        .lights
+        .bound_inputs
+        .push(LightBoundInput::AreaGroup {
+            handle: light_handle,
+            triangles: bound_triangles,
+            emission_max,
+            scale,
+            two_sided,
+        });
     Ok(light_handle)
 }
 

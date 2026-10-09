@@ -84,15 +84,15 @@ pub fn flatten_node_with_material_override(
         PbrtError::error("No RGB film data was found while flattening GPU Node IR.")
     })?;
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
-    let light_bounds = build_light_bounds(&builder.light_bound_inputs)?;
-    let light_bvh = build_light_bvh(&builder.lights, &light_bounds)?;
+    let light_bounds = build_light_bounds(&builder.lights.bound_inputs)?;
+    let light_bvh = build_light_bvh(&builder.lights.records, &light_bounds)?;
     let mut texture_library = compile_texture_library(&builder.texture_root_specs)?;
     let image_offset = u32::try_from(texture_library.mipmaps.len())
         .map_err(|_| PbrtError::error("Texture mipmap table exceeds u32."))?;
     texture_library
         .mipmaps
-        .extend(builder.infinite_light_mipmaps);
-    for light in &mut builder.infinite_lights {
+        .extend(builder.lights.infinite_resources.mipmaps);
+    for light in &mut builder.lights.infinite_records {
         if light.image_index != INVALID_INDEX {
             light.image_index = light
                 .image_index
@@ -123,11 +123,11 @@ pub fn flatten_node_with_material_override(
         output,
         render_settings,
         lights: LightResources {
-            sampling_models: builder.light_sampling_models,
-            positions: builder.light_positions,
-            triangle_distributions: builder.triangle_distributions,
-            lights: builder.lights,
-            infinite_lights: builder.infinite_lights,
+            sampling_models: builder.lights.sampling_models,
+            positions: builder.lights.positions,
+            triangle_distributions: builder.lights.triangle_distributions,
+            lights: builder.lights.records,
+            infinite_lights: builder.lights.infinite_records,
             bounds: light_bounds,
             bvh: light_bvh,
             primitive_distribution_map: PrimitiveDistributionMap {
@@ -135,11 +135,11 @@ pub fn flatten_node_with_material_override(
                 entries: Vec::new(),
             },
             infinite_sampling: InfiniteLightResources {
-                portal_records: builder.portal_infinite_lights,
-                portal_distribution: builder.portal_distribution,
-                image_records: builder.image_infinite_lights,
-                image_distribution: builder.image_infinite_distribution,
-                image_row_cdf: builder.image_infinite_row_cdf,
+                portal_records: builder.lights.infinite_resources.portal_records,
+                portal_distribution: builder.lights.infinite_resources.portal_distribution,
+                image_records: builder.lights.infinite_resources.image_records,
+                image_distribution: builder.lights.infinite_resources.image_distribution,
+                image_row_cdf: builder.lights.infinite_resources.image_row_cdf,
             },
         },
         geometry: GeometryResources {
@@ -299,19 +299,7 @@ struct FlatBuilder {
     output: Option<Output>,
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
-    light_sampling_models: Vec<LightSamplingModel>,
-    light_positions: Vec<[f32; 3]>,
-    triangle_distributions: Vec<TriangleDistributionEntry>,
-    lights: Vec<Light>,
-    infinite_lights: Vec<Light>,
-    light_bound_inputs: Vec<LightBoundInput>,
-    infinite_light_mipmaps: Vec<Arc<super::texture::Mipmap>>,
-    infinite_light_image_decoder: super::texture::ImageDecoder,
-    portal_infinite_lights: Vec<PortalImageInfiniteLight>,
-    portal_distribution: Vec<PortalDistributionTexel>,
-    image_infinite_lights: Vec<ImageInfiniteSamplingRecord>,
-    image_infinite_distribution: Vec<ImageInfiniteDistributionTexel>,
-    image_infinite_row_cdf: Vec<f32>,
+    lights: LightBuilder,
 }
 
 #[derive(Default)]
@@ -329,4 +317,26 @@ struct MaterialBuilder {
     bssrdfs: Vec<BSSRDF>,
     bssrdf_tables: Vec<TabulatedBSSRDFTable>,
     measured_bsdf_library: super::MeasuredBsdfLibrary,
+}
+
+#[derive(Default)]
+struct LightBuilder {
+    sampling_models: Vec<LightSamplingModel>,
+    positions: Vec<[f32; 3]>,
+    triangle_distributions: Vec<TriangleDistributionEntry>,
+    records: Vec<Light>,
+    infinite_records: Vec<Light>,
+    bound_inputs: Vec<LightBoundInput>,
+    infinite_resources: InfiniteLightBuilder,
+}
+
+#[derive(Default)]
+struct InfiniteLightBuilder {
+    mipmaps: Vec<Arc<super::texture::Mipmap>>,
+    image_decoder: super::texture::ImageDecoder,
+    portal_records: Vec<PortalImageInfiniteLight>,
+    portal_distribution: Vec<PortalDistributionTexel>,
+    image_records: Vec<ImageInfiniteSamplingRecord>,
+    image_distribution: Vec<ImageInfiniteDistributionTexel>,
+    image_row_cdf: Vec<f32>,
 }
