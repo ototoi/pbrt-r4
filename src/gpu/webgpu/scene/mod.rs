@@ -12,9 +12,9 @@ use super::abi::{
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
     AttributeRef, CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord,
     LightSamplingModel, LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform,
-    MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, TriangleDistributionEntry,
-    ViewportUniform, INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
-    LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
+    MeasuredBsdfRecord, MeasuredTableRecord, TriangleDistributionEntry, ViewportUniform,
+    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX, LIGHT_KIND_AREA,
+    LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
     LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
     LIGHT_SAMPLER_KIND_BVH,
 };
@@ -34,12 +34,14 @@ use super::sampler::SamplerResources;
 use super::stages::ResourceId;
 
 mod geometry;
+pub mod medium;
 mod texture;
 mod upload;
 
 pub use texture::{lower_texture_library_records, texture_binding_counts};
 
 use geometry::{convert_geometry, validate_instance_area_lights};
+use medium::convert_media;
 use texture::{
     infinite_image_payload, lower_texture_library, scene_texture_views, texture_binding_plan,
     validate_image_infinite_buffer_size,
@@ -166,36 +168,7 @@ impl Scene {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let media = flat
-            .media
-            .iter()
-            .enumerate()
-            .map(|(index, medium)| {
-                if medium.sigma_a as usize >= flat.spectrum_attributes.len()
-                    || medium.sigma_s as usize >= flat.spectrum_attributes.len()
-                    || medium.le as usize >= flat.spectrum_attributes.len()
-                {
-                    return Err(PbrtError::error(&format!(
-                        "Flat medium {index} references an invalid spectrum."
-                    )));
-                }
-                if medium.kind != "homogeneous" {
-                    return Err(PbrtError::error(&format!(
-                        "Flat medium \"{}\" has unsupported type \"{}\".",
-                        medium.name, medium.kind
-                    )));
-                }
-                Ok(MediumRecord {
-                    kind: 0,
-                    sigma_a: medium.sigma_a,
-                    sigma_s: medium.sigma_s,
-                    le: medium.le,
-                    g: medium.g,
-                    padding: [0; 3],
-                    medium_to_world: row_major_to_columns(medium.transform),
-                })
-            })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
+        let media = convert_media(&flat.media, flat.spectrum_attributes.len())?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
         let measured_bsdfs = flat
