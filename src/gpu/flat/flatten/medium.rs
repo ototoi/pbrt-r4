@@ -13,7 +13,7 @@ pub fn register_medium(
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
     let medium_key = Arc::as_ptr(medium);
-    if let Some(index) = builder.media_indices_by_node.get(&medium_key) {
+    if let Some(index) = builder.medium.media_indices_by_node.get(&medium_key) {
         return Ok(*index);
     }
     if medium.kind != "homogeneous" {
@@ -107,9 +107,9 @@ pub fn register_medium(
         .intern_dense(&sigma_s_dense, 0)?;
     let le_index = builder.spectrum_table_builder.intern_dense(&le_dense, 0)?;
 
-    let index = u32::try_from(builder.media.len())
+    let index = u32::try_from(builder.medium.media.len())
         .map_err(|_| PbrtError::error("Flat medium table exceeds u32."))?;
-    builder.media.push(Medium {
+    builder.medium.media.push(Medium {
         name: medium.name.clone(),
         kind: medium.kind.clone(),
         sigma_a: sigma_a_index,
@@ -118,8 +118,11 @@ pub fn register_medium(
         g: g_gpu,
         transform: multiply_transform(world_transform, &medium.transform.matrix),
     });
-    builder.media_indices_by_node.insert(medium_key, index);
-    builder.medium_refs.push(Arc::clone(medium));
+    builder
+        .medium
+        .media_indices_by_node
+        .insert(medium_key, index);
+    builder.medium.medium_refs.push(Arc::clone(medium));
     Ok(index)
 }
 
@@ -133,6 +136,7 @@ pub fn resolve_medium_reference(
         return Ok(INVALID_INDEX);
     };
     builder
+        .medium
         .media_indices_by_node
         .get(&Arc::as_ptr(medium))
         .copied()
