@@ -1579,6 +1579,81 @@ fn light_validation_preserves_image_record_error_order_before_portal_image_looku
 }
 
 #[test]
+fn light_validation_preserves_order_between_internal_data_and_references() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(1, 1, vec![255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("image", "infinite", params.clone()));
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    );
+    root.add_child(light_node("portal", "infinite", params));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let mut cases = Vec::new();
+
+    let mut invalid = scene.clone();
+    invalid.lights.primitive_distribution_map.offsets.clear();
+    invalid.lights.infinite_sampling.portal_records.clear();
+    cases.push((
+        invalid,
+        "Primitive distribution map offsets do not match area lights.",
+    ));
+
+    let mut invalid = scene.clone();
+    invalid.lights.infinite_sampling.portal_records.clear();
+    invalid.lights.infinite_sampling.image_records.clear();
+    cases.push((
+        invalid,
+        "Portal infinite lights and geometry records are not one-to-one.",
+    ));
+
+    let mut invalid = scene.clone();
+    invalid.lights.infinite_sampling.portal_distribution[0].function = f32::NAN;
+    invalid.lights.infinite_sampling.image_records.clear();
+    cases.push((
+        invalid,
+        "Portal infinite light 0 distribution contains a non-finite value.",
+    ));
+
+    let mut invalid = scene.clone();
+    invalid.lights.infinite_sampling.image_distribution[0].conditional_cdf = f32::NAN;
+    for light in &mut invalid.lights.infinite_lights {
+        light.image_index = INVALID_INDEX;
+    }
+    cases.push((
+        invalid,
+        "Image infinite light 0 has an invalid conditional CDF.",
+    ));
+
+    let mut invalid = scene;
+    for light in &mut invalid.lights.infinite_lights {
+        light.image_index = INVALID_INDEX;
+    }
+    cases.push((
+        invalid,
+        "Portal infinite light references an invalid image.",
+    ));
+
+    for (invalid, expected) in cases {
+        let error = invalid
+            .lights
+            .validate_consistency(&invalid.texture_library)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "expected {expected}, got {error}");
+    }
+}
+
+#[test]
 fn flatten_node_rejects_portal_without_an_image_source() {
     let mut params = ParameterDictionary::default();
     params.add_point(

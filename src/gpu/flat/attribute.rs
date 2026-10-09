@@ -12,9 +12,13 @@ pub struct AttributeResources {
 /// The kind of value referenced by a flattened material or light parameter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttributeKind {
+    /// Index into `Scene::attributes.scalars`.
     Scalar,
+    /// Index into `Scene::attributes.spectra`.
     Spectrum,
+    /// Root index into `Scene::texture_library.roots`.
     Texture,
+    /// Record index into `Scene::materials.measured_bsdfs.bsdfs`.
     Measured,
 }
 
