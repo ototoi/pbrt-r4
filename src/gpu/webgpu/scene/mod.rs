@@ -7,12 +7,10 @@ use crate::gpu::flat::texture::{ImageFilterMode, ImageWrapMode};
 use crate::util::error::PbrtError;
 
 use super::abi::{
-    camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
-    light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
+    camera_uniform, film_uniform, light_table_uniform, material_table_uniform, viewport_uniform,
     CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
     LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, ViewportUniform,
-    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
-    LIGHT_SAMPLER_KIND_BVH,
+    INVALID_INDEX, LIGHT_SAMPLER_KIND_BVH,
 };
 use super::acceleration::{self, Acceleration};
 use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
@@ -27,6 +25,7 @@ use super::sampler::SamplerResources;
 use super::stages::ResourceId;
 
 mod geometry;
+pub mod instance;
 pub mod light;
 pub mod medium;
 mod texture;
@@ -35,7 +34,8 @@ mod upload;
 pub use texture::{lower_texture_library_records, texture_binding_counts};
 
 use geometry::convert_geometry;
-use light::{convert_lights, validate_instance_area_lights, LightSamplingData};
+use instance::convert_instances;
+use light::{convert_lights, LightSamplingData};
 use medium::convert_media;
 use texture::{
     infinite_image_payload, lower_texture_library, scene_texture_views, texture_binding_plan,
@@ -114,55 +114,7 @@ impl Scene {
                 "Flat camera references an invalid medium.",
             ));
         }
-        let instances = flat
-            .instances
-            .iter()
-            .enumerate()
-            .map(|(index, instance)| {
-                if instance.geometry as usize >= geometries.len() {
-                    return Err(PbrtError::error(&format!(
-                        "Flat instance {index} references an invalid geometry."
-                    )));
-                }
-                for (side, medium_id) in [
-                    ("inside", instance.inside_medium),
-                    ("outside", instance.outside_medium),
-                ] {
-                    if medium_id != INVALID_INDEX && medium_id as usize >= flat.media.len() {
-                        return Err(PbrtError::error(&format!(
-                            "Flat instance {index} references an invalid {side} medium."
-                        )));
-                    }
-                }
-                if instance.material_root != INVALID_INDEX
-                    && instance.material_root as usize >= flat.material_roots.len()
-                {
-                    return Err(PbrtError::error(&format!(
-                        "Flat instance {index} references an invalid material."
-                    )));
-                }
-                validate_instance_area_lights(index, instance, &flat)?;
-                let label = format!("Flat instance {index}");
-                Ok(Instance {
-                    geometry: instance.geometry,
-                    material_root: instance.material_root,
-                    area_light: instance.area_light,
-                    orientation_flags: instance_orientation_flags(
-                        instance.reverse_orientation,
-                        flat::transform_swaps_handedness(instance.transform),
-                    ) | if instance.shape_transform_swaps_handedness {
-                        INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS
-                    } else {
-                        0
-                    },
-                    medium_inside: instance.inside_medium,
-                    medium_outside: instance.outside_medium,
-                    padding: [0; 2],
-                    world_from_object: row_major_to_columns(instance.transform),
-                    normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let instances = convert_instances(&flat, geometries.len())?;
         let media = convert_media(&flat.media, flat.spectrum_attributes.len())?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
