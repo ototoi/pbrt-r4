@@ -8,6 +8,8 @@ use super::abi::{
 };
 use crate::util::error::PbrtError;
 
+use super::stages::ResourceId;
+
 const QUEUE_COUNT: u64 =
     (std::mem::size_of::<QueueCounters>() / std::mem::size_of::<QueueState>()) as u64;
 const QUEUE_COUNTER_BYTES: u64 = QUEUE_COUNT * std::mem::size_of::<QueueState>() as u64;
@@ -481,6 +483,56 @@ impl Queues {
             .get(std::mem::offset_of!(QueueCounters, shadow_continuation) / 4)
             .copied()
             .unwrap_or(0))
+    }
+
+    pub fn binding_resource(&self, resource: ResourceId) -> Option<wgpu::BindingResource<'_>> {
+        match resource {
+            ResourceId::Surface => Some(self.surfaces.as_entire_binding()),
+            ResourceId::QueueCounters => Some(self.counters.as_entire_binding()),
+            ResourceId::RenderError => Some(self.render_error.as_entire_binding()),
+            ResourceId::PixelSampleState => Some(self.pixel_sample_states.as_entire_binding()),
+            ResourceId::CurrentRay => Some(self.current_rays.as_entire_binding()),
+            ResourceId::NextRay => Some(self.next_rays.as_entire_binding()),
+            ResourceId::ShadowQueue => Some(self.shadow_rays.as_entire_binding()),
+            ResourceId::MaterialRayQueue => Some(self.material_ray_indices.as_entire_binding()),
+            ResourceId::AttributesEvalWorkItems => {
+                Some(self.attributes_eval_work_items.as_entire_binding())
+            }
+            ResourceId::TextureEvalResult => Some(self.texture_eval_results.as_entire_binding()),
+            ResourceId::HitAreaRayQueue => Some(self.hit_area_ray_indices.as_entire_binding()),
+            ResourceId::EscapedRayQueue => Some(self.escaped_ray_indices.as_entire_binding()),
+            ResourceId::DirectLightSample => Some(self.direct_light_samples.as_entire_binding()),
+            ResourceId::DirectEvalQueue => Some(self.direct_eval_ray_indices.as_entire_binding()),
+            ResourceId::ScatterDiffuseQueue => {
+                Some(self.scatter_diffuse_ray_indices.as_entire_binding())
+            }
+            ResourceId::ScatterDiffuseTransmissionQueue => Some(
+                self.scatter_diffuse_transmission_ray_indices
+                    .as_entire_binding(),
+            ),
+            ResourceId::ScatterConductorQueue => {
+                Some(self.scatter_conductor_ray_indices.as_entire_binding())
+            }
+            ResourceId::ScatterDielectricQueue => {
+                Some(self.scatter_dielectric_ray_indices.as_entire_binding())
+            }
+            ResourceId::ScatterThinDielectricQueue => {
+                Some(self.scatter_thin_dielectric_ray_indices.as_entire_binding())
+            }
+            ResourceId::ScatterMeasuredQueue => {
+                Some(self.scatter_measured_ray_indices.as_entire_binding())
+            }
+            ResourceId::ScatterCoatedQueue => {
+                Some(self.scatter_coated_ray_indices.as_entire_binding())
+            }
+            ResourceId::ActiveMediumIndices => Some(self.active_medium_indices.as_entire_binding()),
+            ResourceId::NextMediumIndices => Some(self.next_medium_indices.as_entire_binding()),
+            ResourceId::ActiveShadowIndices => Some(self.active_shadow_indices.as_entire_binding()),
+            ResourceId::NextShadowIndices => Some(self.next_shadow_indices.as_entire_binding()),
+            ResourceId::MediumScatterQueue => Some(self.medium_scatter_indices.as_entire_binding()),
+            ResourceId::QueueDispatchArgs => Some(self.queue_dispatch_args.as_entire_binding()),
+            _ => None,
+        }
     }
 
     fn read_words(&self, device: &wgpu::Device) -> Result<Vec<u32>, PbrtError> {
