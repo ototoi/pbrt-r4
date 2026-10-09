@@ -9,8 +9,8 @@ use crate::util::error::PbrtError;
 use super::abi::{
     camera_uniform, film_uniform, light_table_uniform, material_table_uniform, viewport_uniform,
     CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, ViewportUniform,
-    INVALID_INDEX, LIGHT_SAMPLER_KIND_BVH,
+    LightTableUniform, MaterialNode, MaterialTableUniform, ViewportUniform, INVALID_INDEX,
+    LIGHT_SAMPLER_KIND_BVH,
 };
 use super::acceleration::{self, Acceleration};
 use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
@@ -223,17 +223,9 @@ impl Scene {
             contents: buffer_contents(&media),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let material_roots = flat
-            .material_roots
-            .iter()
-            .map(|layout| MaterialRoot {
-                node_offset: layout.node_offset,
-                node_count: layout.node_count,
-            })
-            .collect::<Vec<_>>();
         let material_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material tree layouts SBO"),
-            contents: buffer_contents(&material_roots),
+            contents: buffer_contents(&material_table.roots),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let material_node_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

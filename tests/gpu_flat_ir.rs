@@ -2116,12 +2116,29 @@ fn material_table_uses_generic_attribute_ranges() {
     use pbrt_r4::gpu::webgpu::material::MaterialTable;
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());
-    for kind in ["diffuse", "dielectric", "diffuse", "thindielectric"] {
+    for kind in [
+        "diffuse",
+        "coateddiffuse",
+        "dielectric",
+        "diffuse",
+        "thindielectric",
+    ] {
         root.add_child(triangle_node(kind, kind, [0.0; 3]));
     }
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let table = MaterialTable::from_flat(&scene).unwrap();
     assert_eq!(table.nodes.len(), scene.material_nodes.len());
+    assert_eq!(table.roots.len(), scene.material_roots.len());
+    assert!(table.roots.iter().any(|root| root.node_count > 1));
+    for (record, source) in table.roots.iter().zip(&scene.material_roots) {
+        assert_eq!(record.node_offset, source.node_offset);
+        assert_eq!(record.node_count, source.node_count);
+    }
+    for instance in &scene.instances {
+        let root = &table.roots[instance.material_root as usize];
+        let end = root.node_offset as usize + root.node_count as usize;
+        assert!(end <= table.nodes.len());
+    }
     assert_eq!(
         table.attributes.len(),
         scene

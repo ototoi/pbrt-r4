@@ -1,9 +1,10 @@
 use crate::util::error::PbrtError;
 
-use super::abi::{AttributeRef, MaterialNode};
+use super::abi::{AttributeRef, MaterialNode, MaterialRoot};
 use crate::gpu::flat;
 
 pub struct MaterialTable {
+    pub roots: Vec<MaterialRoot>,
     pub nodes: Vec<MaterialNode>,
     pub attributes: Vec<AttributeRef>,
 }
@@ -54,7 +55,19 @@ impl MaterialTable {
                 })
             })
             .collect::<Result<Vec<_>, PbrtError>>()?;
-        Ok(Self { nodes, attributes })
+        let roots = scene
+            .material_roots
+            .iter()
+            .map(|layout| MaterialRoot {
+                node_offset: layout.node_offset,
+                node_count: layout.node_count,
+            })
+            .collect::<Vec<_>>();
+        Ok(Self {
+            roots,
+            nodes,
+            attributes,
+        })
     }
 }
 
