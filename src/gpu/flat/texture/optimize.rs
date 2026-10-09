@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::gpu::node::TextureMapping;
+use super::mapping::TextureMapping;
 use crate::util::error::PbrtError;
 
 use super::image::{ImageView, Mipmap};
@@ -495,9 +495,8 @@ fn mapping_equal(first: Option<&TextureMapping>, second: Option<&TextureMapping>
             Some(TextureMapping::PointTransform(first)),
             Some(TextureMapping::PointTransform(second)),
         ) => first
-            .matrix
             .iter()
-            .zip(second.matrix.iter())
+            .zip(second.iter())
             .all(|(first, second)| first.to_bits() == second.to_bits()),
         _ => false,
     }

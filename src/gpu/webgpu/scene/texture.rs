@@ -4,9 +4,9 @@ use std::sync::Arc;
 use crate::gpu::flat;
 use crate::gpu::flat::texture::{
     ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
-    ProceduralOperation, TextureInstruction, TextureLibrary, TextureRoot, TextureValueType,
+    ProceduralOperation, TextureInstruction, TextureLibrary, TextureMapping, TextureRoot,
+    TextureValueType,
 };
-use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 
@@ -465,12 +465,10 @@ fn lower_mapping(
             matrix[7] = uv.vdelta;
             (0, row_major_to_columns(matrix))
         }
-        Some(TextureMapping::Planar(transform)) => (1, row_major_to_columns(transform.matrix)),
-        Some(TextureMapping::Spherical(transform)) => (2, row_major_to_columns(transform.matrix)),
-        Some(TextureMapping::Cylindrical(transform)) => (3, row_major_to_columns(transform.matrix)),
-        Some(TextureMapping::PointTransform(transform)) => {
-            (4, row_major_to_columns(transform.matrix))
-        }
+        Some(TextureMapping::Planar(transform)) => (1, row_major_to_columns(*transform)),
+        Some(TextureMapping::Spherical(transform)) => (2, row_major_to_columns(*transform)),
+        Some(TextureMapping::Cylindrical(transform)) => (3, row_major_to_columns(*transform)),
+        Some(TextureMapping::PointTransform(transform)) => (4, row_major_to_columns(*transform)),
         None => (0, identity),
     }
 }
