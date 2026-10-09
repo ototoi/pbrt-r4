@@ -116,6 +116,15 @@ pub fn flatten_node_with_material_override(
             .filter(|&&layout| layout != INVALID_INDEX)
             .ok_or_else(|| PbrtError::error("Flat instance material layout was not generated."))?;
     }
+    let measured_bsdfs = builder.materials.measured_bsdf_library.finish()?;
+    let spectra = builder.spectrum_table_builder.finish();
+    let primitive_distribution_map = build_primitive_distribution_map(
+        &builder.lights.records,
+        &builder.lights.sampling_models,
+        &builder.lights.triangle_distributions,
+        &builder.instances,
+        &builder.geometry.geometries,
+    )?;
     let scene = Scene {
         camera,
         viewport,
@@ -130,10 +139,7 @@ pub fn flatten_node_with_material_override(
             infinite_lights: builder.lights.infinite_records,
             bounds: light_bounds,
             bvh: light_bvh,
-            primitive_distribution_map: PrimitiveDistributionMap {
-                offsets: vec![0],
-                entries: Vec::new(),
-            },
+            primitive_distribution_map,
             infinite_sampling: InfiniteLightResources {
                 portal_records: builder.lights.infinite_resources.portal_records,
                 portal_distribution: builder.lights.infinite_resources.portal_distribution,
@@ -154,16 +160,14 @@ pub fn flatten_node_with_material_override(
             nodes: material_nodes,
             bssrdfs: builder.materials.bssrdfs,
             bssrdf_tables: builder.materials.bssrdf_tables,
-            measured_bsdfs: builder.materials.measured_bsdf_library.finish()?,
+            measured_bsdfs,
         },
         attributes: AttributeResources {
             scalars: builder.scalar_attributes,
-            spectra: builder.spectrum_table_builder.finish(),
+            spectra,
         },
         texture_library,
     };
-    let mut scene = scene;
-    scene.lights.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
     scene.lights.validate_consistency(&scene.texture_library)?;
     Ok(scene)
 }
@@ -212,41 +216,38 @@ fn validate_layer_limits(name: &str, max_depth: i32, n_samples: i32) -> Result<(
     Ok(())
 }
 
-fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
-    let area_count = scene
-        .lights
-        .lights
+fn build_primitive_distribution_map(
+    lights: &[Light],
+    sampling_models: &[LightSamplingModel],
+    triangle_distributions: &[TriangleDistributionEntry],
+    instances: &[Instance],
+    geometries: &[Geometry],
+) -> Result<PrimitiveDistributionMap, PbrtError> {
+    let area_count = lights
         .iter()
         .filter(|light| light.kind == LightKind::Area)
         .count();
     let mut offsets = Vec::with_capacity(area_count + 1);
     let mut entries = Vec::new();
     offsets.push(0);
-    let area_lights = scene
-        .lights
-        .lights
+    let area_lights = lights
         .iter()
         .filter(|light| light.kind == LightKind::Area)
-        .map(|light| scene.lights.sampling_models[light.sampling_model as usize].clone())
+        .map(|light| sampling_models[light.sampling_model as usize].clone())
         .collect::<Vec<_>>();
     for (area_index, area_light) in area_lights.iter().enumerate() {
-        let instance = scene
-            .instances
+        let instance = instances
             .get(area_light.geometry_index as usize)
             .ok_or_else(|| {
                 PbrtError::error(&format!(
                     "Area light {area_index} references an invalid instance."
                 ))
             })?;
-        let geometry = scene
-            .geometry
-            .geometries
-            .get(instance.geometry as usize)
-            .ok_or_else(|| {
-                PbrtError::error(&format!(
-                    "Area light {area_index} references an invalid geometry."
-                ))
-            })?;
+        let geometry = geometries.get(instance.geometry as usize).ok_or_else(|| {
+            PbrtError::error(&format!(
+                "Area light {area_index} references an invalid geometry."
+            ))
+        })?;
         let triangle_count = geometry.index_count / 3;
         let base = entries.len();
         entries.resize(base + triangle_count as usize, INVALID_INDEX);
@@ -257,9 +258,7 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
         let end = start
             .checked_add(count)
             .ok_or_else(|| PbrtError::error("Area-light distribution range overflowed."))?;
-        for (distribution_index, entry) in scene
-            .lights
-            .triangle_distributions
+        for (distribution_index, entry) in triangle_distributions
             .get(start..end)
             .ok_or_else(|| PbrtError::error("Area-light distribution range is invalid."))?
             .iter()
