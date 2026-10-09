@@ -1,4 +1,3 @@
-use super::super::texture::TextureRootSpec;
 use super::material_attributes::build_material_attributes;
 use super::{
     push_scalar_attribute, push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder,
@@ -228,7 +227,7 @@ pub fn register_material_source(
             let attribute = if let Some((_, texture)) = source_material.texture_attributes.first() {
                 AttributeRef {
                     kind: AttributeKind::Texture,
-                    index: intern_texture_root(builder, Arc::clone(texture), 0)?,
+                    index: builder.textures.intern_root(Arc::clone(texture), 0)?,
                     name: "alpha".to_string(),
                 }
             } else {
@@ -312,7 +311,7 @@ pub fn register_material_source(
             )));
         }
         validate_bump_texture_filters(&source_material.name, texture_node)?;
-        intern_texture_root(builder, Arc::clone(texture_node), 0)?
+        builder.textures.intern_root(Arc::clone(texture_node), 0)?
     } else {
         INVALID_INDEX
     };
@@ -341,7 +340,7 @@ pub fn register_material_source(
                 TextureComponent::Mapping(_) => None,
             });
         if texture.is_some() && !attributes.iter().any(|attribute| attribute.name == *name) {
-            let index = intern_texture_root(builder, texture_node.clone(), 0)?;
+            let index = builder.textures.intern_root(texture_node.clone(), 0)?;
             attributes.push(AttributeRef {
                 kind: AttributeKind::Texture,
                 index,
@@ -496,7 +495,7 @@ pub fn texture_attribute_ref_with_spectrum_type(
             "Texture attribute \"{key}\" has no texture component."
         )));
     }
-    let index = intern_texture_root(builder, node.clone(), spectrum_type)?;
+    let index = builder.textures.intern_root(node.clone(), spectrum_type)?;
     Ok(Some(AttributeRef {
         kind: AttributeKind::Texture,
         index,
@@ -510,51 +509,6 @@ pub fn texture_attribute_ref_unbounded(
     builder: &mut FlatBuilder,
 ) -> Result<Option<AttributeRef>, PbrtError> {
     texture_attribute_ref_with_spectrum_type(source_material, key, builder, 1)
-}
-
-pub fn intern_texture_root(
-    builder: &mut FlatBuilder,
-    texture_node: Arc<TextureNode>,
-    spectrum_type: u32,
-) -> Result<u32, PbrtError> {
-    let texture = texture_node
-        .components
-        .iter()
-        .find_map(|component| match component {
-            TextureComponent::Texture(texture) => Some(texture),
-            TextureComponent::Mapping(_) => None,
-        })
-        .ok_or_else(|| PbrtError::error("Texture root has no texture component."))?;
-    let spectrum_type = match spectrum_type {
-        1 => SpectrumType::Unbounded,
-        2 => SpectrumType::Illuminant,
-        _ => SpectrumType::Albedo,
-    };
-    let key = (
-        Arc::as_ptr(&texture_node) as usize,
-        match texture.kind {
-            TextureKind::Float => 0,
-            TextureKind::Spectrum => match spectrum_type {
-                SpectrumType::Albedo => 1,
-                SpectrumType::Unbounded => 2,
-                SpectrumType::Illuminant => 3,
-            },
-        },
-    );
-    if let Some(&index) = builder.textures.roots_by_key.get(&key) {
-        return Ok(index);
-    }
-    let index = u32::try_from(builder.textures.root_specs.len())
-        .map_err(|_| PbrtError::error("Flat texture root table exceeds u32."))?;
-    builder.textures.root_specs.push(match texture.kind {
-        TextureKind::Float => TextureRootSpec::Float { node: texture_node },
-        TextureKind::Spectrum => TextureRootSpec::Spectrum {
-            node: texture_node,
-            spectrum_type,
-        },
-    });
-    builder.textures.roots_by_key.insert(key, index);
-    Ok(index)
 }
 
 pub fn reject_scalar_textures(
@@ -617,6 +571,7 @@ pub fn spectrum_attribute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu::flat::texture::TextureRootSpec;
     use crate::paramdict::ParameterDictionary;
 
     #[test]
