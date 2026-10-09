@@ -10,9 +10,8 @@ use super::abi::{
     camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
     CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, MeasuredBsdfRecord,
-    MeasuredTableRecord, TriangleDistributionEntry, ViewportUniform,
-    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
+    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, TriangleDistributionEntry,
+    ViewportUniform, INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
     LIGHT_SAMPLER_KIND_BVH,
 };
 use super::abi::{
@@ -25,6 +24,7 @@ use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
 use super::material::MaterialTable;
+use super::measured::MeasuredBsdfRecords;
 use super::output::Output;
 use super::render_settings::RenderSettings;
 use super::sampler::SamplerResources;
@@ -170,40 +170,9 @@ impl Scene {
         let media = convert_media(&flat.media, flat.spectrum_attributes.len())?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
-        let measured_bsdfs = flat
-            .measured_bsdfs
-            .bsdfs
-            .iter()
-            .map(|record| MeasuredBsdfRecord {
-                ndf: record.ndf,
-                sigma: record.sigma,
-                vndf: record.vndf,
-                luminance: record.luminance,
-                spectra: record.spectra,
-                isotropic: u32::from(record.isotropic),
-                padding: [0; 2],
-            })
-            .collect::<Vec<_>>();
-        let measured_tables = flat
-            .measured_bsdfs
-            .tables
-            .iter()
-            .map(|record| MeasuredTableRecord {
-                size: record.size,
-                parameter_count: record.parameter_count,
-                padding0: 0,
-                parameter_sizes: record.parameter_sizes,
-                padding1: 0,
-                parameter_strides: record.parameter_strides,
-                padding2: 0,
-                parameter_value_offsets: record.parameter_value_offsets,
-                padding3: 0,
-                data_offset: record.data_offset,
-                marginal_cdf_offset: record.marginal_cdf_offset,
-                conditional_cdf_offset: record.conditional_cdf_offset,
-                padding4: 0,
-            })
-            .collect::<Vec<_>>();
+        let measured_records = MeasuredBsdfRecords::from_flat(&flat.measured_bsdfs);
+        let measured_bsdfs = measured_records.bsdfs;
+        let measured_tables = measured_records.tables;
         flat.texture_library.validate()?;
         let scalar_attributes = flat.scalar_attributes.clone();
         // Keep the infinite-image sampler first. pbrt-v4 uses nearest lookup
