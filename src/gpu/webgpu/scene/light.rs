@@ -4,8 +4,10 @@ use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 use super::super::abi::{
-    AttributeRef, LightRecord, LightSamplingModel, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT,
-    LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
+    AttributeRef, ImageInfiniteDistributionTexel, ImageInfiniteSamplingRecord, LightRecord,
+    LightSamplingModel, PortalDistributionTexel, PortalImageInfiniteRecord,
+    TriangleDistributionEntry, LIGHT_KIND_AREA, LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE,
+    LIGHT_KIND_POINT, LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT,
     LIGHT_KIND_UNIFORM_INFINITE,
 };
 
@@ -13,6 +15,78 @@ pub struct LightData {
     pub attributes: Vec<AttributeRef>,
     pub records: Vec<LightRecord>,
     pub sampling_models: Vec<LightSamplingModel>,
+}
+
+pub struct LightSamplingData {
+    pub positions: Vec<[f32; 4]>,
+    pub triangle_distributions: Vec<TriangleDistributionEntry>,
+    pub portal_records: Vec<PortalImageInfiniteRecord>,
+    pub portal_distribution: Vec<PortalDistributionTexel>,
+    pub image_infinite_records: Vec<ImageInfiniteSamplingRecord>,
+    pub image_infinite_distribution: Vec<ImageInfiniteDistributionTexel>,
+}
+
+impl LightSamplingData {
+    pub fn from_flat(scene: &flat::Scene) -> Self {
+        Self {
+            positions: scene
+                .light_positions
+                .iter()
+                .map(|position| [position[0], position[1], position[2], 1.0])
+                .collect(),
+            triangle_distributions: scene
+                .triangle_distributions
+                .iter()
+                .map(|entry| TriangleDistributionEntry {
+                    primitive: entry.primitive,
+                    cdf: entry.cdf,
+                    area: entry.area,
+                    reserved: 0,
+                })
+                .collect(),
+            portal_records: scene
+                .portal_infinite_lights
+                .iter()
+                .map(|image| PortalImageInfiniteRecord {
+                    portal: image
+                        .portal
+                        .map(|point| [point[0], point[1], point[2], 1.0]),
+                    world_to_portal: image.world_to_portal,
+                    distribution_offset: image.distribution_offset,
+                    width: image.resolution[0],
+                    height: image.resolution[1],
+                    reserved: 0,
+                })
+                .collect(),
+            portal_distribution: scene
+                .portal_distribution
+                .iter()
+                .map(|value| PortalDistributionTexel {
+                    function: value.function,
+                    summed_area: value.summed_area,
+                })
+                .collect(),
+            image_infinite_records: scene
+                .image_infinite_lights
+                .iter()
+                .map(|image| ImageInfiniteSamplingRecord {
+                    distribution_offset: image.distribution_offset,
+                    row_cdf_offset: image.row_cdf_offset,
+                    width: image.resolution[0],
+                    height: image.resolution[1],
+                    light_to_render: image.light_to_render,
+                })
+                .collect(),
+            image_infinite_distribution: scene
+                .image_infinite_distribution
+                .iter()
+                .map(|texel| ImageInfiniteDistributionTexel {
+                    weight: texel.weight,
+                    conditional_cdf: texel.conditional_cdf,
+                })
+                .collect(),
+        }
+    }
 }
 
 pub fn validate_instance_area_lights(
