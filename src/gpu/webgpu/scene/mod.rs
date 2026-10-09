@@ -6,7 +6,6 @@ use crate::gpu::flat;
 use crate::gpu::flat::texture::{ImageFilterMode, ImageWrapMode};
 use crate::util::error::PbrtError;
 
-use super::abi::BSSRDFMaterialRecord;
 use super::abi::{
     camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
@@ -23,7 +22,7 @@ use super::abi::{
     PortalImageInfiniteRecord,
 };
 use super::acceleration::{self, Acceleration};
-use super::bssrdf::{BSSRDFTableData, BSSRDFTableResources};
+use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
 use super::light_bvh::pack_light_bvh;
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
@@ -662,28 +661,7 @@ impl Scene {
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
         let table_data = BSSRDFTableData::from_flat(&flat.bssrdf_tables)?;
         let bssrdf_tables = table_data.upload(device)?;
-        if flat
-            .bssrdfs
-            .iter()
-            .any(|b| b.table_index as usize >= flat.bssrdf_tables.len())
-        {
-            return Err(PbrtError::error(
-                "BSSRDF material references an invalid table.",
-            ));
-        }
-        let bssrdf_materials = flat
-            .bssrdfs
-            .iter()
-            .map(|b| BSSRDFMaterialRecord {
-                scale: b.scale,
-                eta: b.eta,
-                table_index: b.table_index,
-                coefficient_kind: match b.coefficient_kind {
-                    flat::BSSRDFCoefficientKind::Sigma => 0,
-                    flat::BSSRDFCoefficientKind::ReflectanceMfp => 1,
-                },
-            })
-            .collect::<Vec<_>>();
+        let bssrdf_materials = convert_bssrdf_materials(&flat.bssrdfs, flat.bssrdf_tables.len())?;
         if !bssrdf_materials.is_empty() && !flat.media.is_empty() {
             return Err(PbrtError::error(
                 "WebGPU subsurface with participating media is not supported yet.",
