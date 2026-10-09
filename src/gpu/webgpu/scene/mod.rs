@@ -1,5 +1,4 @@
 use bytemuck::cast_slice;
-use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::flat;
@@ -32,7 +31,9 @@ pub mod spectrum;
 mod texture;
 mod upload;
 
-pub use texture::{lower_texture_library_records, texture_binding_counts};
+pub use texture::{
+    lower_texture_library_records, resolve_infinite_image_bindings, texture_binding_counts,
+};
 
 use geometry::convert_geometry;
 use instance::convert_instances;
@@ -40,7 +41,7 @@ use light::{convert_lights, LightSamplingData};
 use medium::convert_media;
 use spectrum::convert_spectra;
 use texture::{
-    infinite_image_payload, lower_texture_library, scene_texture_views, texture_binding_plan,
+    lower_texture_library, scene_texture_views, texture_binding_plan,
     validate_image_infinite_buffer_size,
 };
 use upload::{upload_measured_atlas, upload_texture_images};
@@ -134,40 +135,12 @@ impl Scene {
             &texture_binding_plan,
             material_view_offset,
         )?;
-        let infinite_image_bindings = flat
-            .infinite_lights
-            .iter()
-            .map(|light| {
-                if light.image_index == flat::INVALID_INDEX {
-                    return Ok(None);
-                }
-                let view_index = texture_views
-                    .iter()
-                    .position(|view| view.mipmap == light.image_index)
-                    .ok_or_else(|| {
-                        PbrtError::error("Infinite light image view was not registered.")
-                    })?;
-                let binding = texture_binding_plan
-                    .image_views
-                    .iter()
-                    .position(|&index| index == view_index)
-                    .ok_or_else(|| {
-                        PbrtError::error("Infinite light image binding was not generated.")
-                    })?;
-                let mipmap = flat
-                    .texture_library
-                    .mipmaps
-                    .get(light.image_index as usize)
-                    .ok_or_else(|| {
-                        PbrtError::error("Infinite light references an invalid mipmap.")
-                    })?;
-                let payload = infinite_image_payload(binding, mipmap.color_space)?;
-                Ok(Some((light.sampling_model, payload)))
-            })
-            .collect::<Result<Vec<_>, PbrtError>>()?
-            .into_iter()
-            .flatten()
-            .collect::<HashMap<_, _>>();
+        let infinite_image_bindings = resolve_infinite_image_bindings(
+            &flat.infinite_lights,
+            &flat.texture_library.mipmaps,
+            &texture_views,
+            &texture_binding_plan.image_views,
+        )?;
         let light_data = convert_lights(
             &flat.light_sampling_models,
             &flat.lights,
