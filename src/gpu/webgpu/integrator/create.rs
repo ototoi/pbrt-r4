@@ -54,7 +54,7 @@ impl super::WavefrontPathIntegrator {
         let (mut texture_image_count, texture_sampler_count) = texture_binding_counts(&flat_scene)?;
         texture_image_count = texture_image_count
             .checked_add(
-                u32::try_from(flat_scene.measured_bsdfs.atlas_pages.len())
+                u32::try_from(flat_scene.materials.measured_bsdfs.atlas_pages.len())
                     .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?,
             )
             .ok_or_else(|| PbrtError::error("Texture image binding count overflowed."))?;

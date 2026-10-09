@@ -120,7 +120,7 @@ impl Scene {
         let media = convert_media(&flat.media, flat.spectrum_attributes.len())?;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
-        let measured_records = MeasuredBsdfRecords::from_flat(&flat.measured_bsdfs);
+        let measured_records = MeasuredBsdfRecords::from_flat(&flat.materials.measured_bsdfs);
         let measured_bsdfs = measured_records.bsdfs;
         let measured_tables = measured_records.tables;
         flat.texture_library.validate()?;
@@ -157,7 +157,7 @@ impl Scene {
             queue,
             &flat.render_settings,
             flat.viewport.resolution,
-            !flat.bssrdfs.is_empty(),
+            !flat.materials.bssrdfs.is_empty(),
         )?;
         let film = film_uniform(&flat.film);
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
@@ -260,7 +260,7 @@ impl Scene {
         texture_images.extend(upload_measured_atlas(
             device,
             queue,
-            &flat.measured_bsdfs.atlas_pages,
+            &flat.materials.measured_bsdfs.atlas_pages,
         )?);
         if texture_images.is_empty() {
             texture_images.push(device.create_texture(&wgpu::TextureDescriptor {
@@ -405,9 +405,10 @@ impl Scene {
         let packed_light_bvh = pack_light_bvh(&flat.lights.bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
-        let table_data = BSSRDFTableData::from_flat(&flat.bssrdf_tables)?;
+        let table_data = BSSRDFTableData::from_flat(&flat.materials.bssrdf_tables)?;
         let bssrdf_tables = table_data.upload(device)?;
-        let bssrdf_materials = convert_bssrdf_materials(&flat.bssrdfs, flat.bssrdf_tables.len())?;
+        let bssrdf_materials =
+            convert_bssrdf_materials(&flat.materials.bssrdfs, flat.materials.bssrdf_tables.len())?;
         if !bssrdf_materials.is_empty() && !flat.media.is_empty() {
             return Err(PbrtError::error(
                 "WebGPU subsurface with participating media is not supported yet.",
@@ -424,7 +425,7 @@ impl Scene {
         material_table.measured_texture_width = flat::MEASURED_ATLAS_WIDTH;
         material_table.measured_texture_height = flat::MEASURED_ATLAS_HEIGHT;
         material_table.measured_texture_count =
-            u32::try_from(flat.measured_bsdfs.atlas_pages.len())
+            u32::try_from(flat.materials.measured_bsdfs.atlas_pages.len())
                 .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?;
         let light_table = light_table_uniform(
             flat.lights.lights.len(),
@@ -462,8 +463,8 @@ impl Scene {
             &geometries,
             &instances,
             &flat.instances,
-            &flat.material_roots,
-            &flat.material_nodes,
+            &flat.materials.roots,
+            &flat.materials.nodes,
             &flat.lights.lights,
             &flat.lights.sampling_models,
         )?;
