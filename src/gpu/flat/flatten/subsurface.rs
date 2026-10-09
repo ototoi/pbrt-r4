@@ -113,6 +113,7 @@ pub fn register_subsurface(
         )));
     }
     let table_index = if let Some(index) = builder
+        .materials
         .bssrdf_tables
         .iter()
         .position(|table| table.g == g && table.eta == eta)
@@ -120,7 +121,7 @@ pub fn register_subsurface(
         u32::try_from(index)
             .map_err(|_| PbrtError::error("Flat BSSRDF table count exceeds u32."))?
     } else {
-        let index = u32::try_from(builder.bssrdf_tables.len())
+        let index = u32::try_from(builder.materials.bssrdf_tables.len())
             .map_err(|_| PbrtError::error("Flat BSSRDF table count exceeds u32."))?;
         let table = TabulatedBSSRDFTable::new(g, eta);
         if table
@@ -135,12 +136,12 @@ pub fn register_subsurface(
                 material.name
             )));
         }
-        builder.bssrdf_tables.push(table);
+        builder.materials.bssrdf_tables.push(table);
         index
     };
-    let index = u32::try_from(builder.bssrdfs.len())
+    let index = u32::try_from(builder.materials.bssrdfs.len())
         .map_err(|_| PbrtError::error("Flat BSSRDF record count exceeds u32."))?;
-    builder.bssrdfs.push(BSSRDF {
+    builder.materials.bssrdfs.push(BSSRDF {
         scale,
         g,
         eta,

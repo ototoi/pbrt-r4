@@ -106,7 +106,7 @@ pub fn flatten_node_with_material_override(
         .map(|instance| instance.material_root)
         .collect::<Vec<_>>();
     let (material_roots, material_nodes, source_to_root) =
-        build_material_roots(&builder.material_source_nodes, &root_source_nodes)?;
+        build_material_roots(&builder.materials.source_nodes, &root_source_nodes)?;
     for instance in &mut builder.instances {
         if instance.material_root == INVALID_INDEX {
             continue;
@@ -152,9 +152,9 @@ pub fn flatten_node_with_material_override(
         materials: MaterialResources {
             roots: material_roots,
             nodes: material_nodes,
-            bssrdfs: builder.bssrdfs,
-            bssrdf_tables: builder.bssrdf_tables,
-            measured_bsdfs: builder.measured_bsdf_library.finish()?,
+            bssrdfs: builder.materials.bssrdfs,
+            bssrdf_tables: builder.materials.bssrdf_tables,
+            measured_bsdfs: builder.materials.measured_bsdf_library.finish()?,
         },
         attributes: AttributeResources {
             scalars: builder.scalar_attributes,
@@ -291,15 +291,12 @@ struct FlatBuilder {
     // Keep Node IR media alive while their pointer identities are keys below.
     medium_refs: Vec<Arc<NodeMedium>>,
     media_indices_by_node: HashMap<*const NodeMedium, u32>,
-    material_source_nodes: Vec<MaterialSourceNode>,
-    bssrdfs: Vec<BSSRDF>,
-    bssrdf_tables: Vec<TabulatedBSSRDFTable>,
+    materials: MaterialBuilder,
     scalar_attributes: Vec<f32>,
     texture_root_specs: Vec<TextureRootSpec>,
     texture_roots_by_key: HashMap<(usize, u32), u32>,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
-    source_materials: Vec<Arc<NodeMaterial>>,
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     light_sampling_models: Vec<LightSamplingModel>,
@@ -315,7 +312,6 @@ struct FlatBuilder {
     image_infinite_lights: Vec<ImageInfiniteSamplingRecord>,
     image_infinite_distribution: Vec<ImageInfiniteDistributionTexel>,
     image_infinite_row_cdf: Vec<f32>,
-    measured_bsdf_library: super::MeasuredBsdfLibrary,
 }
 
 #[derive(Default)]
@@ -324,4 +320,13 @@ struct GeometryBuilder {
     indices: Vec<u32>,
     geometries: Vec<Geometry>,
     geometries_by_shape: HashMap<(usize, usize), u32>,
+}
+
+#[derive(Default)]
+struct MaterialBuilder {
+    source_materials: Vec<Arc<NodeMaterial>>,
+    source_nodes: Vec<MaterialSourceNode>,
+    bssrdfs: Vec<BSSRDF>,
+    bssrdf_tables: Vec<TabulatedBSSRDFTable>,
+    measured_bsdf_library: super::MeasuredBsdfLibrary,
 }
