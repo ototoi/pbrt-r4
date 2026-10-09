@@ -50,7 +50,10 @@ pub(super) fn validate_image_infinite_buffer_size(
     Ok(())
 }
 
-pub(super) fn infinite_image_payload(binding: usize, color_space: ColorSpace) -> Result<u32, PbrtError> {
+pub(super) fn infinite_image_payload(
+    binding: usize,
+    color_space: ColorSpace,
+) -> Result<u32, PbrtError> {
     let binding = u32::try_from(binding)
         .map_err(|_| PbrtError::error("Infinite light image binding exceeds u32."))?;
     if binding > INFINITE_IMAGE_BINDING_MASK {
@@ -502,7 +505,6 @@ mod tests {
         assert_eq!(plan.samplers.len(), 2);
         assert_eq!(plan.view_bindings, vec![(0, 0), (0, 1), (1, 0)]);
     }
-
 
     #[test]
     fn material_image_binding_follows_prefixed_infinite_image_view() {

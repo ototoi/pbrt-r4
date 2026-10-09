@@ -117,7 +117,6 @@ pub fn camera_uniform(
     })
 }
 
-
 fn minimum_perspective_camera_direction_differentials(
     screen_window: [f32; 4],
     resolution: [u32; 2],
@@ -184,4 +183,3 @@ fn minimum_perspective_camera_direction_differentials(
     }
     minimum
 }
-

@@ -45,7 +45,6 @@ pub fn inverse_affine(transform: [f32; 16], label: &str) -> Result<[[f32; 4]; 4]
     ]))
 }
 
-
 pub fn normalize3(v: [f32; 3]) -> [f32; 3] {
     let length = dot3(v, v).sqrt();
     [v[0] / length, v[1] / length, v[2] / length]
@@ -72,7 +71,6 @@ pub fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 pub fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
-
 
 pub fn row_major_to_columns(matrix: [f32; 16]) -> [[f32; 4]; 4] {
     [
@@ -153,4 +151,3 @@ pub fn row_major_to_tlas_transform(matrix: [f32; 16]) -> [f32; 12] {
         matrix[8], matrix[9], matrix[10], matrix[11],
     ]
 }
-
