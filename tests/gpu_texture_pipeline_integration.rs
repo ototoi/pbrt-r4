@@ -2,7 +2,9 @@ use std::process::Command;
 
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::pipeline::Pipeline;
-use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
+use pbrt_r4::gpu::webgpu::shader::required_limits_for_sources;
+use pbrt_r4::gpu::webgpu::stage::COMPUTE_STAGES;
+use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 use pbrt_r4::util::imageio::read_image::read_image;
 use pbrt_r4::util::spectrum::RGBSpectrum;
 
@@ -10,12 +12,13 @@ use pbrt_r4::util::spectrum::RGBSpectrum;
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn texture_material_pipeline_compiles() {
     let _ = env_logger::builder().is_test(true).try_init();
-    let required = RequiredLimits {
-        storage_buffers_per_shader_stage: 30,
-        uniform_buffers_per_shader_stage: 5,
-        buffers_and_acceleration_structures_per_shader_stage: 36,
-        bind_groups: 2,
-    };
+    let canonical_bindings = canonical_wavefront_bindings();
+    let stage_sources = COMPUTE_STAGES
+        .iter()
+        .map(|stage| stage.source)
+        .collect::<Vec<_>>();
+    let mut required = required_limits_for_sources(&canonical_bindings, &stage_sources).unwrap();
+    required.bind_groups = required.bind_groups.max(2);
     let context = Context::new(required, 1, 1).unwrap();
     Pipeline::new(&context.device, 1, 1, 1, false).unwrap();
 }

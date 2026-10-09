@@ -7,6 +7,7 @@ use super::noise::NoiseRuntimeResources;
 use super::pipeline::Pipeline;
 use super::queue::Queues;
 use super::scene::Scene;
+use super::stage::ComputeStageId;
 
 mod create;
 mod dispatch;
@@ -24,7 +25,7 @@ pub struct WavefrontPathIntegrator {
     film: Film,
     noise_resources: NoiseRuntimeResources,
     pipeline: Pipeline,
-    bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]>,
+    bind_groups: HashMap<ComputeStageId, [wgpu::BindGroup; 2]>,
     rendered: bool,
     show_progress: bool,
     tile_width: u32,
