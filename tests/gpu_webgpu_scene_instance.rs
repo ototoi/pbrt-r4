@@ -55,7 +55,7 @@ fn instance() -> flat::Instance {
 #[test]
 fn preserves_instance_order_matrices_indices_and_orientation_bits() {
     let mut scene = empty_flat_scene();
-    scene.geometries = vec![flat::Geometry::default(); 2];
+    scene.geometry.geometries = vec![flat::Geometry::default(); 2];
     scene.materials.roots = vec![
         flat::MaterialRoot {
             node_offset: 0,
@@ -131,7 +131,7 @@ fn preserves_instance_order_matrices_indices_and_orientation_bits() {
 #[test]
 fn validates_references_before_transform_in_existing_order() {
     let mut scene = empty_flat_scene();
-    scene.geometries = vec![flat::Geometry {
+    scene.geometry.geometries = vec![flat::Geometry {
         index_count: 3,
         ..Default::default()
     }];
@@ -175,7 +175,7 @@ fn accepts_empty_instances() {
 #[test]
 fn preserves_and_validates_area_light_links_at_the_instance_index() {
     let mut scene = empty_flat_scene();
-    scene.geometries = vec![flat::Geometry {
+    scene.geometry.geometries = vec![flat::Geometry {
         index_count: 3,
         ..Default::default()
     }];
