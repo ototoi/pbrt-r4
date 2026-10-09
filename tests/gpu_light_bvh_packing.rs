@@ -1,5 +1,54 @@
 use pbrt_r4::gpu::flat::{build_light_bounds, build_light_bvh, Light, LightBoundInput, LightKind};
-use pbrt_r4::gpu::webgpu::light_bvh::pack_light_bvh;
+use pbrt_r4::gpu::webgpu::abi::{light_table_uniform, LIGHT_SAMPLER_KIND_BVH};
+use pbrt_r4::gpu::webgpu::light_bvh::{pack_light_bvh, LightBvhUploadData, PackedLightBVH};
+use pbrt_r4::gpu::webgpu::light_sampler::LightSamplerKind;
+
+#[test]
+fn upload_data_preserves_word_order_and_updates_bvh_table_fields() {
+    let packed = PackedLightBVH {
+        header_words: [1, 2, 3, 4, 5, 6, 7, 8],
+        node_words: vec![
+            [10, 11, 12, 13, 14, 15, 16, 17],
+            [20, 21, 22, 23, 24, 25, 26, 27],
+        ],
+        handle_to_leaf: vec![1, 0, u32::MAX],
+    };
+    for kind in [LightSamplerKind::Uniform, LightSamplerKind::Bvh] {
+        let table = light_table_uniform(3, 2, 7).unwrap();
+        let data = LightBvhUploadData::from_packed(Some(&packed), kind, table).unwrap();
+        assert_eq!(data.header_words, packed.header_words);
+        assert_eq!(
+            data.node_words,
+            vec![10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 22, 23, 24, 25, 26, 27]
+        );
+        assert_eq!(data.handle_to_leaf, packed.handle_to_leaf);
+        let mut expected = table;
+        if kind == LightSamplerKind::Bvh {
+            expected.light_sampler_kind = LIGHT_SAMPLER_KIND_BVH;
+        }
+        expected.light_sampler_data_offset = 0;
+        expected.light_bvh_node_offset = 0;
+        expected.light_bvh_node_count = 2;
+        expected.light_leaf_offset = 0;
+        expected.light_leaf_count = 3;
+        assert_eq!(
+            bytemuck::bytes_of(&data.table),
+            bytemuck::bytes_of(&expected)
+        );
+    }
+}
+
+#[test]
+fn absent_bvh_keeps_uniform_table_and_empty_upload_data() {
+    let table = light_table_uniform(0, 2, 7).unwrap();
+    for kind in [LightSamplerKind::Uniform, LightSamplerKind::Bvh] {
+        let data = LightBvhUploadData::from_packed(None, kind, table).unwrap();
+        assert!(data.header_words.is_empty());
+        assert!(data.node_words.is_empty());
+        assert!(data.handle_to_leaf.is_empty());
+        assert_eq!(bytemuck::bytes_of(&data.table), bytemuck::bytes_of(&table));
+    }
+}
 
 fn records(count: usize) -> Vec<Light> {
     (0..count)
