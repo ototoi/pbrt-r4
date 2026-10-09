@@ -86,7 +86,7 @@ pub fn flatten_node_with_material_override(
     let render_settings = render_settings(&builder.sampler, &builder.integrator)?;
     let light_bounds = build_light_bounds(&builder.lights.bound_inputs)?;
     let light_bvh = build_light_bvh(&builder.lights.records, &light_bounds)?;
-    let mut texture_library = compile_texture_library(&builder.texture_root_specs)?;
+    let mut texture_library = compile_texture_library(&builder.textures.root_specs)?;
     let image_offset = u32::try_from(texture_library.mipmaps.len())
         .map_err(|_| PbrtError::error("Texture mipmap table exceeds u32."))?;
     texture_library
@@ -290,8 +290,7 @@ struct FlatBuilder {
     medium: MediumBuilder,
     materials: MaterialBuilder,
     scalar_attributes: Vec<f32>,
-    texture_root_specs: Vec<TextureRootSpec>,
-    texture_roots_by_key: HashMap<(usize, u32), u32>,
+    textures: TextureBuilder,
     spectrum_table_builder: DenseSpectrumBuilder,
     output: Option<Output>,
     sampler: Option<NodeSampler>,
@@ -344,4 +343,10 @@ struct MediumBuilder {
     // Keep Node IR media alive while their pointer identities are keys below.
     medium_refs: Vec<Arc<NodeMedium>>,
     media_indices_by_node: HashMap<*const NodeMedium, u32>,
+}
+
+#[derive(Default)]
+struct TextureBuilder {
+    root_specs: Vec<TextureRootSpec>,
+    roots_by_key: HashMap<(usize, u32), u32>,
 }
