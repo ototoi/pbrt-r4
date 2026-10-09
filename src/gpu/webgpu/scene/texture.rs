@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::gpu::flat;
 use crate::gpu::flat::texture::{
-    ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, ProceduralOperation,
-    TextureInstruction, TextureLibrary, TextureRoot, TextureValueType,
+    ColorSpace, ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, Mipmap,
+    ProceduralOperation, TextureInstruction, TextureLibrary, TextureRoot, TextureValueType,
 };
 use crate::gpu::node::TextureMapping;
 use crate::util::error::PbrtError;
@@ -68,6 +69,40 @@ pub(super) fn infinite_image_payload(
         ColorSpace::Rec2020 => 3,
     };
     Ok(binding | (color_space << 28))
+}
+
+pub fn resolve_infinite_image_bindings(
+    infinite_lights: &[flat::Light],
+    mipmaps: &[Arc<Mipmap>],
+    texture_views: &[ImageView],
+    image_view_bindings: &[usize],
+) -> Result<HashMap<u32, u32>, PbrtError> {
+    Ok(infinite_lights
+        .iter()
+        .map(|light| {
+            if light.image_index == flat::INVALID_INDEX {
+                return Ok(None);
+            }
+            let view_index = texture_views
+                .iter()
+                .position(|view| view.mipmap == light.image_index)
+                .ok_or_else(|| PbrtError::error("Infinite light image view was not registered."))?;
+            let binding = image_view_bindings
+                .iter()
+                .position(|&index| index == view_index)
+                .ok_or_else(|| {
+                    PbrtError::error("Infinite light image binding was not generated.")
+                })?;
+            let mipmap = mipmaps
+                .get(light.image_index as usize)
+                .ok_or_else(|| PbrtError::error("Infinite light references an invalid mipmap."))?;
+            let payload = infinite_image_payload(binding, mipmap.color_space)?;
+            Ok(Some((light.sampling_model, payload)))
+        })
+        .collect::<Result<Vec<_>, PbrtError>>()?
+        .into_iter()
+        .flatten()
+        .collect::<HashMap<_, _>>())
 }
 
 pub(super) fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBindingPlan, PbrtError> {
