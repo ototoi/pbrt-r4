@@ -1,4 +1,6 @@
+use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
 use super::AttributeRef;
+use super::{ImageInfiniteDistributionTexel, LightBVH, LightBounds};
 
 pub const INVALID_INDEX: u32 = u32::MAX;
 
@@ -85,4 +87,26 @@ pub struct TriangleDistributionEntry {
 pub struct PrimitiveDistributionMap {
     pub offsets: Vec<u32>,
     pub entries: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InfiniteLightResources {
+    pub portal_records: Vec<PortalImageInfiniteLight>,
+    pub portal_distribution: Vec<PortalDistributionTexel>,
+    pub image_records: Vec<ImageInfiniteSamplingRecord>,
+    pub image_distribution: Vec<ImageInfiniteDistributionTexel>,
+    pub image_row_cdf: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightResources {
+    pub sampling_models: Vec<LightSamplingModel>,
+    pub positions: Vec<[f32; 3]>,
+    pub triangle_distributions: Vec<TriangleDistributionEntry>,
+    pub lights: Vec<Light>,
+    pub infinite_lights: Vec<Light>,
+    pub bounds: Vec<LightBounds>,
+    pub bvh: LightBVH,
+    pub primitive_distribution_map: PrimitiveDistributionMap,
+    pub infinite_sampling: InfiniteLightResources,
 }

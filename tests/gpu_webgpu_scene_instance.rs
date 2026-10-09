@@ -181,7 +181,7 @@ fn preserves_and_validates_area_light_links_at_the_instance_index() {
     }];
     scene.instances = vec![instance(), instance()];
     scene.instances[1].area_light = 1;
-    scene.lights = vec![
+    scene.lights.lights = vec![
         flat::Light {
             kind: flat::LightKind::Area,
             attributes: Vec::new(),
@@ -190,7 +190,7 @@ fn preserves_and_validates_area_light_links_at_the_instance_index() {
         };
         2
     ];
-    scene.light_sampling_models = vec![flat::LightSamplingModel {
+    scene.lights.sampling_models = vec![flat::LightSamplingModel {
         kind: flat::LightKind::Area,
         geometry_kind: flat::LightGeometryKind::Instance,
         geometry_index: 1,
@@ -201,7 +201,7 @@ fn preserves_and_validates_area_light_links_at_the_instance_index() {
         flags: 0,
         world_to_light: [[0.0; 4]; 3],
     }];
-    scene.triangle_distributions = vec![flat::TriangleDistributionEntry {
+    scene.lights.triangle_distributions = vec![flat::TriangleDistributionEntry {
         primitive: 0,
         cdf: 1.0,
         area: 2.0,
@@ -210,7 +210,7 @@ fn preserves_and_validates_area_light_links_at_the_instance_index() {
     assert_eq!(records[0].area_light, INVALID_INDEX);
     assert_eq!(records[1].area_light, 1);
 
-    scene.light_sampling_models[0].geometry_index = 0;
+    scene.lights.sampling_models[0].geometry_index = 0;
     let error = convert_instances(&scene, 1).err().unwrap().to_string();
     assert!(
         error.contains("Flat instance 1 area-light range does not match its triangles"),
