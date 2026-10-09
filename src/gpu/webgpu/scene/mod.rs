@@ -10,13 +10,9 @@ use super::abi::{
     camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
     CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
-    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, TriangleDistributionEntry,
-    ViewportUniform, INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
+    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, ViewportUniform,
+    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
     LIGHT_SAMPLER_KIND_BVH,
-};
-use super::abi::{
-    ImageInfiniteDistributionTexel, ImageInfiniteSamplingRecord, PortalDistributionTexel,
-    PortalImageInfiniteRecord,
 };
 use super::acceleration::{self, Acceleration};
 use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
@@ -39,7 +35,7 @@ mod upload;
 pub use texture::{lower_texture_library_records, texture_binding_counts};
 
 use geometry::convert_geometry;
-use light::{convert_lights, validate_instance_area_lights};
+use light::{convert_lights, validate_instance_area_lights, LightSamplingData};
 use medium::convert_media;
 use texture::{
     infinite_image_payload, lower_texture_library, scene_texture_views, texture_binding_plan,
@@ -429,16 +425,7 @@ impl Scene {
             contents: buffer_contents(&measured_tables),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let distribution_entries = flat
-            .triangle_distributions
-            .iter()
-            .map(|entry| TriangleDistributionEntry {
-                primitive: entry.primitive,
-                cdf: entry.cdf,
-                area: entry.area,
-                reserved: 0,
-            })
-            .collect::<Vec<_>>();
+        let light_sampling_data = LightSamplingData::from_flat(&flat);
         let light_record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light record SBO"),
             contents: buffer_contents(&light_records),
@@ -450,92 +437,48 @@ impl Scene {
                 contents: buffer_contents(&light_sampling_models),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let light_positions = flat
-            .light_positions
-            .iter()
-            .map(|p| [p[0], p[1], p[2], 1.0])
-            .collect::<Vec<_>>();
         let light_position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 light position SBO"),
-            contents: buffer_contents(&light_positions),
+            contents: buffer_contents(&light_sampling_data.positions),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let distribution_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 triangle distribution SBO"),
-            contents: buffer_contents(&distribution_entries),
+            contents: buffer_contents(&light_sampling_data.triangle_distributions),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let portal_image_records = flat
-            .portal_infinite_lights
-            .iter()
-            .map(|image| PortalImageInfiniteRecord {
-                portal: image.portal.map(|p| [p[0], p[1], p[2], 1.0]),
-                world_to_portal: image.world_to_portal,
-                distribution_offset: image.distribution_offset,
-                width: image.resolution[0],
-                height: image.resolution[1],
-                reserved: 0,
-            })
-            .collect::<Vec<_>>();
         let portal_image_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 portal image infinite records SBO"),
-            contents: buffer_contents(&portal_image_records),
+            contents: buffer_contents(&light_sampling_data.portal_records),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let portal_distribution = flat
-            .portal_distribution
-            .iter()
-            .map(|value| PortalDistributionTexel {
-                function: value.function,
-                summed_area: value.summed_area,
-            })
-            .collect::<Vec<_>>();
         let portal_distribution_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 portal distribution SBO"),
-                contents: buffer_contents(&portal_distribution),
+                contents: buffer_contents(&light_sampling_data.portal_distribution),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let image_infinite_sampling_records = flat
-            .image_infinite_lights
-            .iter()
-            .map(|image| ImageInfiniteSamplingRecord {
-                distribution_offset: image.distribution_offset,
-                row_cdf_offset: image.row_cdf_offset,
-                width: image.resolution[0],
-                height: image.resolution[1],
-                light_to_render: image.light_to_render,
-            })
-            .collect::<Vec<_>>();
         let limits = device.limits();
         validate_image_infinite_buffer_size(
             "sampling records",
-            buffer_contents(&image_infinite_sampling_records).len(),
+            buffer_contents(&light_sampling_data.image_infinite_records).len(),
             &limits,
         )?;
         let image_infinite_sampling_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 image infinite sampling records SBO"),
-                contents: buffer_contents(&image_infinite_sampling_records),
+                contents: buffer_contents(&light_sampling_data.image_infinite_records),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let image_infinite_distribution = flat
-            .image_infinite_distribution
-            .iter()
-            .map(|texel| ImageInfiniteDistributionTexel {
-                weight: texel.weight,
-                conditional_cdf: texel.conditional_cdf,
-            })
-            .collect::<Vec<_>>();
         validate_image_infinite_buffer_size(
             "distribution",
-            buffer_contents(&image_infinite_distribution).len(),
+            buffer_contents(&light_sampling_data.image_infinite_distribution).len(),
             &limits,
         )?;
         let image_infinite_distribution_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 image infinite distribution SBO"),
-                contents: buffer_contents(&image_infinite_distribution),
+                contents: buffer_contents(&light_sampling_data.image_infinite_distribution),
                 usage: wgpu::BufferUsages::STORAGE,
             });
         validate_image_infinite_buffer_size(
