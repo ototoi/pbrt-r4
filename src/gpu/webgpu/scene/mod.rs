@@ -9,12 +9,10 @@ use crate::util::error::PbrtError;
 use super::abi::{
     camera_uniform, film_uniform, instance_orientation_flags, inverse_transpose_linear,
     light_table_uniform, material_table_uniform, row_major_to_columns, viewport_uniform,
-    AttributeRef, CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord,
-    LightSamplingModel, LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform,
-    MeasuredBsdfRecord, MeasuredTableRecord, TriangleDistributionEntry, ViewportUniform,
-    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX, LIGHT_KIND_AREA,
-    LIGHT_KIND_DISTANT, LIGHT_KIND_IMAGE_INFINITE, LIGHT_KIND_POINT,
-    LIGHT_KIND_PORTAL_IMAGE_INFINITE, LIGHT_KIND_SPOT, LIGHT_KIND_UNIFORM_INFINITE,
+    CameraUniform, DenseSpectrum, FilmUniform, Geometry, Instance, LightRecord, LightSamplingModel,
+    LightTableUniform, MaterialNode, MaterialRoot, MaterialTableUniform, MeasuredBsdfRecord,
+    MeasuredTableRecord, TriangleDistributionEntry, ViewportUniform,
+    INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
     LIGHT_SAMPLER_KIND_BVH,
 };
 use super::abi::{
@@ -33,13 +31,15 @@ use super::sampler::SamplerResources;
 use super::stages::ResourceId;
 
 mod geometry;
+pub mod light;
 pub mod medium;
 mod texture;
 mod upload;
 
 pub use texture::{lower_texture_library_records, texture_binding_counts};
 
-use geometry::{convert_geometry, validate_instance_area_lights};
+use geometry::convert_geometry;
+use light::{convert_lights, validate_instance_area_lights};
 use medium::convert_media;
 use texture::{
     infinite_image_payload, lower_texture_library, scene_texture_views, texture_binding_plan,
@@ -205,34 +205,6 @@ impl Scene {
             })
             .collect::<Vec<_>>();
         flat.texture_library.validate()?;
-        let mut attribute_refs = material_table.attributes;
-        let all_lights = flat
-            .lights
-            .iter()
-            .chain(flat.infinite_lights.iter())
-            .collect::<Vec<_>>();
-        let light_attribute_offsets = all_lights
-            .iter()
-            .scan(attribute_refs.len() as u32, |offset, light| {
-                let current = *offset;
-                *offset = offset.saturating_add(light.attributes.len() as u32);
-                Some(current)
-            })
-            .collect::<Vec<_>>();
-        attribute_refs.extend(
-            all_lights
-                .iter()
-                .flat_map(|light| light.attributes.iter())
-                .map(|attribute| AttributeRef {
-                    kind: match attribute.kind {
-                        flat::AttributeKind::Scalar => 0,
-                        flat::AttributeKind::Spectrum => 1,
-                        flat::AttributeKind::Texture => 2,
-                        flat::AttributeKind::Measured => 3,
-                    },
-                    index: attribute.index,
-                }),
-        );
         let scalar_attributes = flat.scalar_attributes.clone();
         // Keep the infinite-image sampler first. pbrt-v4 uses nearest lookup
         // for ImageInfiniteLight after equal-area sphere-to-square mapping.
@@ -277,64 +249,16 @@ impl Scene {
             .into_iter()
             .flatten()
             .collect::<HashMap<_, _>>();
-        let light_sampling_models = flat
-            .light_sampling_models
-            .iter()
-            .enumerate()
-            .map(|(model_index, model)| LightSamplingModel {
-                kind: match model.kind {
-                    flat::LightKind::Point => LIGHT_KIND_POINT,
-                    flat::LightKind::Spot => LIGHT_KIND_SPOT,
-                    flat::LightKind::Area => LIGHT_KIND_AREA,
-                    flat::LightKind::Distant => LIGHT_KIND_DISTANT,
-                    flat::LightKind::UniformInfinite => LIGHT_KIND_UNIFORM_INFINITE,
-                    flat::LightKind::ImageInfinite => LIGHT_KIND_IMAGE_INFINITE,
-                    flat::LightKind::PortalImageInfinite => LIGHT_KIND_PORTAL_IMAGE_INFINITE,
-                },
-                geometry_kind: match model.geometry_kind {
-                    flat::LightGeometryKind::Position => 0,
-                    flat::LightGeometryKind::Instance => 1,
-                    flat::LightGeometryKind::Direction => 2,
-                    flat::LightGeometryKind::Portal => 3,
-                    flat::LightGeometryKind::ImageInfinite => 4,
-                },
-                geometry_index: model.geometry_index,
-                direction_index: model.direction_index,
-                distribution_offset_words: model.distribution_offset,
-                distribution_count: model.distribution_count,
-                total_area: model.total_area,
-                flags: infinite_image_bindings
-                    .get(&(model_index as u32))
-                    .copied()
-                    .unwrap_or(model.flags),
-                world_to_light: model.world_to_light,
-            })
-            .collect::<Vec<_>>();
-        let light_records = flat
-            .lights
-            .iter()
-            .enumerate()
-            .chain(
-                flat.infinite_lights
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| (flat.lights.len() + i, r)),
-            )
-            .map(|(light_index, record)| LightRecord {
-                kind: match record.kind {
-                    flat::LightKind::Point => LIGHT_KIND_POINT,
-                    flat::LightKind::Spot => LIGHT_KIND_SPOT,
-                    flat::LightKind::Area => LIGHT_KIND_AREA,
-                    flat::LightKind::Distant => LIGHT_KIND_DISTANT,
-                    flat::LightKind::UniformInfinite => LIGHT_KIND_UNIFORM_INFINITE,
-                    flat::LightKind::ImageInfinite => LIGHT_KIND_IMAGE_INFINITE,
-                    flat::LightKind::PortalImageInfinite => LIGHT_KIND_PORTAL_IMAGE_INFINITE,
-                },
-                attribute_offset: light_attribute_offsets[light_index],
-                attribute_count: u32::try_from(record.attributes.len()).unwrap_or(0),
-                sampling_model: record.sampling_model,
-            })
-            .collect::<Vec<_>>();
+        let light_data = convert_lights(
+            &flat.light_sampling_models,
+            &flat.lights,
+            &flat.infinite_lights,
+            material_table.attributes,
+            &infinite_image_bindings,
+        )?;
+        let attribute_refs = light_data.attributes;
+        let light_records = light_data.records;
+        let light_sampling_models = light_data.sampling_models;
         let camera = camera_uniform(&flat.camera, &flat.viewport)?;
         let viewport = viewport_uniform(&flat.viewport, &flat.render_settings)?;
         let sampler = SamplerResources::new_with_subsurface(
