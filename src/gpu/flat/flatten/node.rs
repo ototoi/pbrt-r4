@@ -343,7 +343,7 @@ pub fn flatten_node_ref(
             &name,
             &shape,
             reverse_orientation,
-            builder,
+            &mut builder.geometry,
         )?;
         let material_root = match &material {
             Some(material) => register_material_source(material, builder, material_kind)?,
