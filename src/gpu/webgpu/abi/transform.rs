@@ -1,6 +1,6 @@
 use crate::util::error::PbrtError;
 
-pub(crate) fn inverse_affine(transform: [f32; 16], label: &str) -> Result<[[f32; 4]; 4], PbrtError> {
+pub fn inverse_affine(transform: [f32; 16], label: &str) -> Result<[[f32; 4]; 4], PbrtError> {
     let [a, b, c, tx, d, e, f, ty, g, h, i, tz, _, _, _, _] = transform;
     let determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
     if !determinant.is_finite() || determinant == 0.0 {
@@ -46,12 +46,12 @@ pub(crate) fn inverse_affine(transform: [f32; 16], label: &str) -> Result<[[f32;
 }
 
 
-pub(crate) fn normalize3(v: [f32; 3]) -> [f32; 3] {
+pub fn normalize3(v: [f32; 3]) -> [f32; 3] {
     let length = dot3(v, v).sqrt();
     [v[0] / length, v[1] / length, v[2] / length]
 }
 
-pub(crate) fn coordinate_system3(z: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+pub fn coordinate_system3(z: [f32; 3]) -> ([f32; 3], [f32; 3]) {
     let sign = if z[2].is_sign_negative() { -1.0 } else { 1.0 };
     let a = -1.0 / (sign + z[2]);
     let b = z[0] * z[1] * a;
@@ -61,15 +61,15 @@ pub(crate) fn coordinate_system3(z: [f32; 3]) -> ([f32; 3], [f32; 3]) {
     )
 }
 
-pub(crate) fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-pub(crate) fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-pub(crate) fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 

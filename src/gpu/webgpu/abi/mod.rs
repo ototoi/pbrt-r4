@@ -9,5 +9,7 @@ pub use bssrdf::*;
 pub use camera::*;
 pub use constants::*;
 pub use records::*;
-pub use transform::*;
+pub use transform::{
+    inverse_transpose_linear, row_major_to_columns, row_major_to_tlas_transform, validate_affine,
+};
 pub use uniforms::*;
