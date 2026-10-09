@@ -1,6 +1,6 @@
 use super::texture::TextureLibrary;
 use super::{
-    Camera, DenseSpectrum, Film, GeometryResources, Instance, LightGeometryKind, LightKind,
+    AttributeResources, Camera, Film, GeometryResources, Instance, LightGeometryKind, LightKind,
     LightResources, MaterialResources, Medium, Output, RenderSettings, Viewport, INVALID_INDEX,
 };
 use crate::util::error::PbrtError;
@@ -18,10 +18,10 @@ pub struct Scene {
     pub instances: Vec<Instance>,
     pub media: Vec<Medium>,
     pub materials: MaterialResources,
-    pub scalar_attributes: Vec<f32>,
+    /// Scene-wide scalar and spectrum tables referenced by materials, lights, and media.
+    pub attributes: AttributeResources,
     /// Typed, backend-independent texture programs and shared image resources.
     pub texture_library: TextureLibrary,
-    pub spectrum_attributes: Vec<DenseSpectrum>,
 }
 
 impl LightResources {
