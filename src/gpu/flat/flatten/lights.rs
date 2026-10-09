@@ -2,10 +2,9 @@ use super::super::area_light_flags;
 use super::{
     dot3, inverse_linear_transform, multiply_transform, push_scalar_attribute,
     push_spectrum_attribute, scale3, transform_point, transform_swaps_handedness, transform_vector,
-    triangle_area, triangle_geometric_normal, AreaTriangleInput, FlatBuilder,
-    ImageInfiniteSamplingRecord, Light, LightBoundInput, LightGeometryKind, LightKind,
-    LightSamplingModel, Transform, TriangleDistributionEntry, IDENTITY_LINEAR_TRANSFORM,
-    INVALID_INDEX,
+    triangle_area, triangle_geometric_normal, AreaTriangleInput, FlatBuilder, Light,
+    LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Transform,
+    TriangleDistributionEntry, IDENTITY_LINEAR_TRANSFORM, INVALID_INDEX,
 };
 use crate::gpu::node::{
     AreaLight as NodeAreaLight, Light as NodeLight, TextureComponent, TextureKind,
@@ -19,7 +18,7 @@ use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 use crate::util::vecmath::Frame;
 
 use super::super::image_infinite::ImageInfiniteDistribution;
-use super::super::portal::{prepare_portal_image, PortalImageInfiniteLight};
+use super::super::portal::prepare_portal_image;
 use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, Mipmap, MipmapLevelData};
 
 fn rgb_color_space(color_space: ColorSpace) -> &'static RGBColorSpace {
@@ -487,107 +486,19 @@ pub fn flatten_light(
                     ]
                 });
                 let prepared = prepare_portal_image(&mipmap, portal, world_to_light)?;
-                let distribution_offset =
-                    u32::try_from(builder.lights.infinite_resources.portal_distribution.len())
-                        .map_err(|_| PbrtError::error("Portal distribution offset exceeds u32."))?;
-                builder
-                    .lights
-                    .infinite_resources
-                    .portal_distribution
-                    .extend_from_slice(&prepared.distribution);
-                let geometry_index =
-                    u32::try_from(builder.lights.infinite_resources.portal_records.len())
-                        .map_err(|_| PbrtError::error("Portal image table exceeds u32."))?;
-                builder
-                    .lights
-                    .infinite_resources
-                    .portal_records
-                    .push(PortalImageInfiniteLight {
-                        portal: prepared.portal,
-                        world_to_portal: prepared.world_to_portal,
-                        distribution_offset,
-                        resolution: prepared.resolution,
-                    });
+                let geometry_index = builder.lights.infinite_resources.append_portal(&prepared)?;
                 (prepared.mipmap, LightGeometryKind::Portal, geometry_index)
             } else if kind == LightKind::ImageInfinite {
                 let distribution = ImageInfiniteDistribution::from_mipmap(&mipmap)?;
-                let distribution_offset =
-                    u32::try_from(builder.lights.infinite_resources.image_distribution.len())
-                        .map_err(|_| {
-                            PbrtError::error("Image infinite distribution offset exceeds u32.")
-                        })?;
-                let row_cdf_offset = u32::try_from(
-                    builder.lights.infinite_resources.image_row_cdf.len(),
-                )
-                .map_err(|_| PbrtError::error("Image infinite row CDF offset exceeds u32."))?;
-                builder
+                let geometry_index = builder
                     .lights
                     .infinite_resources
-                    .image_distribution
-                    .len()
-                    .checked_add(distribution.texels.len())
-                    .and_then(|end| u32::try_from(end).ok())
-                    .ok_or_else(|| {
-                        PbrtError::error("Image infinite distribution table exceeds u32.")
-                    })?;
-                builder
-                    .lights
-                    .infinite_resources
-                    .image_row_cdf
-                    .len()
-                    .checked_add(distribution.row_cdf.len())
-                    .and_then(|end| u32::try_from(end).ok())
-                    .ok_or_else(|| PbrtError::error("Image infinite row CDF table exceeds u32."))?;
-                builder
-                    .lights
-                    .infinite_resources
-                    .image_distribution
-                    .extend_from_slice(&distribution.texels);
-                builder
-                    .lights
-                    .infinite_resources
-                    .image_row_cdf
-                    .extend_from_slice(&distribution.row_cdf);
-                let geometry_index =
-                    u32::try_from(builder.lights.infinite_resources.image_records.len()).map_err(
-                        |_| PbrtError::error("Image infinite sampling record table exceeds u32."),
-                    )?;
-                builder
-                    .lights
-                    .infinite_resources
-                    .image_records
-                    .push(ImageInfiniteSamplingRecord {
-                        distribution_offset,
-                        row_cdf_offset,
-                        resolution: distribution.resolution,
-                        light_to_render: [
-                            [
-                                light_transform[0],
-                                light_transform[1],
-                                light_transform[2],
-                                0.0,
-                            ],
-                            [
-                                light_transform[4],
-                                light_transform[5],
-                                light_transform[6],
-                                0.0,
-                            ],
-                            [
-                                light_transform[8],
-                                light_transform[9],
-                                light_transform[10],
-                                0.0,
-                            ],
-                        ],
-                    });
+                    .append_image_distribution(&distribution, &light_transform)?;
                 (mipmap, LightGeometryKind::ImageInfinite, geometry_index)
             } else {
                 (mipmap, LightGeometryKind::Direction, INVALID_INDEX)
             };
-            let index = u32::try_from(builder.lights.infinite_resources.mipmaps.len())
-                .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
-            builder.lights.infinite_resources.mipmaps.push(mipmap);
+            let index = builder.lights.infinite_resources.append_mipmap(mipmap)?;
             (
                 index,
                 Some(illuminant),
