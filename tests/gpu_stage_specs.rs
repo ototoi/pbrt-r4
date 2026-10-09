@@ -1,3 +1,7 @@
+use std::collections::HashSet;
+
+use pbrt_r4::gpu::webgpu::shader::{compose_source_with_noise, resource_bindings};
+use pbrt_r4::gpu::webgpu::stage::COMPUTE_STAGES;
 use pbrt_r4::gpu::webgpu::stages::{
     canonical_wavefront_bindings, Access, BindingClass, BindingSpec, RequiredLimits, ResourceId,
 };
@@ -89,4 +93,48 @@ fn canonical_layout_drives_required_limits() {
         68
     );
     assert_eq!(limits.bind_groups, 2);
+}
+
+#[test]
+fn compute_stage_specs_are_unique_and_reference_their_entry_points() {
+    let mut ids = HashSet::new();
+    let mut labels = HashSet::new();
+    let mut entry_points = HashSet::new();
+
+    for stage in COMPUTE_STAGES {
+        assert!(ids.insert(stage.id), "duplicate stage ID: {:?}", stage.id);
+        assert!(
+            labels.insert(stage.label),
+            "duplicate stage label: {}",
+            stage.label
+        );
+        assert!(
+            entry_points.insert(stage.entry_point),
+            "duplicate stage entry point: {}",
+            stage.entry_point
+        );
+
+        for noise_enabled in [false, true] {
+            let source = compose_source_with_noise(stage.source, noise_enabled);
+            assert!(
+                source.contains(&format!("fn {}(", stage.entry_point)),
+                "stage {} does not declare entry point {}",
+                stage.label,
+                stage.entry_point
+            );
+
+            let used_bindings = resource_bindings(&source);
+            for binding in &used_bindings {
+                assert!(
+                    canonical_wavefront_bindings()
+                        .iter()
+                        .any(|spec| (spec.group, spec.binding) == *binding),
+                    "stage {} uses undeclared binding {binding:?}",
+                    stage.label
+                );
+            }
+        }
+    }
+
+    assert!(!COMPUTE_STAGES.is_empty());
 }

@@ -17,6 +17,7 @@ pub mod sampler;
 pub mod scene;
 pub mod shader;
 pub mod shader_composer;
+pub mod stage;
 pub mod stages;
 
 #[cfg(test)]
