@@ -1,10 +1,10 @@
 //! Reference evaluator for the backend-independent typed texture program.
 
+use super::mapping::{TextureMapping, UvMapping};
 use super::{
     ImageFilterMode, ImageValueType, ImageView, ImageWrapMode, MipmapEncoding, MipmapLevel,
     MipmapLevelData,
 };
-use crate::gpu::node::{TextureMapping, UvMapping};
 use crate::util::base::inverse_gamma_correct;
 use crate::util::error::PbrtError;
 
@@ -225,7 +225,7 @@ fn evaluate_procedural(
         ProceduralOperation::Checkerboard => {
             let odd = match mapping {
                 Some(TextureMapping::PointTransform(transform)) => {
-                    let p = transform_point(transform.matrix, context.position);
+                    let p = transform_point(*transform, context.position);
                     (p[0].floor() as i32 + p[1].floor() as i32 + p[2].floor() as i32) & 1 != 0
                 }
                 _ => {
@@ -237,11 +237,9 @@ fn evaluate_procedural(
         }
         ProceduralOperation::DirectionMix => {
             let direction = match mapping {
-                Some(TextureMapping::PointTransform(transform)) => [
-                    transform.matrix[0],
-                    transform.matrix[1],
-                    transform.matrix[2],
-                ],
+                Some(TextureMapping::PointTransform(transform)) => {
+                    [transform[0], transform[1], transform[2]]
+                }
                 _ => [0.0, 1.0, 0.0],
             };
             let amount = (context.normal[0] * direction[0]
@@ -273,11 +271,11 @@ fn mapped_uv(
             context.uv[1] * *vscale + *vdelta,
         ]),
         Some(TextureMapping::Planar(transform)) => {
-            let p = transform_point(transform.matrix, context.position);
+            let p = transform_point(*transform, context.position);
             Ok([p[0], p[1]])
         }
         Some(TextureMapping::Spherical(transform)) => {
-            let p = transform_point(transform.matrix, context.position);
+            let p = transform_point(*transform, context.position);
             let length = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
             let q = [p[0] / length, p[1] / length, p[2] / length];
             let phi = q[1].atan2(q[0]);
@@ -291,7 +289,7 @@ fn mapped_uv(
             ])
         }
         Some(TextureMapping::Cylindrical(transform)) => {
-            let p = transform_point(transform.matrix, context.position);
+            let p = transform_point(*transform, context.position);
             Ok([
                 (std::f32::consts::PI + p[1].atan2(p[0])) / std::f32::consts::TAU,
                 p[2],

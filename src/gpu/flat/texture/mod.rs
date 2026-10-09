@@ -3,6 +3,7 @@
 mod compile;
 mod evaluate;
 mod image;
+mod mapping;
 mod optimize;
 mod program;
 
@@ -16,6 +17,7 @@ pub use image::{
     ColorSpace, ImageCompiler, ImageDecoder, ImageFilterMode, ImageOptimizationPolicy,
     ImageValueType, ImageView, ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData,
 };
+pub use mapping::{TextureMapping, UvMapping};
 pub use program::{
     Instruction as TextureInstruction, ProceduralOperation, TypedTextureProgram,
     ValueType as TextureValueType,
