@@ -234,7 +234,7 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
-    assert!(scene.primitive_distribution_map.offsets == vec![0]);
+    assert!(scene.lights.primitive_distribution_map.offsets == vec![0]);
 }
 
 #[test]
@@ -662,22 +662,25 @@ fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
 
     assert_eq!(scene.instances.len(), 1);
     assert_eq!(scene.instances[0].area_light, 0);
-    assert_eq!(scene.light_sampling_models.len(), 1);
-    assert_eq!(scene.light_sampling_models[0].geometry_index, 0);
-    assert_eq!(scene.light_sampling_models[0].distribution_offset, 0);
-    assert_eq!(scene.light_sampling_models[0].distribution_count, 2);
-    assert_eq!(scene.light_sampling_models[0].total_area, 1.5);
-    assert_eq!(scene.triangle_distributions.len(), 2);
-    assert_eq!(scene.triangle_distributions[0].primitive, 0);
-    assert!((scene.triangle_distributions[0].cdf - 1.0 / 3.0).abs() < 1e-6);
-    assert_eq!(scene.triangle_distributions[1].primitive, 1);
-    assert_eq!(scene.triangle_distributions[1].cdf, 1.0);
-    assert_eq!(scene.lights.len(), 1);
-    assert_eq!(scene.lights[0].sampling_model, 0);
-    assert_eq!(scene.lights[0].kind, pbrt_r4::gpu::flat::LightKind::Area);
-    assert_eq!(scene.primitive_distribution_map.offsets, vec![0, 2]);
-    assert_eq!(scene.primitive_distribution_map.entries, vec![0, 1]);
-    let scale = &scene.lights[0].attributes[1];
+    assert_eq!(scene.lights.sampling_models.len(), 1);
+    assert_eq!(scene.lights.sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_offset, 0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_count, 2);
+    assert_eq!(scene.lights.sampling_models[0].total_area, 1.5);
+    assert_eq!(scene.lights.triangle_distributions.len(), 2);
+    assert_eq!(scene.lights.triangle_distributions[0].primitive, 0);
+    assert!((scene.lights.triangle_distributions[0].cdf - 1.0 / 3.0).abs() < 1e-6);
+    assert_eq!(scene.lights.triangle_distributions[1].primitive, 1);
+    assert_eq!(scene.lights.triangle_distributions[1].cdf, 1.0);
+    assert_eq!(scene.lights.lights.len(), 1);
+    assert_eq!(scene.lights.lights[0].sampling_model, 0);
+    assert_eq!(
+        scene.lights.lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::Area
+    );
+    assert_eq!(scene.lights.primitive_distribution_map.offsets, vec![0, 2]);
+    assert_eq!(scene.lights.primitive_distribution_map.entries, vec![0, 1]);
+    let scale = &scene.lights.lights[0].attributes[1];
     let expected = 1.0 / spectrum_to_photometric(&Spectrum::from(1.0));
     assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
 }
@@ -1007,9 +1010,9 @@ fn flatten_node_extracts_render_settings_and_point_lights() {
     assert_eq!(scene.render_settings.max_depth, 3);
     assert_eq!(scene.render_settings.seed, 13);
     assert_eq!(scene.render_settings.light_sampler, "uniform");
-    assert_eq!(scene.light_positions, vec![[1.0, 2.0, 3.0]]);
-    assert_eq!(scene.lights[0].attributes.len(), 2);
-    let scale = &scene.lights[0].attributes[1];
+    assert_eq!(scene.lights.positions, vec![[1.0, 2.0, 3.0]]);
+    assert_eq!(scene.lights.lights[0].attributes.len(), 2);
+    let scale = &scene.lights.lights[0].attributes[1];
     let intensity = Spectrum::from_rgb(&[2.0, 2.0, 2.0], SpectrumType::Illuminant);
     let expected = 1.0 / spectrum_to_photometric(&intensity);
     assert!((scene.scalar_attributes[scale.index as usize] - expected).abs() < 1e-6);
@@ -1169,31 +1172,34 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.lights.len(), 1);
-    assert_eq!(scene.infinite_lights.len(), 1);
-    assert_eq!(scene.lights[0].kind, pbrt_r4::gpu::flat::LightKind::Spot);
-    assert_eq!(scene.lights[0].attributes.len(), 4);
+    assert_eq!(scene.lights.lights.len(), 1);
+    assert_eq!(scene.lights.infinite_lights.len(), 1);
     assert_eq!(
-        scene.infinite_lights[0].kind,
+        scene.lights.lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::Spot
+    );
+    assert_eq!(scene.lights.lights[0].attributes.len(), 4);
+    assert_eq!(
+        scene.lights.infinite_lights[0].kind,
         pbrt_r4::gpu::flat::LightKind::Distant
     );
-    assert_eq!(scene.light_bvh.bounded_handles, vec![0]);
+    assert_eq!(scene.lights.bvh.bounded_handles, vec![0]);
 
-    let spot_model = &scene.light_sampling_models[scene.lights[0].sampling_model as usize];
+    let spot_model = &scene.lights.sampling_models[scene.lights.lights[0].sampling_model as usize];
     assert_eq!(spot_model.kind, pbrt_r4::gpu::flat::LightKind::Spot);
     assert_eq!(
         spot_model.geometry_kind,
         pbrt_r4::gpu::flat::LightGeometryKind::Position
     );
     let distant_model =
-        &scene.light_sampling_models[scene.infinite_lights[0].sampling_model as usize];
+        &scene.lights.sampling_models[scene.lights.infinite_lights[0].sampling_model as usize];
     assert_eq!(distant_model.kind, pbrt_r4::gpu::flat::LightKind::Distant);
     assert_eq!(
         distant_model.geometry_kind,
         pbrt_r4::gpu::flat::LightGeometryKind::Direction
     );
-    assert_ne!(scene.lights[0].sampling_model, 0);
-    assert_eq!(scene.infinite_lights[0].sampling_model, 0);
+    assert_ne!(scene.lights.lights[0].sampling_model, 0);
+    assert_eq!(scene.lights.infinite_lights[0].sampling_model, 0);
     assert_eq!(
         spot_model.world_to_light,
         [
@@ -1203,11 +1209,11 @@ fn flatten_node_separates_spot_and_distant_light_sampling_models() {
         ]
     );
 
-    let cos_start = scene.scalar_attributes[scene.lights[0].attributes[2].index as usize];
-    let cos_end = scene.scalar_attributes[scene.lights[0].attributes[3].index as usize];
+    let cos_start = scene.scalar_attributes[scene.lights.lights[0].attributes[2].index as usize];
+    let cos_end = scene.scalar_attributes[scene.lights.lights[0].attributes[3].index as usize];
     assert!((cos_start - 30.0_f32.to_radians().cos()).abs() < 1e-6);
     assert!((cos_end - 40.0_f32.to_radians().cos()).abs() < 1e-6);
-    let scale = scene.scalar_attributes[scene.lights[0].attributes[1].index as usize];
+    let scale = scene.scalar_attributes[scene.lights.lights[0].attributes[1].index as usize];
     let intensity = Spectrum::from(1.0);
     let k_e = 2.0 * PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
     let expected_scale = 10.0 / (spectrum_to_photometric(&intensity) * k_e);
@@ -1227,7 +1233,7 @@ fn flattened_spot_light_maps_its_axis_to_local_positive_z() {
     ];
     root.add_child(spot);
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let model = &scene.light_sampling_models[scene.lights[0].sampling_model as usize];
+    let model = &scene.lights.sampling_models[scene.lights.lights[0].sampling_model as usize];
 
     // These render-space rays are the transformed cone axis and two rays
     // at 45 degrees to it before the nonuniform scale and shear.
@@ -1272,10 +1278,10 @@ fn flatten_node_classifies_infinite_light_variants() {
         add_camera_and_film(&mut root, Default::default());
         root.add_child(light_node("infinite", "infinite", params));
         let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-        assert_eq!(scene.infinite_lights[0].kind, expected_kind);
-        assert_eq!(scene.light_sampling_models.len(), 1);
+        assert_eq!(scene.lights.infinite_lights[0].kind, expected_kind);
+        assert_eq!(scene.lights.sampling_models.len(), 1);
         assert_eq!(
-            scene.light_sampling_models[0].geometry_kind,
+            scene.lights.sampling_models[0].geometry_kind,
             if expected_kind == pbrt_r4::gpu::flat::LightKind::ImageInfinite {
                 pbrt_r4::gpu::flat::LightGeometryKind::ImageInfinite
             } else {
@@ -1283,10 +1289,13 @@ fn flatten_node_classifies_infinite_light_variants() {
             }
         );
         if expected_kind == pbrt_r4::gpu::flat::LightKind::ImageInfinite {
-            assert_eq!(scene.image_infinite_lights.len(), 1);
-            assert_eq!(scene.image_infinite_lights[0].resolution, [2, 2]);
-            assert_eq!(scene.image_infinite_distribution.len(), 4);
-            assert_eq!(scene.image_infinite_row_cdf.len(), 2);
+            assert_eq!(scene.lights.infinite_sampling.image_records.len(), 1);
+            assert_eq!(
+                scene.lights.infinite_sampling.image_records[0].resolution,
+                [2, 2]
+            );
+            assert_eq!(scene.lights.infinite_sampling.image_distribution.len(), 4);
+            assert_eq!(scene.lights.infinite_sampling.image_row_cdf.len(), 2);
         }
     }
 }
@@ -1320,17 +1329,29 @@ fn flattened_image_infinite_lights_keep_distinct_cdfs_and_light_transforms() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.image_infinite_lights.len(), 2);
-    assert_eq!(scene.image_infinite_distribution.len(), 8);
-    assert_eq!(scene.image_infinite_row_cdf.len(), 4);
-    assert_eq!(scene.image_infinite_lights[0].distribution_offset, 0);
-    assert_eq!(scene.image_infinite_lights[0].row_cdf_offset, 0);
-    assert_eq!(scene.image_infinite_lights[1].distribution_offset, 4);
-    assert_eq!(scene.image_infinite_lights[1].row_cdf_offset, 2);
-    assert_eq!(scene.light_sampling_models[0].geometry_index, 0);
-    assert_eq!(scene.light_sampling_models[1].geometry_index, 1);
+    assert_eq!(scene.lights.infinite_sampling.image_records.len(), 2);
+    assert_eq!(scene.lights.infinite_sampling.image_distribution.len(), 8);
+    assert_eq!(scene.lights.infinite_sampling.image_row_cdf.len(), 4);
     assert_eq!(
-        scene.image_infinite_lights[0].light_to_render,
+        scene.lights.infinite_sampling.image_records[0].distribution_offset,
+        0
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[0].row_cdf_offset,
+        0
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[1].distribution_offset,
+        4
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[1].row_cdf_offset,
+        2
+    );
+    assert_eq!(scene.lights.sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.lights.sampling_models[1].geometry_index, 1);
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[0].light_to_render,
         [
             [0.0, -1.0, 0.0, 0.0],
             [1.0, 0.0, 0.0, 0.0],
@@ -1338,11 +1359,11 @@ fn flattened_image_infinite_lights_keep_distinct_cdfs_and_light_transforms() {
         ]
     );
     let local_x = [1.0, 0.0, 0.0];
-    let render_direction = scene.image_infinite_lights[0]
+    let render_direction = scene.lights.infinite_sampling.image_records[0]
         .light_to_render
         .map(|row| row[0] * local_x[0] + row[1] * local_x[1] + row[2] * local_x[2]);
     assert_eq!(render_direction, [0.0, 1.0, 0.0]);
-    let recovered_local = scene.light_sampling_models[0].world_to_light.map(|row| {
+    let recovered_local = scene.lights.sampling_models[0].world_to_light.map(|row| {
         row[0] * render_direction[0] + row[1] * render_direction[1] + row[2] * render_direction[2]
     });
     assert_eq!(recovered_local, local_x);
@@ -1368,16 +1389,16 @@ fn flatten_node_accepts_portal_infinite_image() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     assert_eq!(
-        scene.infinite_lights[0].kind,
+        scene.lights.infinite_lights[0].kind,
         pbrt_r4::gpu::flat::LightKind::PortalImageInfinite
     );
     assert_eq!(
-        scene.light_sampling_models[0].geometry_kind,
+        scene.lights.sampling_models[0].geometry_kind,
         pbrt_r4::gpu::flat::LightGeometryKind::Portal
     );
-    assert_eq!(scene.light_sampling_models[0].distribution_offset, 0);
-    assert_eq!(scene.light_sampling_models[0].distribution_count, 0);
-    assert_eq!(scene.light_sampling_models[0].total_area, 0.0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_offset, 0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_count, 0);
+    assert_eq!(scene.lights.sampling_models[0].total_area, 0.0);
 }
 
 #[test]
@@ -1419,18 +1440,27 @@ fn flatten_node_keeps_multiple_portal_images_and_distributions_separate() {
     }
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.infinite_lights.len(), 2);
-    assert_eq!(scene.portal_infinite_lights.len(), 2);
-    assert_eq!(scene.light_sampling_models[0].geometry_index, 0);
-    assert_eq!(scene.light_sampling_models[1].geometry_index, 1);
-    assert_eq!(scene.portal_infinite_lights[0].distribution_offset, 0);
-    assert_eq!(scene.portal_infinite_lights[1].distribution_offset, 9);
-    assert_eq!(scene.portal_distribution.len(), 18);
-    assert_ne!(
-        scene.infinite_lights[0].image_index,
-        scene.infinite_lights[1].image_index
+    assert_eq!(scene.lights.infinite_lights.len(), 2);
+    assert_eq!(scene.lights.infinite_sampling.portal_records.len(), 2);
+    assert_eq!(scene.lights.sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.lights.sampling_models[1].geometry_index, 1);
+    assert_eq!(
+        scene.lights.infinite_sampling.portal_records[0].distribution_offset,
+        0
     );
-    scene.validate_static_views().unwrap();
+    assert_eq!(
+        scene.lights.infinite_sampling.portal_records[1].distribution_offset,
+        9
+    );
+    assert_eq!(scene.lights.infinite_sampling.portal_distribution.len(), 18);
+    assert_ne!(
+        scene.lights.infinite_lights[0].image_index,
+        scene.lights.infinite_lights[1].image_index
+    );
+    scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap();
 }
 
 fn one_pixel_portal_scene() -> FlatScene {
@@ -1451,59 +1481,101 @@ fn portal_static_view_validation_rejects_inconsistent_flat_data() {
     let scene = one_pixel_portal_scene();
 
     let mut missing_record = scene.clone();
-    missing_record.portal_infinite_lights.clear();
+    missing_record
+        .lights
+        .infinite_sampling
+        .portal_records
+        .clear();
     assert!(missing_record
-        .validate_static_views()
+        .lights
+        .validate_consistency(&missing_record.texture_library)
         .unwrap_err()
         .to_string()
         .contains("not one-to-one"));
 
     let mut legacy_fields = scene.clone();
-    legacy_fields.light_sampling_models[0].distribution_count = 1;
+    legacy_fields.lights.sampling_models[0].distribution_count = 1;
     assert!(legacy_fields
-        .validate_static_views()
+        .lights
+        .validate_consistency(&legacy_fields.texture_library)
         .unwrap_err()
         .to_string()
         .contains("invalid legacy geometry fields"));
 
     let mut non_finite_geometry = scene.clone();
-    non_finite_geometry.portal_infinite_lights[0].portal[0][0] = f32::NAN;
+    non_finite_geometry.lights.infinite_sampling.portal_records[0].portal[0][0] = f32::NAN;
     assert!(non_finite_geometry
-        .validate_static_views()
+        .lights
+        .validate_consistency(&non_finite_geometry.texture_library)
         .unwrap_err()
         .to_string()
         .contains("non-finite geometry"));
 
     let mut non_finite_distribution = scene.clone();
-    non_finite_distribution.portal_distribution[0].summed_area = f32::INFINITY;
+    non_finite_distribution
+        .lights
+        .infinite_sampling
+        .portal_distribution[0]
+        .summed_area = f32::INFINITY;
     assert!(non_finite_distribution
-        .validate_static_views()
+        .lights
+        .validate_consistency(&non_finite_distribution.texture_library)
         .unwrap_err()
         .to_string()
         .contains("non-finite value"));
 
     let mut image_mismatch = scene.clone();
-    let image = image_mismatch.infinite_lights[0].image_index as usize;
+    let image = image_mismatch.lights.infinite_lights[0].image_index as usize;
     image_mismatch.texture_library.mipmaps[image] = Arc::new({
         let mut mipmap = (*image_mismatch.texture_library.mipmaps[image]).clone();
         mipmap.levels[0].resolution = [2, 1];
         mipmap
     });
     assert!(image_mismatch
-        .validate_static_views()
+        .lights
+        .validate_consistency(&image_mismatch.texture_library)
         .unwrap_err()
         .to_string()
         .contains("resolutions differ"));
 
     let mut orphan_texel = scene;
     orphan_texel
+        .lights
+        .infinite_sampling
         .portal_distribution
-        .push(orphan_texel.portal_distribution[0]);
+        .push(orphan_texel.lights.infinite_sampling.portal_distribution[0]);
     assert!(orphan_texel
-        .validate_static_views()
+        .lights
+        .validate_consistency(&orphan_texel.texture_library)
         .unwrap_err()
         .to_string()
         .contains("not owned"));
+}
+
+#[test]
+fn light_validation_preserves_image_record_error_order_before_portal_image_lookup() {
+    let mut scene = one_pixel_portal_scene();
+    scene.lights.infinite_lights[0].image_index = INVALID_INDEX;
+    scene.lights.infinite_sampling.image_records.push(
+        pbrt_r4::gpu::flat::ImageInfiniteSamplingRecord {
+            distribution_offset: 0,
+            row_cdf_offset: 0,
+            resolution: [1, 1],
+            light_to_render: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        },
+    );
+
+    let error = scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("Image infinite lights and sampling records are not one-to-one"));
 }
 
 #[test]
@@ -1606,14 +1678,18 @@ fn flatten_node_builds_portal_jacobian_weighted_sat() {
     root.add_child(light_node("portal", "infinite", params));
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let center = scene.portal_distribution[4];
+    let center = scene.lights.infinite_sampling.portal_distribution[4];
     assert!((center.function - PI.powi(2)).abs() < 1e-4);
     let total: f32 = scene
+        .lights
+        .infinite_sampling
         .portal_distribution
         .iter()
         .map(|texel| texel.function)
         .sum();
-    assert!((scene.portal_distribution[8].summed_area - total).abs() < 1e-4);
+    assert!(
+        (scene.lights.infinite_sampling.portal_distribution[8].summed_area - total).abs() < 1e-4
+    );
 }
 
 #[test]
@@ -1648,9 +1724,12 @@ fn flatten_node_keeps_portal_points_in_world_space() {
     root.add_child(light);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.portal_infinite_lights[0].portal[0], [0.0, 0.0, 2.0]);
     assert_eq!(
-        scene.light_sampling_models[0].world_to_light,
+        scene.lights.infinite_sampling.portal_records[0].portal[0],
+        [0.0, 0.0, 2.0]
+    );
+    assert_eq!(
+        scene.lights.sampling_models[0].world_to_light,
         [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -1701,8 +1780,8 @@ fn flatten_node_prepares_equal_area_infinite_image_and_transform() {
     root.add_child(light);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    let light = &scene.infinite_lights[0];
-    let model = &scene.light_sampling_models[light.sampling_model as usize];
+    let light = &scene.lights.infinite_lights[0];
+    let model = &scene.lights.sampling_models[light.sampling_model as usize];
     assert_eq!(model.world_to_light[0][0], 0.5);
     assert_eq!(model.world_to_light[1][1], 0.25);
     assert_eq!(model.world_to_light[2][2], 0.2);
@@ -1746,9 +1825,12 @@ fn flatten_node_allows_multiple_infinite_lights() {
     root.add_child(light_node("duplicate", "infinite", Default::default()));
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.infinite_lights.len(), 4);
-    assert_eq!(scene.light_sampling_models.len(), 4);
-    scene.validate_static_views().unwrap();
+    assert_eq!(scene.lights.infinite_lights.len(), 4);
+    assert_eq!(scene.lights.sampling_models.len(), 4);
+    scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap();
 }
 
 #[test]
@@ -1766,7 +1848,7 @@ fn flatten_node_uses_color_space_illuminant_for_default_light_spectra() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let expected = ACES2065_1.illuminant.sample_at(450.0);
-    for light in [&scene.lights[0], &scene.infinite_lights[0]] {
+    for light in [&scene.lights.lights[0], &scene.lights.infinite_lights[0]] {
         let actual =
             evaluate_dense_spectrum(&scene.spectrum_attributes, light.attributes[0].index, 450.0)
                 .unwrap();

@@ -1,11 +1,8 @@
-use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
 use super::texture::TextureLibrary;
 use super::{
-    Camera, DenseSpectrum, Film, Geometry, ImageInfiniteDistributionTexel,
-    ImageInfiniteSamplingRecord, Instance, Light, LightBVH, LightBounds, LightGeometryKind,
-    LightKind, LightSamplingModel, MaterialNode, MaterialRoot, MeasuredBsdfResources, Medium,
-    Output, PrimitiveDistributionMap, RenderSettings, TabulatedBSSRDFTable,
-    TriangleDistributionEntry, Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    Camera, DenseSpectrum, Film, Geometry, Instance, LightGeometryKind, LightKind, LightResources,
+    MaterialNode, MaterialRoot, MeasuredBsdfResources, Medium, Output, RenderSettings,
+    TabulatedBSSRDFTable, Vertex, Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::util::error::PbrtError;
 
@@ -16,13 +13,7 @@ pub struct Scene {
     pub film: Film,
     pub output: Output,
     pub render_settings: RenderSettings,
-    pub light_sampling_models: Vec<LightSamplingModel>,
-    pub light_positions: Vec<[f32; 3]>,
-    pub triangle_distributions: Vec<TriangleDistributionEntry>,
-    pub lights: Vec<Light>,
-    pub infinite_lights: Vec<Light>,
-    pub light_bounds: Vec<LightBounds>,
-    pub light_bvh: LightBVH,
+    pub lights: LightResources,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub geometries: Vec<Geometry>,
@@ -37,16 +28,10 @@ pub struct Scene {
     pub texture_library: TextureLibrary,
     pub spectrum_attributes: Vec<DenseSpectrum>,
     pub measured_bsdfs: MeasuredBsdfResources,
-    pub primitive_distribution_map: PrimitiveDistributionMap,
-    pub portal_infinite_lights: Vec<PortalImageInfiniteLight>,
-    pub portal_distribution: Vec<PortalDistributionTexel>,
-    pub image_infinite_lights: Vec<ImageInfiniteSamplingRecord>,
-    pub image_infinite_distribution: Vec<ImageInfiniteDistributionTexel>,
-    pub image_infinite_row_cdf: Vec<f32>,
 }
 
-impl Scene {
-    pub fn validate_static_views(&self) -> Result<(), PbrtError> {
+impl LightResources {
+    pub fn validate_consistency(&self, texture_library: &TextureLibrary) -> Result<(), PbrtError> {
         let area_count = self
             .lights
             .iter()
@@ -68,14 +53,14 @@ impl Scene {
             .iter()
             .filter(|light| light.kind == LightKind::PortalImageInfinite)
             .count();
-        if portal_light_count != self.portal_infinite_lights.len() {
+        if portal_light_count != self.infinite_sampling.portal_records.len() {
             return Err(PbrtError::error(
                 "Portal infinite lights and geometry records are not one-to-one.",
             ));
         }
 
         let mut next_distribution_offset = 0usize;
-        for (index, portal) in self.portal_infinite_lights.iter().enumerate() {
+        for (index, portal) in self.infinite_sampling.portal_records.iter().enumerate() {
             if portal.resolution.contains(&0) {
                 return Err(PbrtError::error(&format!(
                     "Portal infinite light {index} has an empty distribution."
@@ -106,15 +91,15 @@ impl Scene {
                 ))
             })?;
             if offset != next_distribution_offset
-                || offset > self.portal_distribution.len()
-                || count > self.portal_distribution.len() - offset
+                || offset > self.infinite_sampling.portal_distribution.len()
+                || count > self.infinite_sampling.portal_distribution.len() - offset
             {
                 return Err(PbrtError::error(&format!(
                     "Portal infinite light {index} distribution range is invalid."
                 )));
             }
             let end = offset + count;
-            if self.portal_distribution[offset..end]
+            if self.infinite_sampling.portal_distribution[offset..end]
                 .iter()
                 .any(|texel| !texel.function.is_finite() || !texel.summed_area.is_finite())
             {
@@ -124,7 +109,7 @@ impl Scene {
             }
             next_distribution_offset = end;
         }
-        if next_distribution_offset != self.portal_distribution.len() {
+        if next_distribution_offset != self.infinite_sampling.portal_distribution.len() {
             return Err(PbrtError::error(
                 "Portal distribution contains texels not owned by a portal light.",
             ));
@@ -135,14 +120,14 @@ impl Scene {
             .iter()
             .filter(|light| light.kind == LightKind::ImageInfinite)
             .count();
-        if image_light_count != self.image_infinite_lights.len() {
+        if image_light_count != self.infinite_sampling.image_records.len() {
             return Err(PbrtError::error(
                 "Image infinite lights and sampling records are not one-to-one.",
             ));
         }
         let mut next_image_texel_offset = 0usize;
         let mut next_image_row_offset = 0usize;
-        for (index, image) in self.image_infinite_lights.iter().enumerate() {
+        for (index, image) in self.infinite_sampling.image_records.iter().enumerate() {
             let [width, height] = image.resolution;
             if width == 0 || height == 0 {
                 return Err(PbrtError::error(&format!(
@@ -185,14 +170,14 @@ impl Scene {
             })?;
             if texel_offset != next_image_texel_offset
                 || row_offset != next_image_row_offset
-                || texel_end > self.image_infinite_distribution.len()
-                || row_end > self.image_infinite_row_cdf.len()
+                || texel_end > self.infinite_sampling.image_distribution.len()
+                || row_end > self.infinite_sampling.image_row_cdf.len()
             {
                 return Err(PbrtError::error(&format!(
                     "Image infinite light {index} distribution range is invalid."
                 )));
             }
-            let texels = &self.image_infinite_distribution[texel_offset..texel_end];
+            let texels = &self.infinite_sampling.image_distribution[texel_offset..texel_end];
             for row in texels.chunks_exact(width as usize) {
                 let mut previous = 0.0f32;
                 for texel in row {
@@ -209,7 +194,7 @@ impl Scene {
                 }
             }
             let mut previous = 0.0f32;
-            for value in &self.image_infinite_row_cdf[row_offset..row_end] {
+            for value in &self.infinite_sampling.image_row_cdf[row_offset..row_end] {
                 if !value.is_finite() || *value < previous {
                     return Err(PbrtError::error(&format!(
                         "Image infinite light {index} has an invalid marginal CDF."
@@ -225,8 +210,8 @@ impl Scene {
             next_image_texel_offset = texel_end;
             next_image_row_offset = row_end;
         }
-        if next_image_texel_offset != self.image_infinite_distribution.len()
-            || next_image_row_offset != self.image_infinite_row_cdf.len()
+        if next_image_texel_offset != self.infinite_sampling.image_distribution.len()
+            || next_image_row_offset != self.infinite_sampling.image_row_cdf.len()
         {
             return Err(PbrtError::error(
                 "Image infinite distribution data is not owned by a sampling record.",
@@ -238,13 +223,13 @@ impl Scene {
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
         ];
-        let mut referenced_portals = vec![false; self.portal_infinite_lights.len()];
+        let mut referenced_portals = vec![false; self.infinite_sampling.portal_records.len()];
         for (light_index, light) in self.infinite_lights.iter().enumerate() {
             if light.kind != LightKind::PortalImageInfinite {
                 continue;
             }
             let model = self
-                .light_sampling_models
+                .sampling_models
                 .get(light.sampling_model as usize)
                 .ok_or_else(|| {
                     PbrtError::error(&format!(
@@ -270,7 +255,8 @@ impl Scene {
             }
             let portal_index = model.geometry_index as usize;
             let portal = self
-                .portal_infinite_lights
+                .infinite_sampling
+                .portal_records
                 .get(portal_index)
                 .ok_or_else(|| {
                     PbrtError::error("Portal light sampling model has an invalid geometry index.")
@@ -282,8 +268,7 @@ impl Scene {
             }
             referenced_portals[portal_index] = true;
 
-            let level = self
-                .texture_library
+            let level = texture_library
                 .mipmaps
                 .get(light.image_index as usize)
                 .and_then(|mipmap| mipmap.levels.first())
@@ -301,13 +286,13 @@ impl Scene {
                 "Portal geometry record is not referenced by exactly one light.",
             ));
         }
-        let mut referenced_image_lights = vec![false; self.image_infinite_lights.len()];
+        let mut referenced_image_lights = vec![false; self.infinite_sampling.image_records.len()];
         for (light_index, light) in self.infinite_lights.iter().enumerate() {
             if light.kind != LightKind::ImageInfinite {
                 continue;
             }
             let model = self
-                .light_sampling_models
+                .sampling_models
                 .get(light.sampling_model as usize)
                 .ok_or_else(|| {
                     PbrtError::error(&format!(
@@ -322,17 +307,20 @@ impl Scene {
                 ));
             }
             let image_index = model.geometry_index as usize;
-            let image = self.image_infinite_lights.get(image_index).ok_or_else(|| {
-                PbrtError::error("Image infinite sampling model has an invalid record index.")
-            })?;
+            let image = self
+                .infinite_sampling
+                .image_records
+                .get(image_index)
+                .ok_or_else(|| {
+                    PbrtError::error("Image infinite sampling model has an invalid record index.")
+                })?;
             if referenced_image_lights[image_index] {
                 return Err(PbrtError::error(
                     "Multiple image infinite lights reference the same sampling record.",
                 ));
             }
             referenced_image_lights[image_index] = true;
-            let level = self
-                .texture_library
+            let level = texture_library
                 .mipmaps
                 .get(light.image_index as usize)
                 .and_then(|mipmap| mipmap.levels.first())
@@ -350,7 +338,7 @@ impl Scene {
                 "Image infinite sampling record is not referenced by exactly one light.",
             ));
         }
-        for model in &self.light_sampling_models {
+        for model in &self.sampling_models {
             if (model.kind == LightKind::PortalImageInfinite)
                 != (model.geometry_kind == LightGeometryKind::Portal)
             {
