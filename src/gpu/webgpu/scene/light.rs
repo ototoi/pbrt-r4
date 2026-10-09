@@ -15,7 +15,7 @@ pub struct LightData {
     pub sampling_models: Vec<LightSamplingModel>,
 }
 
-pub(super) fn validate_instance_area_lights(
+pub fn validate_instance_area_lights(
     instance_index: usize,
     instance: &flat::Instance,
     flat: &flat::Scene,
