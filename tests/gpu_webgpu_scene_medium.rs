@@ -1,6 +1,6 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::flat::{identity_transform, Medium};
+use pbrt_r4::gpu::flat::Medium;
 use pbrt_r4::gpu::webgpu::scene::medium::convert_media;
 
 fn homogeneous_medium() -> Medium {
@@ -11,7 +11,9 @@ fn homogeneous_medium() -> Medium {
         sigma_s: 1,
         le: 2,
         g: 0.25,
-        transform: identity_transform(),
+        transform: [
+            0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+        ],
     }
 }
 
@@ -26,10 +28,10 @@ fn converts_homogeneous_medium_to_record() {
     assert_eq!(
         record.medium_to_world,
         [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 4.0, 8.0, 12.0],
+            [1.0, 5.0, 9.0, 13.0],
+            [2.0, 6.0, 10.0, 14.0],
+            [3.0, 7.0, 11.0, 15.0],
         ]
     );
 }
