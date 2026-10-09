@@ -148,7 +148,7 @@ pub fn flatten_node_with_material_override(
             geometries: builder.geometry.geometries,
         },
         instances: builder.instances,
-        media: builder.media,
+        media: builder.medium.media,
         materials: MaterialResources {
             roots: material_roots,
             nodes: material_nodes,
@@ -287,10 +287,7 @@ struct FlatBuilder {
     film: Option<Film>,
     geometry: GeometryBuilder,
     instances: Vec<Instance>,
-    media: Vec<Medium>,
-    // Keep Node IR media alive while their pointer identities are keys below.
-    medium_refs: Vec<Arc<NodeMedium>>,
-    media_indices_by_node: HashMap<*const NodeMedium, u32>,
+    medium: MediumBuilder,
     materials: MaterialBuilder,
     scalar_attributes: Vec<f32>,
     texture_root_specs: Vec<TextureRootSpec>,
@@ -339,4 +336,12 @@ struct InfiniteLightBuilder {
     image_records: Vec<ImageInfiniteSamplingRecord>,
     image_distribution: Vec<ImageInfiniteDistributionTexel>,
     image_row_cdf: Vec<f32>,
+}
+
+#[derive(Default)]
+struct MediumBuilder {
+    media: Vec<Medium>,
+    // Keep Node IR media alive while their pointer identities are keys below.
+    medium_refs: Vec<Arc<NodeMedium>>,
+    media_indices_by_node: HashMap<*const NodeMedium, u32>,
 }
