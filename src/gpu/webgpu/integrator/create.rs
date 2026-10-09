@@ -13,47 +13,13 @@ use super::super::context::Context;
 use super::super::film::Film;
 use super::super::material::MaterialKind;
 use super::super::noise::NoiseRuntimeResources;
-use super::super::pipeline::{Pipeline, StagePipeline};
+use super::super::pipeline::Pipeline;
 use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
-use super::super::shader::{
-    compose_source_with_noise, required_limits_for_sources, resource_bindings,
-};
+use super::super::shader::required_limits_for_sources;
+use super::super::stage::{ComputeStageSpec, COMPUTE_STAGES};
 use super::super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
 use super::tiles::DEFAULT_GPU_TILE_SIZE;
-
-const DEPLOYED_STAGE_SOURCES: &[&str] = &[
-    include_str!("../shaders/prepare_sample.wgsl"),
-    include_str!("../shaders/generate_primary_rays.wgsl"),
-    include_str!("../shaders/reset_shadow_queue.wgsl"),
-    include_str!("../shaders/reset_classification_queues.wgsl"),
-    include_str!("../shaders/intersect_primary_rays.wgsl"),
-    include_str!("../shaders/sample_medium.wgsl"),
-    include_str!("../shaders/initialize_medium_segments.wgsl"),
-    include_str!("../shaders/initialize_shadow_segments.wgsl"),
-    include_str!("../shaders/handle_escaped.wgsl"),
-    include_str!("../shaders/shade_surface.wgsl"),
-    include_str!("../shaders/handle_emissive.wgsl"),
-    include_str!("../shaders/prepare_queue_dispatch.wgsl"),
-    include_str!("../shaders/evaluate_textures.wgsl"),
-    include_str!("../shaders/evaluate_attributes.wgsl"),
-    include_str!("../shaders/classify_surface_scatter.wgsl"),
-    include_str!("../shaders/sample_direct_light.wgsl"),
-    include_str!("../shaders/scatter_medium.wgsl"),
-    include_str!("../shaders/scatter_diffuse.wgsl"),
-    include_str!("../shaders/scatter_diffuse_transmission.wgsl"),
-    include_str!("../shaders/scatter_conductor.wgsl"),
-    include_str!("../shaders/scatter_dielectric.wgsl"),
-    include_str!("../shaders/prepare_subsurface_exit.wgsl"),
-    include_str!("../shaders/scatter_subsurface_exit.wgsl"),
-    include_str!("../shaders/scatter_thin_dielectric.wgsl"),
-    include_str!("../shaders/scatter_measured.wgsl"),
-    include_str!("../shaders/scatter_coated.wgsl"),
-    include_str!("../shaders/intersect_shadow.wgsl"),
-    include_str!("../shaders/swap_ray_queues.wgsl"),
-    include_str!("../shaders/reset_next_ray_queue.wgsl"),
-    include_str!("../shaders/accumulate_sample.wgsl"),
-];
 
 impl super::WavefrontPathIntegrator {
     pub fn create(flat_scene: flat::Scene) -> Result<Self, PbrtError> {
@@ -75,8 +41,13 @@ impl super::WavefrontPathIntegrator {
         let texture_eval_stride =
             u64::from(flat::max_texture_eval_results_per_surface(&flat_scene)?).max(1);
         let canonical_bindings = canonical_wavefront_bindings();
-        let mut required_limits =
-            required_limits_for_sources(&canonical_bindings, DEPLOYED_STAGE_SOURCES)?;
+        let mut required_limits = required_limits_for_sources(
+            &canonical_bindings,
+            &COMPUTE_STAGES
+                .iter()
+                .map(|stage| stage.source)
+                .collect::<Vec<_>>(),
+        )?;
         // Every deployed pipeline has a second group reserved for texture
         // binding arrays, even when an individual stage does not sample one.
         required_limits.bind_groups = required_limits.bind_groups.max(2);
@@ -358,183 +329,31 @@ impl super::WavefrontPathIntegrator {
                 }
             },
         };
-        let make_bind_group = |name: &'static str,
-                               stage: &StagePipeline,
-                               stage_source: &'static str|
-         -> [wgpu::BindGroup; 2] {
-            let source = compose_source_with_noise(stage_source, texture_noise_enabled);
-            let used_bindings = resource_bindings(&source);
+        let make_bind_group = |stage_spec: &ComputeStageSpec| -> [wgpu::BindGroup; 2] {
+            let stage_pipeline = pipeline.stage(stage_spec.id);
             std::array::from_fn(|group| {
-                let entries = canonical_wavefront_bindings()
-                    .into_iter()
+                let entries = canonical_bindings
+                    .iter()
                     .filter(|binding| {
                         binding.group == group as u32
-                            && used_bindings.contains(&(binding.group, binding.binding))
+                            && stage_pipeline
+                                .used_bindings()
+                                .contains(&(binding.group, binding.binding))
                     })
+                    .copied()
                     .map(make_entry)
                     .collect::<Vec<_>>();
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(name),
-                    layout: &stage.bind_group_layouts[group],
+                    label: Some(stage_spec.label),
+                    layout: &stage_pipeline.bind_group_layouts[group],
                     entries: &entries,
                 })
             })
         };
-        let bind_groups: HashMap<&'static str, [wgpu::BindGroup; 2]> = [
-            (
-                "prepare_subsurface_exit",
-                &pipeline.prepare_subsurface_exit,
-                include_str!("../shaders/prepare_subsurface_exit.wgsl"),
-            ),
-            (
-                "scatter_subsurface_exit",
-                &pipeline.scatter_subsurface_exit,
-                include_str!("../shaders/scatter_subsurface_exit.wgsl"),
-            ),
-            (
-                "prepare_sample",
-                &pipeline.prepare_sample,
-                include_str!("../shaders/prepare_sample.wgsl"),
-            ),
-            (
-                "generate_primary_rays",
-                &pipeline.generate_primary_rays,
-                include_str!("../shaders/generate_primary_rays.wgsl"),
-            ),
-            (
-                "reset_shadow_queue",
-                &pipeline.reset_shadow_queue,
-                include_str!("../shaders/reset_shadow_queue.wgsl"),
-            ),
-            (
-                "reset_classification_queues",
-                &pipeline.reset_classification_queues,
-                include_str!("../shaders/reset_classification_queues.wgsl"),
-            ),
-            (
-                "intersect_primary_rays",
-                &pipeline.intersect_primary_rays,
-                include_str!("../shaders/intersect_primary_rays.wgsl"),
-            ),
-            (
-                "sample_medium",
-                &pipeline.sample_medium,
-                include_str!("../shaders/sample_medium.wgsl"),
-            ),
-            (
-                "initialize_medium_segments",
-                &pipeline.initialize_medium_segments,
-                include_str!("../shaders/initialize_medium_segments.wgsl"),
-            ),
-            (
-                "initialize_shadow_segments",
-                &pipeline.initialize_shadow_segments,
-                include_str!("../shaders/initialize_shadow_segments.wgsl"),
-            ),
-            (
-                "handle_escaped",
-                &pipeline.handle_escaped,
-                include_str!("../shaders/handle_escaped.wgsl"),
-            ),
-            (
-                "shade_surface",
-                &pipeline.shade_surface,
-                include_str!("../shaders/shade_surface.wgsl"),
-            ),
-            (
-                "handle_emissive",
-                &pipeline.handle_emissive,
-                include_str!("../shaders/handle_emissive.wgsl"),
-            ),
-            (
-                "prepare_queue_dispatch",
-                &pipeline.prepare_queue_dispatch,
-                include_str!("../shaders/prepare_queue_dispatch.wgsl"),
-            ),
-            (
-                "evaluate_textures",
-                &pipeline.evaluate_textures,
-                include_str!("../shaders/evaluate_textures.wgsl"),
-            ),
-            (
-                "evaluate_attributes",
-                &pipeline.evaluate_attributes,
-                include_str!("../shaders/evaluate_attributes.wgsl"),
-            ),
-            (
-                "classify_surface_scatter",
-                &pipeline.classify_surface_scatter,
-                include_str!("../shaders/classify_surface_scatter.wgsl"),
-            ),
-            (
-                "sample_direct_light",
-                &pipeline.sample_direct_light,
-                include_str!("../shaders/sample_direct_light.wgsl"),
-            ),
-            (
-                "scatter_medium",
-                &pipeline.scatter_medium,
-                include_str!("../shaders/scatter_medium.wgsl"),
-            ),
-            (
-                "scatter_diffuse",
-                &pipeline.scatter_diffuse,
-                include_str!("../shaders/scatter_diffuse.wgsl"),
-            ),
-            (
-                "scatter_diffuse_transmission",
-                &pipeline.scatter_diffuse_transmission,
-                include_str!("../shaders/scatter_diffuse_transmission.wgsl"),
-            ),
-            (
-                "scatter_conductor",
-                &pipeline.scatter_conductor,
-                include_str!("../shaders/scatter_conductor.wgsl"),
-            ),
-            (
-                "scatter_dielectric",
-                &pipeline.scatter_dielectric,
-                include_str!("../shaders/scatter_dielectric.wgsl"),
-            ),
-            (
-                "scatter_thin_dielectric",
-                &pipeline.scatter_thin_dielectric,
-                include_str!("../shaders/scatter_thin_dielectric.wgsl"),
-            ),
-            (
-                "scatter_measured",
-                &pipeline.scatter_measured,
-                include_str!("../shaders/scatter_measured.wgsl"),
-            ),
-            (
-                "scatter_coated",
-                &pipeline.scatter_coated,
-                include_str!("../shaders/scatter_coated.wgsl"),
-            ),
-            (
-                "intersect_shadow",
-                &pipeline.intersect_shadow,
-                include_str!("../shaders/intersect_shadow.wgsl"),
-            ),
-            (
-                "swap_ray_queues",
-                &pipeline.swap_ray_queues,
-                include_str!("../shaders/swap_ray_queues.wgsl"),
-            ),
-            (
-                "reset_next_ray_queue",
-                &pipeline.reset_next_ray_queue,
-                include_str!("../shaders/reset_next_ray_queue.wgsl"),
-            ),
-            (
-                "accumulate_sample",
-                &pipeline.accumulate_sample,
-                include_str!("../shaders/accumulate_sample.wgsl"),
-            ),
-        ]
-        .into_iter()
-        .map(|(name, stage, source)| (name, make_bind_group(name, stage, source)))
-        .collect::<HashMap<_, _>>();
+        let bind_groups = COMPUTE_STAGES
+            .iter()
+            .map(|stage| (stage.id, make_bind_group(stage)))
+            .collect::<HashMap<_, _>>();
         log::info!("GPU create: bind groups ready");
         Ok(Self {
             context,
