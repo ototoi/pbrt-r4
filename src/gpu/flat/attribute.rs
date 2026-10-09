@@ -1,3 +1,14 @@
+use super::DenseSpectrum;
+
+/// Scene-wide scalar and dense spectrum tables referenced by flat attributes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AttributeResources {
+    /// Values referenced by `AttributeKind::Scalar` indices.
+    pub scalars: Vec<f32>,
+    /// Values referenced by `AttributeKind::Spectrum` indices, including medium spectra.
+    pub spectra: Vec<DenseSpectrum>,
+}
+
 /// The kind of value referenced by a flattened material or light parameter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttributeKind {
@@ -7,13 +18,15 @@ pub enum AttributeKind {
     Measured,
 }
 
-/// A reference into the scene-wide attribute tables.
+/// A reference into a scene-wide Flat IR resource table.
 ///
 /// The name is retained in Flat IR for diagnostics and CPU-side evaluation;
 /// WebGPU uploads only `kind` and `index`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttributeRef {
+    /// Selects the table addressed by `index`.
     pub kind: AttributeKind,
+    /// Index in the table selected by `kind`.
     pub index: u32,
     pub name: String,
 }

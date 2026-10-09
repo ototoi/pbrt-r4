@@ -85,7 +85,8 @@ impl super::WavefrontPathIntegrator {
         });
         let medium_scattering_enabled = flat_scene.media.iter().any(|medium| {
             flat_scene
-                .spectrum_attributes
+                .attributes
+                .spectra
                 .get(medium.sigma_s as usize)
                 .is_some_and(|spectrum| spectrum.samples.iter().any(|sample| *sample != 0.0))
         });

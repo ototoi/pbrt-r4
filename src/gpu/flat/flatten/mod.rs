@@ -4,11 +4,11 @@ use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
-    Camera, DenseSpectrumBuilder, Film, Geometry, GeometryResources, ImageInfiniteSamplingRecord,
-    InfiniteLightResources, Instance, Light, LightBoundInput, LightGeometryKind, LightKind,
-    LightResources, LightSamplingModel, MaterialResources, Medium, Output,
-    PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform, TriangleDistributionEntry,
-    UnsupportedTexturePolicy, Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    AttributeResources, Camera, DenseSpectrumBuilder, Film, Geometry, GeometryResources,
+    ImageInfiniteSamplingRecord, InfiniteLightResources, Instance, Light, LightBoundInput,
+    LightGeometryKind, LightKind, LightResources, LightSamplingModel, MaterialResources, Medium,
+    Output, PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform,
+    TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
     Component, Integrator as NodeIntegrator, Material as NodeMaterial, Medium as NodeMedium,
@@ -156,9 +156,11 @@ pub fn flatten_node_with_material_override(
             bssrdf_tables: builder.bssrdf_tables,
             measured_bsdfs: builder.measured_bsdf_library.finish()?,
         },
-        scalar_attributes: builder.scalar_attributes,
+        attributes: AttributeResources {
+            scalars: builder.scalar_attributes,
+            spectra: builder.spectrum_table_builder.finish(),
+        },
         texture_library,
-        spectrum_attributes: builder.spectrum_table_builder.finish(),
     };
     let mut scene = scene;
     scene.lights.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
