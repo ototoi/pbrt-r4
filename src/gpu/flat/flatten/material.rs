@@ -136,6 +136,7 @@ pub fn register_material_source(
     material_kind: Option<&str>,
 ) -> Result<u32, PbrtError> {
     if let Some(index) = builder
+        .materials
         .source_materials
         .iter()
         .position(|material| Arc::ptr_eq(material, source_material))
@@ -250,6 +251,7 @@ pub fn register_material_source(
                 )));
             }
             let index = builder
+                .materials
                 .measured_bsdf_library
                 .intern(std::path::Path::new(&filename))
                 .map_err(|error| {
@@ -275,7 +277,12 @@ pub fn register_material_source(
     };
     let bssrdf_index = if kind == "subsurface" {
         let index = super::subsurface::register_subsurface(source_material, builder)?;
-        attributes.extend(builder.bssrdfs[index as usize].coefficients.iter().cloned());
+        attributes.extend(
+            builder.materials.bssrdfs[index as usize]
+                .coefficients
+                .iter()
+                .cloned(),
+        );
         index
     } else {
         INVALID_INDEX
@@ -400,10 +407,10 @@ pub fn register_material_source(
         let child = &source_material.material_attributes[0].1;
         material_children.push(register_material_source(child, builder, material_kind)?);
     }
-    let index = u32::try_from(builder.material_source_nodes.len()).map_err(|_| {
+    let index = u32::try_from(builder.materials.source_nodes.len()).map_err(|_| {
         PbrtError::error("The flattened material source-node table exceeds the u32 index range.")
     })?;
-    builder.material_source_nodes.push(MaterialSourceNode {
+    builder.materials.source_nodes.push(MaterialSourceNode {
         kind: kind.to_string(),
         source_kind: source_kind.to_string(),
         attributes: attributes.clone(),
@@ -411,7 +418,10 @@ pub fn register_material_source(
         displacement_texture_root,
         bssrdf_index,
     });
-    builder.source_materials.push(Arc::clone(source_material));
+    builder
+        .materials
+        .source_materials
+        .push(Arc::clone(source_material));
     Ok(index)
 }
 
@@ -630,7 +640,7 @@ mod tests {
         let mut builder = FlatBuilder::default();
 
         let source_index = register_material_source(&material, &mut builder, None).unwrap();
-        let source = &builder.material_source_nodes[source_index as usize];
+        let source = &builder.materials.source_nodes[source_index as usize];
         assert_eq!(source.displacement_texture_root, 0);
         assert!(source
             .attributes
@@ -638,7 +648,7 @@ mod tests {
             .all(|attribute| attribute.name != "displacement"));
 
         let (_, flat_nodes, _) =
-            build_material_roots(&builder.material_source_nodes, &[source_index]).unwrap();
+            build_material_roots(&builder.materials.source_nodes, &[source_index]).unwrap();
         assert_eq!(flat_nodes[0].displacement_texture_root, 0);
         assert_eq!(builder.texture_root_specs.len(), 1);
         assert!(matches!(
