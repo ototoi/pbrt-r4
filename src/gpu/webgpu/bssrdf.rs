@@ -1,15 +1,41 @@
 use bytemuck::{cast_slice, Zeroable};
 use wgpu::util::DeviceExt;
 
-use super::abi::BSSRDFTableRecord;
+use super::abi::{BSSRDFMaterialRecord, BSSRDFTableRecord};
 use super::material::MaterialKind;
 use super::scene::Scene;
-use crate::gpu::flat::TabulatedBSSRDFTable;
+use crate::gpu::flat::{self, TabulatedBSSRDFTable, BSSRDF};
 use crate::util::error::PbrtError;
 
 pub struct BSSRDFTableData {
     pub records: Vec<BSSRDFTableRecord>,
     pub values: Vec<f32>,
+}
+
+pub fn convert_bssrdf_materials(
+    materials: &[BSSRDF],
+    table_count: usize,
+) -> Result<Vec<BSSRDFMaterialRecord>, PbrtError> {
+    if materials
+        .iter()
+        .any(|material| material.table_index as usize >= table_count)
+    {
+        return Err(PbrtError::error(
+            "BSSRDF material references an invalid table.",
+        ));
+    }
+    Ok(materials
+        .iter()
+        .map(|material| BSSRDFMaterialRecord {
+            scale: material.scale,
+            eta: material.eta,
+            table_index: material.table_index,
+            coefficient_kind: match material.coefficient_kind {
+                flat::BSSRDFCoefficientKind::Sigma => 0,
+                flat::BSSRDFCoefficientKind::ReflectanceMfp => 1,
+            },
+        })
+        .collect())
 }
 
 impl BSSRDFTableData {
