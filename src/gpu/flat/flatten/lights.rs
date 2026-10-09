@@ -851,7 +851,7 @@ fn area_light_has_constant_zero_alpha(
     material_source: u32,
     builder: &FlatBuilder,
 ) -> Result<bool, PbrtError> {
-    let Some(material) = builder.material_source_nodes.get(material_source as usize) else {
+    let Some(material) = builder.materials.source_nodes.get(material_source as usize) else {
         return Err(PbrtError::error(
             "Area light references an invalid material source node.",
         ));
@@ -928,7 +928,7 @@ mod tests {
         builder.texture_root_specs.push(TextureRootSpec::Float {
             node: Arc::new(texture),
         });
-        builder.material_source_nodes.push(MaterialSourceNode {
+        builder.materials.source_nodes.push(MaterialSourceNode {
             kind: "alphamask".to_string(),
             source_kind: "alphamask".to_string(),
             attributes: vec![AttributeRef {
