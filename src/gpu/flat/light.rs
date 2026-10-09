@@ -1,3 +1,5 @@
+mod validation;
+
 use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
 use super::AttributeRef;
 use super::{ImageInfiniteDistributionTexel, LightBVH, LightBounds};
