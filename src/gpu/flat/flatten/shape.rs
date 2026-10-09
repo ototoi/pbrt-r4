@@ -1,5 +1,5 @@
 use super::super::SourceShape;
-use super::{FlatBuilder, Geometry, Vertex};
+use super::{Geometry, GeometryBuilder, Vertex};
 use crate::gpu::node::{TriangleMeshShape, Vec3f};
 use crate::shapes::TriangleMesh;
 use crate::util::base::Normal3f;
@@ -14,7 +14,7 @@ pub fn geometry_index(
     node_name: &str,
     shape: &TriangleMeshShape,
     reverse_orientation: bool,
-    builder: &mut FlatBuilder,
+    builder: &mut GeometryBuilder,
 ) -> Result<u32, PbrtError> {
     let key = (node_key, component_index);
     if let Some(&geometry) = builder.geometries_by_shape.get(&key) {
