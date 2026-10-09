@@ -30,11 +30,13 @@ impl LightSamplingData {
     pub fn from_flat(scene: &flat::Scene) -> Self {
         Self {
             positions: scene
-                .light_positions
+                .lights
+                .positions
                 .iter()
                 .map(|position| [position[0], position[1], position[2], 1.0])
                 .collect(),
             triangle_distributions: scene
+                .lights
                 .triangle_distributions
                 .iter()
                 .map(|entry| TriangleDistributionEntry {
@@ -45,7 +47,9 @@ impl LightSamplingData {
                 })
                 .collect(),
             portal_records: scene
-                .portal_infinite_lights
+                .lights
+                .infinite_sampling
+                .portal_records
                 .iter()
                 .map(|image| PortalImageInfiniteRecord {
                     portal: image
@@ -59,6 +63,8 @@ impl LightSamplingData {
                 })
                 .collect(),
             portal_distribution: scene
+                .lights
+                .infinite_sampling
                 .portal_distribution
                 .iter()
                 .map(|value| PortalDistributionTexel {
@@ -67,7 +73,9 @@ impl LightSamplingData {
                 })
                 .collect(),
             image_infinite_records: scene
-                .image_infinite_lights
+                .lights
+                .infinite_sampling
+                .image_records
                 .iter()
                 .map(|image| ImageInfiniteSamplingRecord {
                     distribution_offset: image.distribution_offset,
@@ -78,7 +86,9 @@ impl LightSamplingData {
                 })
                 .collect(),
             image_infinite_distribution: scene
-                .image_infinite_distribution
+                .lights
+                .infinite_sampling
+                .image_distribution
                 .iter()
                 .map(|texel| ImageInfiniteDistributionTexel {
                     weight: texel.weight,
@@ -108,7 +118,7 @@ pub fn validate_instance_area_lights(
         ));
     }
     let handle = instance.area_light;
-    let record = flat.lights.get(handle as usize).ok_or_else(|| {
+    let record = flat.lights.lights.get(handle as usize).ok_or_else(|| {
         PbrtError::error(&format!(
             "Flat instance {instance_index} has an invalid area-light handle."
         ))
@@ -119,7 +129,8 @@ pub fn validate_instance_area_lights(
         )));
     }
     let model = flat
-        .light_sampling_models
+        .lights
+        .sampling_models
         .get(record.sampling_model as usize)
         .ok_or_else(|| {
             PbrtError::error(&format!(
@@ -144,6 +155,7 @@ pub fn validate_instance_area_lights(
         .checked_add(count)
         .ok_or_else(|| PbrtError::error("Flat area-light distribution range overflowed."))?;
     let entries = flat
+        .lights
         .triangle_distributions
         .get(offset..end)
         .ok_or_else(|| {

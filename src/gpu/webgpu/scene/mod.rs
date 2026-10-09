@@ -135,15 +135,15 @@ impl Scene {
             material_view_offset,
         )?;
         let infinite_image_bindings = resolve_infinite_image_bindings(
-            &flat.infinite_lights,
+            &flat.lights.infinite_lights,
             &flat.texture_library.mipmaps,
             &texture_views,
             &texture_binding_plan.image_views,
         )?;
         let light_data = convert_lights(
-            &flat.light_sampling_models,
-            &flat.lights,
-            &flat.infinite_lights,
+            &flat.lights.sampling_models,
+            &flat.lights.lights,
+            &flat.lights.infinite_lights,
             material_table.attributes,
             &infinite_image_bindings,
         )?;
@@ -393,16 +393,16 @@ impl Scene {
             });
         validate_image_infinite_buffer_size(
             "row CDF",
-            buffer_contents(&flat.image_infinite_row_cdf).len(),
+            buffer_contents(&flat.lights.infinite_sampling.image_row_cdf).len(),
             &limits,
         )?;
         let image_infinite_row_cdf_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 image infinite row CDF SBO"),
-                contents: buffer_contents(&flat.image_infinite_row_cdf),
+                contents: buffer_contents(&flat.lights.infinite_sampling.image_row_cdf),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let packed_light_bvh = pack_light_bvh(&flat.light_bvh)?;
+        let packed_light_bvh = pack_light_bvh(&flat.lights.bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
         let table_data = BSSRDFTableData::from_flat(&flat.bssrdf_tables)?;
@@ -426,7 +426,11 @@ impl Scene {
         material_table.measured_texture_count =
             u32::try_from(flat.measured_bsdfs.atlas_pages.len())
                 .map_err(|_| PbrtError::error("Measured BSDF atlas page count exceeds u32."))?;
-        let light_table = light_table_uniform(flat.lights.len(), flat.infinite_lights.len(), 0)?;
+        let light_table = light_table_uniform(
+            flat.lights.lights.len(),
+            flat.lights.infinite_lights.len(),
+            0,
+        )?;
         material_table.debug_material_kind = INVALID_INDEX;
         let light_bvh_data = LightBvhUploadData::from_packed(
             packed_light_bvh.as_ref(),
@@ -460,8 +464,8 @@ impl Scene {
             &flat.instances,
             &flat.material_roots,
             &flat.material_nodes,
-            &flat.lights,
-            &flat.light_sampling_models,
+            &flat.lights.lights,
+            &flat.lights.sampling_models,
         )?;
         Ok(Self {
             camera,

@@ -4,10 +4,11 @@ use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
-    Camera, DenseSpectrumBuilder, Film, Geometry, ImageInfiniteSamplingRecord, Instance, Light,
-    LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Medium, Output,
-    PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform, TriangleDistributionEntry,
-    UnsupportedTexturePolicy, Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    Camera, DenseSpectrumBuilder, Film, Geometry, ImageInfiniteSamplingRecord,
+    InfiniteLightResources, Instance, Light, LightBoundInput, LightGeometryKind, LightKind,
+    LightResources, LightSamplingModel, Medium, Output, PrimitiveDistributionMap, Scene,
+    TabulatedBSSRDFTable, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex,
+    Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
     Component, Integrator as NodeIntegrator, Material as NodeMaterial, Medium as NodeMedium,
@@ -121,13 +122,26 @@ pub fn flatten_node_with_material_override(
         film,
         output,
         render_settings,
-        light_sampling_models: builder.light_sampling_models,
-        light_positions: builder.light_positions,
-        triangle_distributions: builder.triangle_distributions,
-        lights: builder.lights,
-        infinite_lights: builder.infinite_lights,
-        light_bounds,
-        light_bvh,
+        lights: LightResources {
+            sampling_models: builder.light_sampling_models,
+            positions: builder.light_positions,
+            triangle_distributions: builder.triangle_distributions,
+            lights: builder.lights,
+            infinite_lights: builder.infinite_lights,
+            bounds: light_bounds,
+            bvh: light_bvh,
+            primitive_distribution_map: PrimitiveDistributionMap {
+                offsets: vec![0],
+                entries: Vec::new(),
+            },
+            infinite_sampling: InfiniteLightResources {
+                portal_records: builder.portal_infinite_lights,
+                portal_distribution: builder.portal_distribution,
+                image_records: builder.image_infinite_lights,
+                image_distribution: builder.image_infinite_distribution,
+                image_row_cdf: builder.image_infinite_row_cdf,
+            },
+        },
         vertices: builder.vertices,
         indices: builder.indices,
         geometries: builder.geometries,
@@ -141,19 +155,10 @@ pub fn flatten_node_with_material_override(
         texture_library,
         spectrum_attributes: builder.spectrum_table_builder.finish(),
         measured_bsdfs: builder.measured_bsdf_library.finish()?,
-        primitive_distribution_map: PrimitiveDistributionMap {
-            offsets: vec![0],
-            entries: Vec::new(),
-        },
-        portal_infinite_lights: builder.portal_infinite_lights,
-        portal_distribution: builder.portal_distribution,
-        image_infinite_lights: builder.image_infinite_lights,
-        image_infinite_distribution: builder.image_infinite_distribution,
-        image_infinite_row_cdf: builder.image_infinite_row_cdf,
     };
     let mut scene = scene;
-    scene.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
-    scene.validate_static_views()?;
+    scene.lights.primitive_distribution_map = build_primitive_distribution_map(&scene)?;
+    scene.lights.validate_consistency(&scene.texture_library)?;
     Ok(scene)
 }
 
@@ -204,6 +209,7 @@ fn validate_layer_limits(name: &str, max_depth: i32, n_samples: i32) -> Result<(
 fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributionMap, PbrtError> {
     let area_count = scene
         .lights
+        .lights
         .iter()
         .filter(|light| light.kind == LightKind::Area)
         .count();
@@ -212,9 +218,10 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
     offsets.push(0);
     let area_lights = scene
         .lights
+        .lights
         .iter()
         .filter(|light| light.kind == LightKind::Area)
-        .map(|light| scene.light_sampling_models[light.sampling_model as usize].clone())
+        .map(|light| scene.lights.sampling_models[light.sampling_model as usize].clone())
         .collect::<Vec<_>>();
     for (area_index, area_light) in area_lights.iter().enumerate() {
         let instance = scene
@@ -244,6 +251,7 @@ fn build_primitive_distribution_map(scene: &Scene) -> Result<PrimitiveDistributi
             .checked_add(count)
             .ok_or_else(|| PbrtError::error("Area-light distribution range overflowed."))?;
         for (distribution_index, entry) in scene
+            .lights
             .triangle_distributions
             .get(start..end)
             .ok_or_else(|| PbrtError::error("Area-light distribution range is invalid."))?

@@ -146,7 +146,7 @@ pub(super) fn texture_binding_plan(views: &[ImageView]) -> Result<TextureBinding
 
 pub(super) fn scene_texture_views(flat: &flat::Scene) -> (Vec<ImageView>, usize) {
     let mut views = Vec::new();
-    for light in &flat.infinite_lights {
+    for light in &flat.lights.infinite_lights {
         if light.image_index == flat::INVALID_INDEX {
             continue;
         }

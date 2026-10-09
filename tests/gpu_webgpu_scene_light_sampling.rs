@@ -48,8 +48,8 @@ fn empty_flat_scene() -> flat::Scene {
 #[test]
 fn converts_light_sampling_payload_records_without_reordering() {
     let mut scene = empty_flat_scene();
-    scene.light_positions = vec![[1.0, 2.0, 3.0], [-1.0, -2.0, -3.0]];
-    scene.triangle_distributions = vec![
+    scene.lights.positions = vec![[1.0, 2.0, 3.0], [-1.0, -2.0, -3.0]];
+    scene.lights.triangle_distributions = vec![
         FlatTriangleDistributionEntry {
             primitive: 4,
             cdf: 0.25,
@@ -61,7 +61,7 @@ fn converts_light_sampling_payload_records_without_reordering() {
             area: 6.0,
         },
     ];
-    scene.portal_infinite_lights = vec![FlatPortalImageInfiniteLight {
+    scene.lights.infinite_sampling.portal_records = vec![FlatPortalImageInfiniteLight {
         portal: [
             [1.0, 2.0, 3.0],
             [4.0, 5.0, 6.0],
@@ -72,17 +72,17 @@ fn converts_light_sampling_payload_records_without_reordering() {
         distribution_offset: 13,
         resolution: [14, 15],
     }];
-    scene.portal_distribution = vec![FlatPortalDistributionTexel {
+    scene.lights.infinite_sampling.portal_distribution = vec![FlatPortalDistributionTexel {
         function: 16.0,
         summed_area: 17.0,
     }];
-    scene.image_infinite_lights = vec![FlatImageInfiniteSamplingRecord {
+    scene.lights.infinite_sampling.image_records = vec![FlatImageInfiniteSamplingRecord {
         distribution_offset: 18,
         row_cdf_offset: 19,
         resolution: [20, 21],
         light_to_render: [[22.0; 4]; 3],
     }];
-    scene.image_infinite_distribution = vec![FlatImageInfiniteDistributionTexel {
+    scene.lights.infinite_sampling.image_distribution = vec![FlatImageInfiniteDistributionTexel {
         weight: 23.0,
         conditional_cdf: 24.0,
     }];
