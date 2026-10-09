@@ -10,6 +10,7 @@ pub(super) fn convert_geometry(
     flat: &flat::Scene,
 ) -> Result<(Vec<Vertex>, Vec<Geometry>, Vec<u32>), PbrtError> {
     let vertices = flat
+        .geometry
         .vertices
         .iter()
         .map(|vertex| {
@@ -45,8 +46,8 @@ pub(super) fn convert_geometry(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut local_indices = Vec::new();
-    let mut geometries = Vec::with_capacity(flat.geometries.len());
-    for (index, geometry) in flat.geometries.iter().enumerate() {
+    let mut geometries = Vec::with_capacity(flat.geometry.geometries.len());
+    for (index, geometry) in flat.geometry.geometries.iter().enumerate() {
         let vertex_end = geometry
             .first_vertex
             .checked_add(geometry.vertex_count)
@@ -64,7 +65,8 @@ pub(super) fn convert_geometry(
                 "Flat geometry {index} must contain a non-empty multiple of three indices."
             )));
         }
-        if vertex_end as usize > vertices.len() || index_end as usize > flat.indices.len() {
+        if vertex_end as usize > vertices.len() || index_end as usize > flat.geometry.indices.len()
+        {
             return Err(PbrtError::error(&format!(
                 "Flat geometry {index} range is out of bounds."
             )));
@@ -74,7 +76,9 @@ pub(super) fn convert_geometry(
                 "Flat geometry {index} index offset does not fit in u32."
             ))
         })?;
-        for &absolute_index in &flat.indices[geometry.first_index as usize..index_end as usize] {
+        for &absolute_index in
+            &flat.geometry.indices[geometry.first_index as usize..index_end as usize]
+        {
             if absolute_index < geometry.first_vertex || absolute_index >= vertex_end {
                 return Err(PbrtError::error(&format!(
                     "Flat geometry {index} contains an index outside its vertex range."
