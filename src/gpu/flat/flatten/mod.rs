@@ -37,6 +37,7 @@ use node::flatten_node_ref;
 mod shape;
 use shape::geometry_index;
 
+mod infinite_light;
 mod lights;
 use lights::{append_area_light, flatten_light};
 
