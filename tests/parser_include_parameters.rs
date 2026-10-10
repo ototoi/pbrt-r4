@@ -186,3 +186,28 @@ fn later_parent_error_does_not_prevent_evaluation_of_included_directive() {
     assert!(error.msg.contains("line 4"));
     assert!(builder.work_dirs.is_empty());
 }
+
+#[test]
+fn sequential_includes_preserve_a_large_parent_directive() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("child.pbrt"), "Shape \"sphere\"\n").unwrap();
+    let root = directory.path().join("root.pbrt");
+    let mut source = String::from("WorldBegin\n");
+    for _ in 0..256 {
+        source.push_str("Include \"child.pbrt\"\n\"bool reverse\" [TRUE]\n# Shape \"ignored\"\n");
+    }
+    source.push_str("Shape \"trianglemesh\" \"point3 P\" [");
+    source.push_str(&"0 0 0 ".repeat(100_000));
+    source.push_str("] \"integer indices\" [0 1 2]\n");
+    fs::write(&root, source).unwrap();
+    let mut builder = SceneBuilder::new();
+    parse_file(root.to_str().unwrap(), &mut builder).unwrap();
+    assert_eq!(builder.shapes.len(), 257);
+    for shape in &builder.shapes[..256] {
+        assert!(shape.base.params.get_one_bool("reverse", false));
+    }
+    assert_eq!(
+        builder.shapes[256].base.params.get_points("P").len(),
+        300_000
+    );
+}

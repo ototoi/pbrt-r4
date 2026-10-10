@@ -1,4 +1,4 @@
-use super::common::space0;
+use super::common::{parse_literal, space0};
 use super::parse_target::ParseTarget;
 use super::read_file::read_file_source;
 use super::{evaluate_operation, parse_next_operation, parser_error_at, OPNode};
@@ -131,13 +131,16 @@ impl<'a> ParserSession<'a> {
         for index in (0..last_index).rev() {
             let parent = &self.frames[index];
             let tail = &parent.source[parent.offset..];
+            let prefix_len = continuation_prefix_len(tail);
+            let reaches_eof = prefix_len == tail.len();
+            let prefix = &tail[..prefix_len];
             joined.push('\n');
             let start = joined.len();
-            joined.push_str(tail);
+            joined.push_str(prefix);
             spans.push((index, start, joined.len()));
             match parse_next_operation(&joined, &joined) {
                 Ok(Some((remaining, _, operation))) => {
-                    if remaining.is_empty() && index != 0 {
+                    if remaining.is_empty() && reaches_eof && index != 0 {
                         continue;
                     }
                     let consumed = joined.len() - remaining.len();
@@ -146,7 +149,7 @@ impl<'a> ParserSession<'a> {
                     }
                     return Ok(Some((operation_offset, operation)));
                 }
-                Err(error) if index == 0 || has_unclosed_string(tail) => {
+                Err(error) if index == 0 || !reaches_eof || has_unclosed_string(prefix) => {
                     return Err(self.operation_error(
                         operation_offset,
                         "<continuation>",
@@ -265,4 +268,28 @@ fn has_unclosed_string(input: &str) -> bool {
         }
     }
     in_string
+}
+
+// Stop before the next unquoted directive token. Literals and array brackets
+// may continue a directive across file EOF; strings themselves may not.
+fn continuation_prefix_len(input: &str) -> usize {
+    let mut remaining = input;
+    loop {
+        let Ok((next, _)) = space0(remaining) else {
+            return input.len() - remaining.len();
+        };
+        remaining = next;
+        if remaining.is_empty() {
+            return input.len();
+        }
+        if remaining.starts_with('[') || remaining.starts_with(']') {
+            remaining = &remaining[1..];
+        } else if let Ok((next, _)) = parse_literal(remaining) {
+            remaining = next;
+        } else if remaining.starts_with('"') {
+            return input.len();
+        } else {
+            return input.len() - remaining.len();
+        }
+    }
 }
