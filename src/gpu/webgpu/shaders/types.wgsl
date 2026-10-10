@@ -294,10 +294,20 @@ struct MediumRecord {
     sigma_s: u32,
     le: u32,
     g: f32,
+    grid_index: u32,
     _padding0: u32,
     _padding1: u32,
-    _padding2: u32,
     medium_to_world: mat4x4<f32>,
+};
+
+struct UniformGridMediumRecord {
+    bounds_min: vec4<f32>,
+    bounds_max: vec4<f32>,
+    resolution: vec4<u32>,
+    majorant_resolution: vec4<u32>,
+    density_offset_count: vec4<u32>,
+    majorant_offset_count: vec4<u32>,
+    medium_from_world: mat4x4<f32>,
 };
 
 struct TextureNodeRecord {

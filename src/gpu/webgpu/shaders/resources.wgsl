@@ -137,3 +137,7 @@ var<storage, read_write> next_shadow_indices: array<u32>;
 @group(0) @binding(72) var<storage, read> image_infinite_sampling_records: array<ImageInfiniteSamplingRecord>;
 @group(0) @binding(73) var<storage, read> image_infinite_distribution: array<ImageInfiniteDistributionTexel>;
 @group(0) @binding(74) var<storage, read> image_infinite_row_cdf: array<f32>;
+@group(0) @binding(75)
+var<storage, read> uniform_grid_media: array<UniformGridMediumRecord>;
+@group(0) @binding(76)
+var<storage, read> volume_data: array<f32>;

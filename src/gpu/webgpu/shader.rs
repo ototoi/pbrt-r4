@@ -29,6 +29,7 @@ pub const COMMON_LIBRARY: &[(&str, &str)] = &[
     ("path_state", include_str!("shaders/lib/path_state.wgsl")),
     ("work_queues", include_str!("shaders/lib/work_queues.wgsl")),
     ("interaction", include_str!("shaders/lib/interaction.wgsl")),
+    ("medium", include_str!("shaders/lib/medium.wgsl")),
     ("bssrdf", include_str!("shaders/lib/bssrdf.wgsl")),
     (
         "bssrdf_scattering",
