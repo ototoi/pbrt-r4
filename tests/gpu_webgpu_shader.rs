@@ -8,6 +8,7 @@ use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 
 const INTERSECT_SHADOW_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/intersect_shadow.wgsl");
+const SAMPLE_MEDIUM_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sample_medium.wgsl");
 const CLASSIFY_SURFACE_SCATTER_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/classify_surface_scatter.wgsl");
 const SAMPLE_DIRECT_LIGHT_SHADER: &str =
@@ -183,6 +184,50 @@ fn attribute_shader_omits_noise_call_graph_when_disabled() {
     let source = compose_source_with_noise(EVALUATE_TEXTURES_SHADER, false);
     assert!(!source.contains("fn noise"));
     assert!(!source.contains("texture_noise_table"));
+}
+
+#[test]
+fn uniform_grid_shader_composes_its_records_and_density_lookup() {
+    let stage = r#"
+        @compute @workgroup_size(1)
+        fn test_uniform_grid() {
+            let grid = uniform_grid_media[0];
+            let density = uniform_grid_density(grid, vec3<f32>(0.5));
+            var dda = uniform_grid_dda_init(
+                grid, vec3<f32>(0.5), vec3<f32>(1.0, 0.0, 0.0), 0.0, 1.0,
+            );
+            let segment = uniform_grid_dda_next(grid, vec4<f32>(1.0), &dda);
+            let value = volume_data[grid.majorant_offset_count.x];
+            if (density + segment.sigma_maj.x < value) { return; }
+        }
+    "#;
+    let source = compose_source(stage);
+    assert!(
+        source.contains("var<storage, read> uniform_grid_media: array<UniformGridMediumRecord>;")
+    );
+    assert!(source.contains("var<storage, read> volume_data: array<f32>;"));
+    let module = wgpu::naga::front::wgsl::parse_str(&source).expect("uniform grid WGSL parses");
+    wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("uniform grid WGSL validates");
+}
+
+#[test]
+fn uniform_grid_tracking_stages_validate_as_wgsl() {
+    for stage in [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER] {
+        let source = compose_source(stage);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
 }
 
 #[test]

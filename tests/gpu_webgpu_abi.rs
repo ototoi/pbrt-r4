@@ -5,7 +5,8 @@ use pbrt_r4::gpu::webgpu::abi::{
     Geometry, Instance, LightRecord, LightTableUniform, MaterialNode, MaterialTableUniform,
     MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, PixelSampleState, QueueCounters,
     QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
-    TriangleDistributionEntry, Vertex, ViewportUniform, QUEUE_DISPATCH_SLOT_COUNT,
+    TriangleDistributionEntry, UniformGridMediumRecord, Vertex, ViewportUniform,
+    QUEUE_DISPATCH_SLOT_COUNT,
 };
 use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
 
@@ -41,6 +42,8 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(Geometry, intersection_normal_kind), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 160);
     assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
+    assert_eq!(std::mem::offset_of!(MediumRecord, grid_index), 20);
+    assert_eq!(std::mem::size_of::<UniformGridMediumRecord>(), 160);
     assert_eq!(std::mem::size_of::<MaterialNode>(), 48);
     assert_eq!(std::mem::offset_of!(MaterialNode, bssrdf_index), 32);
     assert_eq!(std::mem::size_of::<BSSRDFMaterialRecord>(), 16);
@@ -98,6 +101,7 @@ fn webgpu_storage_array_strides_are_16_byte_aligned() {
         std::mem::size_of::<Geometry>(),
         std::mem::size_of::<Instance>(),
         std::mem::size_of::<MediumRecord>(),
+        std::mem::size_of::<UniformGridMediumRecord>(),
         std::mem::size_of::<RayWorkItem>(),
         std::mem::size_of::<ShadowRayWorkItem>(),
         std::mem::size_of::<SurfaceWorkItem>(),
