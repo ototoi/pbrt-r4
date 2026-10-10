@@ -283,8 +283,11 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch_indirect(
             &mut encoder,
-            &self.pipeline.stage(ComputeStageId::HandleEscaped).pipeline,
-            self.bind_groups(ComputeStageId::HandleEscaped),
+            &self
+                .pipeline
+                .stage(ComputeStageId::HandleEscapedRays)
+                .pipeline,
+            self.bind_groups(ComputeStageId::HandleEscapedRays),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_ESCAPED,
         );
@@ -312,8 +315,11 @@ impl super::WavefrontPathIntegrator {
         );
         dispatch_indirect(
             &mut encoder,
-            &self.pipeline.stage(ComputeStageId::HandleEmissive).pipeline,
-            self.bind_groups(ComputeStageId::HandleEmissive),
+            &self
+                .pipeline
+                .stage(ComputeStageId::HandleEmissiveIntersection)
+                .pipeline,
+            self.bind_groups(ComputeStageId::HandleEmissiveIntersection),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_HIT_AREA,
         );
@@ -607,9 +613,9 @@ impl super::WavefrontPathIntegrator {
             &mut sample_encoder,
             &self
                 .pipeline
-                .stage(ComputeStageId::GeneratePrimaryRays)
+                .stage(ComputeStageId::GenerateCameraRays)
                 .pipeline,
-            self.bind_groups(ComputeStageId::GeneratePrimaryRays),
+            self.bind_groups(ComputeStageId::GenerateCameraRays),
             workgroups_x,
             workgroups_y,
         );

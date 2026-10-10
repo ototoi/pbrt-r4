@@ -16,11 +16,12 @@ const EVALUATE_ATTRIBUTES_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_attributes.wgsl");
 const EVALUATE_TEXTURES_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_textures.wgsl");
-const GENERATE_PRIMARY_RAYS_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/generate_primary_rays.wgsl");
+const GENERATE_CAMERA_RAYS_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/generate_camera_rays.wgsl");
 const ESCAPED_TEST_SHADER: &str =
     r#"@compute @workgroup_size(1) fn test_stage() { append_escaped_ray(0u); }"#;
-const HANDLE_EMISSIVE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/handle_emissive.wgsl");
+const HANDLE_EMISSIVE_INTERSECTION_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/handle_emissive_intersection.wgsl");
 const SCATTER_DIFFUSE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/scatter_diffuse.wgsl");
 const SCATTER_DIFFUSE_TRANSMISSION_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/scatter_diffuse_transmission.wgsl");
@@ -95,7 +96,7 @@ fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
     assert!(scatter.contains("interaction_get_medium(ray, surface, direction)"));
     assert!(scatter.contains("dot(direction, surface.geometric_normal.xyz) > 0.0"));
 
-    let primary = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    let primary = compose_source(GENERATE_CAMERA_RAYS_SHADER);
     assert!(primary.contains("camera.medium_id"));
 
     let shadow = compose_source(INTERSECT_SHADOW_SHADER);
@@ -187,7 +188,7 @@ fn attribute_shader_omits_noise_call_graph_when_disabled() {
 #[test]
 fn required_limits_are_derived_from_each_composed_stage() {
     let bindings = canonical_wavefront_bindings();
-    let limits = required_limits_for_sources(&bindings, &[GENERATE_PRIMARY_RAYS_SHADER]).unwrap();
+    let limits = required_limits_for_sources(&bindings, &[GENERATE_CAMERA_RAYS_SHADER]).unwrap();
 
     assert_eq!(limits.storage_buffers_per_shader_stage, 9);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 4);
@@ -196,12 +197,12 @@ fn required_limits_are_derived_from_each_composed_stage() {
 
 #[test]
 fn primary_and_path_samples_use_the_sampler_module() {
-    let primary = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    let primary = compose_source(GENERATE_CAMERA_RAYS_SHADER);
     assert!(primary.contains("fn sampler_get_1d("));
     assert!(primary.contains("fn sampler_get_pixel_2d("));
     assert!(primary.contains("var sampler_table: texture_2d<u32>;"));
-    assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
-    assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
+    assert!(GENERATE_CAMERA_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
+    assert!(GENERATE_CAMERA_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
     assert!(common_shader().contains("select(8u, 13u, material_table.have_subsurface != 0u)"));
     assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
 }
@@ -300,7 +301,7 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     assert!(common.contains("is_infinite_light_kind(light_kind)"));
 
     let escaped = compose_source(include_str!(
-        "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
+        "../src/gpu/webgpu/shaders/handle_escaped_rays.wgsl"
     ));
     assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
     assert!(escaped.contains("piecewise_constant_2d_pdf(image, map_uv)"));
@@ -334,7 +335,7 @@ fn hard_edged_spot_light_uses_a_defined_step() {
 
 #[test]
 fn composed_stage_contains_only_referenced_resources() {
-    let source = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
+    let source = compose_source(GENERATE_CAMERA_RAYS_SHADER);
     assert!(source.contains("var<uniform> camera: CameraUniform;"));
     assert!(source.contains("var<uniform> viewport: ViewportUniform;"));
     assert!(source.contains("var<storage, read_write> queue_counters: QueueCounters;"));
@@ -370,7 +371,7 @@ fn classification_queues_resolve_current_rays_in_constant_time() {
     assert!(classify.contains("let ray = load_current_ray(ray_index);"));
     assert!(!classify.contains("find_current_ray_for_pixel"));
 
-    let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
+    let emissive = compose_source(HANDLE_EMISSIVE_INTERSECTION_SHADER);
     assert!(emissive.contains("let ray_index = load_hit_area_ray(queue_index);"));
     assert!(!emissive.contains("find_current_ray_for_pixel"));
 }
@@ -396,7 +397,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(sample.contains("light_sampler_sample(samples.direct.x, position, normal)"));
     assert!(sample.contains("let finite_selection = bvh_light_sampler_sample("));
     assert!(sample.contains("cos_sub_clamped("));
-    let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
+    let emissive = compose_source(HANDLE_EMISSIVE_INTERSECTION_SHADER);
     assert!(emissive.contains("light_sampler_pmf("));
     assert!(sample.contains("select_area_triangle(light_payload, samples.direct.y)"));
     assert!(sample.contains("vec2<f32>(triangle_selection.u_remapped, samples.direct.z)"));
@@ -419,10 +420,10 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
 
 #[test]
 fn emissive_hit_resolves_the_triangle_light_handle() {
-    assert!(HANDLE_EMISSIVE_SHADER.contains("let light_handle = instance.area_light;"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("triangle_selection.pmf * triangle_pdf"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("load_light_payload(light_handle)"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("light_sampler_pmf(light_handle"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("let light_handle = instance.area_light;"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("triangle_selection.pmf * triangle_pdf"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("load_light_payload(light_handle)"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("light_sampler_pmf(light_handle"));
     assert!(!common_shader().contains("fn light_pmf_for_area"));
 }
 
@@ -589,9 +590,9 @@ fn thin_dielectric_shader_uses_thin_interface_transport() {
 
 #[test]
 fn primary_rays_initialize_depth_zero_sample_state() {
-    assert!(GENERATE_PRIMARY_RAYS_SHADER
+    assert!(GENERATE_CAMERA_RAYS_SHADER
         .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
-    assert!(GENERATE_PRIMARY_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
+    assert!(GENERATE_CAMERA_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
     assert!(
         SCATTER_DIFFUSE_SHADER.contains(
             "surface.position,\n        surface.position_error,\n        surface.geometric_normal,\n        vec4<f32>(normal, 0.0),"
@@ -601,10 +602,10 @@ fn primary_rays_initialize_depth_zero_sample_state() {
 
 #[test]
 fn emissive_mis_uses_the_unoffset_previous_interaction_context() {
-    assert!(HANDLE_EMISSIVE_SHADER.contains("ray.prev_position.xyz"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("ray.prev_shading_normal.xyz"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("ray.direction.xyz"));
-    assert!(!HANDLE_EMISSIVE_SHADER.contains("ray.origin.xyz - surface.position.xyz"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.prev_position.xyz"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.prev_shading_normal.xyz"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.direction.xyz"));
+    assert!(!HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.origin.xyz - surface.position.xyz"));
 }
 
 #[test]

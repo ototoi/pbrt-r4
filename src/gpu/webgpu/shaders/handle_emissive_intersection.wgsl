@@ -30,7 +30,7 @@ fn handle_emissive_intersection(@builtin(global_invocation_id) global_id: vec3<u
         return;
     }
     // Balance-heuristic MIS with the v4 rescaled-path-probability (r_u/r_l)
-    // formulation; see handle_escaped.wgsl for the analogous infinite-light
+    // formulation; see handle_escaped_rays.wgsl for the analogous infinite-light
     // case. depth==0 or a specular previous bounce means this light could
     // only ever be found this way (no MIS against BSDF sampling).
     var denom = 1.0;
