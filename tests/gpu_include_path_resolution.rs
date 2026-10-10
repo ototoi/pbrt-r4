@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
 
+use pbrt_r4::gpu::flat::{evaluate_dense_spectrum, flatten_node, MediumData};
 use pbrt_r4::gpu::node::{Component, TextureComponent};
 use pbrt_r4::parser::{parse_file, SceneBuilder};
 
@@ -63,4 +65,37 @@ fn gpu_texture_paths_resolve_against_their_own_included_scene() {
 
     assert_eq!(image_paths.get("firstTexture"), Some(&first_image));
     assert_eq!(image_paths.get("secondTexture"), Some(&second_image));
+}
+
+#[test]
+fn included_uniformgrid_receives_parent_coefficients_in_flat_ir() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("density.pbrt"),
+        "MakeNamedMedium \"smoke\" \"string type\" \"uniformgrid\" \"float density\" [0.25 1] \"integer nx\" [2] \"integer ny\" [1] \"integer nz\" [1]\n",
+    ).unwrap();
+    let root = directory.path().join("root.pbrt");
+    fs::write(
+        &root,
+        "Camera \"perspective\"\nFilm \"rgb\"\nWorldBegin\nInclude \"density.pbrt\"\n\"spectrum sigma_a\" [300 20 830 20]\n\"spectrum sigma_s\" [300 160 830 160]\nWorldEnd\n",
+    ).unwrap();
+    let mut builder = SceneBuilder::new();
+    parse_file(root.to_str().unwrap(), &mut builder).unwrap();
+    let scene = flatten_node(builder.build_gpu_ir_node().unwrap()).unwrap();
+    assert_eq!(scene.media.len(), 1);
+    let medium = &scene.media[0];
+    assert_eq!(medium.name, "smoke");
+    assert_eq!(
+        evaluate_dense_spectrum(&scene.attributes.spectra, medium.sigma_a, 500.0).unwrap(),
+        20.0
+    );
+    assert_eq!(
+        evaluate_dense_spectrum(&scene.attributes.spectra, medium.sigma_s, 500.0).unwrap(),
+        160.0
+    );
+    let MediumData::UniformGrid(grid) = &medium.data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.resolution, [2, 1, 1]);
+    assert_eq!(grid.density, [0.25, 1.0]);
 }
