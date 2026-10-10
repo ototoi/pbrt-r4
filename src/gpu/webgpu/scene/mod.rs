@@ -60,6 +60,8 @@ pub struct Scene {
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub medium_buffer: wgpu::Buffer,
+    pub uniform_grid_medium_buffer: wgpu::Buffer,
+    pub volume_data_buffer: wgpu::Buffer,
     pub bssrdf_material_buffer: wgpu::Buffer,
     pub bssrdf_tables: BSSRDFTableResources,
     pub material_root_buffer: wgpu::Buffer,
@@ -117,7 +119,18 @@ impl Scene {
             ));
         }
         let instances = convert_instances(&flat, geometries.len())?;
-        let media = convert_media(&flat.media, flat.attributes.spectra.len())?;
+        let converted_media = convert_media(&flat.media, flat.attributes.spectra.len())?;
+        validate_storage_array_size::<super::abi::UniformGridMediumRecord>(
+            device,
+            converted_media.uniform_grids.len(),
+            "uniform grid medium records",
+        )?;
+        validate_storage_array_size::<f32>(
+            device,
+            converted_media.volume_data.len(),
+            "volume data",
+        )?;
+        let media = converted_media.records;
         let material_table = MaterialTable::from_flat(&flat)?;
         let material_nodes = material_table.nodes;
         let measured_records = MeasuredBsdfRecords::from_flat(&flat.materials.measured_bsdfs);
@@ -195,6 +208,17 @@ impl Scene {
         let medium_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 medium records SBO"),
             contents: buffer_contents(&media),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let uniform_grid_medium_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 uniform grid medium records SBO"),
+                contents: buffer_contents(&converted_media.uniform_grids),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let volume_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 volume data SBO"),
+            contents: buffer_contents(&converted_media.volume_data),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let material_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -483,6 +507,8 @@ impl Scene {
             geometry_buffer,
             instance_buffer,
             medium_buffer,
+            uniform_grid_medium_buffer,
+            volume_data_buffer,
             bssrdf_material_buffer,
             bssrdf_tables,
             material_root_buffer,
@@ -533,6 +559,10 @@ impl Scene {
             ResourceId::Geometry => Some(self.geometry_buffer.as_entire_binding()),
             ResourceId::Instance => Some(self.instance_buffer.as_entire_binding()),
             ResourceId::Medium => Some(self.medium_buffer.as_entire_binding()),
+            ResourceId::UniformGridMedium => {
+                Some(self.uniform_grid_medium_buffer.as_entire_binding())
+            }
+            ResourceId::VolumeData => Some(self.volume_data_buffer.as_entire_binding()),
             ResourceId::BSSRDFMaterial => Some(self.bssrdf_material_buffer.as_entire_binding()),
             ResourceId::BSSRDFTable => Some(self.bssrdf_tables.records.as_entire_binding()),
             ResourceId::BSSRDFValues => Some(self.bssrdf_tables.values.as_entire_binding()),
@@ -598,4 +628,29 @@ fn buffer_contents<T: bytemuck::Pod>(values: &[T]) -> &[u8] {
     } else {
         cast_slice(values)
     }
+}
+
+fn validate_storage_array_size<T>(
+    device: &wgpu::Device,
+    count: usize,
+    label: &str,
+) -> Result<(), PbrtError> {
+    let byte_size = count
+        .max(1)
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or_else(|| PbrtError::error(&format!("GPU {label} buffer size overflows usize.")))?;
+    let limits = device.limits();
+    let binding_limit = limits.max_storage_buffer_binding_size as usize;
+    if byte_size > binding_limit {
+        return Err(PbrtError::error(&format!(
+            "GPU {label} buffer requires {byte_size} bytes; device storage binding limit is {binding_limit} bytes."
+        )));
+    }
+    if byte_size as u64 > limits.max_buffer_size {
+        return Err(PbrtError::error(&format!(
+            "GPU {label} buffer requires {byte_size} bytes; device buffer limit is {} bytes.",
+            limits.max_buffer_size
+        )));
+    }
+    Ok(())
 }

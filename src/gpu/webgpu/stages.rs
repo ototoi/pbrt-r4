@@ -72,6 +72,8 @@ pub enum ResourceId {
     ImageInfiniteDistribution,
     ImageInfiniteRowCdf,
     Medium,
+    UniformGridMedium,
+    VolumeData,
     ActiveMediumIndices,
     NextMediumIndices,
     ActiveShadowIndices,
@@ -313,6 +315,8 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::Read,
     );
     for (binding, resource) in [
+        (75, ResourceId::UniformGridMedium),
+        (76, ResourceId::VolumeData),
         (72, ResourceId::ImageInfiniteSampling),
         (73, ResourceId::ImageInfiniteDistribution),
         (74, ResourceId::ImageInfiniteRowCdf),
