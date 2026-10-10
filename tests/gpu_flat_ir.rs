@@ -20,9 +20,12 @@ use pbrt_r4::gpu::node::{
     ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
+use pbrt_r4::media::sample_grid::SampledGrid;
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::shapes::TriangleMesh;
-use pbrt_r4::util::base::{Normal3f, Point3f};
+use pbrt_r4::util::base::{Float, Normal3f, Point3f};
+use pbrt_r4::util::error::PbrtError;
+use pbrt_r4::util::geometry::Bounds3f;
 use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
 use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 use pbrt_r4::util::transform::Transform as CpuTransform;
@@ -2928,4 +2931,159 @@ fn flatten_node_packs_multiple_portal_and_image_distributions_independently() {
         .lights
         .validate_consistency(&scene.texture_library)
         .unwrap();
+}
+
+#[test]
+fn flatten_node_preserves_uniformgrid_density_and_majorants() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_int("ny", 1);
+    params.add_int("nz", 1);
+    params.add_floats("density", &[0.25, 1.0]);
+    let medium = Arc::new(NodeMedium {
+        name: "grid".to_owned(),
+        kind: "uniformgrid".to_owned(),
+        params,
+        transform: Transform::default(),
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![medium],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let medium = &scene.media[0];
+    assert_eq!(medium.kind, "uniformgrid");
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &medium.data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.resolution, [2, 1, 1]);
+    assert_eq!(grid.density, [0.25, 1.0]);
+    assert_eq!(grid.majorant_resolution, [16; 3]);
+    assert_eq!(grid.majorant.len(), 16 * 16 * 16);
+    assert!(grid.majorant.iter().all(|value| *value <= 1.0));
+    assert!(grid.majorant.iter().any(|value| *value == 1.0));
+}
+
+fn uniform_grid_scene(params: ParameterDictionary) -> Result<FlatScene, PbrtError> {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "grid".to_owned(),
+                kind: "uniformgrid".to_owned(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+    flatten_node(Arc::new(RwLock::new(root)))
+}
+
+#[test]
+fn uniform_grid_factory_orders_bounds_and_accepts_empty_optional_grids() {
+    let mut params = ParameterDictionary::default();
+    params.add_float("density", 1.0);
+    params.add_point3f("p0", &Point3f::new(2.0, 3.0, 4.0));
+    params.add_point3f("p1", &Point3f::new(-1.0, -2.0, -3.0));
+    params.add_floats("temperature", &[]);
+    params.add_floats("Lescale", &[]);
+    let scene = uniform_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.bounds_min, [-1.0, -2.0, -3.0]);
+    assert_eq!(grid.bounds_max, [2.0, 3.0, 4.0]);
+    for index in [scene.media[0].sigma_a, scene.media[0].sigma_s] {
+        assert_eq!(
+            evaluate_dense_spectrum(&scene.attributes.spectra, index, 500.0).unwrap(),
+            1.0
+        );
+    }
+}
+
+#[test]
+fn uniform_grid_factory_rejects_invalid_payloads_and_emission() {
+    for value in [-1.0, Float::NAN, Float::INFINITY] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", value);
+        assert!(uniform_grid_scene(params)
+            .unwrap_err()
+            .to_string()
+            .contains("finite, non-negative density"));
+    }
+    for resolution in [0, -1, i32::MAX] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", 1.0);
+        for axis in ["nx", "ny", "nz"] {
+            params.add_int(axis, resolution);
+        }
+        assert!(uniform_grid_scene(params).is_err());
+    }
+    assert!(uniform_grid_scene(ParameterDictionary::default())
+        .unwrap_err()
+        .to_string()
+        .contains("requires density"));
+    for parameter in ["temperature", "Lescale"] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", 1.0);
+        params.add_floats(parameter, &[1.0, 2.0]);
+        assert!(uniform_grid_scene(params).is_err());
+    }
+    let mut params = ParameterDictionary::default();
+    params.add_float("density", 1.0);
+    params.add_spectrum("Le", &Spectrum::one());
+    assert!(uniform_grid_scene(params)
+        .unwrap_err()
+        .to_string()
+        .contains("nonzero Le"));
+    for bound in [
+        Point3f::new(0.0, 1.0, 1.0),
+        Point3f::new(Float::NAN, 1.0, 1.0),
+    ] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", 1.0);
+        params.add_point3f("p1", &bound);
+        assert!(uniform_grid_scene(params).is_err());
+    }
+}
+
+#[test]
+fn uniform_grid_majorants_match_sampled_grid_max_value() {
+    let density: Vec<Float> = (0..24).map(|index| index as Float / 8.0).collect();
+    let reference = SampledGrid::new(3, 2, 4, density.clone());
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 3);
+    params.add_int("ny", 2);
+    params.add_int("nz", 4);
+    params.add_floats("density", &density);
+    let scene = uniform_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    for z in 0..16 {
+        for y in 0..16 {
+            for x in 0..16 {
+                let p0 = Point3f::new(x as Float / 16.0, y as Float / 16.0, z as Float / 16.0);
+                let p1 = Point3f::new(
+                    (x + 1) as Float / 16.0,
+                    (y + 1) as Float / 16.0,
+                    (z + 1) as Float / 16.0,
+                );
+                let bounds = Bounds3f::new(&p0, &p1);
+                let majorant = grid.majorant[(z * 16 + y) * 16 + x];
+                assert_eq!(majorant, reference.max_value(&bounds) as f32);
+                for corner in 0..8 {
+                    let point = bounds.corner(corner);
+                    assert!(majorant as Float >= reference.lookup(&point, None));
+                }
+            }
+        }
+    }
 }

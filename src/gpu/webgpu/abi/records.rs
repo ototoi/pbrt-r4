@@ -64,8 +64,21 @@ pub struct MediumRecord {
     pub sigma_s: u32,
     pub le: u32,
     pub g: f32,
-    pub padding: [u32; 3],
+    pub grid_index: u32,
+    pub padding: [u32; 2],
     pub medium_to_world: [[f32; 4]; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct UniformGridMediumRecord {
+    pub bounds_min: [f32; 4],
+    pub bounds_max: [f32; 4],
+    pub resolution: [u32; 4],
+    pub majorant_resolution: [u32; 4],
+    pub density_offset_count: [u32; 4],
+    pub majorant_offset_count: [u32; 4],
+    pub medium_from_world: [[f32; 4]; 4],
 }
 
 #[repr(C)]
