@@ -6,7 +6,7 @@ use std::mem::size_of;
 use bytemuck::{bytes_of, cast_slice, Zeroable};
 use pbrt_r4::gpu::webgpu::abi::{
     DenseSpectrum, Instance, MediumRecord, PixelSampleState, QueueCounters, RayWorkItem,
-    RenderError, ShadowRayWorkItem, SurfaceWorkItem, UniformGridMediumRecord, ViewportUniform,
+    RenderError, ShadowRayWorkItem, SurfaceWorkItem, ViewportUniform, VolumeMediumRecord,
 };
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::shader::{compose_source, resource_bindings};
@@ -452,7 +452,7 @@ fn run_stage(
     medium.kind = 1;
     medium.sigma_s = 1;
     values.insert(61, bytes_of(&medium).to_vec());
-    let grid = UniformGridMediumRecord {
+    let grid = VolumeMediumRecord {
         bounds_min: [-1.0, -1.0, if cells == 16 { 0.0 } else { -1.0 }, 0.0],
         bounds_max: [1.0, 1.0, if cells == 16 { 2.0 } else { 1.0 }, 0.0],
         resolution: [2, 2, 2, 0],
@@ -465,6 +465,7 @@ fn run_stage(
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        cloud_parameters: [0.0; 4],
     };
     values.insert(75, bytes_of(&grid).to_vec());
     let mut volume = vec![1.0_f32; 8];

@@ -1,6 +1,6 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::flat::{Medium, MediumData, UniformGridMedium};
+use pbrt_r4::gpu::flat::{CloudMedium, Medium, MediumData, UniformGridMedium};
 use pbrt_r4::gpu::webgpu::scene::medium::convert_media;
 
 fn homogeneous_medium() -> Medium {
@@ -26,7 +26,7 @@ fn converts_homogeneous_medium_to_record() {
     assert_eq!(record.kind, 0);
     assert_eq!([record.sigma_a, record.sigma_s, record.le], [0, 1, 2]);
     assert_eq!(record.g, 0.25);
-    assert_eq!(record.grid_index, u32::MAX);
+    assert_eq!(record.volume_index, u32::MAX);
     assert_eq!(record.padding, [0; 2]);
     assert_eq!(
         record.medium_to_world,
@@ -72,17 +72,40 @@ fn packs_uniformgrid_data_and_assigns_checked_ranges() {
     });
     let converted = convert_media(&[homogeneous_medium(), medium], 3).unwrap();
     assert_eq!(converted.records[0].kind, 0);
-    assert_eq!(converted.records[0].grid_index, u32::MAX);
+    assert_eq!(converted.records[0].volume_index, u32::MAX);
     assert_eq!(converted.records[1].kind, 1);
-    assert_eq!(converted.records[1].grid_index, 0);
-    assert_eq!(converted.uniform_grids.len(), 1);
-    assert_eq!(
-        converted.uniform_grids[0].density_offset_count,
-        [0, 2, 0, 0]
-    );
-    assert_eq!(
-        converted.uniform_grids[0].majorant_offset_count,
-        [2, 1, 0, 0]
-    );
+    assert_eq!(converted.records[1].volume_index, 0);
+    assert_eq!(converted.volumes.len(), 1);
+    assert_eq!(converted.volumes[0].density_offset_count, [0, 2, 0, 0]);
+    assert_eq!(converted.volumes[0].majorant_offset_count, [2, 1, 0, 0]);
     assert_eq!(converted.volume_data, [0.25, 1.0, 1.0]);
+}
+
+#[test]
+fn packs_cloud_parameters_and_unit_majorant() {
+    let mut medium = homogeneous_medium();
+    medium.kind = "cloud".to_owned();
+    medium.transform = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    medium.data = MediumData::Cloud(CloudMedium {
+        bounds_min: [-1.0, 0.0, -2.0],
+        bounds_max: [1.0, 3.0, 2.0],
+        density: 0.75,
+        wispiness: 0.5,
+        frequency: 4.0,
+    });
+
+    let converted = convert_media(&[medium], 3).unwrap();
+
+    assert_eq!(converted.records[0].kind, 2);
+    assert_eq!(converted.records[0].volume_index, 0);
+    assert_eq!(converted.volumes.len(), 1);
+    assert_eq!(converted.volumes[0].bounds_min, [-1.0, 0.0, -2.0, 0.0]);
+    assert_eq!(converted.volumes[0].bounds_max, [1.0, 3.0, 2.0, 0.0]);
+    assert_eq!(converted.volumes[0].resolution, [1, 1, 1, 0]);
+    assert_eq!(converted.volumes[0].majorant_resolution, [1, 1, 1, 0]);
+    assert_eq!(converted.volumes[0].majorant_offset_count, [0, 1, 0, 0]);
+    assert_eq!(converted.volumes[0].cloud_parameters, [0.75, 0.5, 4.0, 0.0]);
+    assert_eq!(converted.volume_data, [1.0]);
 }

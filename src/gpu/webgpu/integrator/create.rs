@@ -35,9 +35,8 @@ impl super::WavefrontPathIntegrator {
             .instances
             .iter()
             .any(|instance| instance.material_root == flat::INVALID_INDEX);
-        let attributes_eval_stride = u64::from(flat::max_attributes_eval_work_items_per_surface(
-            &flat_scene,
-        )?);
+        let attributes_eval_stride =
+            u64::from(flat::max_attributes_eval_work_items_per_surface(&flat_scene)?.max(1));
         let texture_eval_stride =
             u64::from(flat::max_texture_eval_results_per_surface(&flat_scene)?).max(1);
         let canonical_bindings = canonical_wavefront_bindings();
@@ -68,21 +67,22 @@ impl super::WavefrontPathIntegrator {
             .max(1);
         let texture_program_capacity = u32::try_from(texture_program_capacity)
             .map_err(|_| PbrtError::error("Texture program capacity exceeds u32."))?;
-        let texture_noise_enabled = flat_scene.texture_library.programs.iter().any(|program| {
-            program.instructions.iter().any(|instruction| {
-                matches!(
-                    instruction,
-                    TextureInstruction::Procedural {
-                        operation: ProceduralOperation::Dots
-                            | ProceduralOperation::Fbm
-                            | ProceduralOperation::Wrinkled
-                            | ProceduralOperation::Windy
-                            | ProceduralOperation::Marble,
-                        ..
-                    }
-                )
-            })
-        });
+        let texture_noise_enabled = flat_scene.media.iter().any(|medium| medium.kind == "cloud")
+            || flat_scene.texture_library.programs.iter().any(|program| {
+                program.instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction,
+                        TextureInstruction::Procedural {
+                            operation: ProceduralOperation::Dots
+                                | ProceduralOperation::Fbm
+                                | ProceduralOperation::Wrinkled
+                                | ProceduralOperation::Windy
+                                | ProceduralOperation::Marble,
+                            ..
+                        }
+                    )
+                })
+            });
         let medium_scattering_enabled = flat_scene.media.iter().any(|medium| {
             flat_scene
                 .attributes
