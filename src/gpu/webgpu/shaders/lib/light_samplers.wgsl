@@ -1,11 +1,11 @@
-fn uniform_light_pmf_for_handle(light_handle: u32) -> f32 {
+fn uniform_light_sampler_pmf(light_handle: u32) -> f32 {
     if (light_handle >= light_table.light_count) {
         return 0.0;
     }
     return 1.0 / f32(light_table.light_count);
 }
 
-fn sample_uniform_light(selector: f32) -> LightSelection {
+fn uniform_light_sampler_sample(selector: f32) -> LightSelection {
     if (light_table.light_count == 0u) {
         return LightSelection(0xffffffffu, 0.0);
     }
@@ -67,7 +67,7 @@ fn decode_light_bvh_node(node_index: u32) -> DecodedLightBVHNode {
     );
 }
 
-fn light_bvh_importance(node: DecodedLightBVHNode, p: vec3<f32>, n: vec3<f32>) -> f32 {
+fn compact_light_bounds_importance(node: DecodedLightBVHNode, p: vec3<f32>, n: vec3<f32>) -> f32 {
     let center = (node.bounds_min + node.bounds_max) * 0.5;
     let diagonal = node.bounds_max - node.bounds_min;
     let delta = p - center;
@@ -132,7 +132,7 @@ fn sin_sub_clamped(sin_a: f32, cos_a: f32, sin_b: f32, cos_b: f32) -> f32 {
     return sin_a * cos_b - cos_a * sin_b;
 }
 
-fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
+fn bvh_light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
     if (light_table.light_bvh_node_count == 0u || light_table.light_leaf_count == 0u) {
         return LightSelection(0xffffffffu, 0.0);
     }
@@ -146,8 +146,8 @@ fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection
         }
         let left = decode_light_bvh_node(node_index + 1u);
         let right = decode_light_bvh_node(node.payload);
-        let left_weight = light_bvh_importance(left, p, n);
-        let right_weight = light_bvh_importance(right, p, n);
+        let left_weight = compact_light_bounds_importance(left, p, n);
+        let right_weight = compact_light_bounds_importance(right, p, n);
         let total = left_weight + right_weight;
         if (total <= 0.0) {
             return LightSelection(0xffffffffu, 0.0);
@@ -169,7 +169,7 @@ fn sample_light_bvh(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection
     return LightSelection(0xffffffffu, 0.0);
 }
 
-fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+fn bvh_light_sampler_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
     if (light_handle >= light_table.light_leaf_count) {
         return 0.0;
     }
@@ -191,8 +191,8 @@ fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f3
         let left_child = parent + 1u;
         let left = decode_light_bvh_node(left_child);
         let right = decode_light_bvh_node(parent_node.payload);
-        let left_weight = light_bvh_importance(left, p, n);
-        let right_weight = light_bvh_importance(right, p, n);
+        let left_weight = compact_light_bounds_importance(left, p, n);
+        let right_weight = compact_light_bounds_importance(right, p, n);
         let total = left_weight + right_weight;
         if (total <= 0.0) {
             return 0.0;
@@ -209,7 +209,7 @@ fn light_bvh_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f3
     return 0.0;
 }
 
-fn light_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+fn light_sampler_pmf(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
     if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         let finite_group_count = select(0u, 1u, light_table.light_bvh_node_count > 0u);
         let group_count = light_table.infinite_light_count + finite_group_count;
@@ -222,13 +222,13 @@ fn light_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
             }
             return 1.0 / f32(group_count);
         }
-        return light_bvh_pmf_for_handle(light_handle, p, n)
+        return bvh_light_sampler_pmf_for_handle(light_handle, p, n)
             * f32(finite_group_count) / f32(group_count);
     }
-    return uniform_light_pmf_for_handle(light_handle);
+    return uniform_light_sampler_pmf(light_handle);
 }
 
-fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
+fn light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
     if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         let finite_group_count = select(0u, 1u, light_table.light_bvh_node_count > 0u);
         let group_count = light_table.infinite_light_count + finite_group_count;
@@ -251,7 +251,7 @@ fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelecti
         if (finite_group_count == 0u) {
             return LightSelection(0xffffffffu, 0.0);
         }
-        let finite_selection = sample_light_bvh(
+        let finite_selection = bvh_light_sampler_sample(
             (u - infinite_probability) / (1.0 - infinite_probability),
             p,
             n,
@@ -261,5 +261,5 @@ fn sample_scene_light(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelecti
             finite_selection.pmf / f32(group_count),
         );
     }
-    return sample_uniform_light(selector);
+    return uniform_light_sampler_sample(selector);
 }

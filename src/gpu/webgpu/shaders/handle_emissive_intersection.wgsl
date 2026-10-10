@@ -1,5 +1,5 @@
 @compute @workgroup_size(64, 1, 1)
-fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn handle_emissive_intersection(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
     if (queue_index >= hit_area_light_count()) {
         return;
@@ -30,12 +30,12 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     // Balance-heuristic MIS with the v4 rescaled-path-probability (r_u/r_l)
-    // formulation; see handle_escaped.wgsl for the analogous infinite-light
+    // formulation; see handle_escaped_rays.wgsl for the analogous infinite-light
     // case. depth==0 or a specular previous bounce means this light could
     // only ever be found this way (no MIS against BSDF sampling).
     var denom = 1.0;
     if (ray.depth == 0u || ray.prev_specular != 0u) {
-        denom = average_spectrum(ray.r_u);
+        denom = sampled_spectrum_average(ray.r_u);
     } else {
         var triangle_distribution_index = 0xffffffffu;
         let distribution_count = load_area_distribution_count(area_light);
@@ -61,10 +61,10 @@ fn handle_emissive(@builtin(global_invocation_id) global_id: vec3<u32>) {
             surface.position.xyz,
             triangle_selection.area,
         );
-        let light_pdf = light_pmf_for_handle(light_handle, ray.prev_position.xyz, ray.prev_shading_normal.xyz)
+        let light_pdf = light_sampler_pmf(light_handle, ray.prev_position.xyz, ray.prev_shading_normal.xyz)
             * triangle_selection.pmf * triangle_pdf;
         let r_l = ray.r_l * light_pdf;
-        denom = average_spectrum(ray.r_u + r_l);
+        denom = sampled_spectrum_average(ray.r_u + r_l);
     }
     if (denom <= 1e-7) {
         return;

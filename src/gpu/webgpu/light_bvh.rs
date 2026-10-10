@@ -160,8 +160,8 @@ impl CompactLightBounds {
             q_max,
             direction: encode_octahedral(direction),
             phi: bounds.phi,
-            cos_theta_o: quantize_cosine(bounds.cos_theta_o),
-            cos_theta_e: quantize_cosine(bounds.cos_theta_e),
+            cos_theta_o: quantize_cos(bounds.cos_theta_o),
+            cos_theta_e: quantize_cos(bounds.cos_theta_e),
             two_sided: bounds.two_sided,
         })
     }
@@ -213,7 +213,7 @@ fn quantize_bounds(value: f32, min: f32, max: f32, ceil: bool) -> Result<u16, Pb
         .map_err(|_| PbrtError::error("Light BVH bounds quantization overflowed."))
 }
 
-fn quantize_cosine(value: f32) -> u16 {
+fn quantize_cos(value: f32) -> u16 {
     (32767.0 * ((value + 1.0) / 2.0)).floor() as u16
 }
 

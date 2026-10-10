@@ -20,7 +20,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let normal = normalize(surface.normal.xyz);
     let tangent = surface.tangent.xyz;
-    let wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
+    let wo = frame_to_local(normalize(-ray.direction.xyz), tangent, normal);
     if (wo.z == 0.0) { return; }
 
     // Direct lighting. pbrt-v4 DielectricBxDF::f/PDF are non-zero only for a
@@ -28,21 +28,21 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // dielectrics into the direct-lighting queue).
     let light_sample = direct_light_samples[pixel_index];
     if (light_sample.valid != 0u) {
-        let wi = scattering_local_frame(light_sample.direction_pdf.xyz, tangent, normal);
-        let bsdf_pdf = dielectric_interface_pdf(evaluated, wo, wi, true, true);
+        let wi = frame_to_local(light_sample.direction_pdf.xyz, tangent, normal);
+        let bsdf_pdf = dielectric_bxdf_pdf(evaluated, wo, wi, true, true);
         if (bsdf_pdf > 0.0) {
-            let f = dielectric_interface_f(evaluated, wo, wi);
+            let f = dielectric_bxdf_f(evaluated, wo, wi);
             add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, abs(wi.z));
         }
     }
 
     // Indirect bounce.
     let samples = load_ray_samples(pixel_index);
-    let bs = sample_dielectric_interface(
+    let bs = dielectric_bxdf_sample_f(
         evaluated, wo, samples.indirect.x, samples.indirect.yz, true, true,
     );
     if (bs.valid == 0u || bs.pdf <= 0.0 || bs.wi.z == 0.0) { return; }
-    let direction = normalize(scattering_world_frame(bs.wi, tangent, normal));
+    let direction = normalize(frame_from_local(bs.wi, tangent, normal));
     var next_beta = ray.beta * bs.f * abs(bs.wi.z) / bs.pdf;
     var eta_scale = ray.eta_scale;
     if (bs.transmission != 0u) {
@@ -57,7 +57,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let reflectance = clamp(evaluated.values[4], vec4<f32>(0.0), vec4<f32>(1.0));
                 let mfp = max(vec4<f32>(1e-6), material.scale * evaluated.values[5]);
                 for (var i = 0u; i < 4u; i++) {
-                    let rho = bssrdf_invert_reflectance(bssrdf_tables[material.table_index], reflectance[i]);
+                    let rho = invert_catmull_rom(bssrdf_tables[material.table_index], reflectance[i]);
                     sigma_s[i] = rho / mfp[i];
                     sigma_a[i] = (1.0 - rho) / mfp[i];
                 }
@@ -108,7 +108,7 @@ fn scatter_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.depth + 1u,
         eta_scale,
         bs.pdf,
-        bs.specular, medium_for_direction(ray, surface, direction), 0u, 0u,
+        bs.specular, interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

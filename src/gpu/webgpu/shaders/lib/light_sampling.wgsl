@@ -12,7 +12,7 @@ fn sample_direct_light_at(
     lambda: vec4<f32>,
     samples: RaySamples,
 ) -> DirectLightSample {
-    let light_selection = sample_scene_light(samples.direct.x, position, normal);
+    let light_selection = light_sampler_sample(samples.direct.x, position, normal);
     if (light_selection.pmf <= 0.0 || light_selection.index == 0xffffffffu) {
         return invalid_direct_light_sample();
     }
@@ -52,12 +52,12 @@ fn sample_direct_light_at(
                 set_render_error();
                 return invalid_direct_light_sample();
             }
-            let bounds = portal_image_bounds(portal, position);
-            let portal_sample = sample_portal_distribution(
+            let bounds = portal_image_infinite_light_image_bounds(portal, position);
+            let portal_sample = windowed_piecewise_constant_2d_sample(
                 portal, vec2<f32>(samples.direct.y, samples.direct.z), bounds,
             );
             if (portal_sample.valid == 0u) { return invalid_direct_light_sample(); }
-            let direction = portal_render_from_image(portal, portal_sample.uv);
+            let direction = portal_image_infinite_light_render_from_image(portal, portal_sample.uv);
             if (direction.valid == 0u || direction.duv_dw <= 0.0) { return invalid_direct_light_sample(); }
             let portal_pdf = sampled_light_pdf * portal_sample.pdf / direction.duv_dw;
             if (!portal_finite(portal_pdf) || portal_pdf == 0.0) { return invalid_direct_light_sample(); }
@@ -74,11 +74,11 @@ fn sample_direct_light_at(
                 return invalid_direct_light_sample();
             }
             let image = image_infinite_sampling_records[model.geometry_index];
-            let image_sample = sample_image_infinite_distribution(
+            let image_sample = piecewise_constant_2d_sample(
                 image, vec2<f32>(samples.direct.y, samples.direct.z),
             );
             if (image_sample.valid == 0u) { return invalid_direct_light_sample(); }
-            let w_light = image_infinite_equal_area_square_to_sphere(image_sample.uv);
+            let w_light = equal_area_square_to_sphere(image_sample.uv);
             let transformed = vec3<f32>(
                 dot(image.light_to_render0.xyz, w_light),
                 dot(image.light_to_render1.xyz, w_light),
@@ -95,7 +95,7 @@ fn sample_direct_light_at(
                 light_index, image_sample.uv, lambda,
             ) * load_light_scale(light_index);
         } else {
-            wi = sample_uniform_infinite_direction(samples.direct.yz);
+            wi = sample_uniform_sphere(samples.direct.yz);
             sampled_light_pdf = sampled_light_pdf / (4.0 * PI);
             light_radiance = load_light_spectrum(light_index, 0u, lambda) * load_light_scale(light_index);
         }

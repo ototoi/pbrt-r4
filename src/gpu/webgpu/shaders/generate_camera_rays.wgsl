@@ -1,4 +1,4 @@
-fn concentric_sample_disk(u: vec2<f32>) -> vec2<f32> {
+fn sample_uniform_disk_concentric(u: vec2<f32>) -> vec2<f32> {
     let u_offset = 2.0 * u - vec2<f32>(1.0);
     if (u_offset.x == 0.0 && u_offset.y == 0.0) {
         return vec2<f32>(0.0);
@@ -14,7 +14,7 @@ fn concentric_sample_disk(u: vec2<f32>) -> vec2<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn generate_camera_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= viewport.tile_width || global_id.y >= viewport.tile_height) {
         return;
     }
@@ -47,7 +47,7 @@ fn generate_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (camera.disable_pixel_jitter == 0u) {
             lens_sample = sampler_get_2d(pixel_index, 4u);
         }
-        let lens_point = concentric_sample_disk(lens_sample) * camera.lens_radius;
+        let lens_point = sample_uniform_disk_concentric(lens_sample) * camera.lens_radius;
         let camera_direction = normalize(camera_point.xyz);
         let focal_t = camera.focal_distance / camera_direction.z;
         let focus_point = focal_t * camera_direction;

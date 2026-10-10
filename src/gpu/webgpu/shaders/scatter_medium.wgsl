@@ -17,7 +17,7 @@ fn scatter_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
     if (light_sample.valid != 0u && light_sample.direction_pdf.w > 0.0) {
         let wi = light_sample.direction_pdf.xyz;
-        let p_phase = hg_phase(dot(wo, wi), g);
+        let p_phase = henyey_greenstein(dot(wo, wi), g);
         if (p_phase > 0.0 && p_phase == p_phase) {
             let light_pdf = light_sample.direction_pdf.w;
             let direct = ray.beta * p_phase * light_sample.radiance;
@@ -63,14 +63,14 @@ fn scatter_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    let wi = sample_hg_direction(wo, samples.indirect.yz, g);
-    let phase_pdf = hg_phase(dot(wo, wi), g);
+    let wi = sample_henyey_greenstein(wo, samples.indirect.yz, g);
+    let phase_pdf = henyey_greenstein(dot(wo, wi), g);
     if (!(phase_pdf > 0.0) || phase_pdf != phase_pdf) { return; }
     var next_beta = ray.beta;
     if (ray.depth >= 1u) {
-        let average_r_u = average_spectrum(ray.r_u);
+        let average_r_u = sampled_spectrum_average(ray.r_u);
         if (!(average_r_u > 0.0) || average_r_u != average_r_u) { return; }
-        let rr_beta = max_spectrum(next_beta * ray.eta_scale) / average_r_u;
+        let rr_beta = sampled_spectrum_max_component_value(next_beta * ray.eta_scale) / average_r_u;
         if (rr_beta != rr_beta || abs(rr_beta) > RAY_T_MAX) {
             set_render_error();
             return;
