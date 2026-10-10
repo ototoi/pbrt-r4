@@ -9,7 +9,7 @@ fn rgb_table_coeff(table_base: u32, maxc: u32, z: u32, y: u32, x: u32, component
     return rgb_spectrum_table[table_base + RGB_TABLE_SCALE_COUNT + index];
 }
 
-fn rgb_sigmoid(x: f32) -> f32 {
+fn rgb_sigmoid_polynomial_s(x: f32) -> f32 {
     return 0.5 + x / (2.0 * sqrt(1.0 + x * x));
 }
 
@@ -22,7 +22,7 @@ fn rgb_to_spectrum_lane(rgb_input: vec3<f32>, lambda: f32, color_space: u32) -> 
         if (rgb.x <= 0.0) { return 0.0; }
         if (rgb.x >= 1.0) { return 1.0; }
         let c2 = (rgb.x - 0.5) / sqrt(max(rgb.x * (1.0 - rgb.x), 1e-8));
-        return rgb_sigmoid(c2);
+        return rgb_sigmoid_polynomial_s(c2);
     }
     // Match pbrt-v4's strict tie-breaking: red, then green, then blue.
     var maxc = 2u;
@@ -64,7 +64,7 @@ fn rgb_to_spectrum_lane(rgb_input: vec3<f32>, lambda: f32, color_space: u32) -> 
         polynomial_coeff[component] = mix(c0, c1, dz);
     }
     let polynomial = (polynomial_coeff.x * lambda + polynomial_coeff.y) * lambda + polynomial_coeff.z;
-    return rgb_sigmoid(polynomial);
+    return rgb_sigmoid_polynomial_s(polynomial);
 }
 
 fn rgb_to_spectrum4(rgb: vec3<f32>, lambda: vec4<f32>, color_space: u32) -> vec4<f32> {

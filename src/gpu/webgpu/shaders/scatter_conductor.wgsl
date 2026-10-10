@@ -27,8 +27,8 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
             if (cosine > 0.0) {
                 let eta = evaluated.values[0];
                 let k = evaluated.values[1];
-                let h = scattering_local_frame(normalize(wo + wi), tangent, shading_n);
-                let fresnel = conductor_fresnel(dot(scattering_local_frame(wo, tangent, shading_n), h), eta, k);
+                let h = frame_to_local(normalize(wo + wi), tangent, shading_n);
+                let fresnel = fr_complex(dot(frame_to_local(wo, tangent, shading_n), h), eta, k);
                 let alpha = max(evaluated.values[2].x, 1e-3);
                 let cos_h = max(abs(h.z), 1e-5);
                 let alpha2 = alpha * alpha;
@@ -38,7 +38,7 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let g_o = 2.0 * cos_o / (cos_o + sqrt(cos_o * cos_o + alpha2 * (1.0 - cos_o * cos_o)));
                 let g_i = 2.0 * cos_i / (cos_i + sqrt(cos_i * cos_i + alpha2 * (1.0 - cos_i * cos_i)));
                 let f = fresnel * d * g_o * g_i / (4.0 * cos_o * cos_i);
-                let bsdf_pdf = d * cos_h / max(4.0 * abs(dot(scattering_local_frame(wo, tangent, shading_n), h)), 1e-5);
+                let bsdf_pdf = d * cos_h / max(4.0 * abs(dot(frame_to_local(wo, tangent, shading_n), h)), 1e-5);
                 add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, cosine);
             }
         }
@@ -58,26 +58,26 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let cos_theta = 1.0 / sqrt(1.0 + tan2);
         half_local = normalize(vec3<f32>(sqrt(max(0.0, 1.0 - cos_theta * cos_theta)) * cos(phi),
             sqrt(max(0.0, 1.0 - cos_theta * cos_theta)) * sin(phi), cos_theta));
-        let wo_local = scattering_local_frame(wo, tangent, normal);
+        let wo_local = frame_to_local(wo, tangent, normal);
         if (dot(wo_local, half_local) < 0.0) { half_local = -half_local; }
         let d = alpha * alpha / (PI * pow(half_local.z * half_local.z * (alpha * alpha - 1.0) + 1.0, 2.0));
         pdf = d * abs(half_local.z) / max(4.0 * abs(dot(wo_local, half_local)), 1e-5);
     }
-    let half_world = normalize(scattering_world_frame(half_local, tangent, normal));
+    let half_world = normalize(frame_from_local(half_local, tangent, normal));
     let direction = normalize(reflect(-wo, half_world));
     let cos_i = abs(dot(direction, normal));
     if (cos_i <= 1e-5 || pdf <= 1e-7) { return; }
-    var f = conductor_fresnel(cos_i, evaluated.values[0], evaluated.values[1]) / cos_i;
+    var f = fr_complex(cos_i, evaluated.values[0], evaluated.values[1]) / cos_i;
     if (roughness >= 1e-3) {
-        let wi_local = scattering_local_frame(direction, tangent, normal);
-        let wo_local = scattering_local_frame(wo, tangent, normal);
-        let h_local = scattering_local_frame(normalize(wo + direction), tangent, normal);
+        let wi_local = frame_to_local(direction, tangent, normal);
+        let wo_local = frame_to_local(wo, tangent, normal);
+        let h_local = frame_to_local(normalize(wo + direction), tangent, normal);
         let alpha = max(roughness, 1e-3);
         let a2 = alpha * alpha;
         let d = a2 / (PI * pow(h_local.z * h_local.z * (a2 - 1.0) + 1.0, 2.0));
         let g = 2.0 * abs(wo_local.z) / (abs(wo_local.z) + sqrt(wo_local.z * wo_local.z + a2 * (1.0 - wo_local.z * wo_local.z)))
             * 2.0 * abs(wi_local.z) / (abs(wi_local.z) + sqrt(wi_local.z * wi_local.z + a2 * (1.0 - wi_local.z * wi_local.z)));
-        f = conductor_fresnel(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
+        f = fr_complex(abs(dot(wo_local, h_local)), evaluated.values[0], evaluated.values[1]) * d * g
             / max(4.0 * abs(wo_local.z * wi_local.z), 1e-5);
     }
     var next_beta = ray.beta * f * cos_i / pdf;
@@ -88,7 +88,7 @@ fn scatter_conductor(@builtin(global_invocation_id) global_id: vec3<u32>) {
         next_beta, ray.r_u, ray.r_u / pdf,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.eta_scale, pdf, u32(roughness < 1e-3), medium_for_direction(ray, surface, direction), 0u, 0u,
+        ray.eta_scale, pdf, u32(roughness < 1e-3), interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

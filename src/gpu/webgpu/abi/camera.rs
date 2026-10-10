@@ -2,7 +2,7 @@ use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 use super::transform::{
-    add3, coordinate_system3, dot3, inverse_affine, normalize3, row_major_to_columns, sub3,
+    add3, coordinate_system, dot, inverse_affine, normalize, row_major_to_columns, sub3,
     validate_affine,
 };
 use super::uniforms::CameraUniform;
@@ -139,8 +139,8 @@ fn minimum_perspective_camera_direction_differentials(
             (ymax - dy * (t * resolution[1] as f32)) * tan_half_fov,
             1.0,
         ];
-        let direction = normalize3(p_camera);
-        let (frame_x, frame_y) = coordinate_system3(direction);
+        let direction = normalize(p_camera);
+        let (frame_x, frame_y) = coordinate_system(direction);
         let (rx_direction, ry_direction) = if lens_radius > 0.0 {
             let rx_p_camera = add3(p_camera, delta_x);
             let ry_p_camera = add3(p_camera, delta_y);
@@ -154,27 +154,27 @@ fn minimum_perspective_camera_direction_differentials(
                 focal_distance * ry_p_camera[1] / ry_p_camera[2],
                 focal_distance,
             ];
-            (normalize3(rx_focus), normalize3(ry_focus))
+            (normalize(rx_focus), normalize(ry_focus))
         } else {
             (
-                normalize3(add3(p_camera, delta_x)),
-                normalize3(add3(p_camera, delta_y)),
+                normalize(add3(p_camera, delta_x)),
+                normalize(add3(p_camera, delta_y)),
             )
         };
         let local_x = [
-            dot3(rx_direction, frame_x),
-            dot3(rx_direction, frame_y),
-            dot3(rx_direction, direction),
+            dot(rx_direction, frame_x),
+            dot(rx_direction, frame_y),
+            dot(rx_direction, direction),
         ];
         let local_y = [
-            dot3(ry_direction, frame_x),
-            dot3(ry_direction, frame_y),
-            dot3(ry_direction, direction),
+            dot(ry_direction, frame_x),
+            dot(ry_direction, frame_y),
+            dot(ry_direction, direction),
         ];
         let dx = sub3(local_x, [0.0, 0.0, 1.0]);
         let dy = sub3(local_y, [0.0, 0.0, 1.0]);
         for (axis, differential) in [dx, dy].into_iter().enumerate() {
-            let length_squared = dot3(differential, differential);
+            let length_squared = dot(differential, differential);
             if length_squared < minimum_length_squared[axis] {
                 minimum_length_squared[axis] = length_squared;
                 minimum[axis] = differential;

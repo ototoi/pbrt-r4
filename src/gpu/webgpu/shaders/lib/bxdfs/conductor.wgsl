@@ -4,29 +4,29 @@ fn conductor_interface_alpha(item: AttributesEvalWorkItem) -> vec2<f32> {
     return roughness;
 }
 
-fn sample_conductor_interface(
+fn conductor_bxdf_sample_f(
     item: AttributesEvalWorkItem, wo: vec3<f32>, u: vec2<f32>,
 ) -> DielectricInterfaceSample {
     let alpha = conductor_interface_alpha(item);
     if (max(alpha.x, alpha.y) < 1e-3) {
         let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
-        let value = conductor_fresnel(abs(wo.z), item.values[0], item.values[1]) / abs(wi.z);
+        let value = fr_complex(abs(wo.z), item.values[0], item.values[1]) / abs(wi.z);
         return DielectricInterfaceSample(value, wi, 1.0, 1.0, 1u, 0u, 1u);
     }
     let bounded_alpha = max(alpha, vec2<f32>(1e-4));
-    let wm = sample_visible_tr_wm(wo, bounded_alpha, u);
+    let wm = trowbridge_reitz_distribution_sample_wm(wo, bounded_alpha, u);
     let wi = normalize(-wo + 2.0 * dot(wo, wm) * wm);
     if (wo.z * wi.z <= 0.0) { return invalid_dielectric_interface_sample(); }
-    let pdf = tr_visible_wm_pdf(wo, wm, bounded_alpha)
+    let pdf = trowbridge_reitz_distribution_pdf(wo, wm, bounded_alpha)
         / max(4.0 * abs(dot(wo, wm)), 1e-7);
-    let value = conductor_fresnel(abs(dot(wo, wm)), item.values[0], item.values[1])
-        * tr_distribution_d(wm, bounded_alpha)
-        * tr_distribution_g(wo, wi, bounded_alpha)
+    let value = fr_complex(abs(dot(wo, wm)), item.values[0], item.values[1])
+        * trowbridge_reitz_distribution_d(wm, bounded_alpha)
+        * trowbridge_reitz_distribution_g(wo, wi, bounded_alpha)
         / max(abs(4.0 * wo.z * wi.z), 1e-7);
     return DielectricInterfaceSample(value, wi, pdf, 1.0, 1u, 0u, 0u);
 }
 
-fn conductor_interface_f(
+fn conductor_bxdf_f(
     item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
 ) -> vec4<f32> {
     let alpha = conductor_interface_alpha(item);
@@ -34,19 +34,19 @@ fn conductor_interface_f(
     var wm = normalize(wo + wi);
     if (wm.z < 0.0) { wm = -wm; }
     let bounded_alpha = max(alpha, vec2<f32>(1e-4));
-    return conductor_fresnel(abs(dot(wo, wm)), item.values[0], item.values[1])
-        * tr_distribution_d(wm, bounded_alpha) * tr_distribution_g(wo, wi, bounded_alpha)
+    return fr_complex(abs(dot(wo, wm)), item.values[0], item.values[1])
+        * trowbridge_reitz_distribution_d(wm, bounded_alpha) * trowbridge_reitz_distribution_g(wo, wi, bounded_alpha)
         / max(abs(4.0 * wo.z * wi.z), 1e-7);
 }
 
-fn conductor_interface_pdf(
+fn conductor_bxdf_pdf(
     item: AttributesEvalWorkItem, wo: vec3<f32>, wi: vec3<f32>,
 ) -> f32 {
     let alpha = conductor_interface_alpha(item);
     if (max(alpha.x, alpha.y) < 1e-3 || wo.z * wi.z <= 0.0) { return 0.0; }
     var wm = normalize(wo + wi);
     if (wm.z < 0.0) { wm = -wm; }
-    return tr_visible_wm_pdf(wo, wm, max(alpha, vec2<f32>(1e-4)))
+    return trowbridge_reitz_distribution_pdf(wo, wm, max(alpha, vec2<f32>(1e-4)))
         / max(4.0 * abs(dot(wo, wm)), 1e-7);
 }
 

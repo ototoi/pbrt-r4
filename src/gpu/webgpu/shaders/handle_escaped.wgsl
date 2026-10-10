@@ -1,5 +1,5 @@
 @compute @workgroup_size(64, 1, 1)
-fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn handle_escaped_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
     if (index >= escaped_ray_count()) {
         return;
@@ -24,15 +24,15 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     continue;
                 }
                 let portal = portal_infinite_lights[model.geometry_index];
-                let uv = portal_image_from_render(portal, normalize(ray.direction.xyz));
-                let bounds = portal_image_bounds(portal, ray.origin.xyz);
+                let uv = portal_image_infinite_light_image_from_render(portal, normalize(ray.direction.xyz));
+                let bounds = portal_image_infinite_light_image_bounds(portal, ray.origin.xyz);
                 if (uv.valid != 0u && bounds.valid != 0u && all(uv.uv >= bounds.min) && all(uv.uv <= bounds.max)) {
                     light_radiance = load_portal_image_spectrum(light_index, uv.uv, lambda)
                         * load_light_scale(light_index);
                 }
-                light_pdf = light_pmf_for_handle(
+                light_pdf = light_sampler_pmf(
                     light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
-                ) * portal_pdf_li(portal, uv, ray.prev_position.xyz);
+                ) * portal_image_infinite_light_pdf_li(portal, uv, ray.prev_position.xyz);
             } else if (light_kind == LIGHT_KIND_IMAGE_INFINITE) {
                 light_radiance = load_light_image_spectrum(light_index, ray.direction.xyz, lambda)
                     * load_light_scale(light_index);
@@ -48,7 +48,7 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     dot(model.world_to_light1.xyz, ray.direction.xyz),
                     dot(model.world_to_light2.xyz, ray.direction.xyz),
                 )));
-                let map_pdf = image_infinite_distribution_pdf(image, map_uv);
+                let map_pdf = piecewise_constant_2d_pdf(image, map_uv);
                 let local_direction = normalize(vec3<f32>(
                     dot(model.world_to_light0.xyz, ray.direction.xyz),
                     dot(model.world_to_light1.xyz, ray.direction.xyz),
@@ -59,13 +59,13 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     set_render_error();
                     continue;
                 }
-                light_pdf = light_pmf_for_handle(
+                light_pdf = light_sampler_pmf(
                     light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
                 ) * map_pdf / (4.0 * PI * jacobian);
             } else {
                 light_radiance = load_light_spectrum(light_index, 0u, lambda)
                     * load_light_scale(light_index);
-                light_pdf = light_pmf_for_handle(
+                light_pdf = light_sampler_pmf(
                     light_index, ray.prev_position.xyz, ray.prev_shading_normal.xyz,
                 ) / (4.0 * PI);
             }
@@ -76,13 +76,13 @@ fn handle_escaped(@builtin(global_invocation_id) global_id: vec3<u32>) {
             // the BSDF-sampling density (r_u) and the light-sampling density
             // (r_l * light_pdf).
             if (ray.depth == 0u || ray.prev_specular != 0u) {
-                let denom = average_spectrum(ray.r_u);
+                let denom = sampled_spectrum_average(ray.r_u);
                 if (denom > 1e-7) {
                     radiance += light_radiance / denom;
                 }
             } else {
                 let r_l = ray.r_l * light_pdf;
-                let denom = average_spectrum(ray.r_u + r_l);
+                let denom = sampled_spectrum_average(ray.r_u + r_l);
                 if (denom > 1e-7) {
                     radiance += light_radiance / denom;
                 }

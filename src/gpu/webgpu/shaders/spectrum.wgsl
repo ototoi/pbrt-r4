@@ -34,7 +34,7 @@ fn spectrum_is_constant(id: u32) -> bool {
     return (spectrum_attributes[id].flags & SPECTRUM_FLAG_CONSTANT) != 0u;
 }
 
-fn safe_div_spectrum(value: vec4<f32>, pdf: vec4<f32>) -> vec4<f32> {
+fn safe_div(value: vec4<f32>, pdf: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
         select(0.0, value.x / pdf.x, pdf.x != 0.0),
         select(0.0, value.y / pdf.y, pdf.y != 0.0),
@@ -43,10 +43,10 @@ fn safe_div_spectrum(value: vec4<f32>, pdf: vec4<f32>) -> vec4<f32> {
     );
 }
 
-fn average_spectrum(value: vec4<f32>) -> f32 {
+fn sampled_spectrum_average(value: vec4<f32>) -> f32 {
     return dot(value, vec4<f32>(0.25));
 }
 
-fn max_spectrum(value: vec4<f32>) -> f32 {
+fn sampled_spectrum_max_component_value(value: vec4<f32>) -> f32 {
     return max(max(value.x, value.y), max(value.z, value.w));
 }

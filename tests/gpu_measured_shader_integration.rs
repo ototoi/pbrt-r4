@@ -229,9 +229,9 @@ fn measured_test() {{
     let wo = normalize(vec3<f32>({0}, {1}, {2}));
     let wi = normalize(vec3<f32>({3}, {4}, {5}));
     let lambda = vec4<f32>({6}, {7}, {8}, {9});
-    let f = measured_f(0u, wo, wi, lambda);
-    let pdf = measured_pdf(0u, wo, wi);
-    let sampled = measured_sample_f(0u, wo, vec2<f32>({10}, {11}), lambda);
+    let f = measured_bxdf_f(0u, wo, wi, lambda);
+    let pdf = measured_bxdf_pdf(0u, wo, wi);
+    let sampled = measured_bxdf_sample_f(0u, wo, vec2<f32>({10}, {11}), lambda);
     output_values[0] = f;
     output_values[1] = vec4<f32>(pdf, sampled.pdf, f32(sampled.valid), 0.0);
     output_values[2] = sampled.f;

@@ -5,8 +5,8 @@ fn prepare_subsurface_exit(@builtin(global_invocation_id) id: vec3<u32>) {
     let work = bssrdf_work.items[index];
     var result = bssrdf_results[index];
     if (result.valid == 0u || result.reservoir_probability == 0.0) { return; }
-    let sp = bssrdf_sr(work, distance(result.position.xyz, work.position.xyz), false);
-    let pdf = bssrdf_pdf_sp(work, result.position.xyz, result.normal.xyz);
+    let sp = tabulated_bssrdf_sr(work, distance(result.position.xyz, work.position.xyz), false);
+    let pdf = tabulated_bssrdf_pdf_sp(work, result.position.xyz, result.normal.xyz);
     if (pdf.x <= 0.0 || !any(sp > vec4<f32>(0.0))) { bssrdf_results[index].valid = 0u; return; }
     var ray = load_current_ray(work.ray_index);
     ray.beta *= sp / (result.reservoir_probability * pdf.x);

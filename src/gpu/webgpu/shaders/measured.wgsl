@@ -57,7 +57,7 @@ fn measured_parameter_lookup(table: MeasuredTableRecord, params: vec3<f32>) -> M
     return result;
 }
 
-fn measured_lookup(table: MeasuredTableRecord, data: u32, index: u32,
+fn piecewise_linear_2d_lookup(table: MeasuredTableRecord, data: u32, index: u32,
                    slice_size: u32, lookup: MeasuredLookup) -> f32 {
     var sum = 0.0;
     let combinations = 1u << table.parameter_count;
@@ -77,7 +77,7 @@ fn measured_lookup(table: MeasuredTableRecord, data: u32, index: u32,
     return sum;
 }
 
-fn measured_evaluate(table_index: u32, position_in: vec2<f32>, params: vec3<f32>) -> f32 {
+fn piecewise_linear_2d_evaluate(table_index: u32, position_in: vec2<f32>, params: vec3<f32>) -> f32 {
     if (table_index >= arrayLength(&measured_tables)) { set_render_error(); return 0.0; }
     let table = measured_tables[table_index];
     let lookup = measured_parameter_lookup(table, params);
@@ -88,15 +88,15 @@ fn measured_evaluate(table_index: u32, position_in: vec2<f32>, params: vec3<f32>
     let low = vec2<f32>(1.0) - high;
     let slice_size = table.size.x * table.size.y;
     let base = cell.x + cell.y * table.size.x + lookup.offset * slice_size;
-    let v00 = measured_lookup(table, table.data_offset, base, slice_size, lookup);
-    let v10 = measured_lookup(table, table.data_offset, base + 1u, slice_size, lookup);
-    let v01 = measured_lookup(table, table.data_offset, base + table.size.x, slice_size, lookup);
-    let v11 = measured_lookup(table, table.data_offset, base + table.size.x + 1u, slice_size, lookup);
+    let v00 = piecewise_linear_2d_lookup(table, table.data_offset, base, slice_size, lookup);
+    let v10 = piecewise_linear_2d_lookup(table, table.data_offset, base + 1u, slice_size, lookup);
+    let v01 = piecewise_linear_2d_lookup(table, table.data_offset, base + table.size.x, slice_size, lookup);
+    let v11 = piecewise_linear_2d_lookup(table, table.data_offset, base + table.size.x + 1u, slice_size, lookup);
     return (low.y * (low.x * v00 + high.x * v10)
         + high.y * (low.x * v01 + high.x * v11)) * inverse_patch.x * inverse_patch.y;
 }
 
-fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) -> MeasuredPlSample {
+fn piecewise_linear_2d_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) -> MeasuredPlSample {
     let table = measured_tables[table_index];
     let lookup = measured_parameter_lookup(table, params);
     let slice_size = table.size.x * table.size.y;
@@ -109,18 +109,18 @@ fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
         if (len == 0u) { break; }
         let half = len / 2u;
         let middle = first + half;
-        let value = measured_lookup(table, table.marginal_cdf_offset,
+        let value = piecewise_linear_2d_lookup(table, table.marginal_cdf_offset,
             marginal_offset + middle, table.size.y, lookup);
         if (value < sample.y) { first = middle + 1u; len = len - half - 1u; }
         else { len = half; }
     }
     let row = min(select(0u, first - 1u, first > 0u), table.size.y - 2u);
-    sample.y -= measured_lookup(table, table.marginal_cdf_offset,
+    sample.y -= piecewise_linear_2d_lookup(table, table.marginal_cdf_offset,
         marginal_offset + row, table.size.y, lookup);
     var offset = row * table.size.x + lookup.offset * slice_size;
-    let r0 = measured_lookup(table, table.conditional_cdf_offset,
+    let r0 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         offset + table.size.x - 1u, slice_size, lookup);
-    let r1 = measured_lookup(table, table.conditional_cdf_offset,
+    let r1 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         offset + 2u * table.size.x - 1u, slice_size, lookup);
     let row_constant = abs(r0 - r1) < 1e-4 * (r0 + r1);
     sample.y = select(r0 - sqrt(max(0.0, r0 * r0 - 2.0 * sample.y * (r0 - r1))),
@@ -134,24 +134,24 @@ fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
         if (len == 0u) { break; }
         let half = len / 2u;
         let middle = first + half;
-        let c0 = measured_lookup(table, table.conditional_cdf_offset,
+        let c0 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
             offset + middle, slice_size, lookup);
-        let c1 = measured_lookup(table, table.conditional_cdf_offset,
+        let c1 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
             offset + middle + table.size.x, slice_size, lookup);
         if (mix(c0, c1, sample.y) < sample.x) { first = middle + 1u; len = len - half - 1u; }
         else { len = half; }
     }
     let column = min(select(0u, first - 1u, first > 0u), table.size.x - 2u);
-    let conditional0 = measured_lookup(table, table.conditional_cdf_offset,
+    let conditional0 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         offset + column, slice_size, lookup);
-    let conditional1 = measured_lookup(table, table.conditional_cdf_offset,
+    let conditional1 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         offset + column + table.size.x, slice_size, lookup);
     sample.x -= mix(conditional0, conditional1, sample.y);
     offset += column;
-    let v00 = measured_lookup(table, table.data_offset, offset, slice_size, lookup);
-    let v10 = measured_lookup(table, table.data_offset, offset + 1u, slice_size, lookup);
-    let v01 = measured_lookup(table, table.data_offset, offset + table.size.x, slice_size, lookup);
-    let v11 = measured_lookup(table, table.data_offset, offset + table.size.x + 1u, slice_size, lookup);
+    let v00 = piecewise_linear_2d_lookup(table, table.data_offset, offset, slice_size, lookup);
+    let v10 = piecewise_linear_2d_lookup(table, table.data_offset, offset + 1u, slice_size, lookup);
+    let v01 = piecewise_linear_2d_lookup(table, table.data_offset, offset + table.size.x, slice_size, lookup);
+    let v11 = piecewise_linear_2d_lookup(table, table.data_offset, offset + table.size.x + 1u, slice_size, lookup);
     let c0 = mix(v00, v01, sample.y);
     let c1 = mix(v10, v11, sample.y);
     let column_constant = abs(c0 - c1) < 1e-4 * (c0 + c1);
@@ -165,7 +165,7 @@ fn measured_sample(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
     );
 }
 
-fn measured_invert(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) -> MeasuredPlSample {
+fn piecewise_linear_2d_invert(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) -> MeasuredPlSample {
     let table = measured_tables[table_index];
     let lookup = measured_parameter_lookup(table, params);
     let slice_size = table.size.x * table.size.y;
@@ -174,27 +174,27 @@ fn measured_invert(table_index: u32, sample_in: vec2<f32>, params: vec3<f32>) ->
     let cell = min(vec2<u32>(max(sample, vec2<f32>(0.0))), table.size - vec2<u32>(2u));
     sample -= vec2<f32>(cell);
     var offset = cell.x + cell.y * table.size.x + lookup.offset * slice_size;
-    let v00 = measured_lookup(table, table.data_offset, offset, slice_size, lookup);
-    let v10 = measured_lookup(table, table.data_offset, offset + 1u, slice_size, lookup);
-    let v01 = measured_lookup(table, table.data_offset, offset + table.size.x, slice_size, lookup);
-    let v11 = measured_lookup(table, table.data_offset, offset + table.size.x + 1u, slice_size, lookup);
+    let v00 = piecewise_linear_2d_lookup(table, table.data_offset, offset, slice_size, lookup);
+    let v10 = piecewise_linear_2d_lookup(table, table.data_offset, offset + 1u, slice_size, lookup);
+    let v01 = piecewise_linear_2d_lookup(table, table.data_offset, offset + table.size.x, slice_size, lookup);
+    let v11 = piecewise_linear_2d_lookup(table, table.data_offset, offset + table.size.x + 1u, slice_size, lookup);
     let c0 = mix(v00, v01, sample.y);
     let c1 = mix(v10, v11, sample.y);
     let pdf = mix(c0, c1, sample.x);
     sample.x *= c0 + 0.5 * sample.x * (c1 - c0);
-    let conditional0 = measured_lookup(table, table.conditional_cdf_offset,
+    let conditional0 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         offset, slice_size, lookup);
-    let conditional1 = measured_lookup(table, table.conditional_cdf_offset,
+    let conditional1 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         offset + table.size.x, slice_size, lookup);
     sample.x += mix(conditional0, conditional1, sample.y);
     let row_offset = cell.y * table.size.x + lookup.offset * slice_size;
-    let r0 = measured_lookup(table, table.conditional_cdf_offset,
+    let r0 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         row_offset + table.size.x - 1u, slice_size, lookup);
-    let r1 = measured_lookup(table, table.conditional_cdf_offset,
+    let r1 = piecewise_linear_2d_lookup(table, table.conditional_cdf_offset,
         row_offset + 2u * table.size.x - 1u, slice_size, lookup);
     sample.x /= mix(r0, r1, sample.y);
     sample.y *= r0 + 0.5 * sample.y * (r1 - r0);
-    sample.y += measured_lookup(table, table.marginal_cdf_offset,
+    sample.y += piecewise_linear_2d_lookup(table, table.marginal_cdf_offset,
         lookup.offset * table.size.y + cell.y, table.size.y, lookup);
     return MeasuredPlSample(sample, pdf * inverse_patch.x * inverse_patch.y);
 }
@@ -208,12 +208,12 @@ fn measured_id(material_node: u32) -> u32 {
     return reference.index;
 }
 
-fn measured_theta_to_u(theta: f32) -> f32 { return sqrt(theta * (2.0 / PI)); }
-fn measured_phi_to_u(phi: f32) -> f32 { return phi * (1.0 / (2.0 * PI)) + 0.5; }
-fn measured_u_to_theta(u: f32) -> f32 { return u * u * (PI / 2.0); }
-fn measured_u_to_phi(u: f32) -> f32 { return (2.0 * u - 1.0) * PI; }
+fn measured_bxdf_theta2u(theta: f32) -> f32 { return sqrt(theta * (2.0 / PI)); }
+fn measured_bxdf_phi2u(phi: f32) -> f32 { return phi * (1.0 / (2.0 * PI)) + 0.5; }
+fn measured_bxdf_u2theta(u: f32) -> f32 { return u * u * (PI / 2.0); }
+fn measured_bxdf_u2phi(u: f32) -> f32 { return (2.0 * u - 1.0) * PI; }
 
-fn measured_f(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>, lambda: vec4<f32>) -> vec4<f32> {
+fn measured_bxdf_f(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>, lambda: vec4<f32>) -> vec4<f32> {
     if (id >= arrayLength(&measured_bsdfs) || wo_in.z * wi_in.z <= 0.0) { return vec4<f32>(0.0); }
     let brdf = measured_bsdfs[id];
     var wo = wo_in;
@@ -225,21 +225,21 @@ fn measured_f(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>, lambda: vec4<f32>) ->
     let phi_o = atan2(wo.y, wo.x);
     let theta_m = acos(clamp(wm.z, -1.0, 1.0));
     let phi_m = atan2(wm.y, wm.x);
-    let u_wo = vec2<f32>(measured_theta_to_u(theta_o), measured_phi_to_u(phi_o));
-    var u_wm = vec2<f32>(measured_theta_to_u(theta_m),
-        measured_phi_to_u(select(phi_m, phi_m - phi_o, brdf.isotropic != 0u)));
+    let u_wo = vec2<f32>(measured_bxdf_theta2u(theta_o), measured_bxdf_phi2u(phi_o));
+    var u_wm = vec2<f32>(measured_bxdf_theta2u(theta_m),
+        measured_bxdf_phi2u(select(phi_m, phi_m - phi_o, brdf.isotropic != 0u)));
     u_wm.y -= floor(u_wm.y);
-    let inverted = measured_invert(brdf.vndf, u_wm, vec3<f32>(phi_o, theta_o, 0.0));
+    let inverted = piecewise_linear_2d_invert(brdf.vndf, u_wm, vec3<f32>(phi_o, theta_o, 0.0));
     var fr = vec4<f32>(0.0);
     for (var i = 0u; i < 4u; i++) {
-        fr[i] = max(0.0, measured_evaluate(brdf.spectra, inverted.p,
+        fr[i] = max(0.0, piecewise_linear_2d_evaluate(brdf.spectra, inverted.p,
             vec3<f32>(phi_o, theta_o, lambda[i])));
     }
-    return fr * measured_evaluate(brdf.ndf, u_wm, vec3<f32>(0.0))
-        / (4.0 * measured_evaluate(brdf.sigma, u_wo, vec3<f32>(0.0)) * wi.z);
+    return fr * piecewise_linear_2d_evaluate(brdf.ndf, u_wm, vec3<f32>(0.0))
+        / (4.0 * piecewise_linear_2d_evaluate(brdf.sigma, u_wo, vec3<f32>(0.0)) * wi.z);
 }
 
-fn measured_pdf(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>) -> f32 {
+fn measured_bxdf_pdf(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>) -> f32 {
     if (id >= arrayLength(&measured_bsdfs) || wo_in.z * wi_in.z <= 0.0) { return 0.0; }
     let brdf = measured_bsdfs[id];
     var wo = wo_in;
@@ -251,11 +251,11 @@ fn measured_pdf(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>) -> f32 {
     let phi_o = atan2(wo.y, wo.x);
     let theta_m = acos(clamp(wm.z, -1.0, 1.0));
     let phi_m = atan2(wm.y, wm.x);
-    var u_wm = vec2<f32>(measured_theta_to_u(theta_m),
-        measured_phi_to_u(select(phi_m, phi_m - phi_o, brdf.isotropic != 0u)));
+    var u_wm = vec2<f32>(measured_bxdf_theta2u(theta_m),
+        measured_bxdf_phi2u(select(phi_m, phi_m - phi_o, brdf.isotropic != 0u)));
     u_wm.y -= floor(u_wm.y);
-    let inverted = measured_invert(brdf.vndf, u_wm, vec3<f32>(phi_o, theta_o, 0.0));
-    let luminance_pdf = measured_evaluate(brdf.luminance, inverted.p,
+    let inverted = piecewise_linear_2d_invert(brdf.vndf, u_wm, vec3<f32>(phi_o, theta_o, 0.0));
+    let luminance_pdf = piecewise_linear_2d_evaluate(brdf.luminance, inverted.p,
         vec3<f32>(phi_o, theta_o, 0.0));
     let sin_theta_m = length(wm.xy);
     let jacobian = 4.0 * dot(wo, wm)
@@ -263,7 +263,7 @@ fn measured_pdf(id: u32, wo_in: vec3<f32>, wi_in: vec3<f32>) -> f32 {
     return inverted.pdf * luminance_pdf / jacobian;
 }
 
-fn measured_sample_f(id: u32, wo_in: vec3<f32>, u: vec2<f32>, lambda: vec4<f32>) -> MeasuredBxdfSample {
+fn measured_bxdf_sample_f(id: u32, wo_in: vec3<f32>, u: vec2<f32>, lambda: vec4<f32>) -> MeasuredBxdfSample {
     var invalid = MeasuredBxdfSample(vec4<f32>(0.0), vec3<f32>(0.0), 0.0, 0u);
     if (id >= arrayLength(&measured_bsdfs)) { return invalid; }
     let brdf = measured_bsdfs[id];
@@ -272,22 +272,22 @@ fn measured_sample_f(id: u32, wo_in: vec3<f32>, u: vec2<f32>, lambda: vec4<f32>)
     if (wo.z <= 0.0) { wo = -wo; flip_wi = true; }
     let theta_o = acos(clamp(wo.z, -1.0, 1.0));
     let phi_o = atan2(wo.y, wo.x);
-    let luminance = measured_sample(brdf.luminance, u, vec3<f32>(phi_o, theta_o, 0.0));
-    let vndf = measured_sample(brdf.vndf, luminance.p, vec3<f32>(phi_o, theta_o, 0.0));
-    var phi_m = measured_u_to_phi(vndf.p.y);
-    let theta_m = measured_u_to_theta(vndf.p.x);
+    let luminance = piecewise_linear_2d_sample(brdf.luminance, u, vec3<f32>(phi_o, theta_o, 0.0));
+    let vndf = piecewise_linear_2d_sample(brdf.vndf, luminance.p, vec3<f32>(phi_o, theta_o, 0.0));
+    var phi_m = measured_bxdf_u2phi(vndf.p.y);
+    let theta_m = measured_bxdf_u2theta(vndf.p.x);
     if (brdf.isotropic != 0u) { phi_m += phi_o; }
     let wm = vec3<f32>(sin(theta_m) * cos(phi_m), sin(theta_m) * sin(phi_m), cos(theta_m));
     var wi = reflect(-wo, wm);
     if (wi.z <= 0.0) { return invalid; }
     var fr = vec4<f32>(0.0);
     for (var i = 0u; i < 4u; i++) {
-        fr[i] = max(0.0, measured_evaluate(brdf.spectra, luminance.p,
+        fr[i] = max(0.0, piecewise_linear_2d_evaluate(brdf.spectra, luminance.p,
             vec3<f32>(phi_o, theta_o, lambda[i])));
     }
-    let u_wo = vec2<f32>(measured_theta_to_u(theta_o), measured_phi_to_u(phi_o));
-    fr *= measured_evaluate(brdf.ndf, vndf.p, vec3<f32>(0.0))
-        / (4.0 * measured_evaluate(brdf.sigma, u_wo, vec3<f32>(0.0)) * abs(wi.z));
+    let u_wo = vec2<f32>(measured_bxdf_theta2u(theta_o), measured_bxdf_phi2u(phi_o));
+    fr *= piecewise_linear_2d_evaluate(brdf.ndf, vndf.p, vec3<f32>(0.0))
+        / (4.0 * piecewise_linear_2d_evaluate(brdf.sigma, u_wo, vec3<f32>(0.0)) * abs(wi.z));
     let jacobian = 4.0 * dot(wo, wm)
         * max(2.0 * PI * PI * vndf.p.x * sin(theta_m), 1e-6);
     if (flip_wi) { wi = -wi; }
