@@ -77,7 +77,7 @@ pub fn triangle_geometric_normal(positions: [[f32; 3]; 3]) -> Result<[f32; 3], P
         edge0[2] * edge1[0] - edge0[0] * edge1[2],
         edge0[0] * edge1[1] - edge0[1] * edge1[0],
     ];
-    let length = dot3(cross, cross).sqrt();
+    let length = dot(cross, cross).sqrt();
     if !length.is_finite() || length == 0.0 {
         return Err(PbrtError::error(
             "Area light triangle geometric normal is invalid.",
@@ -90,7 +90,7 @@ fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-pub fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 

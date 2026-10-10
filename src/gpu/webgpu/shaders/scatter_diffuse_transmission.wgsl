@@ -20,8 +20,8 @@ fn scatter_diffuse_transmission(@builtin(global_invocation_id) global_id: vec3<u
         let cos_wi = dot(shading_n, wi);
         let cosine = abs(cos_wi);
         if (cosine > 0.0) {
-            let pr = max_spectrum(reflectance);
-            let pt = max_spectrum(transmittance);
+            let pr = sampled_spectrum_max_component_value(reflectance);
+            let pt = sampled_spectrum_max_component_value(transmittance);
             let total = pr + pt;
             if (total > 0.0) {
                 let same_side = cos_wo * cos_wi > 0.0;
@@ -36,8 +36,8 @@ fn scatter_diffuse_transmission(@builtin(global_invocation_id) global_id: vec3<u
     // Indirect bounce.
     let r = evaluated.values[0];
     let t = evaluated.values[1];
-    let pr = max_spectrum(r);
-    let pt = max_spectrum(t);
+    let pr = sampled_spectrum_max_component_value(r);
+    let pt = sampled_spectrum_max_component_value(t);
     let total = pr + pt;
     if (total <= 0.0) { return; }
 
@@ -61,7 +61,7 @@ fn scatter_diffuse_transmission(@builtin(global_invocation_id) global_id: vec3<u
     let f = select(t, r, reflect) / PI;
     var next_beta = ray.beta * f * cosine / pdf;
     if (ray.depth >= 1u) {
-        let rr_beta = max(max_spectrum(next_beta * ray.eta_scale), 0.0) / max(average_spectrum(ray.r_u), 1e-7);
+        let rr_beta = max(sampled_spectrum_max_component_value(next_beta * ray.eta_scale), 0.0) / max(sampled_spectrum_average(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) { return; }
         next_beta /= max(1.0 - q, 1e-7);
@@ -72,7 +72,7 @@ fn scatter_diffuse_transmission(@builtin(global_invocation_id) global_id: vec3<u
         vec4<f32>(direction, 0.0), next_beta, ray.r_u, ray.r_u / pdf,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.eta_scale, pdf, 0u, medium_for_direction(ray, surface, direction), 0u, 0u,
+        ray.eta_scale, pdf, 0u, interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {

@@ -104,7 +104,7 @@ pub fn build_light_bvh(
 
 /// Samples one bounded light using the same one-child traversal as the GPU
 /// sampler. The returned PMF is the product of the decisions along the path.
-pub fn sample_light_bvh(
+pub fn bvh_light_sampler_sample(
     bvh: &LightBVH,
     p: [f32; 3],
     n: [f32; 3],
@@ -154,7 +154,7 @@ pub fn sample_light_bvh(
 }
 
 /// Computes the PMF of a global light handle by walking its leaf parents.
-pub fn light_bvh_pmf(
+pub fn bvh_light_sampler_pmf(
     bvh: &LightBVH,
     p: [f32; 3],
     n: [f32; 3],

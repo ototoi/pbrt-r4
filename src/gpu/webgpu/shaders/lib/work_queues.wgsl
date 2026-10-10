@@ -167,7 +167,7 @@ fn load_next_ray(index: u32) -> RayWorkItem {
     return next_rays[index];
 }
 
-fn medium_for_direction(ray: RayWorkItem, surface: SurfaceWorkItem, direction: vec3<f32>) -> u32 {
+fn interaction_get_medium(ray: RayWorkItem, surface: SurfaceWorkItem, direction: vec3<f32>) -> u32 {
     let instance = instances[surface.instance_custom_data];
     if (instance.medium_inside == 0xffffffffu && instance.medium_outside == 0xffffffffu) {
         return ray.medium_id;
@@ -380,7 +380,7 @@ fn add_direct_lighting(
         shadow_origin,
         shadow_direction,
         shadow_distance,
-        medium_for_direction(ray, surface, wi),
+        interaction_get_medium(ray, surface, wi),
         ray.depth,
         infinite_distance,
         direct,

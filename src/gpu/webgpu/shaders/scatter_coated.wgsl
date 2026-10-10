@@ -25,10 +25,10 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (cos_wo * cos_wi > 0.0) {
             let cosine = abs(cos_wi);
             if (cosine > 0.0) {
-                let layered_wo = scattering_local_frame(wo, tangent, shading_n);
-                let layered_wi = scattering_local_frame(wi, tangent, shading_n);
-                let f = evaluate_layered_f(root, kind, layered_wo, layered_wi, pixel_index, ray.depth);
-                let bsdf_pdf = evaluate_layered_pdf(root, kind, layered_wo, layered_wi, pixel_index, ray.depth);
+                let layered_wo = frame_to_local(wo, tangent, shading_n);
+                let layered_wi = frame_to_local(wi, tangent, shading_n);
+                let f = layered_bxdf_f(root, kind, layered_wo, layered_wi, pixel_index, ray.depth);
+                let bsdf_pdf = layered_bxdf_pdf(root, kind, layered_wo, layered_wi, pixel_index, ray.depth);
                 add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, cosine);
             }
         }
@@ -40,7 +40,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let top = load_attributes_eval_work_item(root.child_work_item0);
     let bottom = load_attributes_eval_work_item(root.child_work_item1);
     let normal = normalize(surface.normal.xyz);
-    var wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
+    var wo = frame_to_local(normalize(-ray.direction.xyz), tangent, normal);
     if (wo.z == 0.0) { return; }
     let unflipped_wo = wo;
     var flip_wi = false;
@@ -50,7 +50,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let samples = load_ray_samples(ray.pixel_index);
-    var bs = sample_dielectric_interface(
+    var bs = dielectric_bxdf_sample_f(
         top, wo, samples.indirect.x, samples.indirect.yz, true, true,
     );
     if (bs.valid == 0u || bs.pdf == 0.0 || bs.wi.z == 0.0) { return; }
@@ -69,7 +69,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let max_depth = max(1u, u32(params.max_depth));
         for (var layer_depth = 0u; layer_depth < max_depth; layer_depth++) {
             let random_base = 16u + layer_depth * 4u;
-            let rr_beta = max_spectrum(path_f) / max(path_pdf, 1e-30);
+            let rr_beta = sampled_spectrum_max_component_value(path_f) / max(path_pdf, 1e-30);
             if (layer_depth > 3u && rr_beta < 0.25) {
                 let q = max(0.0, 1.0 - rr_beta);
                 if (random01(ray.pixel_index, random_base, ray.depth) < q) { break; }
@@ -77,15 +77,15 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
             if (w.z == 0.0) { break; }
 
-            if (max_spectrum(params.albedo) > 0.0) {
-                let dz = sample_layered_exponential(
+            if (sampled_spectrum_max_component_value(params.albedo) > 0.0) {
+                let dz = sample_exponential(
                     random01(ray.pixel_index, random_base + 1u, ray.depth),
                     1.0 / abs(w.z),
                 );
                 let zp = select(z - dz, z + dz, w.z > 0.0);
                 if (zp == z) { break; }
                 if (zp > 0.0 && zp < params.thickness) {
-                    let phase_wi = sample_hg_direction(
+                    let phase_wi = sample_henyey_greenstein(
                         normalize(-w),
                         vec2<f32>(
                             random01(ray.pixel_index, random_base + 2u, ray.depth),
@@ -93,7 +93,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         ),
                         params.g,
                     );
-                    let phase_p = hg_phase(dot(normalize(-w), phase_wi), params.g);
+                    let phase_p = henyey_greenstein(dot(normalize(-w), phase_wi), params.g);
                     if (phase_p == 0.0 || phase_wi.z == 0.0) { break; }
                     path_f *= params.albedo * phase_p;
                     path_pdf *= phase_p;
@@ -127,7 +127,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     specular_path = false;
                     w = wi;
                 } else {
-                    let bottom_sample = sample_conductor_interface(bottom, -w, u);
+                    let bottom_sample = conductor_bxdf_sample_f(bottom, -w, u);
                     if (bottom_sample.valid == 0u || bottom_sample.pdf == 0.0
                         || bottom_sample.wi.z == 0.0) { break; }
                     path_f *= bottom_sample.f;
@@ -137,7 +137,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 }
                 path_f *= abs(w.z);
             } else {
-                bs = sample_dielectric_interface(
+                bs = dielectric_bxdf_sample_f(
                     top,
                     -w,
                     random01(ray.pixel_index, random_base + 1u, ray.depth),
@@ -165,18 +165,18 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
         }
     }
-    if (!result_valid || result_pdf <= 0.0 || max_spectrum(result_f) <= 0.0) { return; }
+    if (!result_valid || result_pdf <= 0.0 || sampled_spectrum_max_component_value(result_f) <= 0.0) { return; }
     if (flip_wi) { result_wi = -result_wi; }
-    let direction = normalize(scattering_world_frame(result_wi, tangent, normal));
+    let direction = normalize(frame_from_local(result_wi, tangent, normal));
     var next_beta = ray.beta * result_f * abs(result_wi.z) / result_pdf;
     // pbrt-v4 LayeredBxDF::Sample_f returns pdfIsProportional samples: the
     // throughput uses the random-walk pdf, while MIS uses LayeredBxDF::PDF.
     var mis_pdf = result_pdf;
     if (result_specular == 0u) {
-        mis_pdf = evaluate_layered_pdf(root, kind, unflipped_wo, result_wi, pixel_index, ray.depth);
+        mis_pdf = layered_bxdf_pdf(root, kind, unflipped_wo, result_wi, pixel_index, ray.depth);
     }
     if (ray.depth >= 1u) {
-        let rr_beta = max_spectrum(next_beta * ray.eta_scale) / max(average_spectrum(ray.r_u), 1e-7);
+        let rr_beta = sampled_spectrum_max_component_value(next_beta * ray.eta_scale) / max(sampled_spectrum_average(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) { return; }
         next_beta /= max(1.0 - q, 1e-7);
@@ -188,7 +188,7 @@ fn scatter_coated(@builtin(global_invocation_id) global_id: vec3<u32>) {
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), ray.pixel_index, ray.depth + 1u,
         ray.eta_scale, result_pdf,
-        result_specular, medium_for_direction(ray, surface, direction), 0u, 0u,
+        result_specular, interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= queue_counters.next.capacity) {

@@ -42,8 +42,8 @@ const SAMPLER_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sampler.wgs
 const SPECTRUM_TEST_SHADER: &str = r#"
     @compute @workgroup_size(1) fn test_stage() {
         let value = evaluate_spectrum(0u, vec4<f32>(360.0, 400.5, 700.0, 830.0));
-        let divided = safe_div_spectrum(value, vec4<f32>(1.0, 0.0, 2.0, 4.0));
-        if (spectrum_is_constant(0u) && average_spectrum(divided) > max_spectrum(divided)) {
+        let divided = safe_div(value, vec4<f32>(1.0, 0.0, 2.0, 4.0));
+        if (spectrum_is_constant(0u) && sampled_spectrum_average(divided) > sampled_spectrum_max_component_value(divided)) {
             set_render_error();
         }
     }
@@ -71,7 +71,7 @@ fn dense_spectrum_module_declares_one_structured_table() {
     let source = compose_source(SPECTRUM_TEST_SHADER);
     assert!(source.contains("var<storage, read> spectrum_attributes: array<DenseSpectrum>;"));
     assert!(source.contains("struct DenseSpectrum"));
-    assert!(source.contains("fn safe_div_spectrum"));
+    assert!(source.contains("fn safe_div"));
     assert!(!source.contains("var<storage, read> materials: array<MaterialNode>;"));
 }
 
@@ -92,7 +92,7 @@ fn homogeneous_medium_stage_tracks_path_medium_and_spectral_weights() {
 #[test]
 fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
     let scatter = compose_source(SCATTER_DIELECTRIC_SHADER);
-    assert!(scatter.contains("medium_for_direction(ray, surface, direction)"));
+    assert!(scatter.contains("interaction_get_medium(ray, surface, direction)"));
     assert!(scatter.contains("dot(direction, surface.geometric_normal.xyz) > 0.0"));
 
     let primary = compose_source(GENERATE_PRIMARY_RAYS_SHADER);
@@ -107,7 +107,7 @@ fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
     assert!(shadow.contains("random01_stream("));
 
     let thin_dielectric = compose_source(SCATTER_THIN_DIELECTRIC_SHADER);
-    assert!(thin_dielectric.contains("medium_for_direction(ray, surface, direction)"));
+    assert!(thin_dielectric.contains("interaction_get_medium(ray, surface, direction)"));
 }
 
 #[test]
@@ -135,20 +135,20 @@ fn medium_side_and_alpha_candidates_handle_instance_edge_cases() {
 #[test]
 fn measured_material_shader_uses_packed_texture_tables() {
     let direct = compose_source(SCATTER_MEASURED_SHADER);
-    assert!(direct.contains("fn measured_f("));
-    assert!(direct.contains("fn measured_pdf("));
+    assert!(direct.contains("fn measured_bxdf_f("));
+    assert!(direct.contains("fn measured_bxdf_pdf("));
     assert!(direct.contains("textureLoad("));
     assert!(direct.contains("var<storage, read> measured_bsdfs"));
     assert!(direct.contains("var<storage, read> measured_tables"));
 
     let bounce = compose_source(SCATTER_MEASURED_SHADER);
-    assert!(bounce.contains("fn measured_sample_f("));
-    assert!(bounce.contains("scattering_local_frame(wo, tangent, normal)"));
+    assert!(bounce.contains("fn measured_bxdf_sample_f("));
+    assert!(bounce.contains("frame_to_local(wo, tangent, normal)"));
 
     assert!(SHADE_SURFACE_SHADER.contains("surfaces[pixel_index].tangent"));
     assert!(SHADE_SURFACE_SHADER.contains("object_dpdu"));
-    assert!(common_shader().contains("fn scattering_local_frame("));
-    assert!(common_shader().contains("fn scattering_world_frame("));
+    assert!(common_shader().contains("fn frame_to_local("));
+    assert!(common_shader().contains("fn frame_from_local("));
     assert!(!direct.contains("max(p1 - p0"));
     assert!(!direct.contains("max(abs(r0 + r1)"));
 }
@@ -162,7 +162,7 @@ fn attribute_shader_evaluates_procedural_texture_programs() {
     assert!(source.contains("node.operation == TEXTURE_OPERATION_BILERP"));
     assert!(source.contains("values[local] = mix(mix(values[v00], values[v10], st.x)"));
     assert!(!source.contains("if (node.operation >= 4u)"));
-    assert!(source.contains("fn texture_noise"));
+    assert!(source.contains("fn noise"));
     assert!(source.contains("fn texture_fbm"));
     assert!(source.contains("fn texture_marble"));
     assert!(source.contains("textureLoad(texture_noise_table"));
@@ -180,7 +180,7 @@ fn texture_shader_uses_v4_non_uv_mapping_conventions() {
 #[test]
 fn attribute_shader_omits_noise_call_graph_when_disabled() {
     let source = compose_source_with_noise(EVALUATE_TEXTURES_SHADER, false);
-    assert!(!source.contains("fn texture_noise"));
+    assert!(!source.contains("fn noise"));
     assert!(!source.contains("texture_noise_table"));
 }
 
@@ -274,15 +274,15 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     // sample_direct_light and handed to evaluate_materials as
     // DirectLightSample.use_mis.
     let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
-    assert!(sample.contains("fn sample_uniform_infinite_direction("));
+    assert!(sample.contains("fn sample_uniform_sphere("));
     assert!(sample.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
     assert!(sample.contains("is_infinite_light_kind(light_kind)"));
     assert!(sample.contains(
         "let use_mis = (light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))"
     ));
     assert!(sample.contains("|| is_infinite_light_kind(light_kind);"));
-    assert!(sample.contains("sample_image_infinite_distribution("));
-    assert!(sample.contains("image_infinite_equal_area_square_to_sphere("));
+    assert!(sample.contains("piecewise_constant_2d_sample("));
+    assert!(sample.contains("equal_area_square_to_sphere("));
     assert!(sample.contains("load_light_image_spectrum_uv("));
     assert!(sample.contains("image_sample.pdf / (4.0 * PI * jacobian)"));
     assert!(sample.contains("wi = normalize(transformed)"));
@@ -303,7 +303,7 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
         "../src/gpu/webgpu/shaders/handle_escaped.wgsl"
     ));
     assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
-    assert!(escaped.contains("image_infinite_distribution_pdf(image, map_uv)"));
+    assert!(escaped.contains("piecewise_constant_2d_pdf(image, map_uv)"));
     assert!(escaped.contains("map_pdf / (4.0 * PI * jacobian)"));
     assert!(escaped.contains("fn equal_area_sphere_to_square("));
     assert!(escaped.contains("dot(model.world_to_light0.xyz, direction)"));
@@ -393,11 +393,11 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
 fn wavefront_stages_use_persisted_sample_dimensions() {
     let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
     assert!(sample.contains("load_ray_samples(pixel_index)"));
-    assert!(sample.contains("sample_scene_light(samples.direct.x, position, normal)"));
-    assert!(sample.contains("let finite_selection = sample_light_bvh("));
+    assert!(sample.contains("light_sampler_sample(samples.direct.x, position, normal)"));
+    assert!(sample.contains("let finite_selection = bvh_light_sampler_sample("));
     assert!(sample.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_SHADER);
-    assert!(emissive.contains("light_pmf_for_handle("));
+    assert!(emissive.contains("light_sampler_pmf("));
     assert!(sample.contains("select_area_triangle(light_payload, samples.direct.y)"));
     assert!(sample.contains("vec2<f32>(triangle_selection.u_remapped, samples.direct.z)"));
     assert!(sample.contains("sample_uniform_triangle_for_context("));
@@ -422,7 +422,7 @@ fn emissive_hit_resolves_the_triangle_light_handle() {
     assert!(HANDLE_EMISSIVE_SHADER.contains("let light_handle = instance.area_light;"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("triangle_selection.pmf * triangle_pdf"));
     assert!(HANDLE_EMISSIVE_SHADER.contains("load_light_payload(light_handle)"));
-    assert!(HANDLE_EMISSIVE_SHADER.contains("light_pmf_for_handle(light_handle"));
+    assert!(HANDLE_EMISSIVE_SHADER.contains("light_sampler_pmf(light_handle"));
     assert!(!common_shader().contains("fn light_pmf_for_area"));
 }
 
@@ -472,13 +472,13 @@ fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
     // with the layered top interface via lib/bxdfs/dielectric.wgsl, so a
     // standalone rough dielectric matches pbrt-v4 DielectricBxDF exactly.
     let source = compose_source(SCATTER_DIELECTRIC_SHADER);
-    assert!(source.contains("fn sample_dielectric_interface("));
-    assert!(source.contains("fn dielectric_interface_f("));
-    assert!(source.contains("fn dielectric_interface_pdf("));
-    assert!(source.contains("fn sample_rough_dielectric_interface("));
-    assert!(source.contains("fn sample_smooth_dielectric_interface("));
+    assert!(source.contains("fn dielectric_bxdf_sample_f("));
+    assert!(source.contains("fn dielectric_bxdf_f("));
+    assert!(source.contains("fn dielectric_bxdf_pdf("));
+    assert!(source.contains("fn dielectric_bxdf_sample_f_rough("));
+    assert!(source.contains("fn dielectric_bxdf_sample_f_smooth("));
     assert!(SCATTER_DIELECTRIC_SHADER.contains("evaluated.values[0]"));
-    assert!(SCATTER_DIELECTRIC_SHADER.contains("sample_dielectric_interface(\n        evaluated,"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("dielectric_bxdf_sample_f(\n        evaluated,"));
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn conductor_shader_uses_complex_fresnel_attributes() {
     let source = compose_source(SCATTER_CONDUCTOR_SHADER);
     assert!(source.contains("evaluated.values[0]"));
     assert!(source.contains("evaluated.values[1]"));
-    assert!(source.contains("conductor_fresnel"));
+    assert!(source.contains("fr_complex"));
     assert!(source.contains("fn scatter_conductor"));
 }
 
@@ -540,10 +540,10 @@ fn composite_shader_uses_evaluated_material_nodes() {
     let source = compose_source(SCATTER_COATED_SHADER);
     assert!(source.contains("MATERIAL_KIND_COATED_DIFFUSE"));
     assert!(source.contains("load_attributes_eval_work_item"));
-    assert!(source.contains("sample_dielectric_interface"));
-    assert!(source.contains("sample_conductor_interface"));
-    assert!(source.contains("sample_layered_exponential"));
-    assert!(source.contains("sample_hg_direction"));
+    assert!(source.contains("dielectric_bxdf_sample_f"));
+    assert!(source.contains("conductor_bxdf_sample_f"));
+    assert!(source.contains("sample_exponential"));
+    assert!(source.contains("sample_henyey_greenstein"));
     assert!(source.contains("queue_counters.next"));
 }
 
@@ -551,17 +551,17 @@ fn composite_shader_uses_evaluated_material_nodes() {
 fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
     let source = compose_source(SCATTER_COATED_SHADER);
     let attributes_source = compose_source(EVALUATE_ATTRIBUTES_SHADER);
-    assert!(source.contains("evaluate_layered_f"));
-    assert!(source.contains("evaluate_layered_pdf"));
+    assert!(source.contains("layered_bxdf_f"));
+    assert!(source.contains("layered_bxdf_pdf"));
     assert!(source.contains("sample_layered_bottom"));
     assert!(attributes_source.contains("load_material_spectrum(material_node, 1u, lambda)"));
     assert!(!source.contains("Phase 1 of layered evaluation"));
     // Material textures are resolved by evaluate_textures; the layered
     // estimators must not re-evaluate texture programs.
     let layered = compose_source(
-        "@compute @workgroup_size(1) fn test_stage() { evaluate_layered_f(); evaluate_layered_pdf(); }",
+        "@compute @workgroup_size(1) fn test_stage() { layered_bxdf_f(); layered_bxdf_pdf(); }",
     );
-    assert!(layered.contains("fn evaluate_layered_f("));
+    assert!(layered.contains("fn layered_bxdf_f("));
     assert!(!layered.contains("fn sample_texture_program"));
     // Area-light alpha masking happens during light selection in
     // sample_direct_light, as pbrt-v4 DiffuseAreaLight::SampleLi does; the
@@ -576,12 +576,12 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
 #[test]
 fn thin_dielectric_shader_uses_thin_interface_transport() {
     assert!(common_shader().contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
-    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("scattering_local_frame("));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("frame_to_local("));
     let grazing_guard = SCATTER_THIN_DIELECTRIC_SHADER.find("if (wo.z == 0.0) { return; }");
     let fresnel = SCATTER_THIN_DIELECTRIC_SHADER.find("let r0 =").unwrap();
     assert!(grazing_guard.is_some_and(|guard| guard < fresnel));
     assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("direction_local = select(-wo"));
-    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("scattering_world_frame(direction_local"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("frame_from_local(direction_local"));
     assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("t / abs(direction_local.z)"));
     assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("f * abs(direction_local.z) / probability"));
     assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("r0 + (1.0 - r0)"));

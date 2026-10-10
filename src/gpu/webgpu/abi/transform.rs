@@ -45,12 +45,12 @@ pub fn inverse_affine(transform: [f32; 16], label: &str) -> Result<[[f32; 4]; 4]
     ]))
 }
 
-pub fn normalize3(v: [f32; 3]) -> [f32; 3] {
-    let length = dot3(v, v).sqrt();
+pub fn normalize(v: [f32; 3]) -> [f32; 3] {
+    let length = dot(v, v).sqrt();
     [v[0] / length, v[1] / length, v[2] / length]
 }
 
-pub fn coordinate_system3(z: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+pub fn coordinate_system(z: [f32; 3]) -> ([f32; 3], [f32; 3]) {
     let sign = if z[2].is_sign_negative() { -1.0 } else { 1.0 };
     let a = -1.0 / (sign + z[2]);
     let b = z[0] * z[1] * a;
@@ -68,7 +68,7 @@ pub fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-pub fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 

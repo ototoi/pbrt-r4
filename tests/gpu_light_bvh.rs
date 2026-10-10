@@ -1,6 +1,6 @@
 use pbrt_r4::gpu::flat::{
-    build_light_bounds, build_light_bvh, light_bvh_pmf, sample_light_bvh, Light, LightBVHNode,
-    LightBoundInput, LightKind,
+    build_light_bounds, build_light_bvh, bvh_light_sampler_pmf, bvh_light_sampler_sample, Light,
+    LightBVHNode, LightBoundInput, LightKind,
 };
 
 fn point_inputs() -> Vec<LightBoundInput> {
@@ -124,16 +124,18 @@ fn reference_sampling_and_pmf_are_consistent() {
     let bvh = build_light_bvh(&records, &bounds).unwrap();
     let mut sum = 0.0;
     for handle in 0..3 {
-        let pmf = light_bvh_pmf(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], handle).unwrap();
+        let pmf = bvh_light_sampler_pmf(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], handle).unwrap();
         assert!(pmf > 0.0);
         sum += pmf;
     }
     assert!((sum - 1.0).abs() < 1e-6);
-    let (handle, pmf) = sample_light_bvh(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.5)
+    let (handle, pmf) = bvh_light_sampler_sample(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 0.5)
         .unwrap()
         .unwrap();
     assert!(pmf > 0.0);
     assert!(
-        (light_bvh_pmf(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], handle).unwrap() - pmf).abs() < 1e-6
+        (bvh_light_sampler_pmf(&bvh, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], handle).unwrap() - pmf)
+            .abs()
+            < 1e-6
     );
 }

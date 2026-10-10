@@ -1,4 +1,4 @@
-fn texture_noise_weight(t: f32) -> f32 {
+fn noise_weight(t: f32) -> f32 {
     let t3 = t * t * t;
     let t4 = t3 * t;
     return 6.0 * t4 * t - 15.0 * t4 + 10.0 * t3;
@@ -16,7 +16,7 @@ fn texture_noise_pair(a: u32, b: u32) -> u32 {
     ).x;
 }
 
-fn texture_noise_grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 {
+fn grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 {
     let a = texture_noise_pair(x, y);
     let h = texture_noise_perm(a + z) & 15u;
     let u = select(dy, dx, h < 8u || h == 12u || h == 13u);
@@ -24,7 +24,7 @@ fn texture_noise_grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 
     return select(u, -u, (h & 1u) != 0u) + select(v, -v, (h & 2u) != 0u);
 }
 
-fn texture_noise(p: vec3<f32>) -> f32 {
+fn noise(p: vec3<f32>) -> f32 {
     let ix = i32(floor(p.x));
     let iy = i32(floor(p.y));
     let iz = i32(floor(p.z));
@@ -34,17 +34,17 @@ fn texture_noise(p: vec3<f32>) -> f32 {
     let x = u32(ix) & 255u;
     let y = u32(iy) & 255u;
     let z = u32(iz) & 255u;
-    let w000 = texture_noise_grad(x, y, z, dx, dy, dz);
-    let w100 = texture_noise_grad((x + 1u) & 255u, y, z, dx - 1.0, dy, dz);
-    let w010 = texture_noise_grad(x, (y + 1u) & 255u, z, dx, dy - 1.0, dz);
-    let w110 = texture_noise_grad((x + 1u) & 255u, (y + 1u) & 255u, z, dx - 1.0, dy - 1.0, dz);
-    let w001 = texture_noise_grad(x, y, (z + 1u) & 255u, dx, dy, dz - 1.0);
-    let w101 = texture_noise_grad((x + 1u) & 255u, y, (z + 1u) & 255u, dx - 1.0, dy, dz - 1.0);
-    let w011 = texture_noise_grad(x, (y + 1u) & 255u, (z + 1u) & 255u, dx, dy - 1.0, dz - 1.0);
-    let w111 = texture_noise_grad((x + 1u) & 255u, (y + 1u) & 255u, (z + 1u) & 255u, dx - 1.0, dy - 1.0, dz - 1.0);
-    let wx = texture_noise_weight(dx);
-    let wy = texture_noise_weight(dy);
-    let wz = texture_noise_weight(dz);
+    let w000 = grad(x, y, z, dx, dy, dz);
+    let w100 = grad((x + 1u) & 255u, y, z, dx - 1.0, dy, dz);
+    let w010 = grad(x, (y + 1u) & 255u, z, dx, dy - 1.0, dz);
+    let w110 = grad((x + 1u) & 255u, (y + 1u) & 255u, z, dx - 1.0, dy - 1.0, dz);
+    let w001 = grad(x, y, (z + 1u) & 255u, dx, dy, dz - 1.0);
+    let w101 = grad((x + 1u) & 255u, y, (z + 1u) & 255u, dx - 1.0, dy, dz - 1.0);
+    let w011 = grad(x, (y + 1u) & 255u, (z + 1u) & 255u, dx, dy - 1.0, dz - 1.0);
+    let w111 = grad((x + 1u) & 255u, (y + 1u) & 255u, (z + 1u) & 255u, dx - 1.0, dy - 1.0, dz - 1.0);
+    let wx = noise_weight(dx);
+    let wy = noise_weight(dy);
+    let wz = noise_weight(dz);
     let x0 = mix(w000, w100, wx);
     let x1 = mix(w010, w110, wx);
     let x2 = mix(w001, w101, wx);
@@ -58,7 +58,7 @@ fn texture_fbm(p: vec3<f32>, omega: f32, octaves: f32, absolute_value: bool) -> 
     var frequency = 1.0;
     var weight = 1.0;
     for (var octave = 0u; octave < count; octave++) {
-        let value = texture_noise(frequency * p);
+        let value = noise(frequency * p);
         sum += weight * select(value, abs(value), absolute_value);
         frequency *= 1.99;
         weight *= omega;
@@ -310,10 +310,10 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
                 let st = mapped_texture_uv(node, uv);
                 let cell = floor(st + vec2<f32>(0.5));
                 var is_inside = false;
-                if (texture_noise(vec3<f32>(cell + vec2<f32>(0.5), 0.0)) > 0.0) {
+                if (noise(vec3<f32>(cell + vec2<f32>(0.5), 0.0)) > 0.0) {
                     let center = cell + 0.15 * vec2<f32>(
-                        texture_noise(vec3<f32>(cell.x + 1.5, cell.y + 2.8, 0.0)),
-                        texture_noise(vec3<f32>(cell.x + 4.5, cell.y + 9.8, 0.0)),
+                        noise(vec3<f32>(cell.x + 1.5, cell.y + 2.8, 0.0)),
+                        noise(vec3<f32>(cell.x + 4.5, cell.y + 9.8, 0.0)),
                     );
                     let delta = st - center;
                     is_inside = dot(delta, delta) < 0.35 * 0.35;

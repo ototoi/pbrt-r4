@@ -14,7 +14,7 @@ fn rotate_from_to(from_direction: vec3<f32>, to_direction: vec3<f32>, value: vec
         + 4.0 * dot(u, v) * v * dot(u, value) / (uu * vv);
 }
 
-fn approximate_position_differentials(position: vec3<f32>, normal: vec3<f32>) -> mat2x3<f32> {
+fn camera_approximate_dp_dxy(position: vec3<f32>, normal: vec3<f32>) -> mat2x3<f32> {
     if (camera.disable_texture_filtering != 0u) {
         return mat2x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0));
     }
@@ -158,7 +158,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
         dndu = -dndu;
         dndv = -dndv;
     }
-    let dp_dxy = approximate_position_differentials(position, geometric_normal);
+    let dp_dxy = camera_approximate_dp_dxy(position, geometric_normal);
     let uv_differentials = surface_uv_differentials(dpdu, dpdv, dp_dxy[0], dp_dxy[1]);
     let object_tangent = vertices[i0].tangent.xyz * b0
         + vertices[i1].tangent.xyz * b1

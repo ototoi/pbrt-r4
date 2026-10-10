@@ -614,7 +614,7 @@ impl super::WavefrontPathIntegrator {
             workgroups_y,
         );
         // Every pixel emits a primary ray, so the current-ray queue's
-        // count is final as soon as generate_primary_rays completes.
+        // count is final as soon as generate_camera_rays completes.
         dispatch(
             &mut sample_encoder,
             &self

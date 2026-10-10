@@ -14,25 +14,25 @@ const PORTAL_TEST_SHADER: &str = r#"
 @compute @workgroup_size(1)
 fn portal_test() {
     let portal = portal_infinite_lights[0];
-    let mapped = portal_image_from_render(portal, vec3<f32>(0.0, 0.0, 1.0));
-    let back = portal_image_from_render(portal, vec3<f32>(0.0, 0.0, -1.0));
-    let corner00 = portal_image_from_render(portal, normalize(vec3<f32>(-1.0, -1.0, 1.0)));
-    let corner01 = portal_image_from_render(portal, normalize(vec3<f32>(-1.0, 1.0, 1.0)));
-    let corner11 = portal_image_from_render(portal, normalize(vec3<f32>(1.0, 1.0, 1.0)));
-    let corner10 = portal_image_from_render(portal, normalize(vec3<f32>(1.0, -1.0, 1.0)));
-    let direction = portal_render_from_image(portal, vec2<f32>(0.5));
-    let bounds = portal_image_bounds(portal, vec3<f32>(0.0));
-    let sampled = sample_portal_distribution(portal, vec2<f32>(0.5), bounds);
-    let pdf = portal_distribution_pdf(portal, vec2<f32>(0.5), bounds);
+    let mapped = portal_image_infinite_light_image_from_render(portal, vec3<f32>(0.0, 0.0, 1.0));
+    let back = portal_image_infinite_light_image_from_render(portal, vec3<f32>(0.0, 0.0, -1.0));
+    let corner00 = portal_image_infinite_light_image_from_render(portal, normalize(vec3<f32>(-1.0, -1.0, 1.0)));
+    let corner01 = portal_image_infinite_light_image_from_render(portal, normalize(vec3<f32>(-1.0, 1.0, 1.0)));
+    let corner11 = portal_image_infinite_light_image_from_render(portal, normalize(vec3<f32>(1.0, 1.0, 1.0)));
+    let corner10 = portal_image_infinite_light_image_from_render(portal, normalize(vec3<f32>(1.0, -1.0, 1.0)));
+    let direction = portal_image_infinite_light_render_from_image(portal, vec2<f32>(0.5));
+    let bounds = portal_image_infinite_light_image_bounds(portal, vec3<f32>(0.0));
+    let sampled = windowed_piecewise_constant_2d_sample(portal, vec2<f32>(0.5), bounds);
+    let pdf = windowed_piecewise_constant_2d_pdf(portal, vec2<f32>(0.5), bounds);
     let one = portal_infinite_lights[1];
-    let one_bounds = portal_image_bounds(one, vec3<f32>(0.0));
-    let one_sample = sample_portal_distribution(one, vec2<f32>(0.5), one_bounds);
+    let one_bounds = portal_image_infinite_light_image_bounds(one, vec3<f32>(0.0));
+    let one_sample = windowed_piecewise_constant_2d_sample(one, vec2<f32>(0.5), one_bounds);
     let zero = portal_infinite_lights[2];
-    let zero_bounds = portal_image_bounds(zero, vec3<f32>(0.0));
-    let zero_sample = sample_portal_distribution(zero, vec2<f32>(0.5), zero_bounds);
+    let zero_bounds = portal_image_infinite_light_image_bounds(zero, vec3<f32>(0.0));
+    let zero_sample = windowed_piecewise_constant_2d_sample(zero, vec2<f32>(0.5), zero_bounds);
     let non_finite = portal_infinite_lights[3];
-    let non_finite_bounds = portal_image_bounds(non_finite, vec3<f32>(0.0));
-    let non_finite_sample = sample_portal_distribution(
+    let non_finite_bounds = portal_image_infinite_light_image_bounds(non_finite, vec3<f32>(0.0));
+    let non_finite_sample = windowed_piecewise_constant_2d_sample(
         non_finite, vec2<f32>(0.5), non_finite_bounds,
     );
     output_values[0] = vec4<f32>(mapped.uv, mapped.duv_dw, f32(mapped.valid));
@@ -47,7 +47,7 @@ fn portal_test() {
     output_values[9] = vec4<f32>(one_sample.uv, one_sample.pdf, f32(one_sample.valid));
     output_values[10] = vec4<f32>(zero_sample.uv, zero_sample.pdf, f32(zero_sample.valid));
     output_values[11] = vec4<f32>(
-        portal_distribution_pdf(portal, vec2<f32>(0.1), bounds),
+        windowed_piecewise_constant_2d_pdf(portal, vec2<f32>(0.1), bounds),
         non_finite_sample.pdf,
         f32(non_finite_sample.valid),
         0.0,
@@ -56,25 +56,25 @@ fn portal_test() {
     let rounded_bounds = PortalBoundsResult(vec2<f32>(0.5, 0.0), vec2<f32>(1.0), 1u);
     let rounded_sample = portal_sample_marginal_x(rounded_cdf, 0.5, rounded_bounds, 1.0);
     output_values[12] = vec4<f32>(rounded_sample.value, f32(rounded_sample.valid), 0.0, 0.0);
-    let invalid_bounds = portal_image_bounds(portal, vec3<f32>(0.0, 0.0, 2.0));
-    let invalid_bounds_sample = sample_portal_distribution(portal, vec2<f32>(0.5), invalid_bounds);
+    let invalid_bounds = portal_image_infinite_light_image_bounds(portal, vec3<f32>(0.0, 0.0, 2.0));
+    let invalid_bounds_sample = windowed_piecewise_constant_2d_sample(portal, vec2<f32>(0.5), invalid_bounds);
     output_values[13] = vec4<f32>(
         f32(invalid_bounds.valid), invalid_bounds_sample.pdf,
         f32(invalid_bounds_sample.valid), 0.0,
     );
     let nan = bitcast<f32>(0x7fc00000u);
-    let invalid_u_sample = sample_portal_distribution(portal, vec2<f32>(nan, 0.5), bounds);
+    let invalid_u_sample = windowed_piecewise_constant_2d_sample(portal, vec2<f32>(nan, 0.5), bounds);
     output_values[14] = vec4<f32>(
         invalid_u_sample.uv, invalid_u_sample.pdf, f32(invalid_u_sample.valid),
     );
-    let invalid_direction = portal_render_from_image(portal, vec2<f32>(nan, 0.5));
+    let invalid_direction = portal_image_infinite_light_render_from_image(portal, vec2<f32>(nan, 0.5));
     output_values[15] = vec4<f32>(
         invalid_direction.wi, f32(invalid_direction.valid),
     );
-    let outside_direction = portal_render_from_image(portal, vec2<f32>(0.1));
-    let outside_mapping = portal_image_from_render(portal, outside_direction.wi);
+    let outside_direction = portal_image_infinite_light_render_from_image(portal, vec2<f32>(0.1));
+    let outside_mapping = portal_image_infinite_light_image_from_render(portal, outside_direction.wi);
     output_values[16] = vec4<f32>(
-        portal_pdf_li(portal, outside_mapping, vec3<f32>(0.0)),
+        portal_image_infinite_light_pdf_li(portal, outside_mapping, vec3<f32>(0.0)),
         outside_mapping.uv,
         f32(outside_mapping.valid),
     );

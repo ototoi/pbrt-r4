@@ -142,7 +142,7 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let denom = average_spectrum(shadow.r_u * shadow.inv_w_u + shadow.r_l * shadow.inv_w_l);
+    let denom = sampled_spectrum_average(shadow.r_u * shadow.inv_w_u + shadow.r_l * shadow.inv_w_l);
     if (denom != denom || abs(denom) > RAY_T_MAX) {
         set_render_error();
         return;

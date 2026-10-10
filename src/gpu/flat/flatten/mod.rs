@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::geometry::{
-    dot3, scale3, transform_point, transform_vector, triangle_area, triangle_geometric_normal,
+    dot, scale3, transform_point, transform_vector, triangle_area, triangle_geometric_normal,
 };
 
 mod material;

@@ -1,5 +1,5 @@
 struct BSSRDFSplineWeights { offset: i32, weights: vec4<f32>, valid: u32, }
-fn bssrdf_interval(offset: u32, count: u32, x: f32) -> u32 {
+fn find_interval(offset: u32, count: u32, x: f32) -> u32 {
     var low = 0u;
     var high = count - 1u;
     while (high - low > 1u) {
@@ -9,11 +9,11 @@ fn bssrdf_interval(offset: u32, count: u32, x: f32) -> u32 {
     return low;
 }
 // pbrt-v4 CatmullRomWeights.
-fn bssrdf_weights(offset: u32, count: u32, x: f32) -> BSSRDFSplineWeights {
+fn catmull_rom_weights(offset: u32, count: u32, x: f32) -> BSSRDFSplineWeights {
     if (!(x >= bssrdf_values[offset] && x <= bssrdf_values[offset + count - 1u])) {
         return BSSRDFSplineWeights(0, vec4<f32>(0.0), 0u);
     }
-    let idx = bssrdf_interval(offset, count, x);
+    let idx = find_interval(offset, count, x);
     let x0 = bssrdf_values[offset + idx];
     let x1 = bssrdf_values[offset + idx + 1u];
     let t = (x - x0) / (x1 - x0);
@@ -51,8 +51,8 @@ fn bssrdf_integral(t: f32, f0: f32, f1: f32, d0: f32, d1: f32) -> vec2<f32> {
     return vec2<f32>(integral, density);
 }
 // pbrt-v4 SampleCatmullRom2D and NewtonBisection, including endpoint roots.
-fn bssrdf_sample_radius(table: BSSRDFTableRecord, rho: f32, u: f32) -> f32 {
-    let w = bssrdf_weights(table.rho_offset, table.rho_count, rho);
+fn sample_catmull_rom_2d(table: BSSRDFTableRecord, rho: f32, u: f32) -> f32 {
+    let w = catmull_rom_weights(table.rho_offset, table.rho_count, rho);
     if (w.valid == 0u) { return 0.0; }
     let n = table.radius_count;
     let cdf_u = u * bssrdf_interpolate(table.cdf_offset, n, n - 1u, w);
@@ -99,13 +99,13 @@ fn bssrdf_sample_radius(table: BSSRDFTableRecord, rho: f32, u: f32) -> f32 {
     return x0 + width * t;
 }
 struct BSSRDFSegment { start: vec3<f32>, end: vec3<f32>, valid: u32, }
-fn bssrdf_sample_segment(work: BSSRDFProbeWorkItem) -> BSSRDFSegment {
+fn tabulated_bssrdf_sample_sp(work: BSSRDFProbeWorkItem) -> BSSRDFSegment {
     let invalid_segment = BSSRDFSegment(vec3<f32>(0.0), vec3<f32>(0.0), 0u);
     if (work.sigma_t.x == 0.0) { return invalid_segment; }
     if (work.table_index >= arrayLength(&bssrdf_tables)) { set_render_error(); return invalid_segment; }
     let table = bssrdf_tables[work.table_index];
-    let r = bssrdf_sample_radius(table, work.rho.x, work.sample.y) / work.sigma_t.x;
-    let r_max = bssrdf_sample_radius(table, work.rho.x, 0.999) / work.sigma_t.x;
+    let r = sample_catmull_rom_2d(table, work.rho.x, work.sample.y) / work.sigma_t.x;
+    let r_max = sample_catmull_rom_2d(table, work.rho.x, 0.999) / work.sigma_t.x;
     if (r >= r_max) { return invalid_segment; }
     let ns = work.normal.xyz;
     let c0 = coordinate_system_x(ns);
@@ -120,13 +120,13 @@ fn bssrdf_sample_segment(work: BSSRDFProbeWorkItem) -> BSSRDFSegment {
 }
 
 // pbrt-v4 InvertCatmullRom(rhoSamples, rhoEff, reflectance).
-fn bssrdf_invert_reflectance(table: BSSRDFTableRecord, u: f32) -> f32 {
+fn invert_catmull_rom(table: BSSRDFTableRecord, u: f32) -> f32 {
     let nodes = table.rho_offset;
     let values = table.rho_eff_offset;
     let n = table.rho_count;
     if (!(u > bssrdf_values[values])) { return bssrdf_values[nodes]; }
     if (!(u < bssrdf_values[values + n - 1u])) { return bssrdf_values[nodes + n - 1u]; }
-    let i = bssrdf_interval(values, n, u);
+    let i = find_interval(values, n, u);
     let x0 = bssrdf_values[nodes + i];
     let x1 = bssrdf_values[nodes + i + 1u];
     let f0 = bssrdf_values[values + i];
@@ -155,13 +155,13 @@ fn bssrdf_invert_reflectance(table: BSSRDFTableRecord, u: f32) -> f32 {
     return x0 + (x1 - x0) * t;
 }
 
-fn bssrdf_sr(work: BSSRDFProbeWorkItem, radius: f32, normalized: bool) -> vec4<f32> {
+fn tabulated_bssrdf_sr(work: BSSRDFProbeWorkItem, radius: f32, normalized: bool) -> vec4<f32> {
     let table = bssrdf_tables[work.table_index];
     var sr = vec4<f32>(0.0);
     for (var channel = 0u; channel < 4u; channel++) {
         let r = radius * work.sigma_t[channel];
-        let rw = bssrdf_weights(table.rho_offset, table.rho_count, work.rho[channel]);
-        let dw = bssrdf_weights(table.radius_offset, table.radius_count, r);
+        let rw = catmull_rom_weights(table.rho_offset, table.rho_count, work.rho[channel]);
+        let dw = catmull_rom_weights(table.radius_offset, table.radius_count, r);
         if (rw.valid == 0u || dw.valid == 0u) { continue; }
         var value = 0.0;
         for (var k = 0u; k < 4u; k++) {
@@ -177,12 +177,12 @@ fn bssrdf_sr(work: BSSRDFProbeWorkItem, radius: f32, normalized: bool) -> vec4<f
     }
     return sr;
 }
-fn bssrdf_pdf_sp(work: BSSRDFProbeWorkItem, position: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
+fn tabulated_bssrdf_pdf_sp(work: BSSRDFProbeWorkItem, position: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
     let ns = work.normal.xyz;
     let frame = mat3x3<f32>(coordinate_system_x(ns), coordinate_system_y(ns), ns);
     let d = transpose(frame) * (position - work.position.xyz);
     let n = abs(transpose(frame) * normal);
-    return bssrdf_sr(work, length(d.yz), true) * (n.x * 0.25)
-        + bssrdf_sr(work, length(d.zx), true) * (n.y * 0.25)
-        + bssrdf_sr(work, length(d.xy), true) * (n.z * 0.5);
+    return tabulated_bssrdf_sr(work, length(d.yz), true) * (n.x * 0.25)
+        + tabulated_bssrdf_sr(work, length(d.zx), true) * (n.y * 0.25)
+        + tabulated_bssrdf_sr(work, length(d.xy), true) * (n.z * 0.5);
 }

@@ -16,7 +16,7 @@ fn sample_subsurface_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     var result: BSSRDFProbeResult;
     bssrdf_results[index] = result;
     let work = bssrdf_work.items[index];
-    let segment = bssrdf_sample_segment(work);
+    let segment = tabulated_bssrdf_sample_sp(work);
     if (segment.valid == 0u) { return; }
     result.segment_valid = 1u;
     result.start = vec4<f32>(segment.start, 1.0);

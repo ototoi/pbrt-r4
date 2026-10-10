@@ -61,9 +61,9 @@ fn scatter_diffuse(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var next_beta = ray.beta * reflectance;
     if (ray.depth >= 1u) {
         let rr_beta = max(
-            max_spectrum(next_beta * ray.eta_scale),
+            sampled_spectrum_max_component_value(next_beta * ray.eta_scale),
             0.0,
-        ) / max(average_spectrum(ray.r_u), 1e-7);
+        ) / max(sampled_spectrum_average(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) {
             return;
@@ -84,7 +84,7 @@ fn scatter_diffuse(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ray.depth + 1u,
         ray.eta_scale,
         next_pdf,
-        0u, medium_for_direction(ray, surface, direction), 0u, 0u,
+        0u, interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
