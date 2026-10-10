@@ -1101,7 +1101,9 @@ fn parse_work_dir_end(s: &str) -> IResult<&str, OPNode> {
 }
 
 fn parse_include(s: &str) -> IResult<&str, OPNode> {
-    return parse_op_string_params(s, "Include");
+    let (remaining, mut operation) = parse_op_string(s, "Include")?;
+    operation.params = Some(ParameterStorage::Parsed(Vec::new()));
+    Ok((remaining, operation))
 }
 
 fn parse_import(s: &str) -> IResult<&str, OPNode> {
