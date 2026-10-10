@@ -29,6 +29,7 @@ use material::{build_material_roots, register_material_source, MaterialSourceNod
 mod material_attributes;
 mod medium;
 mod subsurface;
+mod texture;
 use medium::{register_medium, resolve_medium_reference};
 mod node;
 use node::flatten_node_ref;
@@ -36,6 +37,7 @@ use node::flatten_node_ref;
 mod shape;
 use shape::geometry_index;
 
+mod infinite_light;
 mod lights;
 use lights::{append_area_light, flatten_light};
 
