@@ -191,7 +191,7 @@ fn uniform_grid_shader_composes_its_records_and_density_lookup() {
     let stage = r#"
         @compute @workgroup_size(1)
         fn test_uniform_grid() {
-            let grid = uniform_grid_media[0];
+            let grid = volume_media[0];
             let density = uniform_grid_density(grid, vec3<f32>(0.5));
             var dda = uniform_grid_dda_init(
                 grid, vec3<f32>(0.5), vec3<f32>(1.0, 0.0, 0.0), 0.0, 1.0,
@@ -202,9 +202,7 @@ fn uniform_grid_shader_composes_its_records_and_density_lookup() {
         }
     "#;
     let source = compose_source(stage);
-    assert!(
-        source.contains("var<storage, read> uniform_grid_media: array<UniformGridMediumRecord>;")
-    );
+    assert!(source.contains("var<storage, read> volume_media: array<VolumeMediumRecord>;"));
     assert!(source.contains("var<storage, read> volume_data: array<f32>;"));
     let module = wgpu::naga::front::wgsl::parse_str(&source).expect("uniform grid WGSL parses");
     wgpu::naga::valid::Validator::new(
@@ -219,6 +217,24 @@ fn uniform_grid_shader_composes_its_records_and_density_lookup() {
 fn uniform_grid_tracking_stages_validate_as_wgsl() {
     for stage in [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER] {
         let source = compose_source(stage);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn cloud_tracking_stages_keep_noise_and_validate_as_wgsl() {
+    for stage in [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER] {
+        let source = compose_source_with_noise(stage, false);
+        assert!(source.contains("fn cloud_density"));
+        assert!(source.contains("fn noise"));
+        assert!(source.contains("texture_noise_table"));
         let module = wgpu::naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
         wgpu::naga::valid::Validator::new(

@@ -25,12 +25,14 @@ fn grad(x: u32, y: u32, z: u32, dx: f32, dy: f32, dz: f32) -> f32 {
 }
 
 fn noise(p: vec3<f32>) -> f32 {
-    let ix = i32(floor(p.x));
-    let iy = i32(floor(p.y));
-    let iz = i32(floor(p.z));
-    let dx = p.x - f32(ix);
-    let dy = p.y - f32(iy);
-    let dz = p.z - f32(iz);
+    let period = 1073741824.0;
+    let point = vec3<f32>(p.x % period, p.y % period, p.z % period);
+    let ix = i32(floor(point.x));
+    let iy = i32(floor(point.y));
+    let iz = i32(floor(point.z));
+    let dx = point.x - f32(ix);
+    let dy = point.y - f32(iy);
+    let dz = point.z - f32(iz);
     let x = u32(ix) & 255u;
     let y = u32(iy) & 255u;
     let z = u32(iz) & 255u;

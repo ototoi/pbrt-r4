@@ -41,7 +41,7 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
         let medium = media[shadow.medium_id];
-        if (medium.kind > 1u) {
+        if (medium.kind > 2u) {
             set_render_error();
             return;
         }
@@ -56,12 +56,12 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
         let infinite_segment = shadow.infinite_distance != 0u && !hit;
-        if (medium.kind == 1u) {
-            if (medium.grid_index >= arrayLength(&uniform_grid_media)) {
+        if (medium.kind == 1u || medium.kind == 2u) {
+            if (medium.volume_index >= arrayLength(&volume_media)) {
                 set_render_error();
                 return;
             }
-            let grid = uniform_grid_media[medium.grid_index];
+            let grid = volume_media[medium.volume_index];
             let direction_world = normalize(shadow_direction);
             var dda = uniform_grid_dda_init(
                 grid, shadow_origin, direction_world, 0.0,
@@ -104,7 +104,12 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         let position_world = shadow_origin + direction_world * candidate_t;
                         let position_medium = (grid.medium_from_world
                             * vec4<f32>(position_world, 1.0)).xyz;
-                        let density = uniform_grid_density(grid, position_medium);
+                        var density: f32;
+                        if (medium.kind == 2u) {
+                            density = cloud_density(grid, position_medium);
+                        } else {
+                            density = uniform_grid_density(grid, position_medium);
+                        }
                         let local_sigma_t = sigma_t * density;
                         if (any(local_sigma_t != local_sigma_t)
                             || any(abs(local_sigma_t) > vec4<f32>(RAY_T_MAX))) {

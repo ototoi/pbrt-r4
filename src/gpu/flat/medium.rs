@@ -16,6 +16,7 @@ pub struct Medium {
 pub enum MediumData {
     Homogeneous,
     UniformGrid(UniformGridMedium),
+    Cloud(CloudMedium),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -26,4 +27,13 @@ pub struct UniformGridMedium {
     pub density: Vec<f32>,
     pub majorant_resolution: [u32; 3],
     pub majorant: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudMedium {
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    pub density: f32,
+    pub wispiness: f32,
+    pub frequency: f32,
 }
