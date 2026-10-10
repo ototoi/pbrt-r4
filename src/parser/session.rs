@@ -1,3 +1,4 @@
+use super::common::space0;
 use super::parse_target::ParseTarget;
 use super::read_file::read_file_source;
 use super::{evaluate_operation, parse_next_operation, parser_error_at, OPNode};
@@ -55,37 +56,10 @@ impl<'a> ParserSession<'a> {
                 continue;
             }
 
-            let parsed = {
-                let Some(frame) = self.frames.last() else {
-                    return Err(Self::stack_empty_error());
-                };
-                let input = &frame.source[frame.offset..];
-                parse_next_operation(&frame.source, input).map(|result| {
-                    result.map(|(remaining, operation_input, operation)| {
-                        (
-                            frame.source.len() - remaining.len(),
-                            frame.source.len() - operation_input.len(),
-                            operation,
-                        )
-                    })
-                })
-            };
-
-            let parsed = match parsed {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    return Err(self.add_current_file_context(error));
-                }
-            };
-            let Some((next_offset, operation_offset, operation)) = parsed else {
+            let Some((operation_offset, operation)) = self.next_operation()? else {
                 self.pop_frame();
                 continue;
             };
-
-            let Some(frame) = self.frames.last_mut() else {
-                return Err(Self::stack_empty_error());
-            };
-            frame.offset = next_offset;
 
             if operation.name == "Include" {
                 let filename = Self::include_filename(&operation).map_err(|error| {
@@ -118,6 +92,71 @@ impl<'a> ParserSession<'a> {
                 .with_file(&frame.path));
             }
         }
+    }
+
+    fn next_operation(&mut self) -> Result<Option<(usize, OPNode)>, PbrtError> {
+        let frame = self.frames.last().ok_or_else(Self::stack_empty_error)?;
+        let input = &frame.source[frame.offset..];
+        let parsed = parse_next_operation(&frame.source, input);
+        let needs_parent = match &parsed {
+            Ok(Some((remaining, _, operation))) => {
+                remaining.is_empty() && operation.name != "Include"
+            }
+            Err(_) => true,
+            Ok(None) => false,
+        };
+        if self.frames.len() == 1 || !needs_parent || has_unclosed_string(input) {
+            let parsed = parsed.map_err(|error| self.add_current_file_context(error))?;
+            let Some((remaining, operation_input, operation)) = parsed else {
+                return Ok(None);
+            };
+            let next_offset = frame.source.len() - remaining.len();
+            let operation_offset = frame.source.len() - operation_input.len();
+            self.frames
+                .last_mut()
+                .ok_or_else(Self::stack_empty_error)?
+                .offset = next_offset;
+            return Ok(Some((operation_offset, operation)));
+        }
+
+        let (operation_input, _) =
+            space0(input).map_err(|error| PbrtError::error(&error.to_string()))?;
+        let operation_offset = frame.offset + input.len() - operation_input.len();
+        let original_error = parsed.err();
+        let mut joined = input.to_string();
+        let last_index = self.frames.len() - 1;
+        let mut spans = vec![(last_index, 0, joined.len())];
+        // Read across EOF without closing the directive's work directory before
+        // evaluation. This preserves source-relative paths on deferred entities.
+        for index in (0..last_index).rev() {
+            let parent = &self.frames[index];
+            let tail = &parent.source[parent.offset..];
+            joined.push('\n');
+            let start = joined.len();
+            joined.push_str(tail);
+            spans.push((index, start, joined.len()));
+            match parse_next_operation(&joined, &joined) {
+                Ok(Some((remaining, _, operation))) => {
+                    if remaining.is_empty() && index != 0 {
+                        continue;
+                    }
+                    let consumed = joined.len() - remaining.len();
+                    for (frame_index, start, end) in spans {
+                        self.frames[frame_index].offset += consumed.clamp(start, end) - start;
+                    }
+                    return Ok(Some((operation_offset, operation)));
+                }
+                Err(error) if index == 0 || has_unclosed_string(tail) => {
+                    return Err(self.operation_error(
+                        operation_offset,
+                        "<continuation>",
+                        original_error.unwrap_or(error),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Err(Self::stack_empty_error())
     }
 
     fn include_filename(operation: &OPNode) -> Result<String, PbrtError> {
@@ -204,4 +243,19 @@ impl<'a> ParserSession<'a> {
     fn stack_empty_error() -> PbrtError {
         PbrtError::error("parser input stack unexpectedly empty")
     }
+}
+
+fn has_unclosed_string(input: &str) -> bool {
+    let mut in_string = false;
+    let mut in_comment = false;
+    for character in input.chars() {
+        if in_comment {
+            in_comment = character != '\n';
+        } else if character == '"' {
+            in_string = !in_string;
+        } else if character == '#' && !in_string {
+            in_comment = true;
+        }
+    }
+    in_string
 }
