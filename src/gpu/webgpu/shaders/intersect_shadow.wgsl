@@ -221,6 +221,11 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
+    if (!any(shadow.transmittance != vec4<f32>(0.0))) {
+        shadow_rays[ray_index] = shadow;
+        return;
+    }
+
     if (hit) {
         let instance = instances[intersection.instance_custom_data];
         if (instance.material_root != 0xffffffffu) {
