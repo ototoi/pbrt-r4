@@ -1,7 +1,8 @@
-use super::super::{MediumData, UniformGridMedium};
+use super::super::{MediumData, UniformGridMedium, DENSE_SAMPLE_COUNT};
 use super::{multiply_transform, FlatBuilder, Medium, Transform, INVALID_INDEX};
 use crate::gpu::node::Medium as NodeMedium;
 use crate::media::get_medium_scattering_properties;
+use crate::util::base::Point3f;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{
     spectrum_to_photometric, DenselySampledSpectrum, Spectrum, SpectrumType,
@@ -61,8 +62,7 @@ pub fn register_medium(
 
     let mut sigma_a_dense = DenselySampledSpectrum::from_spectrum(&sigma_a);
     let mut sigma_s_dense = DenselySampledSpectrum::from_spectrum(&sigma_s);
-    if (0..crate::gpu::flat::DENSE_SAMPLE_COUNT)
-        .any(|index| sigma_a_dense[index] < 0.0 || sigma_s_dense[index] < 0.0)
+    if (0..DENSE_SAMPLE_COUNT).any(|index| sigma_a_dense[index] < 0.0 || sigma_s_dense[index] < 0.0)
     {
         return Err(PbrtError::error(&format!(
             "GPU medium \"{}\" requires non-negative sigma_a and sigma_s.",
@@ -92,15 +92,14 @@ pub fn register_medium(
             medium.name
         )));
     }
-    if (0..crate::gpu::flat::DENSE_SAMPLE_COUNT)
-        .any(|index| sigma_a_dense[index] < 0.0 || sigma_s_dense[index] < 0.0)
+    if (0..DENSE_SAMPLE_COUNT).any(|index| sigma_a_dense[index] < 0.0 || sigma_s_dense[index] < 0.0)
     {
         return Err(PbrtError::error(&format!(
             "GPU medium \"{}\" has negative sigma_a or sigma_s after scale.",
             medium.name
         )));
     }
-    if (0..crate::gpu::flat::DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0) {
+    if (0..DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0) {
         return Err(PbrtError::error(&format!(
             "GPU medium \"{}\" does not support nonzero Le.",
             medium.name
@@ -222,10 +221,10 @@ fn create_uniform_grid(medium: &NodeMedium) -> Result<UniformGridMedium, PbrtErr
 
     let p0 = medium
         .params
-        .get_one_point3f("p0", &crate::util::base::Point3f::new(0.0, 0.0, 0.0));
+        .get_one_point3f("p0", &Point3f::new(0.0, 0.0, 0.0));
     let p1 = medium
         .params
-        .get_one_point3f("p1", &crate::util::base::Point3f::new(1.0, 1.0, 1.0));
+        .get_one_point3f("p1", &Point3f::new(1.0, 1.0, 1.0));
     let p0 = [p0.x as f32, p0.y as f32, p0.z as f32];
     let p1 = [p1.x as f32, p1.y as f32, p1.z as f32];
     if p0.iter().chain(&p1).any(|value| !value.is_finite()) {
