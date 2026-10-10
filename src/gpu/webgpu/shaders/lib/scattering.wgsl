@@ -1,4 +1,4 @@
-fn refract_interface(wo: vec3<f32>, normal_input: vec3<f32>, eta_input: f32) -> DielectricInterfaceSample {
+fn refract(wo: vec3<f32>, normal_input: vec3<f32>, eta_input: f32) -> DielectricInterfaceSample {
     var cosine_i = dot(normal_input, wo);
     var eta = eta_input;
     var normal = normal_input;
@@ -18,7 +18,7 @@ fn refract_interface(wo: vec3<f32>, normal_input: vec3<f32>, eta_input: f32) -> 
     return result;
 }
 
-fn tr_distribution_d(wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
+fn trowbridge_reitz_distribution_d(wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
     let cos2 = wm.z * wm.z;
     if (cos2 < 1e-16) { return 0.0; }
     let e = (wm.x * wm.x / (alpha.x * alpha.x)
@@ -26,7 +26,7 @@ fn tr_distribution_d(wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
     return 1.0 / (PI * alpha.x * alpha.y * cos2 * cos2 * (1.0 + e) * (1.0 + e));
 }
 
-fn tr_distribution_lambda(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
+fn trowbridge_reitz_distribution_lambda(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
     let wz2 = w.z * w.z;
     if (wz2 == 0.0) { return 0.0; }
     let alpha2_tan2 = (alpha.x * w.x) * (alpha.x * w.x)
@@ -34,15 +34,15 @@ fn tr_distribution_lambda(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
     return 0.5 * (sqrt(1.0 + alpha2_tan2 / wz2) - 1.0);
 }
 
-fn tr_distribution_g1(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
-    return 1.0 / (1.0 + tr_distribution_lambda(w, alpha));
+fn trowbridge_reitz_distribution_g1(w: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    return 1.0 / (1.0 + trowbridge_reitz_distribution_lambda(w, alpha));
 }
 
-fn tr_distribution_g(wo: vec3<f32>, wi: vec3<f32>, alpha: vec2<f32>) -> f32 {
-    return 1.0 / (1.0 + tr_distribution_lambda(wo, alpha) + tr_distribution_lambda(wi, alpha));
+fn trowbridge_reitz_distribution_g(wo: vec3<f32>, wi: vec3<f32>, alpha: vec2<f32>) -> f32 {
+    return 1.0 / (1.0 + trowbridge_reitz_distribution_lambda(wo, alpha) + trowbridge_reitz_distribution_lambda(wi, alpha));
 }
 
-fn sample_visible_tr_wm(wo_input: vec3<f32>, alpha: vec2<f32>, u: vec2<f32>) -> vec3<f32> {
+fn trowbridge_reitz_distribution_sample_wm(wo_input: vec3<f32>, alpha: vec2<f32>, u: vec2<f32>) -> vec3<f32> {
     var wh = normalize(vec3<f32>(alpha.x * wo_input.x, alpha.y * wo_input.y, wo_input.z));
     if (wh.z < 0.0) { wh = -wh; }
     var t1 = vec3<f32>(1.0, 0.0, 0.0);
@@ -58,13 +58,13 @@ fn sample_visible_tr_wm(wo_input: vec3<f32>, alpha: vec2<f32>, u: vec2<f32>) -> 
     return normalize(vec3<f32>(alpha.x * nh.x, alpha.y * nh.y, max(1e-6, nh.z)));
 }
 
-fn tr_visible_wm_pdf(wo: vec3<f32>, wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
+fn trowbridge_reitz_distribution_pdf(wo: vec3<f32>, wm: vec3<f32>, alpha: vec2<f32>) -> f32 {
     if (abs(wo.z) == 0.0) { return 0.0; }
-    return tr_distribution_d(wm, alpha) * tr_distribution_g1(wo, alpha)
+    return trowbridge_reitz_distribution_d(wm, alpha) * trowbridge_reitz_distribution_g1(wo, alpha)
         * abs(dot(wo, wm)) / abs(wo.z);
 }
 
-fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f32> {
+fn fr_complex(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f32> {
     let c = clamp(abs(cosine_input), 0.0, 1.0);
     let c2 = c * c;
     let s2 = 1.0 - c2;
@@ -82,7 +82,7 @@ fn conductor_fresnel(cosine_input: f32, eta: vec4<f32>, k: vec4<f32>) -> vec4<f3
     return 0.5 * (rs + rp);
 }
 
-fn dielectric_fresnel(cosine: f32, eta: f32) -> f32 {
+fn fr_dielectric(cosine: f32, eta: f32) -> f32 {
     let c = clamp(abs(cosine), 0.0, 1.0);
     let e = select(eta, 1.0 / eta, cosine < 0.0);
     let sin2_t = max(0.0, 1.0 - c * c) / (e * e);
@@ -94,7 +94,7 @@ fn dielectric_fresnel(cosine: f32, eta: f32) -> f32 {
 }
 
 // pbrt-v4 HGPhaseFunction helpers used by the layered medium random walk.
-fn hg_phase(cosine: f32, g: f32) -> f32 {
+fn henyey_greenstein(cosine: f32, g: f32) -> f32 {
     let bounded_g = clamp(g, -0.99, 0.99);
     let gg = bounded_g * bounded_g;
     let denominator = max(1.0 + gg + 2.0 * bounded_g * cosine, 1e-7);
@@ -115,7 +115,7 @@ fn sample_hg_cosine(u: f32, g: f32) -> f32 {
     );
 }
 
-fn sample_hg_direction(reference: vec3<f32>, u: vec2<f32>, g: f32) -> vec3<f32> {
+fn sample_henyey_greenstein(reference: vec3<f32>, u: vec2<f32>, g: f32) -> vec3<f32> {
     let cosine = sample_hg_cosine(u.x, g);
     let sine = sqrt(max(0.0, 1.0 - cosine * cosine));
     let phi = 2.0 * PI * u.y;

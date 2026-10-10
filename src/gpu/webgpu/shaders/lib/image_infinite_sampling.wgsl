@@ -4,7 +4,7 @@ struct ImageInfiniteSampleResult {
     valid: u32,
 };
 
-fn image_infinite_distribution_pdf(
+fn piecewise_constant_2d_pdf(
     image: ImageInfiniteSamplingRecord,
     uv: vec2<f32>,
 ) -> f32 {
@@ -48,7 +48,7 @@ fn image_infinite_direction_jacobian(
     return abs(determinant) / (transformed_length * transformed_length * transformed_length);
 }
 
-fn sample_image_infinite_distribution(
+fn piecewise_constant_2d_sample(
     image: ImageInfiniteSamplingRecord,
     u: vec2<f32>,
 ) -> ImageInfiniteSampleResult {
@@ -132,7 +132,7 @@ fn sample_image_infinite_distribution(
     return ImageInfiniteSampleResult(uv, pdf, 1u);
 }
 
-fn image_infinite_equal_area_square_to_sphere(uv: vec2<f32>) -> vec3<f32> {
+fn equal_area_square_to_sphere(uv: vec2<f32>) -> vec3<f32> {
     let u = 2.0 * uv.x - 1.0;
     let v = 2.0 * uv.y - 1.0;
     let up = abs(u);

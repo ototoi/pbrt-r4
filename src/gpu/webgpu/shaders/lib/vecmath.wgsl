@@ -3,11 +3,11 @@ fn scattering_local(w: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(dot(w, t), dot(w, cross(n, t)), dot(w, n));
 }
 
-fn scattering_local_frame(w: vec3<f32>, tangent: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+fn frame_to_local(w: vec3<f32>, tangent: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(dot(w, tangent), dot(w, cross(normal, tangent)), dot(w, normal));
 }
 
-fn scattering_world_frame(w: vec3<f32>, tangent: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+fn frame_from_local(w: vec3<f32>, tangent: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     return tangent * w.x + cross(normal, tangent) * w.y + normal * w.z;
 }
 

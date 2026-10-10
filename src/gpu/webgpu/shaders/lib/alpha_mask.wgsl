@@ -1,5 +1,5 @@
 fn alpha_mask_hash(origin: vec3<f32>, direction: vec3<f32>) -> f32 {
-    let hash = murmur_hash_24(
+    let hash = murmur_hash_64a_24(
         vec2<u32>(bitcast<u32>(origin.x), bitcast<u32>(origin.y)),
         vec2<u32>(bitcast<u32>(origin.z), bitcast<u32>(direction.x)),
         vec2<u32>(bitcast<u32>(direction.y), bitcast<u32>(direction.z)),
@@ -8,7 +8,7 @@ fn alpha_mask_hash(origin: vec3<f32>, direction: vec3<f32>) -> f32 {
 }
 
 fn alpha_mask_point_hash(position: vec3<f32>) -> f32 {
-    let hash = murmur_hash_12(
+    let hash = murmur_hash_64a_12(
         vec2<u32>(bitcast<u32>(position.x), bitcast<u32>(position.y)),
         bitcast<u32>(position.z),
     );

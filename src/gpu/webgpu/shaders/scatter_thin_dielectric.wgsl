@@ -14,11 +14,11 @@ fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) 
     if (eta == 0.0) { eta = 1.0; }
     let normal = normalize(surface.normal.xyz);
     let tangent = surface.tangent.xyz;
-    let wo = scattering_local_frame(normalize(-ray.direction.xyz), tangent, normal);
+    let wo = frame_to_local(normalize(-ray.direction.xyz), tangent, normal);
     if (wo.z == 0.0) { return; }
     // ThinDielectricBxDF uses FrDielectric(AbsCosTheta(wo), eta): the sheet
     // always sees the same eta from either side of the interface.
-    let r0 = dielectric_fresnel(abs(wo.z), eta);
+    let r0 = fr_dielectric(abs(wo.z), eta);
     let r = select(r0, r0 + (1.0 - r0) * (1.0 - r0) * r0 / max(1.0 - r0 * r0, 1e-7), r0 < 1.0);
     let t = 1.0 - r;
     if (!(eta > 0.0) || eta != eta || !(r >= 0.0) || !(r <= 1.0)) {
@@ -27,7 +27,7 @@ fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) 
     let samples = load_ray_samples(pixel_index);
     let reflection = samples.indirect.x < r;
     let direction_local = select(-wo, vec3<f32>(-wo.x, -wo.y, wo.z), reflection);
-    let direction = normalize(scattering_world_frame(direction_local, tangent, normal));
+    let direction = normalize(frame_from_local(direction_local, tangent, normal));
     let probability = max(select(t, r, reflection), 1e-7);
     let f = select(vec4<f32>(t / abs(direction_local.z)), vec4<f32>(r / abs(direction_local.z)), reflection);
     let next_ray = RayWorkItem(
@@ -37,7 +37,7 @@ fn scatter_thin_dielectric(@builtin(global_invocation_id) global_id: vec3<u32>) 
         ray.r_u / probability, surface.position,
         surface.position_error, surface.geometric_normal, surface.normal,
         pixel_index, ray.depth + 1u, ray.eta_scale, probability,
-        1u, medium_for_direction(ray, surface, direction), 0u, 0u,
+        1u, interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) { atomicStore(&queue_counters.next.overflow, 1u); return; }

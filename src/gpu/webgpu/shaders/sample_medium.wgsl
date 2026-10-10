@@ -129,7 +129,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             set_render_error();
             return;
         }
-        ray.medium_id = medium_for_direction(ray, boundary, ray.direction.xyz);
+        ray.medium_id = interaction_get_medium(ray, boundary, ray.direction.xyz);
         ray.origin = vec4<f32>(offset_ray_origin(
             triangle.position, triangle.position_error,
             triangle.geometric_normal, ray.direction.xyz,

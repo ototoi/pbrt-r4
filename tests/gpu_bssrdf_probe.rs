@@ -434,14 +434,14 @@ fn gpu_bssrdf_sp_pdf_and_normalized_fresnel_match_cpu() {
     let source = probe_source.split("fn bssrdf_segment_seed").next().unwrap();
     let scattering = include_str!("../src/gpu/webgpu/shaders/lib/scattering.wgsl");
     let fresnel = scattering
-        .split("fn dielectric_fresnel")
+        .split("fn fr_dielectric")
         .nth(1)
         .unwrap()
         .split("// pbrt-v4 HG")
         .next()
         .unwrap();
     let source = format!(
-        "{source}\nfn dielectric_fresnel{fresnel}\n{}\n{}",
+        "{source}\nfn fr_dielectric{fresnel}\n{}\n{}",
         include_str!("../src/gpu/webgpu/shaders/lib/bssrdf_scattering.wgsl"),
         r#"
         @compute @workgroup_size(64)
@@ -449,12 +449,12 @@ fn gpu_bssrdf_sp_pdf_and_normalized_fresnel_match_cpu() {
             if (id.x >= atomicLoad(&bssrdf_work.state.count)) { return; }
             let work = bssrdf_work.items[id.x];
             var result: BSSRDFProbeResult;
-            result.start = bssrdf_sr(work, work.sample.x, false);
-            result.end = bssrdf_pdf_sp(work, work.position.xyz + work.sample.yzw, vec3<f32>(0.36, 0.48, 0.8));
+            result.start = tabulated_bssrdf_sr(work, work.sample.x, false);
+            result.end = tabulated_bssrdf_pdf_sp(work, work.position.xyz + work.sample.yzw, vec3<f32>(0.36, 0.48, 0.8));
             let table = bssrdf_tables[work.table_index];
-            for (var i = 0u; i < 4u; i++) { result.position[i] = bssrdf_invert_reflectance(table, work.rho[i]); }
-            result.normal = bssrdf_normalized_fresnel(work.position.w, 1.33);
-            result.barycentric = vec4<f32>(bssrdf_sample_cosine(work.rho.xy), 0.0);
+            for (var i = 0u; i < 4u; i++) { result.position[i] = invert_catmull_rom(table, work.rho[i]); }
+            result.normal = normalized_fresnel_bxdf_f(work.position.w, 1.33);
+            result.barycentric = vec4<f32>(sample_cosine_hemisphere(work.rho.xy), 0.0);
             bssrdf_results[id.x] = result;
         }
         "#

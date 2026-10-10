@@ -1,6 +1,6 @@
 use super::super::area_light_flags;
 use super::{
-    dot3, inverse_linear_transform, multiply_transform, push_scalar_attribute,
+    dot, inverse_linear_transform, multiply_transform, push_scalar_attribute,
     push_spectrum_attribute, scale3, transform_point, transform_swaps_handedness, transform_vector,
     triangle_area, triangle_geometric_normal, AreaTriangleInput, FlatBuilder, Light,
     LightBoundInput, LightGeometryKind, LightKind, LightSamplingModel, Transform,
@@ -260,7 +260,7 @@ pub fn distant_light(
             from[2] as f32 - to[2] as f32,
         ],
     );
-    let length = dot3(raw, raw).sqrt();
+    let length = dot(raw, raw).sqrt();
     if length == 0.0 || !length.is_finite() {
         return Err(PbrtError::error(&format!(
             "Distant light on node \"{}\" has invalid direction.",

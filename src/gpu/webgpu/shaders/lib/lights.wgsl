@@ -199,7 +199,7 @@ fn is_infinite_light_kind(light_kind: u32) -> bool {
         || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE;
 }
 
-fn sample_uniform_infinite_direction(u: vec2<f32>) -> vec3<f32> {
+fn sample_uniform_sphere(u: vec2<f32>) -> vec3<f32> {
     let z = 1.0 - 2.0 * min(u.x, 0.99999994);
     let phi = 2.0 * PI * u.y;
     let radial = sqrt(max(0.0, 1.0 - z * z));

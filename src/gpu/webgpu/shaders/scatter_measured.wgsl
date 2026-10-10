@@ -25,10 +25,10 @@ fn scatter_measured(@builtin(global_invocation_id) global_id: vec3<u32>) {
             if (cosine > 0.0) {
                 let id = measured_id(material_node);
                 if (id != 0xffffffffu) {
-                    let local_wo = scattering_local_frame(wo, surface.tangent.xyz, shading_n);
-                    let local_wi = scattering_local_frame(wi, surface.tangent.xyz, shading_n);
-                    let f = measured_f(id, local_wo, local_wi, lambda);
-                    let bsdf_pdf = measured_pdf(id, local_wo, local_wi);
+                    let local_wo = frame_to_local(wo, surface.tangent.xyz, shading_n);
+                    let local_wi = frame_to_local(wi, surface.tangent.xyz, shading_n);
+                    let f = measured_bxdf_f(id, local_wo, local_wi, lambda);
+                    let bsdf_pdf = measured_bxdf_pdf(id, local_wo, local_wi);
                     add_direct_lighting(ray, surface, light_sample, f, bsdf_pdf, cosine);
                 }
             }
@@ -42,19 +42,19 @@ fn scatter_measured(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let id = measured_id(material_node);
     if (id == 0xffffffffu) { return; }
     let samples = load_ray_samples(pixel_index);
-    let sampled = measured_sample_f(
+    let sampled = measured_bxdf_sample_f(
         id,
-        scattering_local_frame(wo, tangent, normal),
+        frame_to_local(wo, tangent, normal),
         vec2<f32>(samples.indirect.y, samples.indirect.z),
         lambda,
     );
     if (sampled.valid == 0u || sampled.pdf <= 0.0 || all(sampled.f == vec4<f32>(0.0))) {
         return;
     }
-    let direction = normalize(scattering_world_frame(sampled.wi, tangent, normal));
+    let direction = normalize(frame_from_local(sampled.wi, tangent, normal));
     var next_beta = ray.beta * sampled.f * abs(sampled.wi.z) / sampled.pdf;
     if (ray.depth >= 1u) {
-        let rr_beta = max(max_spectrum(next_beta * ray.eta_scale), 0.0) / max(average_spectrum(ray.r_u), 1e-7);
+        let rr_beta = max(sampled_spectrum_max_component_value(next_beta * ray.eta_scale), 0.0) / max(sampled_spectrum_average(ray.r_u), 1e-7);
         let q = max(0.0, 1.0 - rr_beta);
         if (samples.indirect.w < q) { return; }
         next_beta /= max(1.0 - q, 1e-7);
@@ -65,7 +65,7 @@ fn scatter_measured(@builtin(global_invocation_id) global_id: vec3<u32>) {
         vec4<f32>(direction, 0.0), next_beta, ray.r_u, ray.r_u / sampled.pdf,
         surface.position, surface.position_error, surface.geometric_normal,
         vec4<f32>(normal, 0.0), pixel_index, ray.depth + 1u,
-        ray.eta_scale, sampled.pdf, 0u, medium_for_direction(ray, surface, direction), 0u, 0u,
+        ray.eta_scale, sampled.pdf, 0u, interaction_get_medium(ray, surface, direction), 0u, 0u,
     );
     let next_index = atomicAdd(&queue_counters.next.count, 1u);
     if (next_index >= pixel_count()) {
