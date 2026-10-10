@@ -28,6 +28,7 @@ struct ProbeInput {
     cells: u32,
     shadow_weight_scale: f32,
     infinite: bool,
+    shadow_interface_hit: bool,
 }
 
 impl Default for ProbeInput {
@@ -41,6 +42,7 @@ impl Default for ProbeInput {
             cells: 1,
             shadow_weight_scale: 1.0,
             infinite: false,
+            shadow_interface_hit: false,
         }
     }
 }
@@ -138,7 +140,7 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
 #[test]
 #[ignore = "requires a WebGPU adapter"]
 fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
-    // A miss isolates medium tracking from geometry; real boundary traversal
+    // A synthetic query isolates medium tracking; real boundary traversal
     // is exercised by gpu_medium_segment_integration and the plume renders.
     let mut stage = SHADOW_SHADER.to_owned();
     let start = stage.find("    var query: ray_query;").unwrap();
@@ -146,8 +148,8 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
     stage.replace_range(
         start..end,
         r#"
-        let intersection = TestShadowIntersection(0u, 0u, vec2<f32>(0.0), 0.0);
-        let hit = false;
+        let intersection = TestShadowIntersection(0u, 0u, vec2<f32>(0.0), 0.2);
+        let hit = test_draws[0].y < 0.5;
     "#,
     );
     stage.push_str(
@@ -218,6 +220,19 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             );
         }
         assert_shadow_radiance(&result);
+        if roulette < 0.75 {
+            let boundary_input = ProbeInput {
+                shadow_interface_hit: true,
+                draws: [input.draws[0], 0.0, input.draws[2], roulette],
+                ..input
+            };
+            let boundary_result =
+                run_stage(&context, &layout, &pipeline, &bindings, &boundary_input);
+            assert_eq!(boundary_result.shadow.transmittance, [0.0; 4]);
+            assert_eq!(boundary_result.shadow.segment_index, 0);
+            assert_eq!(boundary_result.counters.shadow_continuation.count, 0);
+            assert_eq!(boundary_result.pixel.radiance, [0.0; 4]);
+        }
     }
 
     for (a, s, majorant, cells, distance) in [
@@ -391,7 +406,11 @@ fn run_stage(
     viewport.max_depth = 4;
     viewport.medium_scattering_enabled = 1;
     values.insert(1, bytes_of(&viewport).to_vec());
-    values.insert(6, bytes_of(&Instance::zeroed()).to_vec());
+    let mut instance = Instance::zeroed();
+    if input.shadow_interface_hit {
+        instance.material_root = u32::MAX;
+    }
+    values.insert(6, bytes_of(&instance).to_vec());
     let mut surface = SurfaceWorkItem::zeroed();
     surface.hit = 1;
     surface.t = distance;
