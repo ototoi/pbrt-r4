@@ -2,12 +2,12 @@ use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
 use super::super::abi::{
-    inverse_affine, row_major_to_columns, MediumRecord, UniformGridMediumRecord, INVALID_INDEX,
+    inverse_affine, row_major_to_columns, MediumRecord, VolumeMediumRecord, INVALID_INDEX,
 };
 
 pub struct ConvertedMedia {
     pub records: Vec<MediumRecord>,
-    pub uniform_grids: Vec<UniformGridMediumRecord>,
+    pub volumes: Vec<VolumeMediumRecord>,
     pub volume_data: Vec<f32>,
 }
 
@@ -17,7 +17,7 @@ pub fn convert_media(
 ) -> Result<ConvertedMedia, PbrtError> {
     let mut result = ConvertedMedia {
         records: Vec::with_capacity(media.len()),
-        uniform_grids: Vec::new(),
+        volumes: Vec::new(),
         volume_data: Vec::new(),
     };
     for (index, medium) in media.iter().enumerate() {
@@ -29,11 +29,11 @@ pub fn convert_media(
                 "Flat medium {index} references an invalid spectrum."
             )));
         }
-        let (kind, grid_index) = match (&medium.kind[..], &medium.data) {
+        let (kind, volume_index) = match (&medium.kind[..], &medium.data) {
             ("homogeneous", flat::MediumData::Homogeneous) => (0, INVALID_INDEX),
             ("uniformgrid", flat::MediumData::UniformGrid(grid)) => {
-                let grid_index = u32::try_from(result.uniform_grids.len())
-                    .map_err(|_| PbrtError::error("Uniform grid record count exceeds u32."))?;
+                let volume_index = u32::try_from(result.volumes.len())
+                    .map_err(|_| PbrtError::error("Volume medium record count exceeds u32."))?;
                 let density_offset = checked_volume_offset(result.volume_data.len())?;
                 let density_count = u32::try_from(grid.density.len())
                     .map_err(|_| PbrtError::error("Uniform grid density count exceeds u32."))?;
@@ -49,7 +49,7 @@ pub fn convert_media(
                 })?;
                 result.volume_data.extend_from_slice(&grid.majorant);
                 let medium_from_world = inverse_affine(medium.transform, "Uniform grid medium")?;
-                result.uniform_grids.push(UniformGridMediumRecord {
+                result.volumes.push(VolumeMediumRecord {
                     bounds_min: [
                         grid.bounds_min[0],
                         grid.bounds_min[1],
@@ -77,8 +77,41 @@ pub fn convert_media(
                     density_offset_count: [density_offset, density_count, 0, 0],
                     majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
                     medium_from_world,
+                    cloud_parameters: [0.0; 4],
                 });
-                (1, grid_index)
+                (1, volume_index)
+            }
+            ("cloud", flat::MediumData::Cloud(cloud)) => {
+                let volume_index = u32::try_from(result.volumes.len())
+                    .map_err(|_| PbrtError::error("Volume medium record count exceeds u32."))?;
+                let majorant_offset = checked_volume_offset(result.volume_data.len())?;
+                let majorant_count = 1u32;
+                majorant_offset
+                    .checked_add(majorant_count)
+                    .ok_or_else(|| PbrtError::error("Cloud majorant range overflows u32."))?;
+                result.volume_data.push(1.0);
+                let medium_from_world = inverse_affine(medium.transform, "Cloud medium")?;
+                result.volumes.push(VolumeMediumRecord {
+                    bounds_min: [
+                        cloud.bounds_min[0],
+                        cloud.bounds_min[1],
+                        cloud.bounds_min[2],
+                        0.0,
+                    ],
+                    bounds_max: [
+                        cloud.bounds_max[0],
+                        cloud.bounds_max[1],
+                        cloud.bounds_max[2],
+                        0.0,
+                    ],
+                    resolution: [1, 1, 1, 0],
+                    majorant_resolution: [1, 1, 1, 0],
+                    density_offset_count: [0; 4],
+                    majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
+                    medium_from_world,
+                    cloud_parameters: [cloud.density, cloud.wispiness, cloud.frequency, 0.0],
+                });
+                (2, volume_index)
             }
             (kind, _) => {
                 return Err(PbrtError::error(&format!(
@@ -93,7 +126,7 @@ pub fn convert_media(
             sigma_s: medium.sigma_s,
             le: medium.le,
             g: medium.g,
-            grid_index,
+            volume_index,
             padding: [0; 2],
             medium_to_world: row_major_to_columns(medium.transform),
         });

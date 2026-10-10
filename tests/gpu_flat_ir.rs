@@ -484,6 +484,107 @@ fn flatten_node_accepts_homogeneous_scattering() {
 }
 
 #[test]
+fn flatten_node_preserves_cloud_parameters_and_bounds() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut params = ParameterDictionary::default();
+    params.add_float("float density", 2.0);
+    params.add_float("float wispiness", 0.25);
+    params.add_float("float frequency", 3.0);
+    params.add_point3f("point3f p0", &Point3f::new(-1.0, 0.0, -2.0));
+    params.add_point3f("point3f p1", &Point3f::new(1.0, 3.0, 2.0));
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "cloud".to_string(),
+                kind: "cloud".to_string(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let medium = &scene.media[0];
+    assert_eq!(medium.kind, "cloud");
+    assert_eq!(
+        medium.data,
+        pbrt_r4::gpu::flat::MediumData::Cloud(pbrt_r4::gpu::flat::CloudMedium {
+            bounds_min: [-1.0, 0.0, -2.0],
+            bounds_max: [1.0, 3.0, 2.0],
+            density: 2.0,
+            wispiness: 0.25,
+            frequency: 3.0,
+        })
+    );
+}
+
+#[test]
+fn cloud_coefficients_ignore_homogeneous_preset_and_scale_parameters() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut params = ParameterDictionary::default();
+    params.add_string("string preset", "Chicken1");
+    params.add_float("float scale", 7.0);
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "cloud".to_string(),
+                kind: "cloud".to_string(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let medium = &scene.media[0];
+    assert!(scene.attributes.spectra[medium.sigma_a as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample == 1.0));
+    assert!(scene.attributes.spectra[medium.sigma_s as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample == 1.0));
+}
+
+#[test]
+fn cloud_factory_rejects_empty_bounds_and_non_finite_parameters() {
+    let flatten_cloud = |params| {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_component(Component::Scene(SceneComponent {
+            scene: NodeScene {
+                media: vec![Arc::new(NodeMedium {
+                    name: "cloud".to_string(),
+                    kind: "cloud".to_string(),
+                    params,
+                    transform: Transform::default(),
+                })],
+                ..Default::default()
+            },
+        }));
+        flatten_node(Arc::new(RwLock::new(root)))
+    };
+
+    let mut empty_bounds = ParameterDictionary::default();
+    empty_bounds.add_point3f("point3f p0", &Point3f::new(1.0, 0.0, 0.0));
+    empty_bounds.add_point3f("point3f p1", &Point3f::new(1.0, 1.0, 1.0));
+    let error = flatten_cloud(empty_bounds).unwrap_err();
+    assert!(error.to_string().contains("finite, non-empty bounds"));
+
+    let mut non_finite_density = ParameterDictionary::default();
+    non_finite_density.add_float("float density", Float::INFINITY);
+    let error = flatten_cloud(non_finite_density).unwrap_err();
+    assert!(error.to_string().contains("finite density parameters"));
+}
+
+#[test]
 fn flatten_node_still_rejects_emission_in_a_scattering_medium() {
     let mut root = Node::new("root");
     add_camera_and_film(&mut root, Default::default());

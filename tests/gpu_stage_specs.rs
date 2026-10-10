@@ -83,7 +83,7 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
     );
     assert_eq!(
         bindings.iter().find(|b| b.binding == 75).unwrap().resource,
-        ResourceId::UniformGridMedium
+        ResourceId::VolumeMedium
     );
     assert_eq!(
         bindings.iter().find(|b| b.binding == 76).unwrap().resource,

@@ -60,7 +60,7 @@ pub struct Scene {
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub medium_buffer: wgpu::Buffer,
-    pub uniform_grid_medium_buffer: wgpu::Buffer,
+    pub volume_medium_buffer: wgpu::Buffer,
     pub volume_data_buffer: wgpu::Buffer,
     pub bssrdf_material_buffer: wgpu::Buffer,
     pub bssrdf_tables: BSSRDFTableResources,
@@ -120,10 +120,10 @@ impl Scene {
         }
         let instances = convert_instances(&flat, geometries.len())?;
         let converted_media = convert_media(&flat.media, flat.attributes.spectra.len())?;
-        validate_storage_array_size::<super::abi::UniformGridMediumRecord>(
+        validate_storage_array_size::<super::abi::VolumeMediumRecord>(
             device,
-            converted_media.uniform_grids.len(),
-            "uniform grid medium records",
+            converted_media.volumes.len(),
+            "volume medium records",
         )?;
         validate_storage_array_size::<f32>(
             device,
@@ -175,13 +175,9 @@ impl Scene {
         let film = film_uniform(&flat.film);
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
         let film_scale = flat.film.scale;
-        if vertices.is_empty()
-            || indices.is_empty()
-            || instances.is_empty()
-            || material_nodes.is_empty()
-        {
+        if vertices.is_empty() || indices.is_empty() || instances.is_empty() {
             return Err(PbrtError::error(
-                "WebGPU primary-ray rendering requires non-empty geometry, instances, and materials.",
+                "WebGPU primary-ray rendering requires non-empty geometry and instances.",
             ));
         }
 
@@ -210,12 +206,11 @@ impl Scene {
             contents: buffer_contents(&media),
             usage: wgpu::BufferUsages::STORAGE,
         });
-        let uniform_grid_medium_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pbrt-r4 uniform grid medium records SBO"),
-                contents: buffer_contents(&converted_media.uniform_grids),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let volume_medium_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pbrt-r4 volume medium records SBO"),
+            contents: buffer_contents(&converted_media.volumes),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let volume_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 volume data SBO"),
             contents: buffer_contents(&converted_media.volume_data),
@@ -507,7 +502,7 @@ impl Scene {
             geometry_buffer,
             instance_buffer,
             medium_buffer,
-            uniform_grid_medium_buffer,
+            volume_medium_buffer,
             volume_data_buffer,
             bssrdf_material_buffer,
             bssrdf_tables,
@@ -559,9 +554,7 @@ impl Scene {
             ResourceId::Geometry => Some(self.geometry_buffer.as_entire_binding()),
             ResourceId::Instance => Some(self.instance_buffer.as_entire_binding()),
             ResourceId::Medium => Some(self.medium_buffer.as_entire_binding()),
-            ResourceId::UniformGridMedium => {
-                Some(self.uniform_grid_medium_buffer.as_entire_binding())
-            }
+            ResourceId::VolumeMedium => Some(self.volume_medium_buffer.as_entire_binding()),
             ResourceId::VolumeData => Some(self.volume_data_buffer.as_entire_binding()),
             ResourceId::BSSRDFMaterial => Some(self.bssrdf_material_buffer.as_entire_binding()),
             ResourceId::BSSRDFTable => Some(self.bssrdf_tables.records.as_entire_binding()),
