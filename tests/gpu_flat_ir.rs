@@ -2866,3 +2866,66 @@ fn flatten_subsurface_rejects_normal_maps_instead_of_ignoring_them() {
     empty.add_string("string normalmap", "");
     assert!(subsurface_test_scene(vec![subsurface_test_material(empty)]).is_ok());
 }
+
+#[test]
+fn flatten_node_packs_multiple_portal_and_image_distributions_independently() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255; 12])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for index in 0..2 {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", image_path.to_str().unwrap());
+        params.add_string("string encoding", "linear");
+        root.add_child(light_node(
+            &format!("image-{index}"),
+            "infinite",
+            params.clone(),
+        ));
+        params.add_point(
+            "point portal",
+            &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+        );
+        root.add_child(light_node(&format!("portal-{index}"), "infinite", params));
+    }
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let sampling = &scene.lights.infinite_sampling;
+    assert_eq!(sampling.portal_records.len(), 2);
+    assert_eq!(sampling.image_records.len(), 2);
+    let mut portal_offset = 0;
+    let mut image_offset = 0;
+    let mut row_offset = 0;
+    for index in 0..2 {
+        let portal = &sampling.portal_records[index];
+        assert_eq!(portal.distribution_offset, portal_offset);
+        portal_offset += portal.resolution[0] * portal.resolution[1];
+        let image = &sampling.image_records[index];
+        assert_eq!(image.distribution_offset, image_offset);
+        assert_eq!(image.row_cdf_offset, row_offset);
+        image_offset += image.resolution[0] * image.resolution[1];
+        row_offset += image.resolution[1];
+        let image_light = &scene.lights.infinite_lights[index * 2];
+        let portal_light = &scene.lights.infinite_lights[index * 2 + 1];
+        assert_eq!(
+            scene.lights.sampling_models[image_light.sampling_model as usize].geometry_index,
+            index as u32
+        );
+        assert_eq!(
+            scene.lights.sampling_models[portal_light.sampling_model as usize].geometry_index,
+            index as u32
+        );
+        assert_eq!(image_light.image_index, (index * 2) as u32);
+        assert_eq!(portal_light.image_index, (index * 2 + 1) as u32);
+    }
+    assert_eq!(sampling.portal_distribution.len(), portal_offset as usize);
+    assert_eq!(sampling.image_distribution.len(), image_offset as usize);
+    assert_eq!(sampling.image_row_cdf.len(), row_offset as usize);
+    scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap();
+}
