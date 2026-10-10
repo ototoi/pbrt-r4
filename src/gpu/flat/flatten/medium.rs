@@ -1,4 +1,4 @@
-use super::super::{MediumData, UniformGridMedium, DENSE_SAMPLE_COUNT};
+use super::super::{CloudMedium, MediumData, UniformGridMedium, DENSE_SAMPLE_COUNT};
 use super::{multiply_transform, FlatBuilder, Medium, Transform, INVALID_INDEX};
 use crate::gpu::node::Medium as NodeMedium;
 use crate::media::get_medium_scattering_properties;
@@ -18,7 +18,7 @@ pub fn register_medium(
     if let Some(index) = builder.medium.media_indices_by_node.get(&medium_key) {
         return Ok(*index);
     }
-    if medium.kind != "homogeneous" && medium.kind != "uniformgrid" {
+    if medium.kind != "homogeneous" && medium.kind != "uniformgrid" && medium.kind != "cloud" {
         return Err(PbrtError::error(&format!(
             "GPU backend does not support medium type \"{}\" (medium \"{}\").",
             medium.kind, medium.name
@@ -45,7 +45,11 @@ pub fn register_medium(
         medium
             .params
             .get_one_spectrum_typed("sigma_s", &sigma_s_default, SpectrumType::Unbounded);
-    let scale = medium.params.get_one_float("scale", 1.0);
+    let scale = if medium.kind == "cloud" {
+        1.0
+    } else {
+        medium.params.get_one_float("scale", 1.0)
+    };
 
     let le =
         medium
@@ -124,10 +128,10 @@ pub fn register_medium(
         le: le_index,
         g: g_gpu,
         transform: multiply_transform(world_transform, &medium.transform.matrix),
-        data: if medium.kind == "uniformgrid" {
-            MediumData::UniformGrid(create_uniform_grid(medium)?)
-        } else {
-            MediumData::Homogeneous
+        data: match medium.kind.as_str() {
+            "uniformgrid" => MediumData::UniformGrid(create_uniform_grid(medium)?),
+            "cloud" => MediumData::Cloud(create_cloud(medium)?),
+            _ => MediumData::Homogeneous,
         },
     });
     builder
@@ -136,6 +140,51 @@ pub fn register_medium(
         .insert(medium_key, index);
     builder.medium.medium_refs.push(Arc::clone(medium));
     Ok(index)
+}
+
+fn create_cloud(medium: &NodeMedium) -> Result<CloudMedium, PbrtError> {
+    let p0 = medium
+        .params
+        .get_one_point3f("p0", &Point3f::new(0.0, 0.0, 0.0));
+    let p1 = medium
+        .params
+        .get_one_point3f("p1", &Point3f::new(1.0, 1.0, 1.0));
+    let p0 = [p0.x as f32, p0.y as f32, p0.z as f32];
+    let p1 = [p1.x as f32, p1.y as f32, p1.z as f32];
+    if p0.iter().chain(&p1).any(|value| !value.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "GPU cloud medium \"{}\" requires finite bounds.",
+            medium.name
+        )));
+    }
+    let bounds_min = std::array::from_fn(|axis| p0[axis].min(p1[axis]));
+    let bounds_max = std::array::from_fn(|axis| p0[axis].max(p1[axis]));
+    if (0..3).any(|axis| {
+        bounds_min[axis] >= bounds_max[axis] || !(bounds_max[axis] - bounds_min[axis]).is_finite()
+    }) {
+        return Err(PbrtError::error(&format!(
+            "GPU cloud medium \"{}\" requires finite, non-empty bounds.",
+            medium.name
+        )));
+    }
+    let parameters = [
+        medium.params.get_one_float("density", 1.0) as f32,
+        medium.params.get_one_float("wispiness", 1.0) as f32,
+        medium.params.get_one_float("frequency", 5.0) as f32,
+    ];
+    if parameters.iter().any(|value| !value.is_finite()) {
+        return Err(PbrtError::error(&format!(
+            "GPU cloud medium \"{}\" requires finite density parameters.",
+            medium.name
+        )));
+    }
+    Ok(CloudMedium {
+        bounds_min,
+        bounds_max,
+        density: parameters[0],
+        wispiness: parameters[1],
+        frequency: parameters[2],
+    })
 }
 
 /// Returns the flat table index of a Node IR medium reference. Vacuum maps to

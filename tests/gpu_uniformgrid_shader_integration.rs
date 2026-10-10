@@ -1,4 +1,4 @@
-use pbrt_r4::gpu::webgpu::abi::UniformGridMediumRecord;
+use pbrt_r4::gpu::webgpu::abi::VolumeMediumRecord;
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::shader::compose_source;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
@@ -11,7 +11,7 @@ const PROBE_SHADER: &str = r#"
 
 @compute @workgroup_size(1)
 fn uniform_grid_probe() {
-    let grid = uniform_grid_media[0];
+    let grid = volume_media[0];
     output_values[0] = vec4<f32>(
         uniform_grid_density(grid, vec3<f32>(1.0, 0.5, 0.5)),
         uniform_grid_density(grid, vec3<f32>(0.0, 0.5, 0.5)),
@@ -183,7 +183,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
     // Two x voxels with density values 1 and 3. The 2x1x1 trilinear
     // lookup at (1, 0.5, 0.5) is 2; at either x bound it is half of the
     // boundary voxel because out-of-range samples are zero.
-    let grid = UniformGridMediumRecord {
+    let grid = VolumeMediumRecord {
         bounds_min: [0.0, 0.0, 0.0, 0.0],
         bounds_max: [2.0, 1.0, 1.0, 0.0],
         resolution: [2, 1, 1, 0],
@@ -196,6 +196,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        cloud_parameters: [0.0; 4],
     };
     let grid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniform grid probe record"),

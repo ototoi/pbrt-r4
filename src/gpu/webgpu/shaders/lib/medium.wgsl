@@ -1,4 +1,38 @@
-fn uniform_grid_density_value(grid: UniformGridMediumRecord, coordinate: vec3<i32>) -> f32 {
+fn cloud_dnoise(point: vec3<f32>) -> vec3<f32> {
+    let delta = 0.01;
+    let value = noise(point);
+    return vec3<f32>(
+        noise(point + vec3<f32>(delta, 0.0, 0.0)) - value,
+        noise(point + vec3<f32>(0.0, delta, 0.0)) - value,
+        noise(point + vec3<f32>(0.0, 0.0, delta)) - value,
+    ) / delta;
+}
+
+fn cloud_density(medium: VolumeMediumRecord, point: vec3<f32>) -> f32 {
+    var p = medium.cloud_parameters.z * point;
+    if (medium.cloud_parameters.y > 0.0) {
+        var omega = 0.05 * medium.cloud_parameters.y;
+        var frequency = 10.0;
+        for (var octave = 0u; octave < 2u; octave += 1u) {
+            p += omega * cloud_dnoise(frequency * p);
+            omega *= 0.5;
+            frequency *= 1.99;
+        }
+    }
+    var density = 0.0;
+    var omega = 0.5;
+    var frequency = 1.0;
+    for (var octave = 0u; octave < 5u; octave += 1u) {
+        density += omega * noise(frequency * p);
+        omega *= 0.5;
+        frequency *= 1.99;
+    }
+    density = clamp((1.0 - point.y) * 4.5 * medium.cloud_parameters.x * density, 0.0, 1.0);
+    density += 2.0 * max(0.0, 0.5 - point.y);
+    return clamp(density, 0.0, 1.0);
+}
+
+fn uniform_grid_density_value(grid: VolumeMediumRecord, coordinate: vec3<i32>) -> f32 {
     let resolution = vec3<i32>(grid.resolution.xyz);
     if (any(coordinate < vec3<i32>(0)) || any(coordinate >= resolution)) {
         return 0.0;
@@ -8,7 +42,7 @@ fn uniform_grid_density_value(grid: UniformGridMediumRecord, coordinate: vec3<i3
     return volume_data[grid.density_offset_count.x + index];
 }
 
-fn uniform_grid_density(grid: UniformGridMediumRecord, position_medium: vec3<f32>) -> f32 {
+fn uniform_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
     let bounds_diagonal = grid.bounds_max.xyz - grid.bounds_min.xyz;
     let unit = (position_medium - grid.bounds_min.xyz) / bounds_diagonal;
     let sample_position = unit * vec3<f32>(grid.resolution.xyz) - vec3<f32>(0.5);
@@ -52,7 +86,7 @@ struct UniformGridMajorantSegment {
 }
 
 fn uniform_grid_dda_init(
-    grid: UniformGridMediumRecord,
+    grid: VolumeMediumRecord,
     origin_world: vec3<f32>,
     direction_world: vec3<f32>,
     t_min: f32,
@@ -136,7 +170,7 @@ fn uniform_grid_dda_init(
 }
 
 fn uniform_grid_dda_next(
-    grid: UniformGridMediumRecord,
+    grid: VolumeMediumRecord,
     sigma_t: vec4<f32>,
     dda: ptr<function, UniformGridDda>,
 ) -> UniformGridMajorantSegment {
