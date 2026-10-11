@@ -441,7 +441,7 @@ fn lower_texture_instruction(
     }
 }
 
-fn color_space_id(color_space: ColorSpace) -> u32 {
+pub fn color_space_id(color_space: ColorSpace) -> u32 {
     match color_space {
         ColorSpace::Unknown | ColorSpace::Srgb => 0,
         ColorSpace::Aces2065 => 1,
