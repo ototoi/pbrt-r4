@@ -221,6 +221,17 @@ fn majorant_handles_negative_indices_and_empty_cells() {
 }
 
 #[test]
+fn majorant_is_x_fastest_and_clips_to_inclusive_bounds() {
+    let (bytes, _) = full_tree(false);
+    let medium = decode_density_grid(&bytes).unwrap();
+    let majorant = build_majorant(&medium).unwrap();
+
+    assert_eq!(majorant[9].to_bits(), (137.0_f32 / 512.0).to_bits());
+    assert_eq!(majorant[9 * 64].to_bits(), (81.0_f32 / 512.0).to_bits());
+    assert_eq!(majorant[9 * 4096].to_bits(), (74.0_f32 / 512.0).to_bits());
+}
+
+#[test]
 #[ignore = "requires local pbrt-v4-scenes assets"]
 fn converts_real_cloud_asset() {
     let mut params = ParameterDictionary::new();
