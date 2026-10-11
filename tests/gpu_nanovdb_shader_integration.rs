@@ -87,6 +87,12 @@ fn sparse_grid_probe() {
     output_values[7] = segment.t_max;
     output_values[8] = segment.sigma_maj.x;
 }
+
+@compute @workgroup_size(1)
+fn sparse_grid_multi_probe() {
+    output_values[0] = sparse_grid_get_value(volume_media[0], vec3<i32>(-1, 0, 0));
+    output_values[1] = sparse_grid_get_value(volume_media[1], vec3<i32>(0, 0, 0));
+}
 "#;
 
 const ASSET_PROBE_SHADER: &str = r#"
@@ -387,6 +393,83 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
         1,
         "out-of-range leaf child must raise render error"
     );
+
+    let mut first_grid = grid;
+    first_grid.sparse_grid_ranges = [[0, 1, 0, 32768], [0; 4]];
+    let mut second_grid = grid;
+    second_grid.sparse_grid_ranges = [[1, 1, 32768, 32768], [0; 4]];
+    let multi_volume_buffer = storage_buffer(
+        device,
+        "NanoVDB multi-grid volume records",
+        &[first_grid, second_grid],
+    );
+    let multi_roots = [
+        SparseGridRootRecord {
+            block: [-1, 0, 0],
+            child_offset: u32::MAX,
+            value: 9.0,
+            padding: [0; 3],
+        },
+        SparseGridRootRecord {
+            block: [0; 3],
+            child_offset: 32768,
+            value: 0.0,
+            padding: [0; 3],
+        },
+    ];
+    let multi_roots_buffer = storage_buffer(device, "NanoVDB multi-grid roots", &multi_roots);
+    let mut multi_entries = vec![
+        SparseGridEntryRecord {
+            child_offset: u32::MAX,
+            value: 2.0,
+        };
+        65536
+    ];
+    multi_entries[32768].value = 17.0;
+    let multi_entries_buffer = storage_buffer(device, "NanoVDB multi-grid entries", &multi_entries);
+    let multi_render_error_buffer = storage_buffer(
+        device,
+        "NanoVDB multi-grid render error",
+        &[RenderError::zeroed()],
+    );
+    let multi_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("NanoVDB multi-grid bind group"),
+        layout: &layout,
+        entries: &[
+            binding(11, &multi_render_error_buffer),
+            binding(75, &multi_volume_buffer),
+            binding(76, &volume_data_buffer),
+            binding(77, &multi_roots_buffer),
+            binding(78, &multi_entries_buffer),
+            binding(79, &output_buffer),
+        ],
+    });
+    let multi_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("NanoVDB multi-grid probe pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some("sparse_grid_multi_probe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&multi_pipeline);
+        pass.set_bind_group(0, &multi_bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback, 0, 8);
+    encoder.copy_buffer_to_buffer(
+        &multi_render_error_buffer,
+        0,
+        &error_readback,
+        0,
+        std::mem::size_of::<RenderError>() as u64,
+    );
+    context.queue.submit(Some(encoder.finish()));
+    assert_eq!(&read_f32_buffer(device, &readback)[..2], &[9.0, 17.0]);
+    assert_eq!(read_u32_buffer(device, &error_readback)[0], 0);
 }
 
 #[test]
