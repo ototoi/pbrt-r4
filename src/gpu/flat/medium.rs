@@ -17,6 +17,7 @@ pub enum MediumData {
     Homogeneous,
     UniformGrid(UniformGridMedium),
     Cloud(CloudMedium),
+    RgbGrid(RgbGridMedium),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -36,4 +37,17 @@ pub struct CloudMedium {
     pub density: f32,
     pub wispiness: f32,
     pub frequency: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RgbGridMedium {
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    pub resolution: [u32; 3],
+    pub sigma_a: Option<Vec<[f32; 3]>>,
+    pub sigma_s: Option<Vec<[f32; 3]>>,
+    pub scale: f32,
+    pub color_space: super::texture::ColorSpace,
+    pub majorant_resolution: [u32; 3],
+    pub majorant: Vec<f32>,
 }

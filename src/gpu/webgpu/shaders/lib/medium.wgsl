@@ -67,6 +67,59 @@ fn uniform_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) ->
     return mix(mix(d00, d10, delta.y), mix(d01, d11, delta.y), delta.z);
 }
 
+fn rgb_grid_coefficient_value(
+    grid: VolumeMediumRecord,
+    offset_count: vec4<u32>,
+    coordinate: vec3<i32>,
+    lambda: vec4<f32>,
+) -> vec4<f32> {
+    if (offset_count.x == 0xffffffffu) { return vec4<f32>(1.0); }
+    let resolution = vec3<i32>(grid.resolution.xyz);
+    if (any(coordinate < vec3<i32>(0)) || any(coordinate >= resolution)) {
+        return vec4<f32>(0.0);
+    }
+    let index = u32(coordinate.z) * grid.resolution.y * grid.resolution.x
+        + u32(coordinate.y) * grid.resolution.x + u32(coordinate.x);
+    let offset = offset_count.x + 3u * index;
+    let rgb = vec3<f32>(volume_data[offset], volume_data[offset + 1u], volume_data[offset + 2u]);
+    return rgb_to_unbounded_spectrum4(rgb, lambda, grid.resolution.w);
+}
+
+fn rgb_grid_coefficient(
+    grid: VolumeMediumRecord,
+    offset_count: vec4<u32>,
+    position_medium: vec3<f32>,
+    lambda: vec4<f32>,
+) -> vec4<f32> {
+    if (offset_count.x == 0xffffffffu) { return vec4<f32>(1.0); }
+    let bounds_diagonal = grid.bounds_max.xyz - grid.bounds_min.xyz;
+    let unit = (position_medium - grid.bounds_min.xyz) / bounds_diagonal;
+    let sample_position = unit * vec3<f32>(grid.resolution.xyz) - vec3<f32>(0.5);
+    let base = vec3<i32>(floor(sample_position));
+    let delta = sample_position - vec3<f32>(base);
+    let d00 = mix(
+        rgb_grid_coefficient_value(grid, offset_count, base, lambda),
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(1, 0, 0), lambda),
+        delta.x,
+    );
+    let d10 = mix(
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(0, 1, 0), lambda),
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(1, 1, 0), lambda),
+        delta.x,
+    );
+    let d01 = mix(
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(0, 0, 1), lambda),
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(1, 0, 1), lambda),
+        delta.x,
+    );
+    let d11 = mix(
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(0, 1, 1), lambda),
+        rgb_grid_coefficient_value(grid, offset_count, base + vec3<i32>(1, 1, 1), lambda),
+        delta.x,
+    );
+    return mix(mix(d00, d10, delta.y), mix(d01, d11, delta.y), delta.z);
+}
+
 struct UniformGridDda {
     valid: u32,
     t_min: f32,

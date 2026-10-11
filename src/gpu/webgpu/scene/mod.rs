@@ -31,7 +31,8 @@ mod texture;
 mod upload;
 
 pub use texture::{
-    lower_texture_library_records, resolve_infinite_image_bindings, texture_binding_counts,
+    color_space_id, lower_texture_library_records, resolve_infinite_image_bindings,
+    texture_binding_counts,
 };
 
 use geometry::convert_geometry;

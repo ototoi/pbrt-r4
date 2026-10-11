@@ -4,7 +4,7 @@ use pbrt_r4::gpu::webgpu::shader::compose_source;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
 use wgpu::util::DeviceExt;
 
-const RESULT_VECTORS: u64 = 33;
+const RESULT_VECTORS: u64 = 37;
 
 const PROBE_SHADER: &str = r#"
 @group(0) @binding(77) var<storage, read_write> output_values: array<vec4<f32>>;
@@ -161,6 +161,18 @@ fn uniform_grid_probe() {
         uniform_grid_density(two_grid, vec3<f32>(0.25, 0.25, 0.75)),
         uniform_grid_density(two_grid, vec3<f32>(1.0)),
     );
+    var rgb_grid = grid;
+    rgb_grid.bounds_max = vec4<f32>(2.0, 1.0, 1.0, 0.0);
+    rgb_grid.resolution = vec4<u32>(2u, 1u, 1u, 0u);
+    rgb_grid.density_offset_count = vec4<u32>(13u, 2u, 0u, 0u);
+    rgb_grid.coefficient_offset_count = vec4<u32>(0xffffffffu, 0u, 0u, 0u);
+    let rgb_lambda = RGB_LAMBDA_PLACEHOLDER;
+    for (var color_space = 0u; color_space < 4u; color_space += 1u) {
+        rgb_grid.resolution.w = color_space;
+        output_values[33u + color_space] = rgb_grid_coefficient(
+            rgb_grid, rgb_grid.density_offset_count, vec3<f32>(1.0, 0.5, 0.5), rgb_lambda,
+        );
+    }
 }
 "#;
 
@@ -169,9 +181,9 @@ fn uniform_grid_probe() {
 fn uniform_grid_lookup_and_dda_match_reference_values() {
     let context = Context::new(
         RequiredLimits {
-            storage_buffers_per_shader_stage: 3,
+            storage_buffers_per_shader_stage: 4,
             uniform_buffers_per_shader_stage: 0,
-            buffers_and_acceleration_structures_per_shader_stage: 3,
+            buffers_and_acceleration_structures_per_shader_stage: 4,
             bind_groups: 1,
         },
         0,
@@ -189,6 +201,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
         resolution: [2, 1, 1, 0],
         majorant_resolution: [2, 1, 1, 0],
         density_offset_count: [0, 2, 0, 0],
+        coefficient_offset_count: [0; 4],
         majorant_offset_count: [2, 2, 0, 0],
         medium_from_world: [
             [1.0, 0.0, 0.0, 0.0],
@@ -203,12 +216,33 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
         contents: bytemuck::bytes_of(&grid),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    // Density values followed by the two majorant values.
+    // Density values and majorant probe values, followed by two RGB voxels.
+    let mut volume_values = vec![
+        1.0_f32, 3.0, 4.0, 5.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 0.0,
+    ];
+    let rgb_voxels = [[0.4_f32, 0.2, 0.1], [0.1_f32, 0.5, 0.3]];
+    volume_values.extend(rgb_voxels.into_iter().flatten());
     let volume_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniform grid probe data"),
-        contents: bytemuck::cast_slice(&[
-            1.0_f32, 3.0, 4.0, 5.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 0.0,
-        ]),
+        contents: bytemuck::cast_slice(&volume_values),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let mut rgb_table = Vec::new();
+    for table in [
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_srgb.bin")).as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_aces.bin")).as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_dci_p3.bin")).as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/rgb_to_spectrum_rec2020.bin")).as_slice(),
+    ] {
+        rgb_table.extend(
+            table
+                .chunks_exact(4)
+                .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap())),
+        );
+    }
+    let rgb_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("RGB spectrum conversion tables"),
+        contents: bytemuck::cast_slice(&rgb_table),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let output = device.create_buffer(&wgpu::BufferDescriptor {
@@ -228,6 +262,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
         entries: &[
             storage_layout(75, true),
             storage_layout(76, true),
+            storage_layout(41, true),
             storage_layout(77, false),
         ],
     });
@@ -244,12 +279,27 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
                 resource: volume_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
+                binding: 41,
+                resource: rgb_table_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
                 binding: 77,
                 resource: output.as_entire_binding(),
             },
         ],
     });
-    let source = compose_source(PROBE_SHADER);
+    let lambda = pbrt_r4::util::spectrum::SampledWavelengths::default();
+    let lambda_values = lambda
+        .lambda()
+        .iter()
+        .map(|value| format!("{value:.8}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let probe_shader = PROBE_SHADER.replace(
+        "RGB_LAMBDA_PLACEHOLDER",
+        &format!("vec4<f32>({lambda_values})"),
+    );
+    let source = compose_source(&probe_shader);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("uniform grid numerical probe"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -341,6 +391,44 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
     assert_eq!(&values[120..124], &[0.0; 4]);
     assert_eq!(&values[124..128], &[1.0, 0.125, 0.0, 0.0]);
     assert_eq!(&values[128..132], &[13.5, 1.25, 14.0, 2.125]);
+    let color_spaces = [
+        &pbrt_r4::util::spectrum::SRGB,
+        &pbrt_r4::util::spectrum::ACES2065_1,
+        &pbrt_r4::util::spectrum::DCI_P3,
+        &pbrt_r4::util::spectrum::REC2020,
+    ];
+    for (color_space_id, color_space) in color_spaces.into_iter().enumerate() {
+        let a = pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(
+            color_space,
+            rgb_voxels[0],
+        )
+        .sample(&lambda);
+        let b = pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(
+            color_space,
+            rgb_voxels[1],
+        )
+        .sample(&lambda);
+        for lane in 0..4 {
+            let expected = 0.5 * (a[lane] + b[lane]);
+            let actual = values[(33 + color_space_id) * 4 + lane];
+            assert!(
+                (actual - expected).abs() <= 3e-6,
+                "RGB spectrum sample {actual} differs from CPU {expected}"
+            );
+            let majorant = 0.5
+                * (pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(
+                    color_space,
+                    rgb_voxels[0],
+                )
+                .max_value()
+                    + pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(
+                        color_space,
+                        rgb_voxels[1],
+                    )
+                    .max_value());
+            assert!(actual <= majorant, "{actual} exceeds {majorant}");
+        }
+    }
 }
 
 fn storage_layout(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {

@@ -17,26 +17,31 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
         let medium = media[ray.medium_id];
-        if (medium.kind > 2u) {
+        if (medium.kind > 3u) {
             set_render_error();
             return;
         }
         let lambda = load_sample_lambda(pixel_index);
-        let sigma_a = evaluate_spectrum(medium.sigma_a, lambda);
-        let sigma_s = evaluate_spectrum(medium.sigma_s, lambda);
+        var sigma_a = vec4<f32>(0.0);
+        var sigma_s = vec4<f32>(0.0);
+        if (medium.kind != 3u) {
+            sigma_a = evaluate_spectrum(medium.sigma_a, lambda);
+            sigma_s = evaluate_spectrum(medium.sigma_s, lambda);
+        }
         let sigma_t = sigma_a + sigma_s;
         if (any(sigma_a < vec4<f32>(0.0)) || any(sigma_s < vec4<f32>(0.0))
             || any(sigma_t != sigma_t) || any(abs(sigma_t) > vec4<f32>(RAY_T_MAX))) {
             set_render_error();
             return;
         }
-        if (medium.kind == 1u || medium.kind == 2u) {
+        if (medium.kind == 1u || medium.kind == 2u || medium.kind == 3u) {
             if (medium.volume_index >= arrayLength(&volume_media)) {
                 set_render_error();
                 return;
             }
             let grid = volume_media[medium.volume_index];
             let direction_world = normalize(ray.direction.xyz);
+            let majorant_sigma_t = select(sigma_t, vec4<f32>(1.0), medium.kind == 3u);
             var dda = uniform_grid_dda_init(
                 grid, ray.origin.xyz, direction_world, 0.0, segment_distance,
             );
@@ -45,7 +50,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             var scattered = false;
             var absorbed = false;
             while (dda.valid != 0u && dda.t_min < dda.t_max) {
-                let segment = uniform_grid_dda_next(grid, sigma_t, &dda);
+                let segment = uniform_grid_dda_next(grid, majorant_sigma_t, &dda);
                 if (!(segment.t_max > segment.t_min)) { continue; }
                 if (any(segment.sigma_maj != segment.sigma_maj)
                     || any(abs(segment.sigma_maj) > vec4<f32>(RAY_T_MAX))) {
@@ -77,14 +82,23 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         let position_world = ray.origin.xyz + direction_world * candidate_t;
                         let position_medium = (grid.medium_from_world
                             * vec4<f32>(position_world, 1.0)).xyz;
-                        var density: f32;
-                        if (medium.kind == 2u) {
-                            density = cloud_density(grid, position_medium);
+                        var local_sigma_a: vec4<f32>;
+                        var local_sigma_s: vec4<f32>;
+                        if (medium.kind == 3u) {
+                            local_sigma_a = grid.cloud_parameters.x
+                                * rgb_grid_coefficient(grid, grid.density_offset_count, position_medium, lambda);
+                            local_sigma_s = grid.cloud_parameters.x
+                                * rgb_grid_coefficient(grid, grid.coefficient_offset_count, position_medium, lambda);
                         } else {
-                            density = uniform_grid_density(grid, position_medium);
+                            var density: f32;
+                            if (medium.kind == 2u) {
+                                density = cloud_density(grid, position_medium);
+                            } else {
+                                density = uniform_grid_density(grid, position_medium);
+                            }
+                            local_sigma_a = sigma_a * density;
+                            local_sigma_s = sigma_s * density;
                         }
-                        let local_sigma_a = sigma_a * density;
-                        let local_sigma_s = sigma_s * density;
                         if (any(local_sigma_a != local_sigma_a)
                             || any(local_sigma_s != local_sigma_s)
                             || any(abs(local_sigma_a) > vec4<f32>(RAY_T_MAX))
