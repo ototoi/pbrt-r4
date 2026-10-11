@@ -458,6 +458,7 @@ fn run_stage(
         resolution: [2, 2, 2, 0],
         majorant_resolution: [1, 1, cells, 0],
         density_offset_count: [0, 8, 0, 0],
+        coefficient_offset_count: [0; 4],
         majorant_offset_count: [8, cells, 0, 0],
         medium_from_world: [
             [1.0, 0.0, 0.0, 0.0],

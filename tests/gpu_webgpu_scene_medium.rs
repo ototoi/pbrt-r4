@@ -1,6 +1,8 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::flat::{CloudMedium, Medium, MediumData, UniformGridMedium};
+use pbrt_r4::gpu::flat::{
+    CloudMedium, ColorSpace, Medium, MediumData, RgbGridMedium, UniformGridMedium,
+};
 use pbrt_r4::gpu::webgpu::scene::medium::convert_media;
 
 fn homogeneous_medium() -> Medium {
@@ -108,4 +110,114 @@ fn packs_cloud_parameters_and_unit_majorant() {
     assert_eq!(converted.volumes[0].majorant_offset_count, [0, 1, 0, 0]);
     assert_eq!(converted.volumes[0].cloud_parameters, [0.75, 0.5, 4.0, 0.0]);
     assert_eq!(converted.volume_data, [1.0]);
+}
+
+#[test]
+fn packs_rgbgrid_coefficients_scale_color_space_and_majorants() {
+    let mut medium = homogeneous_medium();
+    medium.kind = "rgbgrid".to_owned();
+    medium.transform = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    medium.data = MediumData::RgbGrid(RgbGridMedium {
+        bounds_min: [0.0; 3],
+        bounds_max: [1.0; 3],
+        resolution: [2, 1, 1],
+        sigma_a: Some(vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
+        sigma_s: Some(vec![[0.7, 0.8, 0.9], [1.0, 1.1, 1.2]]),
+        scale: 2.0,
+        color_space: ColorSpace::Aces2065,
+        majorant_resolution: [16; 3],
+        majorant: vec![3.0; 16 * 16 * 16],
+    });
+
+    let converted = convert_media(&[medium], 0).unwrap();
+
+    assert_eq!(converted.records[0].kind, 3);
+    assert_eq!(converted.records[0].volume_index, 0);
+    let record = converted.volumes[0];
+    assert_eq!(record.resolution, [2, 1, 1, 1]);
+    assert_eq!(record.density_offset_count, [0, 2, 0, 0]);
+    assert_eq!(record.coefficient_offset_count, [6, 2, 0, 0]);
+    assert_eq!(record.majorant_offset_count, [12, 4096, 0, 0]);
+    assert_eq!(record.cloud_parameters, [2.0, 0.0, 0.0, 0.0]);
+    assert_eq!(converted.volume_data.len(), 12 + 4096);
+    assert_eq!(&converted.volume_data[..6], &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    assert_eq!(
+        &converted.volume_data[6..12],
+        &[0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
+    );
+    assert!(converted.volume_data[12..]
+        .iter()
+        .all(|value| *value == 3.0));
+}
+
+#[test]
+fn packs_missing_rgbgrid_coefficient_as_invalid_range() {
+    let mut medium = homogeneous_medium();
+    medium.kind = "rgbgrid".to_owned();
+    medium.transform = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    medium.data = MediumData::RgbGrid(RgbGridMedium {
+        bounds_min: [0.0; 3],
+        bounds_max: [1.0; 3],
+        resolution: [1; 3],
+        sigma_a: None,
+        sigma_s: Some(vec![[0.5; 3]]),
+        scale: 1.0,
+        color_space: ColorSpace::Srgb,
+        majorant_resolution: [16; 3],
+        majorant: vec![2.0; 16 * 16 * 16],
+    });
+    let converted = convert_media(&[medium], 0).unwrap();
+    assert_eq!(
+        converted.volumes[0].density_offset_count,
+        [u32::MAX, 0, 0, 0]
+    );
+    assert_eq!(converted.volumes[0].coefficient_offset_count, [0, 1, 0, 0]);
+}
+
+#[test]
+fn rejects_malformed_rgbgrid_upload_payloads() {
+    let rgb_grid_medium = || {
+        let mut medium = homogeneous_medium();
+        medium.kind = "rgbgrid".to_owned();
+        medium.transform = [
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ];
+        medium.data = MediumData::RgbGrid(RgbGridMedium {
+            bounds_min: [0.0; 3],
+            bounds_max: [1.0; 3],
+            resolution: [1; 3],
+            sigma_a: Some(vec![[0.5; 3]]),
+            sigma_s: None,
+            scale: 1.0,
+            color_space: ColorSpace::Srgb,
+            majorant_resolution: [16; 3],
+            majorant: vec![1.0; 16 * 16 * 16],
+        });
+        medium
+    };
+
+    let mut invalid_majorant_count = rgb_grid_medium();
+    let MediumData::RgbGrid(grid) = &mut invalid_majorant_count.data else {
+        unreachable!();
+    };
+    grid.majorant.pop();
+    assert!(convert_media(&[invalid_majorant_count], 0).is_err());
+
+    let mut invalid_majorant_value = rgb_grid_medium();
+    let MediumData::RgbGrid(grid) = &mut invalid_majorant_value.data else {
+        unreachable!();
+    };
+    grid.majorant[0] = f32::NAN;
+    assert!(convert_media(&[invalid_majorant_value], 0).is_err());
+
+    let mut missing_coefficients = rgb_grid_medium();
+    let MediumData::RgbGrid(grid) = &mut missing_coefficients.data else {
+        unreachable!();
+    };
+    grid.sigma_a = None;
+    assert!(convert_media(&[missing_coefficients], 0).is_err());
 }
