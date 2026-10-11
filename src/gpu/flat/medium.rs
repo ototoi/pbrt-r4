@@ -19,6 +19,7 @@ pub enum MediumData {
     UniformGrid(UniformGridMedium),
     Cloud(CloudMedium),
     RgbGrid(RgbGridMedium),
+    NanoVDB(NanoVDBMedium),
 }
 
 #[derive(Clone, Debug, PartialEq)]
