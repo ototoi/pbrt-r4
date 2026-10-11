@@ -16,6 +16,7 @@ pub mod output;
 pub mod portal;
 pub mod render_settings;
 pub mod scene;
+pub mod sparse_grid;
 pub mod spectrum;
 pub mod texture;
 pub mod transform;
