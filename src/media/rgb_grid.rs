@@ -40,6 +40,7 @@ impl RGBGridMedium {
         let le = parameters.get_rgb_array("Le");
         let p0 = parameters.get_one_point3f("p0", &Point3f::new(0.0, 0.0, 0.0));
         let p1 = parameters.get_one_point3f("p1", &Point3f::new(1.0, 1.0, 1.0));
+        let color_space = parameters.color_space();
 
         if sigma_a.is_empty() && sigma_s.is_empty() {
             return Err(PbrtError::error(
@@ -87,13 +88,19 @@ impl RGBGridMedium {
                 nx,
                 ny,
                 nz,
-                sigma_a.into_iter().map(RGBUnboundedSpectrum::new).collect(),
+                sigma_a
+                    .into_iter()
+                    .map(|rgb| RGBUnboundedSpectrum::from_color_space(color_space, rgb))
+                    .collect(),
             )),
             (!sigma_s.is_empty()).then_some(SampledGrid::new(
                 nx,
                 ny,
                 nz,
-                sigma_s.into_iter().map(RGBUnboundedSpectrum::new).collect(),
+                sigma_s
+                    .into_iter()
+                    .map(|rgb| RGBUnboundedSpectrum::from_color_space(color_space, rgb))
+                    .collect(),
             )),
             parameters.get_one_float("scale", 1.0),
             (!le.is_empty()).then_some(SampledGrid::new(

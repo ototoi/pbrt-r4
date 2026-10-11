@@ -3213,6 +3213,13 @@ fn rgb_grid_factory_rejects_missing_or_invalid_coefficients_and_emission() {
         .to_string()
         .contains("finite, non-negative sigma_s"));
 
+    let mut spectral_overflow = ParameterDictionary::default();
+    spectral_overflow.add_rgb("rgb sigma_a", &[f32::MAX, f32::MAX, f32::MAX]);
+    assert!(rgb_grid_scene(spectral_overflow)
+        .unwrap_err()
+        .to_string()
+        .contains("finite sigma_a spectral maxima representable as f32"));
+
     let mut emission = ParameterDictionary::default();
     emission.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
     emission.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);

@@ -279,6 +279,19 @@ fn create_rgb_grid(medium: &NodeMedium) -> Result<RgbGridMedium, PbrtError> {
             .map(|rgb| RGBUnboundedSpectrum::from_color_space(color_space_spectrum, *rgb))
             .collect()
     });
+    for (name, spectra) in [("sigma_a", &sigma_a_spectra), ("sigma_s", &sigma_s_spectra)] {
+        if spectra.as_ref().is_some_and(|spectra| {
+            spectra.iter().any(|spectrum| {
+                let maximum = spectrum.max_value();
+                !maximum.is_finite() || !(maximum as f32).is_finite()
+            })
+        }) {
+            return Err(PbrtError::error(&format!(
+                "GPU rgbgrid medium \"{}\" requires finite {name} spectral maxima representable as f32.",
+                medium.name
+            )));
+        }
+    }
     let majorant_resolution = [16u32; 3];
     let mut majorant = vec![0.0f32; 16 * 16 * 16];
     for z in 0..16i32 {
