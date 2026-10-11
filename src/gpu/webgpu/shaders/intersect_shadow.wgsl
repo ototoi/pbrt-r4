@@ -41,7 +41,7 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
         let medium = media[shadow.medium_id];
-        if (medium.kind > 3u) {
+        if (medium.kind > 4u) {
             set_render_error();
             return;
         }
@@ -60,7 +60,7 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
         let infinite_segment = shadow.infinite_distance != 0u && !hit;
-        if (medium.kind == 1u || medium.kind == 2u || medium.kind == 3u) {
+        if (medium.kind == 1u || medium.kind == 2u || medium.kind == 3u || medium.kind == 4u) {
             if (medium.volume_index >= arrayLength(&volume_media)) {
                 set_render_error();
                 return;
@@ -120,6 +120,8 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
                             var density: f32;
                             if (medium.kind == 2u) {
                                 density = cloud_density(grid, position_medium);
+                            } else if (medium.kind == 4u) {
+                                density = sparse_grid_density(grid, position_medium);
                             } else {
                                 density = uniform_grid_density(grid, position_medium);
                             }

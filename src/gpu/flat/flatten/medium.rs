@@ -23,6 +23,7 @@ pub fn register_medium(
         && medium.kind != "uniformgrid"
         && medium.kind != "cloud"
         && medium.kind != "rgbgrid"
+        && medium.kind != "nanovdb"
     {
         return Err(PbrtError::error(&format!(
             "GPU backend does not support medium type \"{}\" (medium \"{}\").",
@@ -153,6 +154,7 @@ pub fn register_medium(
             "uniformgrid" => MediumData::UniformGrid(create_uniform_grid(medium)?),
             "cloud" => MediumData::Cloud(create_cloud(medium)?),
             "rgbgrid" => MediumData::RgbGrid(create_rgb_grid(medium)?),
+            "nanovdb" => MediumData::NanoVDB(super::nanovdb::create_nanovdb(&medium.params)?),
             _ => MediumData::Homogeneous,
         },
     });

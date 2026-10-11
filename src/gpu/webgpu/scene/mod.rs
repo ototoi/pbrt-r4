@@ -63,6 +63,8 @@ pub struct Scene {
     pub medium_buffer: wgpu::Buffer,
     pub volume_medium_buffer: wgpu::Buffer,
     pub volume_data_buffer: wgpu::Buffer,
+    pub sparse_grid_roots_buffer: wgpu::Buffer,
+    pub sparse_grid_entries_buffer: wgpu::Buffer,
     pub bssrdf_material_buffer: wgpu::Buffer,
     pub bssrdf_tables: BSSRDFTableResources,
     pub material_root_buffer: wgpu::Buffer,
@@ -130,6 +132,16 @@ impl Scene {
             device,
             converted_media.volume_data.len(),
             "volume data",
+        )?;
+        validate_storage_array_size::<super::abi::SparseGridRootRecord>(
+            device,
+            converted_media.sparse_grid_roots.len(),
+            "sparse grid roots",
+        )?;
+        validate_storage_array_size::<super::abi::SparseGridEntryRecord>(
+            device,
+            converted_media.sparse_grid_entries.len(),
+            "sparse grid entries",
         )?;
         let media = converted_media.records;
         let material_table = MaterialTable::from_flat(&flat)?;
@@ -217,6 +229,18 @@ impl Scene {
             contents: buffer_contents(&converted_media.volume_data),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let sparse_grid_roots_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 sparse grid roots SBO"),
+                contents: buffer_contents(&converted_media.sparse_grid_roots),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let sparse_grid_entries_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 sparse grid entries SBO"),
+                contents: buffer_contents(&converted_media.sparse_grid_entries),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let material_root_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 material tree layouts SBO"),
             contents: buffer_contents(&material_table.roots),
@@ -505,6 +529,8 @@ impl Scene {
             medium_buffer,
             volume_medium_buffer,
             volume_data_buffer,
+            sparse_grid_roots_buffer,
+            sparse_grid_entries_buffer,
             bssrdf_material_buffer,
             bssrdf_tables,
             material_root_buffer,
@@ -557,6 +583,10 @@ impl Scene {
             ResourceId::Medium => Some(self.medium_buffer.as_entire_binding()),
             ResourceId::VolumeMedium => Some(self.volume_medium_buffer.as_entire_binding()),
             ResourceId::VolumeData => Some(self.volume_data_buffer.as_entire_binding()),
+            ResourceId::SparseGridRoots => Some(self.sparse_grid_roots_buffer.as_entire_binding()),
+            ResourceId::SparseGridEntries => {
+                Some(self.sparse_grid_entries_buffer.as_entire_binding())
+            }
             ResourceId::BSSRDFMaterial => Some(self.bssrdf_material_buffer.as_entire_binding()),
             ResourceId::BSSRDFTable => Some(self.bssrdf_tables.records.as_entire_binding()),
             ResourceId::BSSRDFValues => Some(self.bssrdf_tables.values.as_entire_binding()),

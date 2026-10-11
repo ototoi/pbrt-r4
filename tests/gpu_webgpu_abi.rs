@@ -43,7 +43,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Instance>(), 160);
     assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
     assert_eq!(std::mem::offset_of!(MediumRecord, volume_index), 20);
-    assert_eq!(std::mem::size_of::<VolumeMediumRecord>(), 192);
+    assert_eq!(std::mem::size_of::<VolumeMediumRecord>(), 304);
     assert_eq!(
         std::mem::offset_of!(VolumeMediumRecord, cloud_parameters),
         176
@@ -51,6 +51,30 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(
         std::mem::offset_of!(VolumeMediumRecord, coefficient_offset_count),
         80
+    );
+    assert_eq!(
+        std::mem::offset_of!(VolumeMediumRecord, sparse_grid_ranges),
+        192
+    );
+    assert_eq!(
+        std::mem::offset_of!(VolumeMediumRecord, sparse_grid_background),
+        224
+    );
+    assert_eq!(
+        std::mem::offset_of!(VolumeMediumRecord, grid_inverse_map),
+        240
+    );
+    assert_eq!(
+        std::mem::offset_of!(VolumeMediumRecord, grid_translation),
+        288
+    );
+    assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::SparseGridEntryRecord>(),
+        8
+    );
+    assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::SparseGridRootRecord>(),
+        32
     );
     assert_eq!(std::mem::size_of::<MaterialNode>(), 48);
     assert_eq!(std::mem::offset_of!(MaterialNode, bssrdf_index), 32);
