@@ -77,6 +77,7 @@ pub struct VolumeMediumRecord {
     pub resolution: [u32; 4],
     pub majorant_resolution: [u32; 4],
     pub density_offset_count: [u32; 4],
+    pub coefficient_offset_count: [u32; 4],
     pub majorant_offset_count: [u32; 4],
     pub medium_from_world: [[f32; 4]; 4],
     pub cloud_parameters: [f32; 4],

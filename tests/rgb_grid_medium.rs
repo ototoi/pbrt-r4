@@ -20,6 +20,24 @@ fn rgb_grid_sample_point_uses_sigma_grids() {
 }
 
 #[test]
+fn rgb_grid_sigma_grids_use_parameter_color_space() {
+    use pbrt_r4::util::spectrum::{rgb_to_spectrum::ACES2065_1, RGBUnboundedSpectrum};
+
+    let rgb = [0.25, 0.5, 0.75];
+    let mut parameters = ParameterDictionary::new();
+    parameters.set_color_space(&ACES2065_1);
+    parameters.add_rgb("sigma_a", &rgb);
+    let medium = RGBGridMedium::create(&parameters, &Transform::identity()).unwrap();
+
+    let lambda = SampledWavelengths::sample_visible(0.37);
+    let actual = medium
+        .sample_point(&Point3f::new(0.5, 0.5, 0.5), &lambda)
+        .sigma_a;
+    let expected = RGBUnboundedSpectrum::from_color_space(&ACES2065_1, rgb).sample(&lambda);
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn rgb_grid_create_uses_illuminant_le_grid() {
     let mut parameters = ParameterDictionary::new();
     parameters.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);

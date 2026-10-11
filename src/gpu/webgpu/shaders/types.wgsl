@@ -306,6 +306,7 @@ struct VolumeMediumRecord {
     resolution: vec4<u32>,
     majorant_resolution: vec4<u32>,
     density_offset_count: vec4<u32>,
+    coefficient_offset_count: vec4<u32>,
     majorant_offset_count: vec4<u32>,
     medium_from_world: mat4x4<f32>,
     cloud_parameters: vec4<f32>,

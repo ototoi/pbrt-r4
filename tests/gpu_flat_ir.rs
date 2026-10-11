@@ -3109,6 +3109,126 @@ fn uniform_grid_factory_orders_bounds_and_accepts_empty_optional_grids() {
     }
 }
 
+fn rgb_grid_scene(params: ParameterDictionary) -> Result<FlatScene, PbrtError> {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "rgb-grid".to_owned(),
+                kind: "rgbgrid".to_owned(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+    flatten_node(Arc::new(RwLock::new(root)))
+}
+
+#[test]
+fn rgb_grid_factory_preserves_rgb_grids_scale_and_color_space() {
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_int("ny", 1);
+    params.add_int("nz", 1);
+    params.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    params.add_rgb("rgb sigma_s", &[0.7, 0.8, 0.9, 1.0, 1.1, 1.2]);
+    params.add_float("scale", 2.0);
+    params.set_color_space(&pbrt_r4::util::spectrum::rgb_to_spectrum::ACES2065_1);
+    let scene = rgb_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::RgbGrid(grid) = &scene.media[0].data else {
+        panic!("expected rgbgrid payload");
+    };
+    assert_eq!(grid.resolution, [2, 1, 1]);
+    assert_eq!(grid.sigma_a.as_ref().unwrap()[0], [0.1, 0.2, 0.3]);
+    assert_eq!(grid.sigma_s.as_ref().unwrap()[1], [1.0, 1.1, 1.2]);
+    assert_eq!(grid.scale, 2.0);
+    assert_eq!(grid.color_space, ColorSpace::Aces2065);
+    assert_eq!(grid.majorant_resolution, [16; 3]);
+    assert_eq!(grid.majorant.len(), 16 * 16 * 16);
+}
+
+#[test]
+fn rgb_grid_majorants_match_v4_spectral_maximum_rule() {
+    let rgb_a = [[0.1, 0.3, 0.2], [0.4, 0.2, 0.1]];
+    let rgb_s = [[0.2, 0.1, 0.3], [0.1, 0.5, 0.2]];
+    let spectra_a: Vec<_> = rgb_a
+        .iter()
+        .map(|rgb| pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(&SRGB, *rgb))
+        .collect();
+    let spectra_s: Vec<_> = rgb_s
+        .iter()
+        .map(|rgb| pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(&SRGB, *rgb))
+        .collect();
+    let reference_a = SampledGrid::new(2, 1, 1, spectra_a);
+    let reference_s = SampledGrid::new(2, 1, 1, spectra_s);
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_rgb("rgb sigma_a", &[0.1, 0.3, 0.2, 0.4, 0.2, 0.1]);
+    params.add_rgb("rgb sigma_s", &[0.2, 0.1, 0.3, 0.1, 0.5, 0.2]);
+    params.add_float("scale", 1.5);
+    let scene = rgb_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::RgbGrid(grid) = &scene.media[0].data else {
+        panic!("expected rgbgrid payload");
+    };
+    for z in 0..16 {
+        for y in 0..16 {
+            for x in 0..16 {
+                let p0 = Point3f::new(x as Float / 16.0, y as Float / 16.0, z as Float / 16.0);
+                let p1 = Point3f::new(
+                    (x + 1) as Float / 16.0,
+                    (y + 1) as Float / 16.0,
+                    (z + 1) as Float / 16.0,
+                );
+                let bounds = Bounds3f::new(&p0, &p1);
+                let index = (z * 16 + y) * 16 + x;
+                let expected =
+                    1.5 * (reference_a.max_value(&bounds) + reference_s.max_value(&bounds));
+                assert_eq!(grid.majorant[index] as Float, expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn rgb_grid_factory_rejects_missing_or_invalid_coefficients_and_emission() {
+    assert!(rgb_grid_scene(ParameterDictionary::default())
+        .unwrap_err()
+        .to_string()
+        .contains("requires sigma_a and/or sigma_s"));
+
+    let mut wrong_count = ParameterDictionary::default();
+    wrong_count.add_int("nx", 2);
+    wrong_count.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
+    assert!(rgb_grid_scene(wrong_count)
+        .unwrap_err()
+        .to_string()
+        .contains("expected 2"));
+
+    let mut negative = ParameterDictionary::default();
+    negative.add_rgb("rgb sigma_s", &[-0.1, 0.2, 0.3]);
+    assert!(rgb_grid_scene(negative)
+        .unwrap_err()
+        .to_string()
+        .contains("finite, non-negative sigma_s"));
+
+    let mut spectral_overflow = ParameterDictionary::default();
+    spectral_overflow.add_rgb("rgb sigma_a", &[f32::MAX, f32::MAX, f32::MAX]);
+    assert!(rgb_grid_scene(spectral_overflow)
+        .unwrap_err()
+        .to_string()
+        .contains("finite sigma_a spectral maxima representable as f32"));
+
+    let mut emission = ParameterDictionary::default();
+    emission.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
+    emission.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);
+    assert!(rgb_grid_scene(emission)
+        .unwrap_err()
+        .to_string()
+        .contains("does not support emission yet"));
+}
+
 #[test]
 fn uniform_grid_factory_rejects_invalid_payloads_and_emission() {
     for value in [-1.0, Float::NAN, Float::INFINITY] {
