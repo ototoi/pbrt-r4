@@ -2,7 +2,8 @@
 
 use bytemuck::{cast_slice, Zeroable};
 use pbrt_r4::gpu::flat::flatten::nanovdb::{create_nanovdb, world_to_index_f};
-use pbrt_r4::gpu::flat::{identity_transform, Medium, MediumData};
+use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseScalarGrid};
+use pbrt_r4::gpu::flat::{identity_transform, Medium, MediumData, NanoVDBMedium};
 use pbrt_r4::gpu::webgpu::abi::{
     RenderError, SparseGridEntryRecord, SparseGridRootRecord, VolumeMediumRecord,
 };
@@ -12,6 +13,59 @@ use pbrt_r4::gpu::webgpu::shader::compose_source;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
 use pbrt_r4::paramdict::ParameterDictionary;
 use wgpu::util::DeviceExt;
+
+#[test]
+fn converts_multiple_sparse_grids_with_global_offsets() {
+    let make_medium = |name: &str, density: f32| Medium {
+        name: name.to_owned(),
+        kind: "nanovdb".to_owned(),
+        sigma_a: 0,
+        sigma_s: 0,
+        le: 0,
+        g: 0.0,
+        transform: identity_transform(),
+        data: MediumData::NanoVDB(NanoVDBMedium {
+            density: SparseScalarGrid {
+                background: 0.0,
+                roots: vec![SparseGridRoot {
+                    block: [0; 3],
+                    entry: SparseGridEntry {
+                        child_index: None,
+                        value: density,
+                    },
+                }],
+                ..Default::default()
+            },
+            index_bbox_min: [0; 3],
+            index_bbox_max: [0; 3],
+            inverse_map_f: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            translation_f: [0.0; 3],
+            bounds_min: [0.0; 3],
+            bounds_max: [1.0; 3],
+            majorant_resolution: [64; 3],
+            majorant: vec![density; 64usize.pow(3)],
+        }),
+    };
+    let converted =
+        convert_media(&[make_medium("first", 2.0), make_medium("second", 7.0)], 1).unwrap();
+
+    assert_eq!(converted.records[0].volume_index, 0);
+    assert_eq!(converted.records[1].volume_index, 1);
+    assert_eq!(converted.volumes[0].sparse_grid_ranges[0], [0, 1, 0, 0]);
+    assert_eq!(converted.volumes[1].sparse_grid_ranges[0], [1, 1, 0, 0]);
+    assert_eq!(converted.volumes[0].majorant_offset_count[0], 0);
+    assert_eq!(converted.volumes[1].majorant_offset_count[0], 64u32.pow(3));
+    assert_eq!(
+        converted
+            .sparse_grid_roots
+            .iter()
+            .map(|root| root.value)
+            .collect::<Vec<_>>(),
+        [2.0, 7.0]
+    );
+    assert_eq!(converted.volume_data[0], 2.0);
+    assert_eq!(converted.volume_data[64usize.pow(3)], 7.0);
+}
 
 const PROBE_SHADER: &str = r#"
 @group(0) @binding(79) var<storage, read_write> output_values: array<f32>;
