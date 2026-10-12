@@ -125,7 +125,10 @@ pub fn register_medium(
             medium.name
         )));
     }
-    if medium.kind != "homogeneous" && (0..DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0) {
+    if medium.kind != "homogeneous"
+        && medium.kind != "uniformgrid"
+        && (0..DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0)
+    {
         return Err(PbrtError::error(&format!(
             "GPU {} medium \"{}\" does not support nonzero Le.",
             medium.kind, medium.name
@@ -465,16 +468,27 @@ fn create_uniform_grid(medium: &NodeMedium) -> Result<UniformGridMedium, PbrtErr
             medium.name
         )));
     }
-    let lescale = medium.params.get_floats_ref("Lescale");
-    if let Some(values) = lescale {
-        if !values.is_empty() && values.len() != expected {
-            return Err(PbrtError::error(&format!(
-                "GPU uniformgrid medium \"{}\" has invalid Lescale grid length {}.",
-                medium.name,
-                values.len()
-            )));
+    let lescale_values = medium.params.get_floats_ref("Lescale");
+    let (emission_scale_resolution, emission_scale) = match lescale_values {
+        Some(values) if !values.is_empty() => {
+            if values.len() != expected {
+                return Err(PbrtError::error(&format!(
+                    "GPU uniformgrid medium \"{}\" has invalid Lescale grid length {}.",
+                    medium.name,
+                    values.len()
+                )));
+            }
+            let values: Vec<f32> = values.iter().map(|value| *value as f32).collect();
+            if values.iter().any(|value| !value.is_finite()) {
+                return Err(PbrtError::error(&format!(
+                    "GPU uniformgrid medium \"{}\" has non-finite Lescale values.",
+                    medium.name
+                )));
+            }
+            (resolution, values)
         }
-    }
+        _ => ([1, 1, 1], vec![1.0]),
+    };
 
     let p0 = medium
         .params
@@ -536,6 +550,8 @@ fn create_uniform_grid(medium: &NodeMedium) -> Result<UniformGridMedium, PbrtErr
         bounds_max,
         resolution,
         density,
+        emission_scale_resolution,
+        emission_scale,
         majorant_resolution,
         majorant,
     })

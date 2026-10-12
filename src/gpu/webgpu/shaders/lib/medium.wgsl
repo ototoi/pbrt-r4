@@ -32,39 +32,54 @@ fn cloud_density(medium: VolumeMediumRecord, point: vec3<f32>) -> f32 {
     return clamp(density, 0.0, 1.0);
 }
 
-fn uniform_grid_density_value(grid: VolumeMediumRecord, coordinate: vec3<i32>) -> f32 {
-    let resolution = vec3<i32>(grid.resolution.xyz);
+fn uniform_grid_scalar_value(
+    offset: u32,
+    resolution_u: vec3<u32>,
+    coordinate: vec3<i32>,
+) -> f32 {
+    let resolution = vec3<i32>(resolution_u);
     if (any(coordinate < vec3<i32>(0)) || any(coordinate >= resolution)) {
         return 0.0;
     }
-    let index = u32(coordinate.z) * grid.resolution.y * grid.resolution.x
-        + u32(coordinate.y) * grid.resolution.x + u32(coordinate.x);
-    return volume_data[grid.density_offset_count.x + index];
+    let index = u32(coordinate.z) * resolution_u.y * resolution_u.x
+        + u32(coordinate.y) * resolution_u.x + u32(coordinate.x);
+    return volume_data[offset + index];
 }
 
-fn uniform_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
+fn uniform_grid_scalar(
+    grid: VolumeMediumRecord,
+    offset: u32,
+    resolution: vec3<u32>,
+    position_medium: vec3<f32>,
+) -> f32 {
     let bounds_diagonal = grid.bounds_max.xyz - grid.bounds_min.xyz;
     let unit = (position_medium - grid.bounds_min.xyz) / bounds_diagonal;
-    let sample_position = unit * vec3<f32>(grid.resolution.xyz) - vec3<f32>(0.5);
+    let sample_position = unit * vec3<f32>(resolution) - vec3<f32>(0.5);
     let base = vec3<i32>(floor(sample_position));
     let delta = sample_position - vec3<f32>(base);
     let d00 = mix(
-        uniform_grid_density_value(grid, base),
-        uniform_grid_density_value(grid, base + vec3<i32>(1, 0, 0)), delta.x,
+        uniform_grid_scalar_value(offset, resolution, base),
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(1, 0, 0)), delta.x,
     );
     let d10 = mix(
-        uniform_grid_density_value(grid, base + vec3<i32>(0, 1, 0)),
-        uniform_grid_density_value(grid, base + vec3<i32>(1, 1, 0)), delta.x,
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(0, 1, 0)),
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(1, 1, 0)), delta.x,
     );
     let d01 = mix(
-        uniform_grid_density_value(grid, base + vec3<i32>(0, 0, 1)),
-        uniform_grid_density_value(grid, base + vec3<i32>(1, 0, 1)), delta.x,
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(0, 0, 1)),
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(1, 0, 1)), delta.x,
     );
     let d11 = mix(
-        uniform_grid_density_value(grid, base + vec3<i32>(0, 1, 1)),
-        uniform_grid_density_value(grid, base + vec3<i32>(1, 1, 1)), delta.x,
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(0, 1, 1)),
+        uniform_grid_scalar_value(offset, resolution, base + vec3<i32>(1, 1, 1)), delta.x,
     );
     return mix(mix(d00, d10, delta.y), mix(d01, d11, delta.y), delta.z);
+}
+
+fn uniform_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
+    return uniform_grid_scalar(
+        grid, grid.density_offset_count.x, grid.resolution.xyz, position_medium,
+    );
 }
 
 fn sparse_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
