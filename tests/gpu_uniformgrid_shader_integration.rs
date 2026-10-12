@@ -222,10 +222,14 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
             [0.0, 0.0, 0.0, 1.0],
         ],
         cloud_parameters: [0.0; 4],
-        sparse_grid_ranges: [[0; 4]; 2],
-        sparse_grid_background: [0.0; 4],
-        grid_inverse_map: [[0.0; 4]; 3],
-        grid_translation: [0.0; 4],
+        density_grid: pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord {
+            ranges: [[0; 4]; 2],
+            background: [0.0; 4],
+            inverse_map: [[0.0; 4]; 3],
+            translation: [0.0; 4],
+        },
+        temperature_grid: Default::default(),
+        temperature_parameters: [0.0; 4],
         emission_scale_resolution: [2, 1, 1, 0],
     };
     let grid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

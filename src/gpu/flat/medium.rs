@@ -59,6 +59,10 @@ pub struct RgbGridMedium {
 #[derive(Clone, Debug, PartialEq)]
 pub struct NanoVDBMedium {
     pub density: SparseScalarGrid,
+    pub temperature: Option<NanoVDBScalarGrid>,
+    pub temperature_offset: f32,
+    pub temperature_scale: f32,
+    pub le_scale: f32,
     pub index_bbox_min: [i32; 3],
     pub index_bbox_max: [i32; 3],
     pub inverse_map_f: [[f32; 3]; 3],
@@ -67,4 +71,13 @@ pub struct NanoVDBMedium {
     pub bounds_max: [f32; 3],
     pub majorant_resolution: [u32; 3],
     pub majorant: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NanoVDBScalarGrid {
+    pub values: SparseScalarGrid,
+    pub index_bbox_min: [i32; 3],
+    pub index_bbox_max: [i32; 3],
+    pub inverse_map_f: [[f32; 3]; 3],
+    pub translation_f: [f32; 3],
 }

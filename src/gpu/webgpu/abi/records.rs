@@ -69,6 +69,15 @@ pub struct MediumRecord {
     pub medium_to_world: [[f32; 4]; 4],
 }
 
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct SparseScalarGridRecord {
+    pub ranges: [[u32; 4]; 2],
+    pub background: [f32; 4],
+    pub inverse_map: [[f32; 4]; 3],
+    pub translation: [f32; 4],
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct VolumeMediumRecord {
@@ -81,11 +90,10 @@ pub struct VolumeMediumRecord {
     pub majorant_offset_count: [u32; 4],
     pub medium_from_world: [[f32; 4]; 4],
     pub cloud_parameters: [f32; 4],
-    pub sparse_grid_ranges: [[u32; 4]; 2],
-    pub sparse_grid_background: [f32; 4],
-    pub grid_inverse_map: [[f32; 4]; 3],
-    pub grid_translation: [f32; 4],
+    pub density_grid: SparseScalarGridRecord,
     pub emission_scale_resolution: [u32; 4],
+    pub temperature_grid: SparseScalarGridRecord,
+    pub temperature_parameters: [f32; 4],
 }
 
 #[repr(C)]
