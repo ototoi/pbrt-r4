@@ -1,4 +1,4 @@
-use super::super::medium::NanoVDBMedium;
+use super::super::medium::{NanoVDBMedium, NanoVDBScalarGrid};
 use super::super::sparse_grid::{
     SparseGridEntry, SparseGridRoot, SparseScalarGrid, SPARSE_LEAF_SIZE, SPARSE_LOWER_SIZE,
     SPARSE_UPPER_SIZE,
@@ -47,28 +47,37 @@ pub fn create_nanovdb(parameters: &ParameterDictionary) -> Result<NanoVDBMedium,
             .ok_or_else(|| error(&format!("Missing density grid {name:?}.")))?;
         validate_metadata(grid)?;
         let mut medium = decode_density_grid(grid.raw_bytes())?;
+        medium.le_scale = parameters.get_one_float("Lescale", 1.0);
+        medium.temperature_offset = parameters.get_one_float(
+            "temperatureoffset",
+            parameters.get_one_float("temperaturecutoff", 0.0),
+        );
+        medium.temperature_scale = parameters.get_one_float("temperaturescale", 1.0);
+        if [
+            medium.le_scale,
+            medium.temperature_offset,
+            medium.temperature_scale,
+        ]
+        .iter()
+        .any(|value| !value.is_finite())
+        {
+            return Err(error("Temperature emission parameters must be finite."));
+        }
         let temperature = parameters.get_one_string("temperaturename", "temperature");
         if let Some(grid) = file.grids().iter().find(|g| g.name() == temperature) {
             validate_metadata(grid)?;
             let header = validate_header(grid.raw_bytes())?;
-            let lescale = parameters.get_one_float("Lescale", 1.0);
-            if !lescale.is_finite() || lescale != 0.0 {
-                return Err(error(
-                    "Temperature emission is not supported; requires Lescale=0.",
-                ));
-            }
             let (min, max) = header_bounds(&header)?;
+            let bounds = [min, max];
+            if medium.le_scale > 0.0 {
+                let (temperature_grid, _) = decode_scalar_grid(grid.raw_bytes())?;
+                medium.temperature = Some(temperature_grid);
+            }
             for axis in 0..3 {
-                medium.bounds_min[axis] = medium.bounds_min[axis].min(min[axis]);
-                medium.bounds_max[axis] = medium.bounds_max[axis].max(max[axis]);
+                medium.bounds_min[axis] = medium.bounds_min[axis].min(bounds[0][axis]);
+                medium.bounds_max[axis] = medium.bounds_max[axis].max(bounds[1][axis]);
             }
         }
-        // Temperature aliases are consumed as in NanoVDBMedium::Create.
-        parameters.get_one_float(
-            "temperatureoffset",
-            parameters.get_one_float("temperaturecutoff", 0.0),
-        );
-        parameters.get_one_float("temperaturescale", 1.0);
         medium.majorant = build_majorant(&medium)?;
         Ok(medium)
     };
@@ -78,6 +87,26 @@ pub fn create_nanovdb(parameters: &ParameterDictionary) -> Result<NanoVDBMedium,
 /// Decode one raw Float grid. The caller can union temperature bounds before
 /// building the majorant. The returned payload owns no source bytes.
 pub fn decode_density_grid(bytes: &[u8]) -> Result<NanoVDBMedium, PbrtError> {
+    let (grid, bounds) = decode_scalar_grid(bytes)?;
+    grid.values.validate_density()?;
+    Ok(NanoVDBMedium {
+        density: grid.values,
+        temperature: None,
+        temperature_offset: 0.0,
+        temperature_scale: 1.0,
+        le_scale: 1.0,
+        index_bbox_min: grid.index_bbox_min,
+        index_bbox_max: grid.index_bbox_max,
+        inverse_map_f: grid.inverse_map_f,
+        translation_f: grid.translation_f,
+        bounds_min: bounds[0],
+        bounds_max: bounds[1],
+        majorant_resolution: [64; 3],
+        majorant: Vec::new(),
+    })
+}
+
+fn decode_scalar_grid(bytes: &[u8]) -> Result<(NanoVDBScalarGrid, [[f32; 3]; 2]), PbrtError> {
     let header = validate_header(bytes)?;
     ValidatedFloatTree::new(bytes).ok_or_else(|| error("Invalid Float tree links."))?;
     let mut decoder = Decoder {
@@ -147,7 +176,7 @@ pub fn decode_density_grid(bytes: &[u8]) -> Result<NanoVDBMedium, PbrtError> {
         })
     {
         return Err(error(
-            "Density grid requires a finite positive diagonal inverse map and translation.",
+            "Scalar grid requires a finite positive diagonal inverse map and translation.",
         ));
     }
     let mut index_bbox_min = [0; 3];
@@ -157,20 +186,19 @@ pub fn decode_density_grid(bytes: &[u8]) -> Result<NanoVDBMedium, PbrtError> {
         index_bbox_max[axis] = read_u32(bytes, root + 12 + axis * 4)? as i32;
     }
     if (0..3).any(|axis| index_bbox_min[axis] > index_bbox_max[axis]) {
-        return Err(error("Empty density index bounds."));
+        return Err(error("Empty scalar index bounds."));
     }
     let (bounds_min, bounds_max) = header_bounds(&header)?;
-    Ok(NanoVDBMedium {
-        density: decoder.grid,
-        index_bbox_min,
-        index_bbox_max,
-        inverse_map_f,
-        translation_f,
-        bounds_min,
-        bounds_max,
-        majorant_resolution: [64; 3],
-        majorant: Vec::new(),
-    })
+    Ok((
+        NanoVDBScalarGrid {
+            values: decoder.grid,
+            index_bbox_min,
+            index_bbox_max,
+            inverse_map_f,
+            translation_f,
+        },
+        [bounds_min, bounds_max],
+    ))
 }
 
 struct Decoder<'a> {
@@ -467,7 +495,7 @@ fn majorant_index(medium: &NanoVDBMedium, point: [f32; 3]) -> [f32; 3] {
 }
 
 pub fn build_majorant(medium: &NanoVDBMedium) -> Result<Vec<f32>, PbrtError> {
-    medium.density.validate()?;
+    medium.density.validate_density()?;
     if medium.majorant_resolution != [64; 3] {
         return Err(error("NanoVDB majorant resolution must be 64 cubed."));
     }

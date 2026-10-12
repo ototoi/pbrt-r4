@@ -1,4 +1,7 @@
 use crate::gpu::flat;
+use crate::gpu::flat::sparse_grid::{
+    SparseScalarGrid, SPARSE_LEAF_SIZE, SPARSE_LOWER_SIZE, SPARSE_UPPER_SIZE,
+};
 use crate::util::error::PbrtError;
 
 pub fn validate_storage_array_size<T: bytemuck::Pod>(
@@ -27,7 +30,7 @@ pub fn validate_storage_array_size<T: bytemuck::Pod>(
 
 use super::super::abi::{
     inverse_affine, row_major_to_columns, MediumRecord, SparseGridEntryRecord,
-    SparseGridRootRecord, VolumeMediumRecord, INVALID_INDEX,
+    SparseGridRootRecord, SparseScalarGridRecord, VolumeMediumRecord, INVALID_INDEX,
 };
 
 pub struct ConvertedMedia {
@@ -136,10 +139,9 @@ pub fn convert_media(
                     majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
                     medium_from_world,
                     cloud_parameters: [0.0; 4],
-                    sparse_grid_ranges: [[0; 4]; 2],
-                    sparse_grid_background: [0.0; 4],
-                    grid_inverse_map: [[0.0; 4]; 3],
-                    grid_translation: [0.0; 4],
+                    density_grid: SparseScalarGridRecord::default(),
+                    temperature_grid: SparseScalarGridRecord::default(),
+                    temperature_parameters: [0.0; 4],
                     emission_scale_resolution: [
                         grid.emission_scale_resolution[0],
                         grid.emission_scale_resolution[1],
@@ -179,10 +181,9 @@ pub fn convert_media(
                     majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
                     medium_from_world,
                     cloud_parameters: [cloud.density, cloud.wispiness, cloud.frequency, 0.0],
-                    sparse_grid_ranges: [[0; 4]; 2],
-                    sparse_grid_background: [0.0; 4],
-                    grid_inverse_map: [[0.0; 4]; 3],
-                    grid_translation: [0.0; 4],
+                    density_grid: SparseScalarGridRecord::default(),
+                    temperature_grid: SparseScalarGridRecord::default(),
+                    temperature_parameters: [0.0; 4],
                     emission_scale_resolution: [0; 4],
                 });
                 (2, volume_index)
@@ -288,10 +289,9 @@ pub fn convert_media(
                     majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
                     medium_from_world,
                     cloud_parameters: [grid.scale, 0.0, 0.0, 0.0],
-                    sparse_grid_ranges: [[0; 4]; 2],
-                    sparse_grid_background: [0.0; 4],
-                    grid_inverse_map: [[0.0; 4]; 3],
-                    grid_translation: [0.0; 4],
+                    density_grid: SparseScalarGridRecord::default(),
+                    temperature_grid: SparseScalarGridRecord::default(),
+                    temperature_parameters: [0.0; 4],
                     emission_scale_resolution: [0; 4],
                 });
                 (3, volume_index)
@@ -329,8 +329,7 @@ fn append_sparse_grid(
     grid: &flat::NanoVDBMedium,
     medium_to_world: [f32; 16],
 ) -> Result<VolumeMediumRecord, PbrtError> {
-    use flat::sparse_grid::{SPARSE_LEAF_SIZE, SPARSE_LOWER_SIZE, SPARSE_UPPER_SIZE};
-    grid.density.validate()?;
+    grid.density.validate_density()?;
     if grid.majorant_resolution != [64; 3]
         || grid.majorant.len() != 64usize.pow(3)
         || grid.majorant.iter().any(|v| !v.is_finite() || *v < 0.0)
@@ -343,17 +342,114 @@ fn append_sparse_grid(
     {
         return Err(PbrtError::error("Malformed Flat NanoVDB payload."));
     }
+    if [
+        grid.temperature_offset,
+        grid.temperature_scale,
+        grid.le_scale,
+    ]
+    .iter()
+    .any(|value| !value.is_finite())
+    {
+        return Err(PbrtError::error(
+            "Temperature emission parameters must be finite.",
+        ));
+    }
+    let density_grid = append_scalar_grid(
+        output,
+        &grid.density,
+        grid.inverse_map_f,
+        grid.translation_f,
+    )?;
+    let temperature_grid = if let Some(temperature) =
+        grid.temperature.as_ref().filter(|_| grid.le_scale > 0.0)
+    {
+        if (0..3).any(|axis| temperature.index_bbox_min[axis] > temperature.index_bbox_max[axis]) {
+            return Err(PbrtError::error("Empty temperature index bounds."));
+        }
+        append_scalar_grid(
+            output,
+            &temperature.values,
+            temperature.inverse_map_f,
+            temperature.translation_f,
+        )?
+    } else {
+        SparseScalarGridRecord::default()
+    };
+    let majorant_offset = checked_volume_offset(output.volume_data.len())?;
+    let majorant_count = u32::try_from(grid.majorant.len())
+        .map_err(|_| PbrtError::error("Sparse grid majorant count exceeds u32."))?;
+    majorant_offset
+        .checked_add(majorant_count)
+        .ok_or_else(|| PbrtError::error("Sparse grid majorant range overflows u32."))?;
+    output.volume_data.extend_from_slice(&grid.majorant);
+    let medium_from_world = inverse_affine(medium_to_world, "NanoVDB medium")?;
+    Ok(VolumeMediumRecord {
+        bounds_min: [
+            grid.bounds_min[0],
+            grid.bounds_min[1],
+            grid.bounds_min[2],
+            0.0,
+        ],
+        bounds_max: [
+            grid.bounds_max[0],
+            grid.bounds_max[1],
+            grid.bounds_max[2],
+            0.0,
+        ],
+        resolution: [0; 4],
+        majorant_resolution: [64, 64, 64, 0],
+        density_offset_count: [0; 4],
+        coefficient_offset_count: [0; 4],
+        majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
+        medium_from_world,
+        cloud_parameters: [0.0; 4],
+        density_grid,
+        emission_scale_resolution: [0; 4],
+        temperature_grid,
+        temperature_parameters: [
+            grid.temperature_offset,
+            grid.temperature_scale,
+            grid.le_scale,
+            0.0,
+        ],
+    })
+}
+
+fn append_scalar_grid(
+    output: &mut ConvertedMedia,
+    values: &SparseScalarGrid,
+    inverse_map: [[f32; 3]; 3],
+    translation: [f32; 3],
+) -> Result<SparseScalarGridRecord, PbrtError> {
+    values.validate()?;
+    if translation.iter().any(|v| !v.is_finite())
+        || (0..3).any(|row| {
+            (0..3).any(|col| {
+                let value = inverse_map[row][col];
+                !value.is_finite()
+                    || if row == col {
+                        value <= 0.0
+                    } else {
+                        value != 0.0
+                    }
+            })
+        })
+    {
+        return Err(PbrtError::error(
+            "Sparse grid requires a finite positive diagonal map and translation.",
+        ));
+    }
     let root_offset = u32::try_from(output.sparse_grid_roots.len())
         .map_err(|_| PbrtError::error("Sparse grid root offset exceeds u32."))?;
-    let root_count = u32::try_from(grid.density.roots.len())
+    let root_count = u32::try_from(values.roots.len())
         .map_err(|_| PbrtError::error("Sparse grid root count exceeds u32."))?;
     root_offset
         .checked_add(root_count)
         .ok_or_else(|| PbrtError::error("Sparse grid root range overflows u32."))?;
     let entry_offset = u32::try_from(output.sparse_grid_entries.len())
         .map_err(|_| PbrtError::error("Sparse grid entry offset exceeds u32."))?;
-    let upper_entries = &grid.density.upper_entries;
-    let lower_entries = &grid.density.lower_entries;
+    let upper_entries = &values.upper_entries;
+    let lower_entries = &values.lower_entries;
     let entry_count = upper_entries
         .len()
         .checked_add(lower_entries.len())
@@ -369,25 +465,16 @@ fn append_sparse_grid(
         .and_then(|base| u32::try_from(base).ok())
         .ok_or_else(|| PbrtError::error("Sparse lower entry offset exceeds u32."))?;
     let leaf_offset = checked_volume_offset(output.volume_data.len())?;
-    let leaf_count = u32::try_from(grid.density.leaf_values.len())
+    let leaf_count = u32::try_from(values.leaf_values.len())
         .map_err(|_| PbrtError::error("Sparse grid leaf value count exceeds u32."))?;
     leaf_offset
         .checked_add(leaf_count)
         .ok_or_else(|| PbrtError::error("Sparse grid leaf range overflows u32."))?;
-    let majorant_offset = leaf_offset
-        .checked_add(leaf_count)
-        .ok_or_else(|| PbrtError::error("Sparse grid majorant offset overflows u32."))?;
-    let majorant_count = u32::try_from(grid.majorant.len())
-        .map_err(|_| PbrtError::error("Sparse grid majorant count exceeds u32."))?;
-    majorant_offset
-        .checked_add(majorant_count)
-        .ok_or_else(|| PbrtError::error("Sparse grid majorant range overflows u32."))?;
-
     let upper_base = entry_offset;
     let lower_base = lower_offset;
     let leaf_base = leaf_offset;
-    let mut root_records = Vec::with_capacity(grid.density.roots.len());
-    for root in &grid.density.roots {
+    let mut root_records = Vec::with_capacity(values.roots.len());
+    for root in &values.roots {
         let child_offset = match root.entry.child_index {
             None => INVALID_INDEX,
             Some(index) => absolute_node_offset(upper_base, index, SPARSE_UPPER_SIZE)?,
@@ -418,52 +505,15 @@ fn append_sparse_grid(
     }
     output.sparse_grid_roots.extend(root_records);
     output.sparse_grid_entries.extend(entry_records);
-    output
-        .volume_data
-        .extend_from_slice(&grid.density.leaf_values);
-    output.volume_data.extend_from_slice(&grid.majorant);
-
-    let medium_from_world = inverse_affine(medium_to_world, "NanoVDB medium")?;
-    Ok(VolumeMediumRecord {
-        bounds_min: [
-            grid.bounds_min[0],
-            grid.bounds_min[1],
-            grid.bounds_min[2],
-            0.0,
-        ],
-        bounds_max: [
-            grid.bounds_max[0],
-            grid.bounds_max[1],
-            grid.bounds_max[2],
-            0.0,
-        ],
-        resolution: [0; 4],
-        majorant_resolution: [64, 64, 64, 0],
-        density_offset_count: [0; 4],
-        coefficient_offset_count: [0; 4],
-        majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
-        medium_from_world,
-        cloud_parameters: [0.0; 4],
-        sparse_grid_ranges: [
+    output.volume_data.extend_from_slice(&values.leaf_values);
+    Ok(SparseScalarGridRecord {
+        ranges: [
             [root_offset, root_count, entry_offset, entry_count],
-            [leaf_offset, leaf_count, 0, 0],
+            [leaf_offset, leaf_count, 1, 0],
         ],
-        sparse_grid_background: [grid.density.background, 0.0, 0.0, 0.0],
-        grid_inverse_map: std::array::from_fn(|row| {
-            [
-                grid.inverse_map_f[row][0],
-                grid.inverse_map_f[row][1],
-                grid.inverse_map_f[row][2],
-                0.0,
-            ]
-        }),
-        grid_translation: [
-            grid.translation_f[0],
-            grid.translation_f[1],
-            grid.translation_f[2],
-            0.0,
-        ],
-        emission_scale_resolution: [0; 4],
+        background: [values.background, 0.0, 0.0, 0.0],
+        inverse_map: inverse_map.map(|row| [row[0], row[1], row[2], 0.0]),
+        translation: [translation[0], translation[1], translation[2], 0.0],
     })
 }
 

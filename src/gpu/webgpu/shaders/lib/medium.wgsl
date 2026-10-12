@@ -82,15 +82,15 @@ fn uniform_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) ->
     );
 }
 
-fn sparse_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
-    let point = position_medium - grid.grid_translation.xyz;
+fn sparse_grid_sample(grid: SparseScalarGridRecord, position_medium: vec3<f32>) -> f32 {
+    let point = position_medium - grid.translation.xyz;
     let index = vec3<f32>(
-        fma(point.x, grid.grid_inverse_map[0].x,
-            fma(point.y, grid.grid_inverse_map[0].y, point.z * grid.grid_inverse_map[0].z)),
-        fma(point.x, grid.grid_inverse_map[1].x,
-            fma(point.y, grid.grid_inverse_map[1].y, point.z * grid.grid_inverse_map[1].z)),
-        fma(point.x, grid.grid_inverse_map[2].x,
-            fma(point.y, grid.grid_inverse_map[2].y, point.z * grid.grid_inverse_map[2].z)),
+        fma(point.x, grid.inverse_map[0].x,
+            fma(point.y, grid.inverse_map[0].y, point.z * grid.inverse_map[0].z)),
+        fma(point.x, grid.inverse_map[1].x,
+            fma(point.y, grid.inverse_map[1].y, point.z * grid.inverse_map[1].z)),
+        fma(point.x, grid.inverse_map[2].x,
+            fma(point.y, grid.inverse_map[2].y, point.z * grid.inverse_map[2].z)),
     );
     if (any(index != index) || any(abs(index) > vec3<f32>(RAY_T_MAX))
         || any(index < vec3<f32>(-2147483648.0))
@@ -119,10 +119,16 @@ fn sparse_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> 
     let y0 = z00 + fraction.y * (z01 - z00);
     let y1 = z10 + fraction.y * (z11 - z10);
     let density = y0 + fraction.x * (y1 - y0);
-    if (density != density || abs(density) > RAY_T_MAX || density < 0.0) {
+    if (density != density || abs(density) > RAY_T_MAX) {
         set_render_error();
         return 0.0;
     }
+    return density;
+}
+
+fn sparse_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
+    let density = sparse_grid_sample(grid.density_grid, position_medium);
+    if (density < 0.0) { set_render_error(); return 0.0; }
     return density;
 }
 
@@ -316,4 +322,48 @@ fn uniform_grid_dda_next(
     }
     (*dda).next_crossing_t[axis] += (*dda).delta_t[axis];
     return segment;
+}
+
+// pbrt-v4 NanoVDBMedium::Le; nonpositive Lescale follows r4 CPU.
+fn nanovdb_le(grid: VolumeMediumRecord, position_medium: vec3<f32>, lambda: vec4<f32>) -> vec4<f32> {
+    let present = grid.temperature_grid.ranges[1].z;
+    if (present > 1u) { set_render_error(); return vec4<f32>(0.0); }
+    if (present == 0u || grid.temperature_parameters.z <= 0.0) { return vec4<f32>(0.0); }
+    let sampled_temperature = sparse_grid_sample(grid.temperature_grid, position_medium);
+    let temperature = (sampled_temperature - grid.temperature_parameters.x)
+        * grid.temperature_parameters.y;
+    if (temperature != temperature || abs(temperature) > RAY_T_MAX) {
+        set_render_error();
+        return vec4<f32>(0.0);
+    }
+    if (temperature <= 100.0) { return vec4<f32>(0.0); }
+    let le = grid.temperature_parameters.z * blackbody_spectrum(temperature, lambda);
+    if (any(le != le) || any(abs(le) > vec4<f32>(RAY_T_MAX))) {
+        set_render_error();
+        return vec4<f32>(0.0);
+    }
+    return le;
+}
+
+// pbrt-v4 WavefrontPathIntegrator::SampleMediumInteraction emission estimator.
+fn medium_emission_contribution(
+    beta: vec4<f32>, r_u: vec4<f32>, sigma_maj: vec4<f32>,
+    transmittance_ratio: vec4<f32>, sigma_a: vec4<f32>, le: vec4<f32>,
+) -> vec4<f32> {
+    if (all(le == vec4<f32>(0.0))) { return vec4<f32>(0.0); }
+    let emission_probability = sampled_spectrum_average(
+        r_u * (sigma_maj / sigma_maj.x) * transmittance_ratio,
+    );
+    if (emission_probability != emission_probability || abs(emission_probability) > RAY_T_MAX) {
+        set_render_error();
+        return vec4<f32>(0.0);
+    }
+    if (emission_probability <= 0.0) { return vec4<f32>(0.0); }
+    let contribution = beta * (transmittance_ratio / sigma_maj.x)
+        * sigma_a * le / emission_probability;
+    if (any(contribution != contribution) || any(abs(contribution) > vec4<f32>(RAY_T_MAX))) {
+        set_render_error();
+        return vec4<f32>(0.0);
+    }
+    return contribution;
 }

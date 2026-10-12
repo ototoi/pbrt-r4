@@ -21,6 +21,10 @@ const SHADOW_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/intersect_sh
 #[derive(Clone, Copy)]
 struct ProbeInput {
     a: [f32; 4],
+    emission_temperature: f32,
+    le_scale: f32,
+    depth: u32,
+    max_depth: u32,
     s: [f32; 4],
     draws: [f32; 4],
     distance: f32,
@@ -36,6 +40,10 @@ impl Default for ProbeInput {
     fn default() -> Self {
         Self {
             a: [0.0; 4],
+            emission_temperature: 0.0,
+            le_scale: 1.0,
+            depth: 0,
+            max_depth: 4,
             s: [0.0; 4],
             draws: [0.9; 4],
             distance: 0.2,
@@ -481,7 +489,7 @@ fn run_stage(
     let mut viewport = ViewportUniform::zeroed();
     viewport.full_width = 1;
     viewport.tile_width = 1;
-    viewport.max_depth = 4;
+    viewport.max_depth = input.max_depth;
     viewport.medium_scattering_enabled = 1;
     values.insert(1, bytes_of(&viewport).to_vec());
     let mut instance = Instance::zeroed();
@@ -503,6 +511,7 @@ fn run_stage(
     pixel.lambda = [400.0, 500.0, 600.0, 700.0];
     values.insert(12, bytes_of(&pixel).to_vec());
     let mut ray = RayWorkItem::zeroed();
+    ray.depth = input.depth;
     ray.direction = [0.0, 0.0, 1.0, 0.0];
     ray.beta = [1.0; 4];
     ray.r_u = [1.0; 4];
@@ -545,10 +554,23 @@ fn run_stage(
             [0.0, 0.0, 0.0, 1.0],
         ],
         cloud_parameters: [0.0; 4],
-        sparse_grid_ranges: [[0; 4]; 2],
-        sparse_grid_background: [1.0, 0.0, 0.0, 0.0],
-        grid_inverse_map: [[0.0; 4]; 3],
-        grid_translation: [0.0; 4],
+        density_grid: pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord {
+            ranges: [[0; 4], [0, 0, 1, 0]],
+            background: [1.0, 0.0, 0.0, 0.0],
+            inverse_map: [[0.0; 4]; 3],
+            translation: [0.0; 4],
+        },
+        temperature_grid: pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord {
+            ranges: [[0; 4], [0, 0, 1, 0]],
+            background: [input.emission_temperature, 0.0, 0.0, 0.0],
+            inverse_map: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            translation: [0.0; 4],
+        },
+        temperature_parameters: [0.0, 1.0, input.le_scale, 0.0],
         emission_scale_resolution: [0; 4],
     };
     values.insert(75, bytes_of(&grid).to_vec());
@@ -675,4 +697,61 @@ fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() <= 2e-5 * expected.abs().max(1.0),
         "actual {actual}, expected {expected}"
     );
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter"]
+fn primary_nanovdb_temperature_emission_precedes_each_event() {
+    let source = fixed_random_source(PRIMARY_SHADER);
+    let bindings = probe_bindings(&source);
+    let context = Context::new(RequiredLimits::from_bindings(&bindings).unwrap(), 0, 0).unwrap();
+    let (layout, pipeline) = probe_pipeline(&context.device, &source, &bindings, "sample_medium");
+    let a = [0.25_f32, 0.5, 0.75, 1.0];
+    let s = [0.75_f32, 0.5, 1.0, 1.5];
+    let blackbody = [0.0725499615_f32, 0.261518776, 0.520067334, 0.75420779];
+    let sigma_maj = std::array::from_fn::<_, 4, _>(|lane| 2.0 * (a[lane] + s[lane]));
+    let t_maj = sigma_maj.map(|sigma| (-0.1 * sigma).exp());
+    let pr = sigma_maj[0] * t_maj[0];
+    let r_e_average = (0..4)
+        .map(|lane| sigma_maj[lane] * t_maj[lane] / pr)
+        .sum::<f32>()
+        / 4.0;
+    for mode in [0.05, 0.3, 0.9] {
+        let input = ProbeInput {
+            a,
+            s,
+            medium_kind: 4,
+            emission_temperature: 3000.0,
+            le_scale: 2.0,
+            draws: [1.0 - (-0.2_f32).exp(), mode, 0.9, 0.9],
+            ..Default::default()
+        };
+        let result = run_stage(&context, &layout, &pipeline, &bindings, &input);
+        for lane in 0..4 {
+            let expected = a[lane] * t_maj[lane] * 2.0 * blackbody[lane] / (pr * r_e_average);
+            assert_close(result.pixel.radiance[lane], expected);
+        }
+        for (depth, max_depth, temperature, scale) in [
+            (1, 1, 3000.0, 2.0),
+            (2, 1, 3000.0, 2.0),
+            (0, 1, 100.0, 2.0),
+            (0, 1, 3000.0, 0.0),
+            (0, 1, 3000.0, -2.0),
+        ] {
+            let result = run_stage(
+                &context,
+                &layout,
+                &pipeline,
+                &bindings,
+                &ProbeInput {
+                    depth,
+                    max_depth,
+                    emission_temperature: temperature,
+                    le_scale: scale,
+                    ..input
+                },
+            );
+            assert_eq!(result.pixel.radiance, [0.0; 4]);
+        }
+    }
 }

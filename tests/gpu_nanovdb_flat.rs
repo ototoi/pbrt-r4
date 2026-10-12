@@ -156,9 +156,13 @@ fn loads_zip_and_uncompressed_and_unions_temperature_bounds() {
         assert_eq!(medium.majorant.len(), 64usize.pow(3));
         assert!(medium.majorant.iter().all(|v| *v == 2.0));
         let temperature = root_tile("temperature", 2000.0, ([0; 3], [8; 3]));
-        assert!(load(&[density.clone(), temperature.clone()], zip, None).is_err());
+        assert!(load(&[density.clone(), temperature.clone()], zip, None)
+            .unwrap()
+            .temperature
+            .is_some());
         let medium = load(&[density.clone(), temperature], zip, Some(0.0)).unwrap();
         assert_eq!(medium.bounds_max, [8.0; 3]);
+        assert!(medium.temperature.is_none());
         let mut temperature = root_tile("temperature", 1.0, ([0; 3], [8; 3]));
         put32(&mut temperature, 636, 2);
         assert!(load(&[density.clone(), temperature], zip, Some(0.0)).is_err());
@@ -249,6 +253,10 @@ fn majorant_skips_large_empty_regions_between_sparse_roots() {
         ..Default::default()
     };
     let medium = NanoVDBMedium {
+        temperature: None,
+        temperature_offset: 0.0,
+        temperature_scale: 1.0,
+        le_scale: 1.0,
         density,
         index_bbox_min: [-409_600_000, 0, 0],
         index_bbox_max: [409_604_095, 1, 1],
@@ -280,6 +288,10 @@ fn majorant_includes_background_between_sparse_roots() {
         ..Default::default()
     };
     let medium = NanoVDBMedium {
+        temperature: None,
+        temperature_offset: 0.0,
+        temperature_scale: 1.0,
+        le_scale: 1.0,
         density,
         index_bbox_min: [0; 3],
         index_bbox_max: [8191, 1, 1],
@@ -304,7 +316,7 @@ fn converts_real_cloud_asset() {
     params.add_string("filename", &asset);
     let medium = create_nanovdb(&params).unwrap();
     assert_eq!(medium.majorant.len(), 64usize.pow(3));
-    medium.density.validate().unwrap();
+    medium.density.validate_density().unwrap();
     if let Ok(path) = std::env::var("NANOVDB_MAJORANT_OUTPUT") {
         let bytes: Vec<u8> = medium
             .majorant
@@ -348,4 +360,107 @@ fn export_v4_fixtures() {
             .unwrap();
         }
     }
+}
+
+#[test]
+fn temperature_preserves_signed_values_and_independent_f32_map() {
+    let density = root_tile("density", 2.0, ([0; 3], [7; 3]));
+    let (mut temperature, root) = full_tree(false);
+    temperature[40..296].fill(0);
+    temperature[40..51].copy_from_slice(b"temperature");
+    putf(&mut temperature, root + 28, -2.0);
+    putf(&mut temperature, root + 116, -3.0);
+    putf(&mut temperature, UPPER + 8256 + 8, -4.0);
+    putf(&mut temperature, LOWER + 1088 + 8, -5.0);
+    putf(&mut temperature, LEAF + 96, -6.0);
+    putf(&mut temperature, 332, 0.5);
+    putf(&mut temperature, 368, 2.0);
+    let medium = load(&[density, temperature], true, Some(5.0)).unwrap();
+    let temperature = medium.temperature.unwrap();
+    assert_eq!(medium.inverse_map_f[0][0], 1.0);
+    assert_eq!(temperature.inverse_map_f[0][0], 0.5);
+    assert_eq!(temperature.translation_f[0], 2.0);
+    for (point, expected) in [
+        ([4096, 0, 0], -2.0),
+        ([-1, 0, 0], -3.0),
+        ([0, 0, 128], -4.0),
+        ([0, 0, 8], -5.0),
+        ([0, 0, 0], -6.0),
+    ] {
+        assert_eq!(temperature.values.get_value(point).unwrap(), expected);
+    }
+    assert!(temperature.values.validate().is_ok());
+    assert!(temperature.values.validate_density().is_err());
+}
+
+#[test]
+fn temperature_parameters_preserve_alias_precedence_and_reject_nonfinite_values() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(
+        &mut file,
+        &file_bytes(
+            &[
+                root_tile("density", 2.0, ([0; 3], [7; 3])),
+                root_tile("heat", 2000.0, ([0; 3], [7; 3])),
+            ],
+            false,
+        ),
+    )
+    .unwrap();
+    let mut params = ParameterDictionary::new();
+    params.add_string("filename", file.path().to_str().unwrap());
+    params.add_string("temperaturename", "heat");
+    params.add_float("temperaturecutoff", 1.0);
+    params.add_float("temperaturescale", -100.0);
+    params.add_float("Lescale", -5.0);
+    let medium = create_nanovdb(&params).unwrap();
+    assert!(medium.temperature.is_none());
+    assert_eq!(medium.temperature_offset, 1.0);
+    assert_eq!(medium.temperature_scale, -100.0);
+    assert_eq!(medium.le_scale, -5.0);
+    params.add_float("temperatureoffset", 2.0);
+    assert_eq!(create_nanovdb(&params).unwrap().temperature_offset, 2.0);
+    for field in ["Lescale", "temperatureoffset", "temperaturescale"] {
+        let mut invalid = params.clone();
+        invalid.replace_floats(field, &[f32::INFINITY]);
+        assert!(create_nanovdb(&invalid).is_err(), "{field}");
+    }
+    let density = root_tile("density", 2.0, ([0; 3], [7; 3]));
+    let temperature = root_tile("temperature", f32::NAN, ([0; 3], [7; 3]));
+    assert!(load(&[density, temperature], false, Some(1.0)).is_err());
+}
+
+#[test]
+fn rejects_negative_density_at_every_scalar_storage_level() {
+    let (valid, root) = full_tree(false);
+    for offset in [
+        root + 28,
+        root + 116,
+        UPPER + 8256 + 8,
+        LOWER + 1088 + 8,
+        LEAF + 96,
+    ] {
+        let mut bytes = valid.clone();
+        putf(&mut bytes, offset, -1.0);
+        assert!(decode_density_grid(&bytes).is_err(), "offset {offset}");
+    }
+}
+
+#[test]
+fn disabled_temperature_emission_only_retains_header_bounds() {
+    let density = root_tile("density", 2.0, ([0; 3], [7; 3]));
+    let (mut temperature, root) = full_tree(false);
+    temperature[40..296].fill(0);
+    temperature[40..51].copy_from_slice(b"temperature");
+    // Scalar payloads are unused; source tree/header validation is still retained.
+    putf(&mut temperature, root + 28, f32::NAN);
+    putf(&mut temperature, LEAF + 96, f32::NAN);
+    put64(&mut temperature, 584, 8.0_f64.to_bits());
+    for scale in [0.0, -5.0] {
+        let medium = load(&[density.clone(), temperature.clone()], true, Some(scale)).unwrap();
+        assert!(medium.temperature.is_none());
+        assert_eq!(medium.bounds_max, [8.0, 7.0, 7.0]);
+        assert_eq!(medium.le_scale, scale);
+    }
+    assert!(load(&[density, temperature], true, Some(1.0)).is_err());
 }

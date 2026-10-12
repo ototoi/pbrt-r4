@@ -300,6 +300,13 @@ struct MediumRecord {
     medium_to_world: mat4x4<f32>,
 };
 
+struct SparseScalarGridRecord {
+    ranges: array<vec4<u32>, 2>,
+    background: vec4<f32>,
+    inverse_map: array<vec4<f32>, 3>,
+    translation: vec4<f32>,
+};
+
 struct VolumeMediumRecord {
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
@@ -310,11 +317,10 @@ struct VolumeMediumRecord {
     majorant_offset_count: vec4<u32>,
     medium_from_world: mat4x4<f32>,
     cloud_parameters: vec4<f32>,
-    sparse_grid_ranges: array<vec4<u32>, 2>,
-    sparse_grid_background: vec4<f32>,
-    grid_inverse_map: array<vec4<f32>, 3>,
-    grid_translation: vec4<f32>,
+    density_grid: SparseScalarGridRecord,
     emission_scale_resolution: vec4<u32>,
+    temperature_grid: SparseScalarGridRecord,
+    temperature_parameters: vec4<f32>,
 };
 
 struct SparseGridEntryRecord { child_offset: u32, value: f32, };

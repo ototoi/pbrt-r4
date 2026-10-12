@@ -64,6 +64,26 @@ impl SparseScalarGrid {
         Ok(())
     }
 
+    pub fn validate_density(&self) -> Result<(), PbrtError> {
+        self.validate()?;
+        if std::iter::once(self.background)
+            .chain(self.roots.iter().map(|root| root.entry.value))
+            .chain(
+                self.upper_entries
+                    .iter()
+                    .chain(&self.lower_entries)
+                    .map(|entry| entry.value),
+            )
+            .chain(self.leaf_values.iter().copied())
+            .any(|value| value < 0.0)
+        {
+            return Err(PbrtError::error(
+                "Sparse density values must be non-negative.",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn get_value(&self, coordinate: [i32; 3]) -> Result<f32, PbrtError> {
         let block = coordinate.map(|v| v >> 12);
         let Some(root) = self.roots.iter().find(|root| root.block == block) else {
@@ -137,10 +157,8 @@ fn validate_entry(entry: SparseGridEntry, count: usize) -> Result<(), PbrtError>
 }
 
 fn validate_value(value: f32) -> Result<(), PbrtError> {
-    if !value.is_finite() || value < 0.0 {
-        Err(PbrtError::error(
-            "Sparse grid values must be finite and non-negative.",
-        ))
+    if !value.is_finite() {
+        Err(PbrtError::error("Sparse grid values must be finite."))
     } else {
         Ok(())
     }
