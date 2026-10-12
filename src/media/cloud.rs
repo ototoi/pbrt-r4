@@ -1,5 +1,5 @@
 use super::majorant_iterator::HomogeneousMajorantIterator;
-use super::medium::medium_scattering_parameters;
+use super::medium::medium_scattering_parameters_unscaled;
 use super::phase_function::HGPhaseFunction;
 use super::phase_function::PhaseFunction;
 use crate::base::{MediumCoefficients, MediumProperties, MediumSigma};
@@ -35,7 +35,8 @@ impl CloudMedium {
         let density = parameters.get_one_float("density", 1.0);
         let wispiness = parameters.get_one_float("wispiness", 1.0);
         let frequency = parameters.get_one_float("frequency", 5.0);
-        let (sigma_a, sigma_s, _scale, g) = medium_scattering_parameters(parameters);
+        // pbrt-v4 CloudMedium::Create currently ignores "scale"; revisit if v4 adds support.
+        let (sigma_a, sigma_s, g) = medium_scattering_parameters_unscaled(parameters);
         let p0 = parameters.get_one_point3f("p0", &Point3f::new(0.0, 0.0, 0.0));
         let p1 = parameters.get_one_point3f("p1", &Point3f::new(1.0, 1.0, 1.0));
         Ok(Self::new(

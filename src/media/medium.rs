@@ -234,6 +234,19 @@ fn scale_spectrum(source: Spectrum, scale: Float) -> Spectrum {
 pub fn medium_scattering_parameters(
     parameters: &ParameterDictionary,
 ) -> (Spectrum, Spectrum, Float, Float) {
+    let (sig_a_source, sig_s_source, g) = medium_scattering_parameters_unscaled(parameters);
+    let scale = parameters.get_one_float("scale", 1.0);
+    (
+        scale_spectrum(sig_a_source, scale),
+        scale_spectrum(sig_s_source, scale),
+        scale,
+        g,
+    )
+}
+
+pub fn medium_scattering_parameters_unscaled(
+    parameters: &ParameterDictionary,
+) -> (Spectrum, Spectrum, Float) {
     let preset = parameters.get_one_string("preset", "");
     let (sig_a_default, sig_s_default) =
         if let Some((a, b)) = get_medium_scattering_properties(&preset) {
@@ -247,18 +260,12 @@ pub fn medium_scattering_parameters(
             }
             (Spectrum::one(), Spectrum::one())
         };
-    let scale = parameters.get_one_float("scale", 1.0);
     let g = parameters.get_one_float("g", 0.0);
     let sig_a_source =
         parameters.get_one_spectrum_typed("sigma_a", &sig_a_default, SpectrumType::Unbounded);
     let sig_s_source =
         parameters.get_one_spectrum_typed("sigma_s", &sig_s_default, SpectrumType::Unbounded);
-    (
-        scale_spectrum(sig_a_source, scale),
-        scale_spectrum(sig_s_source, scale),
-        scale,
-        g,
-    )
+    (sig_a_source, sig_s_source, g)
 }
 
 pub fn grid_resolution(parameters: &ParameterDictionary) -> (u32, u32, u32) {
