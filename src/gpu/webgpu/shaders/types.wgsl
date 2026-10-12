@@ -314,6 +314,7 @@ struct VolumeMediumRecord {
     sparse_grid_background: vec4<f32>,
     grid_inverse_map: array<vec4<f32>, 3>,
     grid_translation: vec4<f32>,
+    emission_scale_resolution: vec4<u32>,
 };
 
 struct SparseGridEntryRecord { child_offset: u32, value: f32, };
