@@ -125,10 +125,10 @@ pub fn register_medium(
             medium.name
         )));
     }
-    if (0..DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0) {
+    if medium.kind != "homogeneous" && (0..DENSE_SAMPLE_COUNT).any(|index| le_dense[index] != 0.0) {
         return Err(PbrtError::error(&format!(
-            "GPU medium \"{}\" does not support nonzero Le.",
-            medium.name
+            "GPU {} medium \"{}\" does not support nonzero Le.",
+            medium.kind, medium.name
         )));
     }
 

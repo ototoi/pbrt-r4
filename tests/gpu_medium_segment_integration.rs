@@ -562,3 +562,64 @@ AttributeEnd
     );
     assert!((gpu / cpu - 1.0).abs() < 0.15, "CPU={cpu}, GPU={gpu}");
 }
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn homogeneous_emission_matches_absorbing_segment_solution() {
+    let directory = tempfile::tempdir().unwrap();
+    let render = |gpu: bool, sigma_a: f32, max_depth: u32, spp: u32| {
+        let scene = directory
+            .path()
+            .join(format!("emission-{gpu}-{sigma_a}-{max_depth}-{spp}.pbrt"));
+        let output = scene.with_extension("exr");
+        std::fs::write(
+            &scene,
+            format!(
+                r#"MakeNamedMedium "emitter" "string type" "homogeneous"
+    "rgb sigma_a" [{sigma_a} {sigma_a} {sigma_a}] "rgb sigma_s" [0 0 0]
+    "rgb Le" [1 1 1]
+MediumInterface "" "emitter"
+LookAt 0 0 0  0 0 1  0 1 0
+Camera "perspective" "float fov" [40]
+Film "rgb" "integer xresolution" [1] "integer yresolution" [1]
+Sampler "independent" "integer pixelsamples" [{spp}]
+Integrator "volpath" "integer maxdepth" [{max_depth}]
+WorldBegin
+Material ""
+MediumInterface "emitter" ""
+Shape "sphere" "float radius" [1]
+"#
+            ),
+        )
+        .unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
+        command
+            .arg("--quiet")
+            .arg("--outfile")
+            .arg(&output)
+            .arg(&scene);
+        if gpu {
+            command.arg("--use-gpu");
+        }
+        assert!(command.status().unwrap().success());
+        let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+        assert_eq!([resolution.x, resolution.y], [1, 1]);
+        let luminance = pixels[0].y();
+        assert!(luminance.is_finite() && luminance >= 0.0);
+        luminance
+    };
+
+    let expected = 1.0 - (-0.1_f32).exp();
+    let cpu = render(false, 0.1, 1, 16_384);
+    let gpu = render(true, 0.1, 1, 16_384);
+    assert!(
+        (cpu - expected).abs() < 0.01,
+        "CPU={cpu}, analytical absorbing-segment radiance={expected}"
+    );
+    assert!(
+        (gpu - expected).abs() < 0.01,
+        "GPU={gpu}, analytical absorbing-segment radiance={expected}"
+    );
+    assert_eq!(render(true, 0.0, 1, 8), 0.0);
+    assert_eq!(render(true, 0.1, 0, 8), 0.0);
+}
