@@ -67,6 +67,50 @@ fn uniform_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) ->
     return mix(mix(d00, d10, delta.y), mix(d01, d11, delta.y), delta.z);
 }
 
+fn sparse_grid_density(grid: VolumeMediumRecord, position_medium: vec3<f32>) -> f32 {
+    let point = position_medium - grid.grid_translation.xyz;
+    let index = vec3<f32>(
+        fma(point.x, grid.grid_inverse_map[0].x,
+            fma(point.y, grid.grid_inverse_map[0].y, point.z * grid.grid_inverse_map[0].z)),
+        fma(point.x, grid.grid_inverse_map[1].x,
+            fma(point.y, grid.grid_inverse_map[1].y, point.z * grid.grid_inverse_map[1].z)),
+        fma(point.x, grid.grid_inverse_map[2].x,
+            fma(point.y, grid.grid_inverse_map[2].y, point.z * grid.grid_inverse_map[2].z)),
+    );
+    if (any(index != index) || any(abs(index) > vec3<f32>(RAY_T_MAX))
+        || any(index < vec3<f32>(-2147483648.0))
+        || any(index >= vec3<f32>(2147483520.0))) {
+        set_render_error();
+        return 0.0;
+    }
+    let base = vec3<i32>(floor(index));
+    if (any(base == vec3<i32>(2147483647))) {
+        set_render_error();
+        return 0.0;
+    }
+    let fraction = index - vec3<f32>(base);
+    let v000 = sparse_grid_get_value(grid, base);
+    let v001 = sparse_grid_get_value(grid, base + vec3<i32>(0, 0, 1));
+    let v010 = sparse_grid_get_value(grid, base + vec3<i32>(0, 1, 0));
+    let v011 = sparse_grid_get_value(grid, base + vec3<i32>(0, 1, 1));
+    let v100 = sparse_grid_get_value(grid, base + vec3<i32>(1, 0, 0));
+    let v101 = sparse_grid_get_value(grid, base + vec3<i32>(1, 0, 1));
+    let v110 = sparse_grid_get_value(grid, base + vec3<i32>(1, 1, 0));
+    let v111 = sparse_grid_get_value(grid, base + vec3<i32>(1, 1, 1));
+    let z00 = v000 + fraction.z * (v001 - v000);
+    let z01 = v010 + fraction.z * (v011 - v010);
+    let z10 = v100 + fraction.z * (v101 - v100);
+    let z11 = v110 + fraction.z * (v111 - v110);
+    let y0 = z00 + fraction.y * (z01 - z00);
+    let y1 = z10 + fraction.y * (z11 - z10);
+    let density = y0 + fraction.x * (y1 - y0);
+    if (density != density || abs(density) > RAY_T_MAX || density < 0.0) {
+        set_render_error();
+        return 0.0;
+    }
+    return density;
+}
+
 fn rgb_grid_coefficient_value(
     grid: VolumeMediumRecord,
     offset_count: vec4<u32>,

@@ -1,6 +1,11 @@
 use std::process::Command;
 
+use pbrt_r4::util::base::Float;
 use pbrt_r4::util::imageio::read_image::read_image;
+use pbrt_r4::util::spectrum::RGBSpectrum;
+
+#[path = "support/nanovdb_fixture.rs"]
+mod nanovdb_fixture;
 
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
@@ -99,6 +104,92 @@ AttributeEnd
         changed_energy > 0.01,
         "the boundary did not exercise segment continuation"
     );
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn nanovdb_camera_medium_attenuates_primary_rays() {
+    let directory = tempfile::tempdir().unwrap();
+    let nvdb_path = directory.path().join("camera-medium.nvdb");
+    std::fs::write(
+        &nvdb_path,
+        nanovdb_fixture::file_bytes(
+            &[nanovdb_fixture::root_tile("density", 2.0, ([0; 3], [7; 3]))],
+            false,
+        ),
+    )
+    .unwrap();
+
+    let render = |camera_medium: bool| {
+        let scene_path = directory.path().join(if camera_medium {
+            "nanovdb-camera-medium.pbrt"
+        } else {
+            "clear-camera.pbrt"
+        });
+        let output_path = directory.path().join(if camera_medium {
+            "nanovdb-camera-medium.exr"
+        } else {
+            "clear-camera.exr"
+        });
+        let medium_setup = if camera_medium {
+            format!(
+                r#"MakeNamedMedium "fog" "string type" "nanovdb"
+    "string filename" "{}" "rgb sigma_a" [0.25 0.25 0.25] "rgb sigma_s" [0 0 0]
+MediumInterface "" "fog"
+"#,
+                nvdb_path.display()
+            )
+        } else {
+            String::new()
+        };
+        let scene = format!(
+            r#"{medium_setup}LookAt 3 3 6  3 3 0  0 1 0
+Camera "perspective" "float fov" [12]
+Film "rgb" "integer xresolution" [8] "integer yresolution" [8]
+Sampler "independent" "integer pixelsamples" [128]
+Integrator "volpath" "integer maxdepth" [2]
+WorldBegin
+AreaLightSource "diffuse" "rgb L" [10 10 10]
+Material "diffuse" "rgb reflectance" [0.8 0.8 0.8]
+Shape "trianglemesh"
+    "point3 P" [0 0 0  7 0 0  7 7 0  0 7 0]
+    "integer indices" [0 1 2  0 2 3]
+"#
+        );
+        std::fs::write(&scene_path, scene).unwrap();
+        let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
+            .args([
+                "--use-gpu",
+                "--quiet",
+                "--outfile",
+                output_path.to_str().unwrap(),
+                scene_path.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let (pixels, resolution) = read_image(output_path.to_str().unwrap()).unwrap();
+        assert_eq!([resolution.x, resolution.y], [8, 8]);
+        pixels
+    };
+
+    let clear = render(false);
+    let attenuated = render(true);
+    let mean_luminance = |pixels: &[RGBSpectrum]| {
+        pixels
+            .iter()
+            .map(|pixel| {
+                let [r, g, b] = pixel.to_rgb();
+                0.2126 * r + 0.7152 * g + 0.0722 * b
+            })
+            .sum::<Float>()
+            / pixels.len() as Float
+    };
+    let clear_mean = mean_luminance(&clear);
+    let attenuated_mean = mean_luminance(&attenuated);
+    assert!(clear_mean.is_finite() && attenuated_mean.is_finite());
+    assert!(clear_mean > 0.0);
+    assert!(attenuated_mean > 0.0 && attenuated_mean < clear_mean * 0.25);
 }
 
 #[test]

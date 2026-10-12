@@ -310,6 +310,18 @@ struct VolumeMediumRecord {
     majorant_offset_count: vec4<u32>,
     medium_from_world: mat4x4<f32>,
     cloud_parameters: vec4<f32>,
+    sparse_grid_ranges: array<vec4<u32>, 2>,
+    sparse_grid_background: vec4<f32>,
+    grid_inverse_map: array<vec4<f32>, 3>,
+    grid_translation: vec4<f32>,
+};
+
+struct SparseGridEntryRecord { child_offset: u32, value: f32, };
+struct SparseGridRootRecord {
+    block: vec3<i32>,
+    child_offset: u32,
+    value: f32,
+    padding: array<u32, 3>,
 };
 
 struct TextureNodeRecord {

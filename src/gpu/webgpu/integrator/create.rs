@@ -16,7 +16,7 @@ use super::super::noise::NoiseRuntimeResources;
 use super::super::pipeline::Pipeline;
 use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
-use super::super::shader::required_limits_for_sources;
+use super::super::shader::required_limits_for_sources_with_nanovdb;
 use super::super::stage::{ComputeStageSpec, COMPUTE_STAGES};
 use super::super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
 use super::tiles::DEFAULT_GPU_TILE_SIZE;
@@ -39,13 +39,18 @@ impl super::WavefrontPathIntegrator {
             u64::from(flat::max_attributes_eval_work_items_per_surface(&flat_scene)?.max(1));
         let texture_eval_stride =
             u64::from(flat::max_texture_eval_results_per_surface(&flat_scene)?).max(1);
+        let nanovdb_enabled = flat_scene
+            .media
+            .iter()
+            .any(|medium| matches!(&medium.data, flat::MediumData::NanoVDB(_)));
         let canonical_bindings = canonical_wavefront_bindings();
-        let mut required_limits = required_limits_for_sources(
+        let mut required_limits = required_limits_for_sources_with_nanovdb(
             &canonical_bindings,
             &COMPUTE_STAGES
                 .iter()
                 .map(|stage| stage.source)
                 .collect::<Vec<_>>(),
+            nanovdb_enabled,
         )?;
         // Every deployed pipeline has a second group reserved for texture
         // binding arrays, even when an individual stage does not sample one.
@@ -208,6 +213,7 @@ impl super::WavefrontPathIntegrator {
             scene.texture_samplers.len() as u32,
             texture_program_capacity,
             texture_noise_enabled,
+            nanovdb_enabled,
         )?;
         log::info!("GPU create: compute pipelines ready");
         let texture_image_views: Vec<&wgpu::TextureView> =
