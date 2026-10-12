@@ -17,7 +17,7 @@ use pbrt_r4::gpu::node::{
     IntegratorComponent, Light as NodeLight, LightComponent, Material, MaterialComponent,
     Medium as NodeMedium, MediumComponent, MediumInterface, Node, Output, OutputComponent,
     Sampler as NodeSampler, SamplerComponent, Scene as NodeScene, SceneComponent, Shape,
-    ShapeComponent, SourceShape, Transform, TriangleMeshShape,
+    ShapeComponent, Transform, TriangleMeshShape,
 };
 use pbrt_r4::gpu::node::{Vec2f, Vec3f};
 use pbrt_r4::media::sample_grid::SampledGrid;

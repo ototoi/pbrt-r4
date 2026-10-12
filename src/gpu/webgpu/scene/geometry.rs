@@ -1,5 +1,5 @@
 use crate::gpu::flat;
-use crate::gpu::node::SourceShape;
+use crate::gpu::flat::SourceShape;
 use crate::util::error::PbrtError;
 
 use super::super::abi::{
