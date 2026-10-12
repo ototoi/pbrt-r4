@@ -81,6 +81,26 @@ pub struct VolumeMediumRecord {
     pub majorant_offset_count: [u32; 4],
     pub medium_from_world: [[f32; 4]; 4],
     pub cloud_parameters: [f32; 4],
+    pub sparse_grid_ranges: [[u32; 4]; 2],
+    pub sparse_grid_background: [f32; 4],
+    pub grid_inverse_map: [[f32; 4]; 3],
+    pub grid_translation: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct SparseGridEntryRecord {
+    pub child_offset: u32,
+    pub value: f32,
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct SparseGridRootRecord {
+    pub block: [i32; 3],
+    pub child_offset: u32,
+    pub value: f32,
+    pub padding: [u32; 3],
 }
 
 #[repr(C)]

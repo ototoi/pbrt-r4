@@ -141,3 +141,7 @@ var<storage, read_write> next_shadow_indices: array<u32>;
 var<storage, read> volume_media: array<VolumeMediumRecord>;
 @group(0) @binding(76)
 var<storage, read> volume_data: array<f32>;
+@group(0) @binding(77)
+var<storage, read> sparse_grid_roots: array<SparseGridRootRecord>;
+@group(0) @binding(78)
+var<storage, read> sparse_grid_entries: array<SparseGridEntryRecord>;

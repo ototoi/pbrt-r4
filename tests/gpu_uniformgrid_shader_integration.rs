@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 const RESULT_VECTORS: u64 = 37;
 
 const PROBE_SHADER: &str = r#"
-@group(0) @binding(77) var<storage, read_write> output_values: array<vec4<f32>>;
+@group(0) @binding(79) var<storage, read_write> output_values: array<vec4<f32>>;
 
 @compute @workgroup_size(1)
 fn uniform_grid_probe() {
@@ -210,6 +210,10 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
             [0.0, 0.0, 0.0, 1.0],
         ],
         cloud_parameters: [0.0; 4],
+        sparse_grid_ranges: [[0; 4]; 2],
+        sparse_grid_background: [0.0; 4],
+        grid_inverse_map: [[0.0; 4]; 3],
+        grid_translation: [0.0; 4],
     };
     let grid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniform grid probe record"),
@@ -263,7 +267,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
             storage_layout(75, true),
             storage_layout(76, true),
             storage_layout(41, true),
-            storage_layout(77, false),
+            storage_layout(79, false),
         ],
     });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -283,7 +287,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
                 resource: rgb_table_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 77,
+                binding: 79,
                 resource: output.as_entire_binding(),
             },
         ],

@@ -26,6 +26,7 @@ struct ProbeInput {
     distance: f32,
     majorant: f32,
     cells: u32,
+    medium_kind: u32,
     shadow_weight_scale: f32,
     infinite: bool,
     shadow_interface_hit: bool,
@@ -40,6 +41,7 @@ impl Default for ProbeInput {
             distance: 0.2,
             majorant: 2.0,
             cells: 1,
+            medium_kind: 1,
             shadow_weight_scale: 1.0,
             infinite: false,
             shadow_interface_hit: false,
@@ -103,6 +105,14 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
                 assert_close(ray.r_l[lane], t_maj * sigma_maj / pr * tail_ratio);
             }
         }
+        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        assert_eq!(nanovdb_result.ray.beta, ray.beta);
+        assert_eq!(nanovdb_result.ray.r_u, ray.r_u);
+        assert_eq!(nanovdb_result.ray.r_l, ray.r_l);
+        assert_eq!(
+            nanovdb_result.counters.medium_scatter.count,
+            counters.medium_scatter.count
+        );
     }
 
     for (a, s, majorant, cells, distance) in [
@@ -134,6 +144,14 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
             assert_close(ray.r_u[lane], expected);
             assert_close(ray.r_l[lane], expected);
         }
+        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        assert_eq!(nanovdb_result.ray.beta, ray.beta);
+        assert_eq!(nanovdb_result.ray.r_u, ray.r_u);
+        assert_eq!(nanovdb_result.ray.r_l, ray.r_l);
+        assert_eq!(
+            nanovdb_result.counters.medium_scatter.count,
+            counters.medium_scatter.count
+        );
     }
 }
 
@@ -196,6 +214,9 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             );
         }
         assert_shadow_radiance(&result);
+
+        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        assert_shadow_tracking_matches(&nanovdb_result, &result);
     }
 
     for roulette in [0.1, 0.9] {
@@ -220,6 +241,8 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             );
         }
         assert_shadow_radiance(&result);
+        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        assert_shadow_tracking_matches(&nanovdb_result, &result);
         if roulette < 0.75 {
             let boundary_input = ProbeInput {
                 shadow_interface_hit: true,
@@ -232,6 +255,21 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             assert_eq!(boundary_result.shadow.segment_index, 0);
             assert_eq!(boundary_result.counters.shadow_continuation.count, 0);
             assert_eq!(boundary_result.pixel.radiance, [0.0; 4]);
+            let nanovdb_boundary =
+                run_nanovdb_stage(&context, &layout, &pipeline, &bindings, boundary_input);
+            assert_eq!(
+                nanovdb_boundary.shadow.transmittance,
+                boundary_result.shadow.transmittance
+            );
+            assert_eq!(
+                nanovdb_boundary.shadow.segment_index,
+                boundary_result.shadow.segment_index
+            );
+            assert_eq!(nanovdb_boundary.counters.shadow_continuation.count, 0);
+            assert_eq!(
+                nanovdb_boundary.pixel.radiance,
+                boundary_result.pixel.radiance
+            );
         }
     }
 
@@ -263,7 +301,35 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             assert_close(result.shadow.inv_w_l[lane], expected);
         }
         assert_shadow_radiance(&result);
+        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        assert_shadow_tracking_matches(&nanovdb_result, &result);
     }
+}
+
+fn run_nanovdb_stage(
+    context: &Context,
+    layout: &wgpu::BindGroupLayout,
+    pipeline: &wgpu::ComputePipeline,
+    bindings: &[BindingSpec],
+    input: ProbeInput,
+) -> ProbeResult {
+    run_stage(
+        context,
+        layout,
+        pipeline,
+        bindings,
+        &ProbeInput {
+            medium_kind: 4,
+            ..input
+        },
+    )
+}
+
+fn assert_shadow_tracking_matches(actual: &ProbeResult, expected: &ProbeResult) {
+    assert_eq!(actual.shadow.transmittance, expected.shadow.transmittance);
+    assert_eq!(actual.shadow.inv_w_u, expected.shadow.inv_w_u);
+    assert_eq!(actual.shadow.inv_w_l, expected.shadow.inv_w_l);
+    assert_eq!(actual.pixel.radiance, expected.pixel.radiance);
 }
 
 fn assert_shadow_radiance(result: &ProbeResult) {
@@ -309,7 +375,7 @@ fn fixed_random_source(stage: &str) -> String {
         return test_draws[0].z;
     "#,
     );
-    source.push_str("\n@group(0) @binding(77) var<storage, read> test_draws: array<vec4<f32>>;\n");
+    source.push_str("\n@group(0) @binding(79) var<storage, read> test_draws: array<vec4<f32>>;\n");
     source
 }
 
@@ -317,7 +383,7 @@ fn probe_bindings(source: &str) -> Vec<BindingSpec> {
     let mut canonical = canonical_wavefront_bindings();
     canonical.push(BindingSpec {
         group: 0,
-        binding: 77,
+        binding: 79,
         resource: ResourceId::VolumeData,
         class: BindingClass::Storage,
         access: Access::Read,
@@ -345,16 +411,28 @@ fn probe_pipeline(
         .map(|spec| wgpu::BindGroupLayoutEntry {
             binding: spec.binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: match spec.class {
-                    BindingClass::Uniform => wgpu::BufferBindingType::Uniform,
-                    BindingClass::Storage => wgpu::BufferBindingType::Storage {
+            ty: match spec.class {
+                BindingClass::Uniform => wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                BindingClass::Storage => wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage {
                         read_only: !spec.access.permits_write(),
                     },
-                    _ => panic!("unexpected probe resource"),
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-                has_dynamic_offset: false,
-                min_binding_size: None,
+                BindingClass::IntegerTexture => wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                _ => panic!(
+                    "unexpected probe resource {}: {:?}",
+                    spec.binding, spec.class
+                ),
             },
             count: None,
         })
@@ -449,7 +527,7 @@ fn run_stage(
     }
     values.insert(34, cast_slice(&spectra).to_vec());
     let mut medium = MediumRecord::zeroed();
-    medium.kind = 1;
+    medium.kind = input.medium_kind;
     medium.sigma_s = 1;
     values.insert(61, bytes_of(&medium).to_vec());
     let grid = VolumeMediumRecord {
@@ -467,14 +545,21 @@ fn run_stage(
             [0.0, 0.0, 0.0, 1.0],
         ],
         cloud_parameters: [0.0; 4],
+        sparse_grid_ranges: [[0; 4]; 2],
+        sparse_grid_background: [1.0, 0.0, 0.0, 0.0],
+        grid_inverse_map: [[0.0; 4]; 3],
+        grid_translation: [0.0; 4],
     };
     values.insert(75, bytes_of(&grid).to_vec());
     let mut volume = vec![1.0_f32; 8];
     volume.extend(std::iter::repeat_n(majorant, cells as usize));
     values.insert(76, cast_slice(&volume).to_vec());
-    values.insert(77, bytes_of(&draws).to_vec());
+    values.insert(79, bytes_of(&draws).to_vec());
+    let noise_resources =
+        pbrt_r4::gpu::webgpu::noise::NoiseRuntimeResources::new(&context.device, &context.queue);
     let buffers: BTreeMap<_, _> = bindings
         .iter()
+        .filter(|spec| spec.class != BindingClass::IntegerTexture)
         .map(|spec| {
             let data = values
                 .remove(&spec.binding)
@@ -496,13 +581,22 @@ fn run_stage(
             )
         })
         .collect();
-    let entries: Vec<_> = buffers
+    let mut entries: Vec<_> = buffers
         .iter()
         .map(|(binding, buffer)| wgpu::BindGroupEntry {
             binding: *binding,
             resource: buffer.as_entire_binding(),
         })
         .collect();
+    for spec in bindings
+        .iter()
+        .filter(|spec| spec.class == BindingClass::IntegerTexture)
+    {
+        entries.push(wgpu::BindGroupEntry {
+            binding: spec.binding,
+            resource: wgpu::BindingResource::TextureView(&noise_resources.view),
+        });
+    }
     let group = context
         .device
         .create_bind_group(&wgpu::BindGroupDescriptor {

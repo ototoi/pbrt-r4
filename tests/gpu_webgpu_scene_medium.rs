@@ -1,9 +1,10 @@
 #![cfg(feature = "webgpu")]
 
+use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseScalarGrid};
 use pbrt_r4::gpu::flat::{
-    CloudMedium, ColorSpace, Medium, MediumData, RgbGridMedium, UniformGridMedium,
+    CloudMedium, ColorSpace, Medium, MediumData, NanoVDBMedium, RgbGridMedium, UniformGridMedium,
 };
-use pbrt_r4::gpu::webgpu::scene::medium::convert_media;
+use pbrt_r4::gpu::webgpu::scene::medium::{convert_media, validate_storage_array_size};
 
 fn homogeneous_medium() -> Medium {
     Medium {
@@ -18,6 +19,33 @@ fn homogeneous_medium() -> Medium {
             0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
         ],
     }
+}
+
+fn nanovdb_medium() -> Medium {
+    let mut medium = homogeneous_medium();
+    medium.name = "sparse fog".to_owned();
+    medium.kind = "nanovdb".to_owned();
+    medium.data = MediumData::NanoVDB(NanoVDBMedium {
+        density: SparseScalarGrid {
+            roots: vec![SparseGridRoot {
+                block: [0; 3],
+                entry: SparseGridEntry {
+                    child_index: None,
+                    value: 0.5,
+                },
+            }],
+            ..Default::default()
+        },
+        index_bbox_min: [0; 3],
+        index_bbox_max: [7; 3],
+        inverse_map_f: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        translation_f: [0.0; 3],
+        bounds_min: [0.0; 3],
+        bounds_max: [1.0; 3],
+        majorant_resolution: [64; 3],
+        majorant: vec![0.5; 64usize.pow(3)],
+    });
+    medium
 }
 
 #[test]
@@ -47,6 +75,27 @@ fn rejects_invalid_spectrum_references() {
     medium.le = 3;
 
     assert!(convert_media(&[medium], 3).is_err());
+}
+
+#[test]
+fn validates_storage_buffer_device_limits_and_boundaries() {
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_buffer_binding_size = 8;
+    limits.max_buffer_size = 8;
+
+    assert!(validate_storage_array_size::<u32>(&limits, 2, "probe").is_ok());
+    assert!(validate_storage_array_size::<u32>(&limits, 1, "probe").is_ok());
+
+    let binding_error = validate_storage_array_size::<u32>(&limits, 3, "probe").unwrap_err();
+    assert!(binding_error
+        .to_string()
+        .contains("storage binding limit is 8 bytes"));
+
+    limits.max_storage_buffer_binding_size = 16;
+    let buffer_error = validate_storage_array_size::<u32>(&limits, 3, "probe").unwrap_err();
+    assert!(buffer_error
+        .to_string()
+        .contains("device buffer limit is 8 bytes"));
 }
 
 #[test]
@@ -176,6 +225,28 @@ fn packs_missing_rgbgrid_coefficient_as_invalid_range() {
         [u32::MAX, 0, 0, 0]
     );
     assert_eq!(converted.volumes[0].coefficient_offset_count, [0, 1, 0, 0]);
+}
+
+#[test]
+fn accepts_rotated_reflected_nonuniform_nanovdb_medium_transform() {
+    let mut medium = nanovdb_medium();
+    medium.transform = [
+        0.0, -2.0, 0.0, 3.0, 3.0, 0.0, 0.0, -4.0, 0.0, 0.0, -0.5, 5.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+
+    let converted = convert_media(&[medium], 3).unwrap();
+    let inverse = converted.volumes[0].medium_from_world;
+    let expected = [
+        [0.0, 1.0 / 3.0, 0.0, 4.0 / 3.0],
+        [-0.5, 0.0, 0.0, 1.5],
+        [0.0, 0.0, -2.0, 10.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    for column in 0..4 {
+        for row in 0..4 {
+            assert!((inverse[column][row] - expected[row][column]).abs() < 1.0e-6);
+        }
+    }
 }
 
 #[test]

@@ -28,6 +28,7 @@ mod material;
 use material::{build_material_roots, register_material_source, MaterialSourceNode};
 mod material_attributes;
 mod medium;
+pub mod nanovdb;
 mod subsurface;
 mod texture;
 use medium::{register_medium, resolve_medium_reference};

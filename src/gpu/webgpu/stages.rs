@@ -74,6 +74,8 @@ pub enum ResourceId {
     Medium,
     VolumeMedium,
     VolumeData,
+    SparseGridRoots,
+    SparseGridEntries,
     ActiveMediumIndices,
     NextMediumIndices,
     ActiveShadowIndices,
@@ -315,6 +317,8 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         Access::Read,
     );
     for (binding, resource) in [
+        (77, ResourceId::SparseGridRoots),
+        (78, ResourceId::SparseGridEntries),
         (75, ResourceId::VolumeMedium),
         (76, ResourceId::VolumeData),
         (72, ResourceId::ImageInfiniteSampling),
