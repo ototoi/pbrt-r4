@@ -15,6 +15,8 @@ const PORTAL_SHADER: &str = include_str!("shaders/portal_image_infinite.wgsl");
 
 const TEXTURE_NOISE_BRANCH_BEGIN: &str = "// TEXTURE_NOISE_BRANCH_BEGIN";
 const TEXTURE_NOISE_BRANCH_END: &str = "// TEXTURE_NOISE_BRANCH_END";
+const NANOVDB_BRANCH_BEGIN: &str = "// NANOVDB_BRANCH_BEGIN";
+const NANOVDB_BRANCH_END: &str = "// NANOVDB_BRANCH_END";
 
 /// Shared WGSL function library, one file per pbrt-v4 source area.
 ///
@@ -81,7 +83,21 @@ pub fn compose_source(stage_source: &str) -> String {
 }
 
 pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> String {
-    let roots = vec![stage_source, TRIANGLE_SAMPLING_SHADER];
+    compose_source_with_features(stage_source, noise_enabled, true)
+}
+
+pub fn compose_source_with_features(
+    stage_source: &str,
+    noise_enabled: bool,
+    nanovdb_enabled: bool,
+) -> String {
+    let stage_source = if nanovdb_enabled {
+        stage_source.to_string()
+    } else {
+        remove_marked_section(stage_source, NANOVDB_BRANCH_BEGIN, NANOVDB_BRANCH_END)
+            .replace("medium.kind > 4u", "medium.kind > 3u")
+    };
+    let roots = vec![stage_source.as_str(), TRIANGLE_SAMPLING_SHADER];
     let common_source = prune_common_source(&common_input(noise_enabled), &roots);
     let references = format!("{common_source}\n{stage_source}\n{TRIANGLE_SAMPLING_SHADER}");
     let resource_source = select_resources(RESOURCES_SHADER, &references);
@@ -142,14 +158,17 @@ fn common_input(noise_enabled: bool) -> String {
 }
 
 fn remove_marked_section(source: &str, begin: &str, end: &str) -> String {
-    let Some(begin_offset) = source.find(begin) else {
-        return source.to_string();
-    };
-    let Some(relative_end) = source[begin_offset..].find(end) else {
-        return source.to_string();
-    };
-    let end_offset = begin_offset + relative_end + end.len();
-    format!("{}{}", &source[..begin_offset], &source[end_offset..])
+    let mut result = source.to_string();
+    loop {
+        let Some(begin_offset) = result.find(begin) else {
+            return result;
+        };
+        let Some(relative_end) = result[begin_offset..].find(end) else {
+            return result;
+        };
+        let end_offset = begin_offset + relative_end + end.len();
+        result.replace_range(begin_offset..end_offset, "");
+    }
 }
 
 /// Returns the `(group, binding)` pairs declared by a composed WGSL module.
@@ -202,9 +221,17 @@ pub fn required_limits_for_sources(
     canonical_bindings: &[BindingSpec],
     stage_sources: &[&str],
 ) -> Result<RequiredLimits, PbrtError> {
+    required_limits_for_sources_with_nanovdb(canonical_bindings, stage_sources, true)
+}
+
+pub fn required_limits_for_sources_with_nanovdb(
+    canonical_bindings: &[BindingSpec],
+    stage_sources: &[&str],
+    nanovdb_enabled: bool,
+) -> Result<RequiredLimits, PbrtError> {
     let mut required = RequiredLimits::default();
     for stage_source in stage_sources {
-        let source = compose_source(stage_source);
+        let source = compose_source_with_features(stage_source, true, nanovdb_enabled);
         let used_bindings = resource_bindings(&source);
         let bindings = used_bindings
             .iter()

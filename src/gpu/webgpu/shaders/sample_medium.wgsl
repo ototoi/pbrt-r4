@@ -34,7 +34,11 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
             set_render_error();
             return;
         }
-        if (medium.kind == 1u || medium.kind == 2u || medium.kind == 3u || medium.kind == 4u) {
+        if (medium.kind == 1u || medium.kind == 2u || medium.kind == 3u
+            // NANOVDB_BRANCH_BEGIN
+            || medium.kind == 4u
+            // NANOVDB_BRANCH_END
+        ) {
             if (medium.volume_index >= arrayLength(&volume_media)) {
                 set_render_error();
                 return;
@@ -93,9 +97,13 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
                             var density: f32;
                             if (medium.kind == 2u) {
                                 density = cloud_density(grid, position_medium);
-                            } else if (medium.kind == 4u) {
+                            }
+                            // NANOVDB_BRANCH_BEGIN
+                            else if (medium.kind == 4u) {
                                 density = sparse_grid_density(grid, position_medium);
-                            } else {
+                            }
+                            // NANOVDB_BRANCH_END
+                            else {
                                 density = uniform_grid_density(grid, position_medium);
                             }
                             local_sigma_a = sigma_a * density;

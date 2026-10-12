@@ -30,6 +30,7 @@ impl Pipeline {
         texture_sampler_count: u32,
         texture_program_capacity: u32,
         texture_noise_enabled: bool,
+        nanovdb_enabled: bool,
     ) -> Result<Self, PbrtError> {
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let canonical_bindings = canonical_wavefront_bindings();
@@ -37,21 +38,23 @@ impl Pipeline {
             .iter()
             .map(|stage| {
                 log::info!("GPU pipeline: creating {}", stage.label);
-                let source = shader::compose_source_with_noise(stage.source, texture_noise_enabled)
-                    .replace(
-                        "const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;",
-                        &format!(
-                            "const TEXTURE_PROGRAM_CAPACITY: u32 = {texture_program_capacity}u;"
-                        ),
-                    )
-                    .replace(
-                        "binding_array<texture_2d<f32>>",
-                        &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
-                    )
-                    .replace(
-                        "binding_array<sampler>",
-                        &format!("binding_array<sampler, {texture_sampler_count}u>"),
-                    );
+                let source = shader::compose_source_with_features(
+                    stage.source,
+                    texture_noise_enabled,
+                    nanovdb_enabled,
+                )
+                .replace(
+                    "const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;",
+                    &format!("const TEXTURE_PROGRAM_CAPACITY: u32 = {texture_program_capacity}u;"),
+                )
+                .replace(
+                    "binding_array<texture_2d<f32>>",
+                    &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
+                )
+                .replace(
+                    "binding_array<sampler>",
+                    &format!("binding_array<sampler, {texture_sampler_count}u>"),
+                );
                 log::info!(
                     "GPU pipeline: {} source composed ({} bytes)",
                     stage.label,

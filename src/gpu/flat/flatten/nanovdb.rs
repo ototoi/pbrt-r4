@@ -536,18 +536,164 @@ fn range_max(grid: &SparseScalarGrid, lo: [i32; 3], hi: [i32; 3]) -> Result<f32,
     if (0..3).any(|axis| lo[axis] > hi[axis]) {
         return Ok(0.0);
     }
-    if grid.roots.is_empty() {
-        return Ok(grid.background);
-    }
-    let mut value = 0.0f32;
-    for z in lo[2]..=hi[2] {
-        for y in lo[1]..=hi[1] {
-            for x in lo[0]..=hi[0] {
-                value = value.max(grid.get_value([x, y, z])?);
+    let query_min = lo.map(i64::from);
+    let query_max = hi.map(i64::from);
+    let query_volume = (0..3)
+        .map(|axis| (query_max[axis] - query_min[axis] + 1) as u128)
+        .product::<u128>();
+    let mut covered_volume = 0u128;
+    let mut maximum = 0.0f32;
+    for root in &grid.roots {
+        let root_min = root.block.map(|block| i64::from(block) << 12);
+        let Some((root_lo, root_hi)) =
+            intersect_bounds(root_min, root_min.map(|v| v + 4095), query_min, query_max)
+        else {
+            continue;
+        };
+        covered_volume += (0..3)
+            .map(|axis| (root_hi[axis] - root_lo[axis] + 1) as u128)
+            .product::<u128>();
+        let Some(upper_index) = root.entry.child_index else {
+            maximum = maximum.max(root.entry.value);
+            continue;
+        };
+        let upper = node_entries(
+            &grid.upper_entries,
+            upper_index,
+            SPARSE_UPPER_SIZE,
+            "Invalid sparse upper node reference.",
+        )?;
+        let upper_slots = intersecting_slots(root_lo, root_hi, root_min, 7);
+        for x in upper_slots[0].0..=upper_slots[0].1 {
+            for y in upper_slots[1].0..=upper_slots[1].1 {
+                for z in upper_slots[2].0..=upper_slots[2].1 {
+                    let upper_origin = [
+                        root_min[0] + x * 128,
+                        root_min[1] + y * 128,
+                        root_min[2] + z * 128,
+                    ];
+                    let upper_entry = upper[table_index([x, y, z], 32)];
+                    let Some(lower_index) = upper_entry.child_index else {
+                        maximum = maximum.max(upper_entry.value);
+                        continue;
+                    };
+                    let lower = node_entries(
+                        &grid.lower_entries,
+                        lower_index,
+                        SPARSE_LOWER_SIZE,
+                        "Invalid sparse lower node reference.",
+                    )?;
+                    let Some((lower_lo, lower_hi)) = intersect_bounds(
+                        upper_origin,
+                        upper_origin.map(|v| v + 127),
+                        root_lo,
+                        root_hi,
+                    ) else {
+                        continue;
+                    };
+                    let lower_slots = intersecting_slots(lower_lo, lower_hi, upper_origin, 3);
+                    for lx in lower_slots[0].0..=lower_slots[0].1 {
+                        for ly in lower_slots[1].0..=lower_slots[1].1 {
+                            for lz in lower_slots[2].0..=lower_slots[2].1 {
+                                let lower_origin = [
+                                    upper_origin[0] + lx * 8,
+                                    upper_origin[1] + ly * 8,
+                                    upper_origin[2] + lz * 8,
+                                ];
+                                let lower_entry = lower[table_index([lx, ly, lz], 16)];
+                                let Some(leaf_index) = lower_entry.child_index else {
+                                    maximum = maximum.max(lower_entry.value);
+                                    continue;
+                                };
+                                let Some((leaf_lo, leaf_hi)) = intersect_bounds(
+                                    lower_origin,
+                                    lower_origin.map(|v| v + 7),
+                                    root_lo,
+                                    root_hi,
+                                ) else {
+                                    continue;
+                                };
+                                let leaf_start = (leaf_index as usize)
+                                    .checked_mul(SPARSE_LEAF_SIZE)
+                                    .ok_or_else(|| error("Sparse leaf offset overflow."))?;
+                                let leaf_end = leaf_start
+                                    .checked_add(SPARSE_LEAF_SIZE)
+                                    .ok_or_else(|| error("Sparse leaf range overflow."))?;
+                                let leaf = grid
+                                    .leaf_values
+                                    .get(leaf_start..leaf_end)
+                                    .ok_or_else(|| error("Invalid sparse leaf reference."))?;
+                                for vx in leaf_lo[0]..=leaf_hi[0] {
+                                    for vy in leaf_lo[1]..=leaf_hi[1] {
+                                        for vz in leaf_lo[2]..=leaf_hi[2] {
+                                            let local = [
+                                                vx - lower_origin[0],
+                                                vy - lower_origin[1],
+                                                vz - lower_origin[2],
+                                            ];
+                                            maximum = maximum.max(leaf[table_index(local, 8)]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
-    Ok(value)
+    // `get_value` returns the background outside all root tiles. Account for
+    // those coordinates without visiting each voxel in the uncovered space.
+    if covered_volume < query_volume {
+        maximum = maximum.max(grid.background);
+    }
+    Ok(maximum)
+}
+
+fn node_entries<'a>(
+    entries: &'a [SparseGridEntry],
+    node_index: u32,
+    node_size: usize,
+    message: &str,
+) -> Result<&'a [SparseGridEntry], PbrtError> {
+    let start = (node_index as usize)
+        .checked_mul(node_size)
+        .ok_or_else(|| error("Sparse node offset overflow."))?;
+    let end = start
+        .checked_add(node_size)
+        .ok_or_else(|| error("Sparse node range overflow."))?;
+    entries.get(start..end).ok_or_else(|| error(message))
+}
+
+fn intersect_bounds(
+    tile_min: [i64; 3],
+    tile_max: [i64; 3],
+    query_min: [i64; 3],
+    query_max: [i64; 3],
+) -> Option<([i64; 3], [i64; 3])> {
+    let min = std::array::from_fn(|axis| tile_min[axis].max(query_min[axis]));
+    let max = std::array::from_fn(|axis| tile_max[axis].min(query_max[axis]));
+    (0..3)
+        .all(|axis| min[axis] <= max[axis])
+        .then_some((min, max))
+}
+
+fn intersecting_slots(
+    query_min: [i64; 3],
+    query_max: [i64; 3],
+    node_min: [i64; 3],
+    shift: u32,
+) -> [(i64, i64); 3] {
+    std::array::from_fn(|axis| {
+        (
+            (query_min[axis] - node_min[axis]) >> shift,
+            (query_max[axis] - node_min[axis]) >> shift,
+        )
+    })
+}
+
+fn table_index([x, y, z]: [i64; 3], dimension: i64) -> usize {
+    ((x * dimension + y) * dimension + z) as usize
 }
 
 fn read<const N: usize>(bytes: &[u8], at: usize) -> Result<[u8; N], PbrtError> {
