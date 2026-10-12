@@ -33,6 +33,7 @@ pub const COMMON_LIBRARY: &[(&str, &str)] = &[
     ("interaction", include_str!("shaders/lib/interaction.wgsl")),
     ("sparse_grid", include_str!("shaders/lib/sparse_grid.wgsl")),
     ("medium", include_str!("shaders/lib/medium.wgsl")),
+    ("blackbody", include_str!("shaders/lib/blackbody.wgsl")),
     ("bssrdf", include_str!("shaders/lib/bssrdf.wgsl")),
     (
         "bssrdf_scattering",

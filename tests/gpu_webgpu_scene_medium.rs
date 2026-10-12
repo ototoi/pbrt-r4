@@ -2,7 +2,8 @@
 
 use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseScalarGrid};
 use pbrt_r4::gpu::flat::{
-    CloudMedium, ColorSpace, Medium, MediumData, NanoVDBMedium, RgbGridMedium, UniformGridMedium,
+    CloudMedium, ColorSpace, Medium, MediumData, NanoVDBMedium, NanoVDBScalarGrid, RgbGridMedium,
+    UniformGridMedium,
 };
 use pbrt_r4::gpu::webgpu::scene::medium::{convert_media, validate_storage_array_size};
 
@@ -26,6 +27,10 @@ fn nanovdb_medium() -> Medium {
     medium.name = "sparse fog".to_owned();
     medium.kind = "nanovdb".to_owned();
     medium.data = MediumData::NanoVDB(NanoVDBMedium {
+        temperature: None,
+        temperature_offset: 0.0,
+        temperature_scale: 1.0,
+        le_scale: 1.0,
         density: SparseScalarGrid {
             roots: vec![SparseGridRoot {
                 block: [0; 3],
@@ -314,4 +319,44 @@ fn rejects_malformed_rgbgrid_upload_payloads() {
     };
     grid.sigma_a = None;
     assert!(convert_media(&[missing_coefficients], 0).is_err());
+}
+
+#[test]
+fn temperature_background_only_grid_has_explicit_presence_and_own_map() {
+    let mut medium = nanovdb_medium();
+    medium.transform = pbrt_r4::gpu::flat::identity_transform();
+    let MediumData::NanoVDB(grid) = &mut medium.data else {
+        unreachable!()
+    };
+    grid.temperature = Some(NanoVDBScalarGrid {
+        values: SparseScalarGrid {
+            background: -2000.0,
+            ..Default::default()
+        },
+        index_bbox_min: [0; 3],
+        index_bbox_max: [7; 3],
+        inverse_map_f: [[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]],
+        translation_f: [1.0, 2.0, 3.0],
+    });
+    grid.temperature_scale = -1.0;
+    grid.le_scale = 5.0;
+    let converted = convert_media(&[medium.clone()], 3).unwrap();
+    let record = converted.volumes[0];
+    assert_eq!(record.temperature_grid.ranges[0][1], 0);
+    assert_eq!(record.temperature_grid.ranges[1][2], 1);
+    assert_eq!(record.temperature_grid.background[0], -2000.0);
+    assert_eq!(record.temperature_grid.translation, [1.0, 2.0, 3.0, 0.0]);
+    assert_eq!(record.temperature_grid.inverse_map[1], [0.0, 3.0, 0.0, 0.0]);
+    assert_eq!(record.temperature_parameters, [0.0, -1.0, 5.0, 0.0]);
+    let MediumData::NanoVDB(grid) = &mut medium.data else {
+        unreachable!()
+    };
+    grid.temperature = None;
+    let converted = convert_media(&[medium.clone()], 3).unwrap();
+    assert_eq!(converted.volumes[0].temperature_grid.ranges[1][2], 0);
+    let MediumData::NanoVDB(grid) = &mut medium.data else {
+        unreachable!()
+    };
+    grid.density.background = -1.0;
+    assert!(convert_media(&[medium], 3).is_err());
 }

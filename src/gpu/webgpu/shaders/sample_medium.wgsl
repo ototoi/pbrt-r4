@@ -116,40 +116,30 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
                             set_render_error();
                             return;
                         }
-                        if (medium.kind == 1u && ray.depth < viewport.max_depth) {
-                            let emission_scale = uniform_grid_scalar(
-                                grid,
-                                grid.coefficient_offset_count.x,
-                                grid.emission_scale_resolution.xyz,
-                                position_medium,
-                            );
-                            if (emission_scale > 0.0) {
-                                let le = evaluate_spectrum(medium.le, lambda) * emission_scale;
-                                if (any(le != vec4<f32>(0.0))) {
-                                    let emission_probability = sampled_spectrum_average(
-                                        ray.r_u * (segment.sigma_maj / segment.sigma_maj.x)
-                                            * transmittance_ratio,
-                                    );
-                                    if (emission_probability != emission_probability
-                                        || abs(emission_probability) > RAY_T_MAX) {
-                                        set_render_error();
-                                        return;
-                                    }
-                                    if (emission_probability > 0.0) {
-                                        let contribution = ray.beta
-                                            * (transmittance_ratio / segment.sigma_maj.x)
-                                            * local_sigma_a * le / emission_probability;
-                                        if (any(contribution != contribution)
-                                            || any(abs(contribution) > vec4<f32>(RAY_T_MAX))) {
-                                            set_render_error();
-                                            return;
-                                        }
-                                        store_sample_radiance(
-                                            pixel_index,
-                                            load_sample_radiance(pixel_index) + contribution,
-                                        );
-                                    }
+                        if (ray.depth < viewport.max_depth) {
+                            var le = vec4<f32>(0.0);
+                            if (medium.kind == 1u) {
+                                let emission_scale = uniform_grid_scalar(
+                                    grid, grid.coefficient_offset_count.x,
+                                    grid.emission_scale_resolution.xyz, position_medium,
+                                );
+                                if (emission_scale > 0.0) {
+                                    le = evaluate_spectrum(medium.le, lambda) * emission_scale;
                                 }
+                            }
+                            // NANOVDB_BRANCH_BEGIN
+                            else if (medium.kind == 4u) {
+                                le = nanovdb_le(grid, position_medium, lambda);
+                            }
+                            // NANOVDB_BRANCH_END
+                            if (any(le != vec4<f32>(0.0))) {
+                                let contribution = medium_emission_contribution(
+                                    ray.beta, ray.r_u, segment.sigma_maj,
+                                    transmittance_ratio, local_sigma_a, le,
+                                );
+                                store_sample_radiance(
+                                    pixel_index, load_sample_radiance(pixel_index) + contribution,
+                                );
                             }
                         }
                         let local_sigma_n = max(

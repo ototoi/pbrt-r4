@@ -1,9 +1,11 @@
 #![cfg(feature = "webgpu")]
 
 use bytemuck::{cast_slice, Zeroable};
-use pbrt_r4::gpu::flat::flatten::nanovdb::{create_nanovdb, world_to_index_f};
+use pbrt_r4::gpu::flat::flatten::nanovdb::{create_nanovdb, decode_density_grid};
 use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseScalarGrid};
-use pbrt_r4::gpu::flat::{identity_transform, Medium, MediumData, NanoVDBMedium};
+use pbrt_r4::gpu::flat::{
+    identity_transform, Medium, MediumData, NanoVDBMedium, NanoVDBScalarGrid,
+};
 use pbrt_r4::gpu::webgpu::abi::{
     RenderError, SparseGridEntryRecord, SparseGridRootRecord, VolumeMediumRecord,
 };
@@ -25,6 +27,10 @@ fn converts_multiple_sparse_grids_with_global_offsets() {
         g: 0.0,
         transform: identity_transform(),
         data: MediumData::NanoVDB(NanoVDBMedium {
+            temperature: None,
+            temperature_offset: 0.0,
+            temperature_scale: 1.0,
+            le_scale: 1.0,
             density: SparseScalarGrid {
                 background: 0.0,
                 roots: vec![SparseGridRoot {
@@ -51,8 +57,8 @@ fn converts_multiple_sparse_grids_with_global_offsets() {
 
     assert_eq!(converted.records[0].volume_index, 0);
     assert_eq!(converted.records[1].volume_index, 1);
-    assert_eq!(converted.volumes[0].sparse_grid_ranges[0], [0, 1, 0, 0]);
-    assert_eq!(converted.volumes[1].sparse_grid_ranges[0], [1, 1, 0, 0]);
+    assert_eq!(converted.volumes[0].density_grid.ranges[0], [0, 1, 0, 0]);
+    assert_eq!(converted.volumes[1].density_grid.ranges[0], [1, 1, 0, 0]);
     assert_eq!(converted.volumes[0].majorant_offset_count[0], 0);
     assert_eq!(converted.volumes[1].majorant_offset_count[0], 64u32.pow(3));
     assert_eq!(
@@ -73,11 +79,11 @@ const PROBE_SHADER: &str = r#"
 @compute @workgroup_size(1)
 fn sparse_grid_probe() {
     let grid = volume_media[0];
-    output_values[0] = sparse_grid_get_value(grid, vec3<i32>(-1, 0, 0));
-    output_values[1] = sparse_grid_get_value(grid, vec3<i32>(1, 2, 3));
-    output_values[2] = sparse_grid_get_value(grid, vec3<i32>(8, 0, 0));
-    output_values[3] = sparse_grid_get_value(grid, vec3<i32>(128, 0, 0));
-    output_values[4] = sparse_grid_get_value(grid, vec3<i32>(4096, 0, 0));
+    output_values[0] = sparse_grid_get_value(grid.density_grid, vec3<i32>(-1, 0, 0));
+    output_values[1] = sparse_grid_get_value(grid.density_grid, vec3<i32>(1, 2, 3));
+    output_values[2] = sparse_grid_get_value(grid.density_grid, vec3<i32>(8, 0, 0));
+    output_values[3] = sparse_grid_get_value(grid.density_grid, vec3<i32>(128, 0, 0));
+    output_values[4] = sparse_grid_get_value(grid.density_grid, vec3<i32>(4096, 0, 0));
     output_values[5] = sparse_grid_density(grid, vec3<f32>(3.0, -3.0, 2.0));
     var dda = uniform_grid_dda_init(
         grid, vec3<f32>(-1.0, 1.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), 0.0, 4.0,
@@ -94,21 +100,21 @@ fn sparse_grid_probe() {
 
 @compute @workgroup_size(1)
 fn sparse_grid_multi_probe() {
-    output_values[0] = sparse_grid_get_value(volume_media[0], vec3<i32>(-1, 0, 0));
-    output_values[1] = sparse_grid_get_value(volume_media[1], vec3<i32>(0, 0, 0));
+    output_values[0] = sparse_grid_get_value(volume_media[0].density_grid, vec3<i32>(-1, 0, 0));
+    output_values[1] = sparse_grid_get_value(volume_media[1].density_grid, vec3<i32>(0, 0, 0));
 }
 
 @compute @workgroup_size(1)
 fn sparse_grid_empty_probe() {
-    output_values[0] = sparse_grid_get_value(volume_media[0], vec3<i32>(0, 0, 0));
+    output_values[0] = sparse_grid_get_value(volume_media[0].density_grid, vec3<i32>(0, 0, 0));
 }
 
 @compute @workgroup_size(1)
 fn sparse_grid_record_range_probe() {
-    _ = sparse_grid_get_value(volume_media[0], vec3<i32>(0, 0, 0));
+    _ = sparse_grid_get_value(volume_media[0].density_grid, vec3<i32>(0, 0, 0));
     output_values[0] = f32(atomicLoad(&render_error.value));
     atomicStore(&render_error.value, 0u);
-    _ = sparse_grid_get_value(volume_media[1], vec3<i32>(0, 0, 0));
+    _ = sparse_grid_get_value(volume_media[1].density_grid, vec3<i32>(0, 0, 0));
     output_values[1] = f32(atomicLoad(&render_error.value));
 }
 "#;
@@ -120,9 +126,12 @@ const ASSET_PROBE_SHADER: &str = r#"
 @compute @workgroup_size(64)
 fn sparse_grid_asset_probe(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x >= arrayLength(&probe_points)) { return; }
-    output_values[global_id.x] = sparse_grid_density(
-        volume_media[0], probe_points[global_id.x].xyz,
-    );
+    let point = probe_points[global_id.x];
+    if (point.w == 0.0) {
+        output_values[global_id.x] = sparse_grid_density(volume_media[0], point.xyz);
+    } else {
+        output_values[global_id.x] = sparse_grid_sample(volume_media[0].temperature_grid, point.xyz);
+    }
 }
 "#;
 
@@ -147,14 +156,14 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     grid.bounds_max = [2.0; 4];
     grid.majorant_resolution = [2, 1, 1, 0];
     grid.majorant_offset_count = [512, 2, 0, 0];
-    grid.sparse_grid_ranges = [[0, 2, 0, 32768 + 4096], [0, 512, 0, 0]];
-    grid.sparse_grid_background = [1.0, 0.0, 0.0, 0.0];
-    grid.grid_inverse_map = [
+    grid.density_grid.ranges = [[0, 2, 0, 32768 + 4096], [0, 512, 1, 0]];
+    grid.density_grid.background = [1.0, 0.0, 0.0, 0.0];
+    grid.density_grid.inverse_map = [
         [0.5, 0.0, 0.0, 0.0],
         [0.0, 0.5, 0.0, 0.0],
         [0.0, 0.0, 0.5, 0.0],
     ];
-    grid.grid_translation = [2.0, -4.0, 1.0, 0.0];
+    grid.density_grid.translation = [2.0, -4.0, 1.0, 0.0];
     grid.medium_from_world = [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
@@ -416,9 +425,9 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     );
 
     let mut first_grid = grid;
-    first_grid.sparse_grid_ranges = [[0, 1, 0, 32768], [0; 4]];
+    first_grid.density_grid.ranges = [[0, 1, 0, 32768], [0, 0, 1, 0]];
     let mut second_grid = grid;
-    second_grid.sparse_grid_ranges = [[1, 1, 32768, 32768], [0; 4]];
+    second_grid.density_grid.ranges = [[1, 1, 32768, 32768], [0, 0, 1, 0]];
     let multi_volume_buffer = storage_buffer(
         device,
         "NanoVDB multi-grid volume records",
@@ -493,8 +502,8 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     assert_eq!(read_u32_buffer(device, &error_readback)[0], 0);
 
     let mut empty_grid = grid;
-    empty_grid.sparse_grid_ranges = [[0; 4]; 2];
-    empty_grid.sparse_grid_background = [4.25, 0.0, 0.0, 0.0];
+    empty_grid.density_grid.ranges = [[0; 4], [0, 0, 1, 0]];
+    empty_grid.density_grid.background = [4.25, 0.0, 0.0, 0.0];
     let empty_volume_buffer = storage_buffer(device, "NanoVDB empty volume record", &[empty_grid]);
     let empty_roots_buffer = storage_buffer(
         device,
@@ -552,9 +561,11 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     assert_eq!(read_u32_buffer(device, &error_readback)[0], 0);
 
     let mut invalid_root_range = VolumeMediumRecord::zeroed();
-    invalid_root_range.sparse_grid_ranges[0] = [1, 2, 0, 0];
+    invalid_root_range.density_grid.ranges[1][2] = 1;
+    invalid_root_range.density_grid.ranges[0] = [1, 2, 0, 0];
     let mut invalid_entry_range = VolumeMediumRecord::zeroed();
-    invalid_entry_range.sparse_grid_ranges[0] = [0, 0, 1, 1];
+    invalid_entry_range.density_grid.ranges[1][2] = 1;
+    invalid_entry_range.density_grid.ranges[0] = [0, 0, 1, 1];
     let record_ranges_buffer = storage_buffer(
         device,
         "NanoVDB invalid record ranges",
@@ -626,31 +637,52 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
     };
     let converted = convert_media(&[medium], 1).unwrap();
     let volume = converted.volumes[0];
-    let sample_count = 729usize;
-    let mut points = Vec::with_capacity(sample_count);
-    let mut expected = Vec::with_capacity(sample_count);
-    for z in 0..9 {
-        for y in 0..9 {
-            for x in 0..9 {
-                let sample = [x, y, z];
-                let mut index = [0.0; 3];
-                for axis in 0..3 {
-                    let t = sample[axis] as f32 / 8.0;
-                    let lower = nanovdb.index_bbox_min[axis] as f32 - 1.25;
-                    let upper = nanovdb.index_bbox_max[axis] as f32 + 1.25;
-                    index[axis] = lower + t * (upper - lower);
+    let mut grids = vec![(
+        &nanovdb.density,
+        nanovdb.index_bbox_min,
+        nanovdb.index_bbox_max,
+        nanovdb.inverse_map_f,
+        nanovdb.translation_f,
+        0.0,
+    )];
+    if let Some(temperature) = &nanovdb.temperature {
+        grids.push((
+            &temperature.values,
+            temperature.index_bbox_min,
+            temperature.index_bbox_max,
+            temperature.inverse_map_f,
+            temperature.translation_f,
+            1.0,
+        ));
+    }
+    let mut points = Vec::new();
+    let mut expected = Vec::new();
+    for (grid, bbox_min, bbox_max, inverse_map, translation, role) in grids {
+        for z in 0..9 {
+            for y in 0..9 {
+                for x in 0..9 {
+                    let sample = [x, y, z];
+                    let index = std::array::from_fn::<_, 3, _>(|axis| {
+                        let lower = bbox_min[axis] as f32 - 1.25;
+                        let upper = bbox_max[axis] as f32 + 1.25;
+                        lower + sample[axis] as f32 / 8.0 * (upper - lower)
+                    });
+                    let point_medium = std::array::from_fn::<_, 3, _>(|axis| {
+                        translation[axis] + index[axis] / inverse_map[axis][axis]
+                    });
+                    let delta = std::array::from_fn::<_, 3, _>(|axis| {
+                        point_medium[axis] - translation[axis]
+                    });
+                    let mapped_index = inverse_map.map(|row| {
+                        delta[0].mul_add(row[0], delta[1].mul_add(row[1], delta[2] * row[2]))
+                    });
+                    expected.push(sample_sparse_grid(grid, mapped_index));
+                    points.push([point_medium[0], point_medium[1], point_medium[2], role]);
                 }
-                let mut point_medium = [0.0; 3];
-                for axis in 0..3 {
-                    let scale = nanovdb.inverse_map_f[axis][axis];
-                    point_medium[axis] = nanovdb.translation_f[axis] + index[axis] / scale;
-                }
-                let mapped_index = world_to_index_f(&nanovdb, point_medium);
-                expected.push(sample_sparse_grid(&nanovdb, mapped_index));
-                points.push([point_medium[0], point_medium[1], point_medium[2], 0.0]);
             }
         }
     }
+    let sample_count = points.len();
 
     let context = Context::new(
         RequiredLimits {
@@ -797,10 +829,10 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
     }
 }
 
-fn sample_sparse_grid(grid: &pbrt_r4::gpu::flat::NanoVDBMedium, point: [f32; 3]) -> f32 {
+fn sample_sparse_grid(grid: &SparseScalarGrid, point: [f32; 3]) -> f32 {
     let base = point.map(|coordinate| coordinate.floor() as i32);
     let fraction = std::array::from_fn::<_, 3, _>(|axis| point[axis] - base[axis] as f32);
-    let value = |x: i32, y: i32, z: i32| grid.density.get_value([x, y, z]).unwrap();
+    let value = |x: i32, y: i32, z: i32| grid.get_value([x, y, z]).unwrap();
     let v000 = value(base[0], base[1], base[2]);
     let v001 = value(base[0], base[1], base[2] + 1);
     let v010 = value(base[0], base[1] + 1, base[2]);
@@ -871,4 +903,222 @@ fn read_bytes(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
     drop(mapped);
     buffer.unmap();
     bytes
+}
+
+#[allow(dead_code)]
+#[path = "support/nanovdb_fixture.rs"]
+mod fixture;
+
+const TEMPERATURE_PROBE_SHADER: &str = r#"
+@group(0) @binding(79) var<storage, read_write> output_values: array<f32>;
+fn store_probe4(offset: u32, value: vec4<f32>) {
+    for (var lane = 0u; lane < 4u; lane += 1u) { output_values[offset + lane] = value[lane]; }
+}
+@compute @workgroup_size(1)
+fn temperature_probe() {
+    let lambda = vec4<f32>(360.0, 450.0, 600.0, 830.0);
+    let position = vec3<f32>(3.0, -3.0, 2.0);
+    let volume = volume_media[0];
+    output_values[0] = sparse_grid_density(volume, position);
+    output_values[1] = sparse_grid_sample(volume.temperature_grid, position);
+    let temperatures = array<f32, 8>(101.0, 500.0, 1000.0, 2000.0, 3000.0, 6000.0, 12000.0, 50000.0);
+    for (var i = 0u; i < 8u; i += 1u) {
+        store_probe4(2u + 4u * i, blackbody_spectrum(temperatures[i], lambda));
+    }
+    store_probe4(34u, nanovdb_le(volume, position, lambda));
+    var grid = volume;
+    grid.temperature_grid.ranges[1].z = 0u;
+    store_probe4(38u, nanovdb_le(grid, position, lambda));
+    grid = volume;
+    grid.temperature_grid.ranges = array<vec4<u32>, 2>(vec4<u32>(0u), vec4<u32>(0u, 0u, 1u, 0u));
+    grid.temperature_grid.background.x = 1300.0;
+    store_probe4(42u, nanovdb_le(grid, position, lambda));
+    grid.temperature_parameters.z = -2.0;
+    store_probe4(46u, nanovdb_le(grid, position, lambda));
+    grid.temperature_parameters = vec4<f32>(1200.0, 1.0, 2.0, 0.0);
+    store_probe4(50u, nanovdb_le(grid, position, vec4<f32>(28977.721)));
+    grid.temperature_parameters.x = 1199.9;
+    store_probe4(54u, nanovdb_le(grid, position, vec4<f32>(28977.721)));
+    grid.temperature_grid.background.x = -1300.0;
+    grid.temperature_parameters = vec4<f32>(0.0, -1.0, 2.0, 0.0);
+    store_probe4(58u, nanovdb_le(grid, position, lambda));
+    grid.temperature_grid.background.x = RAY_T_MAX;
+    grid.temperature_parameters.y = 2.0;
+    _ = nanovdb_le(grid, position, lambda);
+    output_values[66] = f32(atomicLoad(&render_error.value));
+    atomicStore(&render_error.value, 0u);
+    grid.temperature_grid.ranges[1].z = 2u;
+    _ = nanovdb_le(grid, position, lambda);
+    output_values[67] = f32(atomicLoad(&render_error.value));
+    atomicStore(&render_error.value, 0u);
+    store_probe4(68u, medium_emission_contribution(
+        vec4<f32>(0.2, 0.4, 0.8, 1.6), vec4<f32>(1.0, 0.8, 0.6, 0.4),
+        vec4<f32>(2.0, 3.0, 4.0, 5.0), vec4<f32>(1.0, 0.7, 0.5, 0.2),
+        vec4<f32>(0.5, 1.0, 1.5, 2.0), vec4<f32>(0.3, 0.6, 0.9, 1.2),
+    ));
+}
+"#;
+
+#[test]
+#[ignore = "requires a WebGPU adapter"]
+fn temperature_lookup_blackbody_and_emission_match_v4() {
+    let (bytes, _) = fixture::full_tree(false);
+    let mut payload = decode_density_grid(&bytes).unwrap();
+    let mut temperature = payload.density.clone();
+    for (index, value) in temperature.leaf_values.iter_mut().enumerate() {
+        let x = (index / 64) as f32;
+        let y = ((index / 8) % 8) as f32;
+        let z = (index % 8) as f32;
+        *value = 1000.0 + 100.0 * x + 200.0 * y + 300.0 * z;
+    }
+    temperature.background = -10.0;
+    payload.temperature = Some(NanoVDBScalarGrid {
+        values: temperature,
+        index_bbox_min: [0; 3],
+        index_bbox_max: [7; 3],
+        inverse_map_f: [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]],
+        translation_f: [2.0, -4.0, 1.0],
+    });
+    payload.le_scale = 2.0;
+    payload.majorant = vec![4.0; 64usize.pow(3)];
+    let medium = Medium {
+        name: "temperature probe".into(),
+        kind: "nanovdb".into(),
+        sigma_a: 0,
+        sigma_s: 0,
+        le: 0,
+        g: 0.0,
+        transform: identity_transform(),
+        data: MediumData::NanoVDB(payload),
+    };
+    let converted = convert_media(&[medium], 1).unwrap();
+    assert_eq!(converted.volumes[0].density_grid.ranges[1][2], 1);
+    assert_eq!(converted.volumes[0].temperature_grid.ranges[1][2], 1);
+    assert_eq!(converted.volumes[0].density_grid.ranges[1][0], 0);
+    assert_eq!(converted.volumes[0].temperature_grid.ranges[1][0], 512);
+    let context = Context::new(
+        RequiredLimits {
+            storage_buffers_per_shader_stage: 6,
+            uniform_buffers_per_shader_stage: 0,
+            buffers_and_acceleration_structures_per_shader_stage: 6,
+            bind_groups: 1,
+        },
+        0,
+        0,
+    )
+    .unwrap();
+    let device = &context.device;
+    let error = storage_buffer(device, "temperature error", &[RenderError::zeroed()]);
+    let volumes = storage_buffer(device, "temperature records", &converted.volumes);
+    let values = storage_buffer(device, "temperature values", &converted.volume_data);
+    let roots = storage_buffer(device, "temperature roots", &converted.sparse_grid_roots);
+    let entries = storage_buffer(
+        device,
+        "temperature entries",
+        &converted.sparse_grid_entries,
+    );
+    let output = storage_buffer(device, "temperature output", &[0.0_f32; 72]);
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("temperature readback"),
+        size: 72 * 4,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let error_readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("temperature error readback"),
+        size: 4,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("temperature layout"),
+        entries: &[
+            storage_layout(11, false),
+            storage_layout(75, true),
+            storage_layout(76, true),
+            storage_layout(77, true),
+            storage_layout(78, true),
+            storage_layout(79, false),
+        ],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("temperature bind group"),
+        layout: &layout,
+        entries: &[
+            binding(11, &error),
+            binding(75, &volumes),
+            binding(76, &values),
+            binding(77, &roots),
+            binding(78, &entries),
+            binding(79, &output),
+        ],
+    });
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("temperature probe"),
+        source: wgpu::ShaderSource::Wgsl(compose_source(TEMPERATURE_PROBE_SHADER).into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("temperature pipeline layout"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("temperature pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some("temperature_probe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 72 * 4);
+    encoder.copy_buffer_to_buffer(&error, 0, &error_readback, 0, 4);
+    context.queue.submit(Some(encoder.finish()));
+    let actual = read_f32_buffer(device, &readback);
+    assert_eq!(read_u32_buffer(device, &error_readback), [0]);
+    assert_eq!(&actual[..2], &[0.25, 1300.0]);
+    // Generated from local v4 CPU FastExp / Blackbody / BlackbodySpectrum f32 formulas.
+    let reference = [
+        [0.0, 0.0, 0.0, 0.0],
+        [
+            2.97333731e-27,
+            8.54041041e-21,
+            1.77651998e-14,
+            2.07344009e-9,
+        ],
+        [2.11405476e-11, 2.05075175e-8, 1.44110736e-5, 0.00218724622],
+        [0.000315094774, 0.00561797852, 0.072549887, 0.397230864],
+        [0.0324210078, 0.152571335, 0.520067334, 0.943106771],
+        [0.792712629, 0.987796068, 0.900461614, 0.559223592],
+        [0.717135549, 0.474087685, 0.235704437, 0.0915684178],
+        [0.0125721321, 0.00563188037, 0.00194476242, 0.000570338219],
+    ];
+    for (value, expected) in actual[2..34].iter().zip(reference.into_iter().flatten()) {
+        assert!(
+            (value - expected).abs() <= 3e-5 * expected.abs().max(1e-30),
+            "{value} != {expected}"
+        );
+    }
+    assert_eq!(&actual[38..42], &[0.0; 4]);
+    assert_eq!(&actual[46..54], &[0.0; 8]);
+    for lane in 0..4 {
+        assert!(actual[34 + lane] > 0.0);
+        assert!((actual[42 + lane] - actual[34 + lane]).abs() < 1e-7);
+        assert!((actual[58 + lane] - actual[34 + lane]).abs() < 1e-7);
+        assert!((actual[54 + lane] - 2.0).abs() < 1e-4);
+        let beta = [0.2_f32, 0.4, 0.8, 1.6][lane];
+        let sigma_a = [0.5_f32, 1.0, 1.5, 2.0][lane];
+        let le = [0.3_f32, 0.6, 0.9, 1.2][lane];
+        let t_maj = [1.0_f32, 0.7, 0.5, 0.2][lane];
+        let r_e_average = (1.0 + 0.8 * 1.5 * 0.7 + 0.6 * 2.0 * 0.5 + 0.4 * 2.5 * 0.2) / 4.0;
+        let expected = beta * sigma_a * t_maj * le / (2.0 * r_e_average);
+        assert!((actual[68 + lane] - expected).abs() < 1e-6);
+    }
+    assert_eq!(&actual[66..68], &[1.0; 2]);
 }

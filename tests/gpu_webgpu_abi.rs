@@ -43,7 +43,24 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Instance>(), 160);
     assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
     assert_eq!(std::mem::offset_of!(MediumRecord, volume_index), 20);
-    assert_eq!(std::mem::size_of::<VolumeMediumRecord>(), 320);
+    assert_eq!(std::mem::size_of::<VolumeMediumRecord>(), 448);
+    assert_eq!(
+        std::mem::offset_of!(VolumeMediumRecord, temperature_grid),
+        320
+    );
+    assert_eq!(
+        std::mem::offset_of!(VolumeMediumRecord, temperature_parameters),
+        432
+    );
+    assert_eq!(
+        std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord>(),
+        112
+    );
+    assert_eq!(
+        std::mem::align_of::<pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord>(),
+        16
+    );
+
     assert_eq!(
         std::mem::offset_of!(VolumeMediumRecord, emission_scale_resolution),
         304
@@ -75,20 +92,29 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
         std::mem::offset_of!(VolumeMediumRecord, majorant_offset_count),
         96
     );
+    assert_eq!(std::mem::offset_of!(VolumeMediumRecord, density_grid), 192);
     assert_eq!(
-        std::mem::offset_of!(VolumeMediumRecord, sparse_grid_ranges),
-        192
-    );
-    assert_eq!(
-        std::mem::offset_of!(VolumeMediumRecord, sparse_grid_background),
+        std::mem::offset_of!(VolumeMediumRecord, density_grid)
+            + std::mem::offset_of!(
+                pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord,
+                background
+            ),
         224
     );
     assert_eq!(
-        std::mem::offset_of!(VolumeMediumRecord, grid_inverse_map),
+        std::mem::offset_of!(VolumeMediumRecord, density_grid)
+            + std::mem::offset_of!(
+                pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord,
+                inverse_map
+            ),
         240
     );
     assert_eq!(
-        std::mem::offset_of!(VolumeMediumRecord, grid_translation),
+        std::mem::offset_of!(VolumeMediumRecord, density_grid)
+            + std::mem::offset_of!(
+                pbrt_r4::gpu::webgpu::abi::SparseScalarGridRecord,
+                translation
+            ),
         288
     );
     assert_eq!(
