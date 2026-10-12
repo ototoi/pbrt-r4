@@ -99,6 +99,28 @@ fn medium_cloud_defaults_to_unit_sigma_density_one_and_unit_frequency() {
 }
 
 #[test]
+fn medium_cloud_ignores_scale_like_v4() {
+    let mut base_params = ParameterDictionary::new();
+    base_params.add_string("preset", "Apple");
+    let mut scaled_params = ParameterDictionary::new();
+    scaled_params.add_string("preset", "Apple");
+    scaled_params.add_float("scale", 7.0);
+    let t = Transform::identity();
+    let base = Medium::create("cloud", &base_params, &t).unwrap();
+    let scaled = Medium::create("cloud", &scaled_params, &t).unwrap();
+    let lambda = pbrt_r4::util::spectrum::SampledWavelengths::sample_visible(0.37);
+    let p = Point3f::new(0.25, 0.0, 0.25);
+
+    let (Medium::Cloud(base), Medium::Cloud(scaled)) = (base, scaled) else {
+        panic!("expected cloud media");
+    };
+    let base = base.sample_point(&p, &lambda);
+    let scaled = scaled.sample_point(&p, &lambda);
+    assert_eq!(base.sigma_a, scaled.sigma_a);
+    assert_eq!(base.sigma_s, scaled.sigma_s);
+}
+
+#[test]
 fn medium_nanovdb_defaults_to_density_grid_and_temperature_grid_names() {
     let params = ParameterDictionary::new();
     let t = Transform::identity();
