@@ -38,7 +38,7 @@ pub use texture::{
 use geometry::convert_geometry;
 use instance::convert_instances;
 use light::{convert_lights, LightSamplingData};
-use medium::convert_media;
+use medium::{convert_media, validate_storage_array_size};
 use spectrum::convert_spectra;
 use texture::{
     lower_texture_library, scene_texture_views, texture_binding_plan,
@@ -123,23 +123,24 @@ impl Scene {
         }
         let instances = convert_instances(&flat, geometries.len())?;
         let converted_media = convert_media(&flat.media, flat.attributes.spectra.len())?;
+        let limits = device.limits();
         validate_storage_array_size::<super::abi::VolumeMediumRecord>(
-            device,
+            &limits,
             converted_media.volumes.len(),
             "volume medium records",
         )?;
         validate_storage_array_size::<f32>(
-            device,
+            &limits,
             converted_media.volume_data.len(),
             "volume data",
         )?;
         validate_storage_array_size::<super::abi::SparseGridRootRecord>(
-            device,
+            &limits,
             converted_media.sparse_grid_roots.len(),
             "sparse grid roots",
         )?;
         validate_storage_array_size::<super::abi::SparseGridEntryRecord>(
-            device,
+            &limits,
             converted_media.sparse_grid_entries.len(),
             "sparse grid entries",
         )?;
@@ -652,29 +653,4 @@ fn buffer_contents<T: bytemuck::Pod>(values: &[T]) -> &[u8] {
     } else {
         cast_slice(values)
     }
-}
-
-fn validate_storage_array_size<T>(
-    device: &wgpu::Device,
-    count: usize,
-    label: &str,
-) -> Result<(), PbrtError> {
-    let byte_size = count
-        .max(1)
-        .checked_mul(std::mem::size_of::<T>())
-        .ok_or_else(|| PbrtError::error(&format!("GPU {label} buffer size overflows usize.")))?;
-    let limits = device.limits();
-    let binding_limit = limits.max_storage_buffer_binding_size as usize;
-    if byte_size > binding_limit {
-        return Err(PbrtError::error(&format!(
-            "GPU {label} buffer requires {byte_size} bytes; device storage binding limit is {binding_limit} bytes."
-        )));
-    }
-    if byte_size as u64 > limits.max_buffer_size {
-        return Err(PbrtError::error(&format!(
-            "GPU {label} buffer requires {byte_size} bytes; device buffer limit is {} bytes.",
-            limits.max_buffer_size
-        )));
-    }
-    Ok(())
 }

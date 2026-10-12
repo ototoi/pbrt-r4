@@ -1,6 +1,30 @@
 use crate::gpu::flat;
 use crate::util::error::PbrtError;
 
+pub fn validate_storage_array_size<T: bytemuck::Pod>(
+    limits: &wgpu::Limits,
+    count: usize,
+    label: &str,
+) -> Result<(), PbrtError> {
+    let byte_size = count
+        .max(1)
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or_else(|| PbrtError::error(&format!("GPU {label} buffer size overflows usize.")))?;
+    let binding_limit = limits.max_storage_buffer_binding_size as usize;
+    if byte_size > binding_limit {
+        return Err(PbrtError::error(&format!(
+            "GPU {label} buffer requires {byte_size} bytes; device storage binding limit is {binding_limit} bytes."
+        )));
+    }
+    if byte_size as u64 > limits.max_buffer_size {
+        return Err(PbrtError::error(&format!(
+            "GPU {label} buffer requires {byte_size} bytes; device buffer limit is {} bytes.",
+            limits.max_buffer_size
+        )));
+    }
+    Ok(())
+}
+
 use super::super::abi::{
     inverse_affine, row_major_to_columns, MediumRecord, SparseGridEntryRecord,
     SparseGridRootRecord, VolumeMediumRecord, INVALID_INDEX,
