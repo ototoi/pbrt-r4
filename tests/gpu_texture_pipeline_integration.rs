@@ -2,7 +2,7 @@ use std::process::Command;
 
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::pipeline::Pipeline;
-use pbrt_r4::gpu::webgpu::shader::required_limits_for_sources;
+use pbrt_r4::gpu::webgpu::shader::required_limits_for_sources_with_nanovdb;
 use pbrt_r4::gpu::webgpu::stage::COMPUTE_STAGES;
 use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 use pbrt_r4::util::imageio::read_image::read_image;
@@ -17,10 +17,12 @@ fn texture_material_pipeline_compiles() {
         .iter()
         .map(|stage| stage.source)
         .collect::<Vec<_>>();
-    let mut required = required_limits_for_sources(&canonical_bindings, &stage_sources).unwrap();
+    let mut required =
+        required_limits_for_sources_with_nanovdb(&canonical_bindings, &stage_sources, false)
+            .unwrap();
     required.bind_groups = required.bind_groups.max(2);
     let context = Context::new(required, 1, 1).unwrap();
-    Pipeline::new(&context.device, 1, 1, 1, false).unwrap();
+    Pipeline::new(&context.device, 1, 1, 1, false, false).unwrap();
 }
 
 #[test]

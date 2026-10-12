@@ -2,7 +2,8 @@ use std::mem::{offset_of, size_of};
 
 use pbrt_r4::gpu::webgpu::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
 use pbrt_r4::gpu::webgpu::shader::{
-    common_library_source, compose_source, compose_source_with_noise, required_limits_for_sources,
+    common_library_source, compose_source, compose_source_with_features, compose_source_with_noise,
+    required_limits_for_sources, required_limits_for_sources_with_nanovdb,
 };
 use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
 
@@ -254,6 +255,51 @@ fn required_limits_are_derived_from_each_composed_stage() {
     assert_eq!(limits.storage_buffers_per_shader_stage, 9);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 4);
     assert_eq!(limits.bind_groups, 1);
+}
+
+#[test]
+fn nanovdb_bindings_are_composed_only_for_nanovdb_scenes() {
+    let bindings = canonical_wavefront_bindings();
+    let stage_sources = [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER];
+    let with_nanovdb =
+        required_limits_for_sources_with_nanovdb(&bindings, &stage_sources, true).unwrap();
+    let without_nanovdb =
+        required_limits_for_sources_with_nanovdb(&bindings, &stage_sources, false).unwrap();
+    assert_eq!(
+        with_nanovdb.storage_buffers_per_shader_stage,
+        without_nanovdb.storage_buffers_per_shader_stage + 2
+    );
+
+    for stage_source in stage_sources {
+        let source = compose_source_with_features(stage_source, true, false);
+        assert!(!source.contains("sparse_grid_roots"));
+        assert!(!source.contains("sparse_grid_entries"));
+        assert!(!source.contains("sparse_grid_density"));
+        assert!(source.contains("medium.kind > 3u"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    for stage_source in stage_sources {
+        let source = compose_source_with_features(stage_source, true, true);
+        assert!(source.contains("sparse_grid_roots"));
+        assert!(source.contains("sparse_grid_entries"));
+        assert!(source.contains("sparse_grid_density"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
 }
 
 #[test]

@@ -5,7 +5,8 @@ use fixture::*;
 use pbrt_r4::gpu::flat::flatten::nanovdb::{
     build_majorant, create_nanovdb, decode_density_grid, world_to_index_f,
 };
-use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseScalarGrid};
+use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseScalarGrid};
+use pbrt_r4::gpu::flat::NanoVDBMedium;
 use pbrt_r4::paramdict::ParameterDictionary;
 
 #[test]
@@ -229,6 +230,70 @@ fn majorant_is_x_fastest_and_clips_to_inclusive_bounds() {
     assert_eq!(majorant[9].to_bits(), (137.0_f32 / 512.0).to_bits());
     assert_eq!(majorant[9 * 64].to_bits(), (81.0_f32 / 512.0).to_bits());
     assert_eq!(majorant[9 * 4096].to_bits(), (74.0_f32 / 512.0).to_bits());
+}
+
+#[test]
+fn majorant_skips_large_empty_regions_between_sparse_roots() {
+    let density = SparseScalarGrid {
+        roots: [-100_000, 0, 100_000]
+            .into_iter()
+            .zip([2.0, 3.0, 4.0])
+            .map(|(x, value)| SparseGridRoot {
+                block: [x, 0, 0],
+                entry: SparseGridEntry {
+                    child_index: None,
+                    value,
+                },
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let medium = NanoVDBMedium {
+        density,
+        index_bbox_min: [-409_600_000, 0, 0],
+        index_bbox_max: [409_604_095, 1, 1],
+        inverse_map_f: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        translation_f: [0.0; 3],
+        bounds_min: [-409_600_000.0, 0.0, 0.0],
+        bounds_max: [409_604_095.0, 1.0, 1.0],
+        majorant_resolution: [64; 3],
+        majorant: Vec::new(),
+    };
+
+    let majorant = build_majorant(&medium).unwrap();
+    assert_eq!(majorant[0], 2.0);
+    assert_eq!(majorant[32], 3.0);
+    assert_eq!(majorant[63], 4.0);
+}
+
+#[test]
+fn majorant_includes_background_between_sparse_roots() {
+    let density = SparseScalarGrid {
+        background: 5.0,
+        roots: vec![SparseGridRoot {
+            block: [0; 3],
+            entry: SparseGridEntry {
+                child_index: None,
+                value: 2.0,
+            },
+        }],
+        ..Default::default()
+    };
+    let medium = NanoVDBMedium {
+        density,
+        index_bbox_min: [0; 3],
+        index_bbox_max: [8191, 1, 1],
+        inverse_map_f: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        translation_f: [0.0; 3],
+        bounds_min: [0.0; 3],
+        bounds_max: [8192.0, 2.0, 2.0],
+        majorant_resolution: [64; 3],
+        majorant: Vec::new(),
+    };
+
+    let majorant = build_majorant(&medium).unwrap();
+    assert_eq!(majorant[0], 2.0);
+    assert_eq!(majorant[63], 5.0);
 }
 
 #[test]
