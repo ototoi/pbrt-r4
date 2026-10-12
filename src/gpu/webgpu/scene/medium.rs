@@ -360,7 +360,9 @@ fn append_sparse_grid(
         grid.inverse_map_f,
         grid.translation_f,
     )?;
-    let temperature_grid = if let Some(temperature) = &grid.temperature {
+    let temperature_grid = if let Some(temperature) =
+        grid.temperature.as_ref().filter(|_| grid.le_scale > 0.0)
+    {
         if (0..3).any(|axis| temperature.index_bbox_min[axis] > temperature.index_bbox_max[axis]) {
             return Err(PbrtError::error("Empty temperature index bounds."));
         }

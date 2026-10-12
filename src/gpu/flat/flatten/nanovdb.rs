@@ -47,16 +47,6 @@ pub fn create_nanovdb(parameters: &ParameterDictionary) -> Result<NanoVDBMedium,
             .ok_or_else(|| error(&format!("Missing density grid {name:?}.")))?;
         validate_metadata(grid)?;
         let mut medium = decode_density_grid(grid.raw_bytes())?;
-        let temperature = parameters.get_one_string("temperaturename", "temperature");
-        if let Some(grid) = file.grids().iter().find(|g| g.name() == temperature) {
-            validate_metadata(grid)?;
-            let (temperature_grid, bounds) = decode_scalar_grid(grid.raw_bytes())?;
-            medium.temperature = Some(temperature_grid);
-            for axis in 0..3 {
-                medium.bounds_min[axis] = medium.bounds_min[axis].min(bounds[0][axis]);
-                medium.bounds_max[axis] = medium.bounds_max[axis].max(bounds[1][axis]);
-            }
-        }
         medium.le_scale = parameters.get_one_float("Lescale", 1.0);
         medium.temperature_offset = parameters.get_one_float(
             "temperatureoffset",
@@ -72,6 +62,21 @@ pub fn create_nanovdb(parameters: &ParameterDictionary) -> Result<NanoVDBMedium,
         .any(|value| !value.is_finite())
         {
             return Err(error("Temperature emission parameters must be finite."));
+        }
+        let temperature = parameters.get_one_string("temperaturename", "temperature");
+        if let Some(grid) = file.grids().iter().find(|g| g.name() == temperature) {
+            validate_metadata(grid)?;
+            let header = validate_header(grid.raw_bytes())?;
+            let (min, max) = header_bounds(&header)?;
+            let bounds = [min, max];
+            if medium.le_scale > 0.0 {
+                let (temperature_grid, _) = decode_scalar_grid(grid.raw_bytes())?;
+                medium.temperature = Some(temperature_grid);
+            }
+            for axis in 0..3 {
+                medium.bounds_min[axis] = medium.bounds_min[axis].min(bounds[0][axis]);
+                medium.bounds_max[axis] = medium.bounds_max[axis].max(bounds[1][axis]);
+            }
         }
         medium.majorant = build_majorant(&medium)?;
         Ok(medium)

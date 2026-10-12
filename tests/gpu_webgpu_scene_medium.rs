@@ -360,3 +360,43 @@ fn temperature_background_only_grid_has_explicit_presence_and_own_map() {
     grid.density.background = -1.0;
     assert!(convert_media(&[medium], 3).is_err());
 }
+
+#[test]
+fn nonpositive_lescale_omits_flat_temperature_buffers() {
+    let mut medium = nanovdb_medium();
+    medium.transform = pbrt_r4::gpu::flat::identity_transform();
+    let MediumData::NanoVDB(grid) = &mut medium.data else {
+        unreachable!()
+    };
+    grid.temperature = Some(NanoVDBScalarGrid {
+        values: SparseScalarGrid {
+            roots: vec![SparseGridRoot {
+                block: [0; 3],
+                entry: SparseGridEntry {
+                    child_index: None,
+                    value: 2000.0,
+                },
+            }],
+            leaf_values: vec![2000.0; 512],
+            ..Default::default()
+        },
+        index_bbox_min: [0; 3],
+        index_bbox_max: [7; 3],
+        inverse_map_f: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        translation_f: [0.0; 3],
+    });
+    let enabled = convert_media(&[medium.clone()], 3).unwrap();
+    assert_eq!(enabled.sparse_grid_roots.len(), 2);
+    assert_eq!(enabled.volume_data.len(), 64usize.pow(3) + 512);
+    for scale in [0.0, -1.0] {
+        let MediumData::NanoVDB(grid) = &mut medium.data else {
+            unreachable!()
+        };
+        grid.le_scale = scale;
+        let converted = convert_media(&[medium.clone()], 3).unwrap();
+        assert_eq!(converted.sparse_grid_roots.len(), 1);
+        assert_eq!(converted.volume_data.len(), 64usize.pow(3));
+        assert_eq!(converted.volumes[0].temperature_grid.ranges, [[0; 4]; 2]);
+        assert_eq!(converted.volumes[0].majorant_offset_count[0], 0);
+    }
+}

@@ -956,6 +956,13 @@ fn temperature_probe() {
         vec4<f32>(2.0, 3.0, 4.0, 5.0), vec4<f32>(1.0, 0.7, 0.5, 0.2),
         vec4<f32>(0.5, 1.0, 1.5, 2.0), vec4<f32>(0.3, 0.6, 0.9, 1.2),
     ));
+    let high_temperatures = array<f32, 5>(100000.0, 200000.0, 1000000.0, 10000000.0, 1e12);
+    for (var i = 0u; i < 5u; i += 1u) {
+        let temperature = high_temperatures[i];
+        let peak_nm = 2.8977721e6 / temperature;
+        store_probe4(72u + 4u * i,
+            blackbody_spectrum(temperature, vec4<f32>(peak_nm, 450.0, 600.0, 830.0)));
+    }
 }
 "#;
 
@@ -1017,10 +1024,10 @@ fn temperature_lookup_blackbody_and_emission_match_v4() {
         "temperature entries",
         &converted.sparse_grid_entries,
     );
-    let output = storage_buffer(device, "temperature output", &[0.0_f32; 72]);
+    let output = storage_buffer(device, "temperature output", &[0.0_f32; 92]);
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("temperature readback"),
-        size: 72 * 4,
+        size: 92 * 4,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -1077,7 +1084,7 @@ fn temperature_lookup_blackbody_and_emission_match_v4() {
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 72 * 4);
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 92 * 4);
     encoder.copy_buffer_to_buffer(&error, 0, &error_readback, 0, 4);
     context.queue.submit(Some(encoder.finish()));
     let actual = read_f32_buffer(device, &readback);
@@ -1121,4 +1128,24 @@ fn temperature_lookup_blackbody_and_emission_match_v4() {
         assert!((actual[68 + lane] - expected).abs() < 1e-6);
     }
     assert_eq!(&actual[66..68], &[1.0; 2]);
+    for (index, temperature) in [100000.0_f32, 200000.0, 1000000.0, 10000000.0, 1e12]
+        .into_iter()
+        .enumerate()
+    {
+        let peak_nm = 2.8977721e6 / temperature;
+        for (lane, wavelength) in [peak_nm, 450.0, 600.0, 830.0].into_iter().enumerate() {
+            let expected =
+                pbrt_r4::util::spectrum::blackbody_normalized_at(wavelength, temperature);
+            let value = actual[72 + 4 * index + lane];
+            assert!(
+                value.is_finite() && value > 0.0,
+                "T={temperature}, lambda={wavelength}, value={value}"
+            );
+            assert!(
+                (value - expected).abs() <= 1e-3 * expected.abs(),
+                "T={temperature}, lambda={wavelength}: {value} != {expected}"
+            );
+        }
+        assert!((actual[72 + 4 * index] - 1.0).abs() < 1e-5);
+    }
 }
