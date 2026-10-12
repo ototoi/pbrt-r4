@@ -28,6 +28,8 @@ pub struct UniformGridMedium {
     pub bounds_max: [f32; 3],
     pub resolution: [u32; 3],
     pub density: Vec<f32>,
+    pub emission_scale_resolution: [u32; 3],
+    pub emission_scale: Vec<f32>,
     pub majorant_resolution: [u32; 3],
     pub majorant: Vec<f32>,
 }

@@ -118,6 +118,8 @@ fn packs_uniformgrid_data_and_assigns_checked_ranges() {
         bounds_max: [1.0; 3],
         resolution: [2, 1, 1],
         density: vec![0.25, 1.0],
+        emission_scale_resolution: [1, 1, 1],
+        emission_scale: vec![1.0],
         majorant_resolution: [1; 3],
         majorant: vec![1.0],
     });
@@ -128,8 +130,29 @@ fn packs_uniformgrid_data_and_assigns_checked_ranges() {
     assert_eq!(converted.records[1].volume_index, 0);
     assert_eq!(converted.volumes.len(), 1);
     assert_eq!(converted.volumes[0].density_offset_count, [0, 2, 0, 0]);
-    assert_eq!(converted.volumes[0].majorant_offset_count, [2, 1, 0, 0]);
-    assert_eq!(converted.volume_data, [0.25, 1.0, 1.0]);
+    assert_eq!(converted.volumes[0].coefficient_offset_count, [2, 1, 0, 0]);
+    assert_eq!(converted.volumes[0].majorant_offset_count, [3, 1, 0, 0]);
+    assert_eq!(converted.volumes[0].emission_scale_resolution, [1, 1, 1, 0]);
+    assert_eq!(converted.volume_data, [0.25, 1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn rejects_invalid_uniformgrid_emission_scale_payload() {
+    let mut medium = homogeneous_medium();
+    medium.kind = "uniformgrid".to_owned();
+    medium.data = MediumData::UniformGrid(UniformGridMedium {
+        bounds_min: [0.0; 3],
+        bounds_max: [1.0; 3],
+        resolution: [1; 3],
+        density: vec![1.0],
+        emission_scale_resolution: [2, 1, 1],
+        emission_scale: vec![1.0],
+        majorant_resolution: [1; 3],
+        majorant: vec![1.0],
+    });
+
+    let error = convert_media(&[medium], 3).err().unwrap();
+    assert!(error.to_string().contains("emission scale"));
 }
 
 #[test]

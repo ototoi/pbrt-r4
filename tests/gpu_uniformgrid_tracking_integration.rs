@@ -549,6 +549,7 @@ fn run_stage(
         sparse_grid_background: [1.0, 0.0, 0.0, 0.0],
         grid_inverse_map: [[0.0; 4]; 3],
         grid_translation: [0.0; 4],
+        emission_scale_resolution: [0; 4],
     };
     values.insert(75, bytes_of(&grid).to_vec());
     let mut volume = vec![1.0_f32; 8];

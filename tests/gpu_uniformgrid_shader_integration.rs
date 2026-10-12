@@ -4,7 +4,7 @@ use pbrt_r4::gpu::webgpu::shader::compose_source;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
 use wgpu::util::DeviceExt;
 
-const RESULT_VECTORS: u64 = 37;
+const RESULT_VECTORS: u64 = 38;
 
 const PROBE_SHADER: &str = r#"
 @group(0) @binding(79) var<storage, read_write> output_values: array<vec4<f32>>;
@@ -173,6 +173,18 @@ fn uniform_grid_probe() {
             rgb_grid, rgb_grid.density_offset_count, vec3<f32>(1.0, 0.5, 0.5), rgb_lambda,
         );
     }
+    output_values[37] = vec4<f32>(
+        uniform_grid_scalar(
+            grid, 19u, vec3<u32>(2u, 1u, 1u), vec3<f32>(1.0, 0.5, 0.5),
+        ),
+        uniform_grid_scalar(
+            grid, 19u, vec3<u32>(2u, 1u, 1u), vec3<f32>(0.0, 0.5, 0.5),
+        ),
+        uniform_grid_scalar(
+            grid, 19u, vec3<u32>(2u, 1u, 1u), vec3<f32>(2.0, 0.5, 0.5),
+        ),
+        0.0,
+    );
 }
 "#;
 
@@ -201,7 +213,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
         resolution: [2, 1, 1, 0],
         majorant_resolution: [2, 1, 1, 0],
         density_offset_count: [0, 2, 0, 0],
-        coefficient_offset_count: [0; 4],
+        coefficient_offset_count: [19, 2, 0, 0],
         majorant_offset_count: [2, 2, 0, 0],
         medium_from_world: [
             [1.0, 0.0, 0.0, 0.0],
@@ -214,6 +226,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
         sparse_grid_background: [0.0; 4],
         grid_inverse_map: [[0.0; 4]; 3],
         grid_translation: [0.0; 4],
+        emission_scale_resolution: [2, 1, 1, 0],
     };
     let grid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniform grid probe record"),
@@ -226,6 +239,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
     ];
     let rgb_voxels = [[0.4_f32, 0.2, 0.1], [0.1_f32, 0.5, 0.3]];
     volume_values.extend(rgb_voxels.into_iter().flatten());
+    volume_values.extend([2.0_f32, 4.0]);
     let volume_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniform grid probe data"),
         contents: bytemuck::cast_slice(&volume_values),
@@ -395,6 +409,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
     assert_eq!(&values[120..124], &[0.0; 4]);
     assert_eq!(&values[124..128], &[1.0, 0.125, 0.0, 0.0]);
     assert_eq!(&values[128..132], &[13.5, 1.25, 14.0, 2.125]);
+    assert_eq!(&values[148..152], &[3.0, 1.0, 2.0, 0.0]);
     let color_spaces = [
         &pbrt_r4::util::spectrum::SRGB,
         &pbrt_r4::util::spectrum::ACES2065_1,
