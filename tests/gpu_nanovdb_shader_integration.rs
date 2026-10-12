@@ -86,12 +86,30 @@ fn sparse_grid_probe() {
     output_values[6] = segment.t_min;
     output_values[7] = segment.t_max;
     output_values[8] = segment.sigma_maj.x;
+    let next_segment = uniform_grid_dda_next(grid, vec4<f32>(1.0), &dda);
+    output_values[9] = next_segment.t_min;
+    output_values[10] = next_segment.t_max;
+    output_values[11] = next_segment.sigma_maj.x;
 }
 
 @compute @workgroup_size(1)
 fn sparse_grid_multi_probe() {
     output_values[0] = sparse_grid_get_value(volume_media[0], vec3<i32>(-1, 0, 0));
     output_values[1] = sparse_grid_get_value(volume_media[1], vec3<i32>(0, 0, 0));
+}
+
+@compute @workgroup_size(1)
+fn sparse_grid_empty_probe() {
+    output_values[0] = sparse_grid_get_value(volume_media[0], vec3<i32>(0, 0, 0));
+}
+
+@compute @workgroup_size(1)
+fn sparse_grid_record_range_probe() {
+    _ = sparse_grid_get_value(volume_media[0], vec3<i32>(0, 0, 0));
+    output_values[0] = f32(atomicLoad(&render_error.value));
+    atomicStore(&render_error.value, 0u);
+    _ = sparse_grid_get_value(volume_media[1], vec3<i32>(0, 0, 0));
+    output_values[1] = f32(atomicLoad(&render_error.value));
 }
 "#;
 
@@ -127,8 +145,8 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     let mut grid = VolumeMediumRecord::zeroed();
     grid.bounds_min = [0.0; 4];
     grid.bounds_max = [2.0; 4];
-    grid.majorant_resolution = [1, 1, 1, 0];
-    grid.majorant_offset_count = [512, 1, 0, 0];
+    grid.majorant_resolution = [2, 1, 1, 0];
+    grid.majorant_offset_count = [512, 2, 0, 0];
     grid.sparse_grid_ranges = [[0, 2, 0, 32768 + 4096], [0, 512, 0, 0]];
     grid.sparse_grid_background = [1.0, 0.0, 0.0, 0.0];
     grid.grid_inverse_map = [
@@ -203,7 +221,7 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
         })
         .collect::<Vec<_>>();
     let mut volume_values = leaf_values;
-    volume_values.push(2.0);
+    volume_values.extend([1.0, 2.0]);
     let volume_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("NanoVDB sparse-grid probe leaf values"),
         contents: cast_slice(&volume_values),
@@ -223,13 +241,13 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     });
     let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("NanoVDB sparse-grid probe output"),
-        size: 9 * std::mem::size_of::<f32>() as u64,
+        size: 12 * std::mem::size_of::<f32>() as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("NanoVDB sparse-grid probe readback"),
-        size: 9 * std::mem::size_of::<f32>() as u64,
+        size: 12 * std::mem::size_of::<f32>() as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -282,7 +300,7 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback, 0, 36);
+    encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback, 0, 48);
     encoder.copy_buffer_to_buffer(
         &render_error_buffer,
         0,
@@ -295,8 +313,11 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
 
     assert_eq!(&values[..6], &[9.0, 14.0, 3.0, 2.0, 1.0, 3.0]);
     assert!((values[6] - 1.0).abs() < 1.0e-5);
-    assert!((values[7] - 3.0).abs() < 1.0e-5);
-    assert_eq!(values[8], 2.0);
+    assert!((values[7] - 2.0).abs() < 1.0e-5);
+    assert_eq!(values[8], 1.0);
+    assert!((values[9] - 2.0).abs() < 1.0e-5);
+    assert!((values[10] - 3.0).abs() < 1.0e-5);
+    assert_eq!(values[11], 2.0);
     let render_error = read_u32_buffer(device, &error_readback);
     assert_eq!(
         render_error[0], 0,
@@ -470,6 +491,120 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
     context.queue.submit(Some(encoder.finish()));
     assert_eq!(&read_f32_buffer(device, &readback)[..2], &[9.0, 17.0]);
     assert_eq!(read_u32_buffer(device, &error_readback)[0], 0);
+
+    let mut empty_grid = grid;
+    empty_grid.sparse_grid_ranges = [[0; 4]; 2];
+    empty_grid.sparse_grid_background = [4.25, 0.0, 0.0, 0.0];
+    let empty_volume_buffer = storage_buffer(device, "NanoVDB empty volume record", &[empty_grid]);
+    let empty_roots_buffer = storage_buffer(
+        device,
+        "NanoVDB empty root placeholder",
+        &[SparseGridRootRecord::default()],
+    );
+    let empty_entries_buffer = storage_buffer(
+        device,
+        "NanoVDB empty entry placeholder",
+        &[SparseGridEntryRecord::default()],
+    );
+    let empty_data_buffer = storage_buffer(device, "NanoVDB empty data placeholder", &[0.0_f32]);
+    let empty_render_error_buffer = storage_buffer(
+        device,
+        "NanoVDB empty grid render error",
+        &[RenderError::zeroed()],
+    );
+    let empty_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("NanoVDB empty grid bind group"),
+        layout: &layout,
+        entries: &[
+            binding(11, &empty_render_error_buffer),
+            binding(75, &empty_volume_buffer),
+            binding(76, &empty_data_buffer),
+            binding(77, &empty_roots_buffer),
+            binding(78, &empty_entries_buffer),
+            binding(79, &output_buffer),
+        ],
+    });
+    let empty_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("NanoVDB empty grid probe pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some("sparse_grid_empty_probe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&empty_pipeline);
+        pass.set_bind_group(0, &empty_bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback, 0, 4);
+    encoder.copy_buffer_to_buffer(
+        &empty_render_error_buffer,
+        0,
+        &error_readback,
+        0,
+        std::mem::size_of::<RenderError>() as u64,
+    );
+    context.queue.submit(Some(encoder.finish()));
+    assert_eq!(read_f32_buffer(device, &readback)[0], 4.25);
+    assert_eq!(read_u32_buffer(device, &error_readback)[0], 0);
+
+    let mut invalid_root_range = VolumeMediumRecord::zeroed();
+    invalid_root_range.sparse_grid_ranges[0] = [1, 2, 0, 0];
+    let mut invalid_entry_range = VolumeMediumRecord::zeroed();
+    invalid_entry_range.sparse_grid_ranges[0] = [0, 0, 1, 1];
+    let record_ranges_buffer = storage_buffer(
+        device,
+        "NanoVDB invalid record ranges",
+        &[invalid_root_range, invalid_entry_range],
+    );
+    let two_root_placeholders = storage_buffer(
+        device,
+        "NanoVDB root range placeholders",
+        &[SparseGridRootRecord::default(); 2],
+    );
+    let one_entry_placeholder = storage_buffer(
+        device,
+        "NanoVDB entry range placeholder",
+        &[SparseGridEntryRecord::default()],
+    );
+    let range_render_error_buffer = storage_buffer(
+        device,
+        "NanoVDB record range render error",
+        &[RenderError::zeroed()],
+    );
+    let range_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("NanoVDB record range bind group"),
+        layout: &layout,
+        entries: &[
+            binding(11, &range_render_error_buffer),
+            binding(75, &record_ranges_buffer),
+            binding(76, &empty_data_buffer),
+            binding(77, &two_root_placeholders),
+            binding(78, &one_entry_placeholder),
+            binding(79, &output_buffer),
+        ],
+    });
+    let range_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("NanoVDB record range probe pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some("sparse_grid_record_range_probe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&range_pipeline);
+        pass.set_bind_group(0, &range_bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback, 0, 8);
+    context.queue.submit(Some(encoder.finish()));
+    assert_eq!(&read_f32_buffer(device, &readback)[..2], &[1.0, 1.0]);
 }
 
 #[test]
@@ -529,9 +664,28 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
     )
     .unwrap();
     let device = &context.device;
-    assert!(
-        converted.volume_data.len() * 4 <= device.limits().max_storage_buffer_binding_size as usize
-    );
+    let storage_limit = device.limits().max_storage_buffer_binding_size as usize;
+    for (label, byte_size) in [
+        (
+            "volume records",
+            converted.volumes.len() * std::mem::size_of::<VolumeMediumRecord>(),
+        ),
+        ("volume data", converted.volume_data.len() * 4),
+        (
+            "sparse roots",
+            converted.sparse_grid_roots.len() * std::mem::size_of::<SparseGridRootRecord>(),
+        ),
+        (
+            "sparse entries",
+            converted.sparse_grid_entries.len() * std::mem::size_of::<SparseGridEntryRecord>(),
+        ),
+    ] {
+        assert!(
+            byte_size <= storage_limit,
+            "{label} needs {byte_size} bytes, device binding limit is {storage_limit}"
+        );
+        assert!(byte_size as u64 <= device.limits().max_buffer_size);
+    }
     let volume_buffer = storage_buffer(device, "NanoVDB asset volume record", &[volume]);
     let roots_buffer = storage_buffer(
         device,
