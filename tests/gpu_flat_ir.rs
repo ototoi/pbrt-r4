@@ -585,27 +585,39 @@ fn cloud_factory_rejects_empty_bounds_and_non_finite_parameters() {
 }
 
 #[test]
-fn flatten_node_still_rejects_emission_in_a_scattering_medium() {
-    let mut root = Node::new("root");
-    add_camera_and_film(&mut root, Default::default());
-    let mut params = ParameterDictionary::default();
-    params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
-    params.add_floats("rgb sigma_s", &[0.2, 0.2, 0.2]);
-    params.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);
-    root.add_component(Component::Scene(SceneComponent {
-        scene: NodeScene {
-            media: vec![Arc::new(NodeMedium {
-                name: "emitting-fog".to_string(),
-                kind: "homogeneous".to_string(),
-                params,
-                transform: Transform::default(),
-            })],
-            ..Default::default()
-        },
-    }));
-    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
-    assert!(error.to_string().contains("does not support nonzero Le"));
-    assert!(error.to_string().contains("emitting-fog"));
+fn flatten_node_accepts_emission_in_a_homogeneous_scattering_medium() {
+    let flatten_emission = |lescale| {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        let mut params = ParameterDictionary::default();
+        params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+        params.add_floats("rgb sigma_s", &[0.2, 0.2, 0.2]);
+        params.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);
+        params.add_float("float Lescale", lescale);
+        root.add_component(Component::Scene(SceneComponent {
+            scene: NodeScene {
+                media: vec![Arc::new(NodeMedium {
+                    name: "emitting-fog".to_string(),
+                    kind: "homogeneous".to_string(),
+                    params,
+                    transform: Transform::default(),
+                })],
+                ..Default::default()
+            },
+        }));
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        let medium = &scene.media[0];
+        scene.attributes.spectra[medium.le as usize].samples.clone()
+    };
+
+    let scale_one = flatten_emission(1.0);
+    let scale_two = flatten_emission(2.0);
+    assert!(scale_one
+        .iter()
+        .all(|sample| sample.is_finite() && *sample > 0.0));
+    for (one, two) in scale_one.iter().zip(scale_two) {
+        assert!((two - 2.0 * one).abs() <= 1e-6 * one.max(1.0));
+    }
 }
 
 #[test]
