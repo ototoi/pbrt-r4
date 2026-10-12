@@ -85,6 +85,7 @@ pub struct VolumeMediumRecord {
     pub sparse_grid_background: [f32; 4],
     pub grid_inverse_map: [[f32; 4]; 3],
     pub grid_translation: [f32; 4],
+    pub emission_scale_resolution: [u32; 4],
 }
 
 #[repr(C)]

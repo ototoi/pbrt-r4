@@ -63,6 +63,21 @@ pub fn convert_media(
         let (kind, volume_index) = match (&medium.kind[..], &medium.data) {
             ("homogeneous", flat::MediumData::Homogeneous) => (0, INVALID_INDEX),
             ("uniformgrid", flat::MediumData::UniformGrid(grid)) => {
+                let expected_emission_scale_count = grid
+                    .emission_scale_resolution
+                    .iter()
+                    .try_fold(1usize, |count, value| count.checked_mul(*value as usize))
+                    .ok_or_else(|| {
+                        PbrtError::error("Uniform grid emission scale size overflows usize.")
+                    })?;
+                if grid.emission_scale_resolution.contains(&0)
+                    || expected_emission_scale_count != grid.emission_scale.len()
+                    || grid.emission_scale.iter().any(|value| !value.is_finite())
+                {
+                    return Err(PbrtError::error(
+                        "Uniform grid emission scale has invalid resolution or values.",
+                    ));
+                }
                 let volume_index = u32::try_from(result.volumes.len())
                     .map_err(|_| PbrtError::error("Volume medium record count exceeds u32."))?;
                 let density_offset = checked_volume_offset(result.volume_data.len())?;
@@ -72,6 +87,17 @@ pub fn convert_media(
                     .checked_add(density_count)
                     .ok_or_else(|| PbrtError::error("Uniform grid density range overflows u32."))?;
                 result.volume_data.extend_from_slice(&grid.density);
+                let emission_scale_offset = checked_volume_offset(result.volume_data.len())?;
+                let emission_scale_count =
+                    u32::try_from(grid.emission_scale.len()).map_err(|_| {
+                        PbrtError::error("Uniform grid emission scale count exceeds u32.")
+                    })?;
+                emission_scale_offset
+                    .checked_add(emission_scale_count)
+                    .ok_or_else(|| {
+                        PbrtError::error("Uniform grid emission scale range overflows u32.")
+                    })?;
+                result.volume_data.extend_from_slice(&grid.emission_scale);
                 let majorant_offset = checked_volume_offset(result.volume_data.len())?;
                 let majorant_count = u32::try_from(grid.majorant.len())
                     .map_err(|_| PbrtError::error("Uniform grid majorant count exceeds u32."))?;
@@ -106,7 +132,7 @@ pub fn convert_media(
                         0,
                     ],
                     density_offset_count: [density_offset, density_count, 0, 0],
-                    coefficient_offset_count: [0; 4],
+                    coefficient_offset_count: [emission_scale_offset, emission_scale_count, 0, 0],
                     majorant_offset_count: [majorant_offset, majorant_count, 0, 0],
                     medium_from_world,
                     cloud_parameters: [0.0; 4],
@@ -114,6 +140,12 @@ pub fn convert_media(
                     sparse_grid_background: [0.0; 4],
                     grid_inverse_map: [[0.0; 4]; 3],
                     grid_translation: [0.0; 4],
+                    emission_scale_resolution: [
+                        grid.emission_scale_resolution[0],
+                        grid.emission_scale_resolution[1],
+                        grid.emission_scale_resolution[2],
+                        0,
+                    ],
                 });
                 (1, volume_index)
             }
@@ -151,6 +183,7 @@ pub fn convert_media(
                     sparse_grid_background: [0.0; 4],
                     grid_inverse_map: [[0.0; 4]; 3],
                     grid_translation: [0.0; 4],
+                    emission_scale_resolution: [0; 4],
                 });
                 (2, volume_index)
             }
@@ -259,6 +292,7 @@ pub fn convert_media(
                     sparse_grid_background: [0.0; 4],
                     grid_inverse_map: [[0.0; 4]; 3],
                     grid_translation: [0.0; 4],
+                    emission_scale_resolution: [0; 4],
                 });
                 (3, volume_index)
             }
@@ -429,6 +463,7 @@ fn append_sparse_grid(
             grid.translation_f[2],
             0.0,
         ],
+        emission_scale_resolution: [0; 4],
     })
 }
 

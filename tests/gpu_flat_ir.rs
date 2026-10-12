@@ -7,8 +7,8 @@ use pbrt_r4::gpu::flat::portal::prepare_portal_image;
 use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
 use pbrt_r4::gpu::flat::{
     area_light_flags, area_light_is_two_sided, area_light_is_zero_alpha_sample_only,
-    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, SamplerKind,
-    SamplerRandomization, Scene as FlatScene, INVALID_INDEX,
+    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, MediumData,
+    SamplerKind, SamplerRandomization, Scene as FlatScene, INVALID_INDEX,
 };
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, prepare_triangle_meshes, tessellate_shapes,
@@ -3076,6 +3076,8 @@ fn flatten_node_preserves_uniformgrid_density_and_majorants() {
     };
     assert_eq!(grid.resolution, [2, 1, 1]);
     assert_eq!(grid.density, [0.25, 1.0]);
+    assert_eq!(grid.emission_scale_resolution, [1, 1, 1]);
+    assert_eq!(grid.emission_scale, [1.0]);
     assert_eq!(grid.majorant_resolution, [16; 3]);
     assert_eq!(grid.majorant.len(), 16 * 16 * 16);
     assert!(grid.majorant.iter().all(|value| *value <= 1.0));
@@ -3108,7 +3110,7 @@ fn uniform_grid_factory_orders_bounds_and_accepts_empty_optional_grids() {
     params.add_floats("temperature", &[]);
     params.add_floats("Lescale", &[]);
     let scene = uniform_grid_scene(params).unwrap();
-    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &scene.media[0].data else {
+    let MediumData::UniformGrid(grid) = &scene.media[0].data else {
         panic!("expected uniformgrid payload");
     };
     assert_eq!(grid.bounds_min, [-1.0, -2.0, -3.0]);
@@ -3242,7 +3244,7 @@ fn rgb_grid_factory_rejects_missing_or_invalid_coefficients_and_emission() {
 }
 
 #[test]
-fn uniform_grid_factory_rejects_invalid_payloads_and_emission() {
+fn uniform_grid_factory_rejects_invalid_payloads_and_accepts_emission() {
     for value in [-1.0, Float::NAN, Float::INFINITY] {
         let mut params = ParameterDictionary::default();
         params.add_float("density", value);
@@ -3272,10 +3274,20 @@ fn uniform_grid_factory_rejects_invalid_payloads_and_emission() {
     let mut params = ParameterDictionary::default();
     params.add_float("density", 1.0);
     params.add_spectrum("Le", &Spectrum::one());
-    assert!(uniform_grid_scene(params)
-        .unwrap_err()
-        .to_string()
-        .contains("nonzero Le"));
+    let scene = uniform_grid_scene(params).unwrap();
+    let le = &scene.attributes.spectra[scene.media[0].le as usize];
+    let expected_le = 1.0 / spectrum_to_photometric(&Spectrum::one());
+    assert!((le.samples[0] - expected_le).abs() < 1e-6);
+    assert!(scene.attributes.spectra[scene.media[0].le as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample > 0.0));
+    let MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.emission_scale_resolution, [1, 1, 1]);
+    assert_eq!(grid.emission_scale.len(), 1);
+    assert!(grid.emission_scale[0] > 0.0);
     for bound in [
         Point3f::new(0.0, 1.0, 1.0),
         Point3f::new(Float::NAN, 1.0, 1.0),
@@ -3285,6 +3297,23 @@ fn uniform_grid_factory_rejects_invalid_payloads_and_emission() {
         params.add_point3f("p1", &bound);
         assert!(uniform_grid_scene(params).is_err());
     }
+}
+
+#[test]
+fn uniform_grid_emission_scale_uses_v4_resolution_without_changing_input_scale() {
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_float("density", 1.0);
+    params.add_float("density", 1.0);
+    params.add_floats("Lescale", &[2.0, 4.0]);
+    params.add_spectrum("Le", &Spectrum::one());
+    let scene = uniform_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.emission_scale_resolution, [2, 1, 1]);
+    assert_eq!(grid.emission_scale.len(), 2);
+    assert_eq!(grid.emission_scale, [2.0, 4.0]);
 }
 
 #[test]
