@@ -224,6 +224,40 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 );
                 let event_distance = -log(1.0 - u_distance) / sigma_t.x;
                 if (event_distance < segment_distance) {
+                    if (ray.depth < viewport.max_depth) {
+                        let le = evaluate_spectrum(medium.le, lambda);
+                        if (any(le != vec4<f32>(0.0))) {
+                            let transmittance_ratio = exp(
+                                (vec4<f32>(sigma_t.x) - sigma_t) * event_distance,
+                            );
+                            if (any(transmittance_ratio != transmittance_ratio)
+                                || any(abs(transmittance_ratio) > vec4<f32>(RAY_T_MAX))) {
+                                set_render_error();
+                                return;
+                            }
+                            let emission_probability = sampled_spectrum_average(
+                                ray.r_u * (sigma_t / sigma_t.x) * transmittance_ratio,
+                            );
+                            if (emission_probability != emission_probability
+                                || abs(emission_probability) > RAY_T_MAX) {
+                                set_render_error();
+                                return;
+                            }
+                            if (emission_probability > 0.0) {
+                                let contribution = ray.beta * (transmittance_ratio / sigma_t.x)
+                                    * sigma_a * le / emission_probability;
+                                if (any(contribution != contribution)
+                                    || any(abs(contribution) > vec4<f32>(RAY_T_MAX))) {
+                                    set_render_error();
+                                    return;
+                                }
+                                store_sample_radiance(
+                                    pixel_index,
+                                    load_sample_radiance(pixel_index) + contribution,
+                                );
+                            }
+                        }
+                    }
                     let u_event = random_medium(pixel_index, ray.medium_segment_index, ray.depth, 2u);
                     let p_absorb = sigma_a.x / sigma_t.x;
                     let p_scatter = sigma_s.x / sigma_t.x;
