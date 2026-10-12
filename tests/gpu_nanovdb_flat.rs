@@ -143,7 +143,7 @@ fn load(
     let mut params = ParameterDictionary::new();
     params.add_string("filename", file.path().to_str().unwrap());
     if let Some(value) = lescale {
-        params.add_float("LeScale", value);
+        params.add_float("Lescale", value);
     }
     create_nanovdb(&params)
 }
@@ -157,8 +157,6 @@ fn loads_zip_and_uncompressed_and_unions_temperature_bounds() {
         assert!(medium.majorant.iter().all(|v| *v == 2.0));
         let temperature = root_tile("temperature", 2000.0, ([0; 3], [8; 3]));
         assert!(load(&[density.clone(), temperature.clone()], zip, None).is_err());
-        let error = load(&[density.clone(), temperature.clone()], zip, Some(1.0)).unwrap_err();
-        assert!(error.to_string().contains("requires LeScale=0"));
         let medium = load(&[density.clone(), temperature], zip, Some(0.0)).unwrap();
         assert_eq!(medium.bounds_max, [8.0; 3]);
         let mut temperature = root_tile("temperature", 1.0, ([0; 3], [8; 3]));

@@ -51,10 +51,10 @@ pub fn create_nanovdb(parameters: &ParameterDictionary) -> Result<NanoVDBMedium,
         if let Some(grid) = file.grids().iter().find(|g| g.name() == temperature) {
             validate_metadata(grid)?;
             let header = validate_header(grid.raw_bytes())?;
-            let le_scale = parameters.get_one_float("LeScale", 1.0);
-            if !le_scale.is_finite() || le_scale != 0.0 {
+            let lescale = parameters.get_one_float("Lescale", 1.0);
+            if !lescale.is_finite() || lescale != 0.0 {
                 return Err(error(
-                    "Temperature emission is not supported; requires LeScale=0.",
+                    "Temperature emission is not supported; requires Lescale=0.",
                 ));
             }
             let (min, max) = header_bounds(&header)?;
