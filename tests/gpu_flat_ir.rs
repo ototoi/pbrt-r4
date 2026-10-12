@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat::SourceShape;
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};

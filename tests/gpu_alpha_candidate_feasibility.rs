@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 //! Hardware feasibility check for alpha-mask ray-query candidates and the texture VM.
 //! Run the feasibility probe with `cargo test --test gpu_alpha_candidate_feasibility
 //! non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture -- --ignored`.

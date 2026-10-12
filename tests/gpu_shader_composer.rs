@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::webgpu::shader_composer::{compose, ShaderModuleSpec};
 
 fn module(id: &str, source: &str, dependencies: &[&str]) -> ShaderModuleSpec {

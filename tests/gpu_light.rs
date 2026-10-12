@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::webgpu::light::{
     area_pdf_omega, area_triangle_pmf, select_area_triangle_cdf, triangle_world_area,
     uniform_light_pmf,

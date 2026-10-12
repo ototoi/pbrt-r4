@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use std::f32::consts::PI;
 
 use pbrt_r4::gpu::webgpu::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};

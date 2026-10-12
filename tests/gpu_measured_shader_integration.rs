@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;

@@ -19,6 +19,14 @@ mod _impl {
             Err(PbrtError::error("GPU integrator not implemented yet"))
         }
 
+        pub fn create_with_progress(
+            _scene: Scene,
+            _show_progress: bool,
+            _tile_size: Option<u32>,
+        ) -> Result<Self, PbrtError> {
+            Err(PbrtError::error("GPU integrator not implemented yet"))
+        }
+
         pub fn render(&mut self) -> Result<(), PbrtError> {
             Err(PbrtError::error("GPU integrator not implemented yet"))
         }

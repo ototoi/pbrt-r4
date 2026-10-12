@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::webgpu::abi::VolumeMediumRecord;
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::shader::compose_source;

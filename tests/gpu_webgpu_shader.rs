@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use std::mem::{offset_of, size_of};
 
 use pbrt_r4::gpu::webgpu::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};

@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use std::sync::Arc;
 
 use image::{ImageBuffer, Luma};

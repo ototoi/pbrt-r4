@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat::{build_light_bounds, build_light_bvh, Light, LightBoundInput, LightKind};
 use pbrt_r4::gpu::webgpu::abi::{light_table_uniform, LIGHT_SAMPLER_KIND_BVH};
 use pbrt_r4::gpu::webgpu::light_bvh::{pack_light_bvh, LightBvhUploadData, PackedLightBVH};

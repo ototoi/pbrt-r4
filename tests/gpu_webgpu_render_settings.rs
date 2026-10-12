@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat;
 use pbrt_r4::gpu::webgpu::render_settings::RenderSettings;
 

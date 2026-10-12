@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization};
 use pbrt_r4::gpu::webgpu::abi::{RenderError, ViewportUniform};
 use pbrt_r4::gpu::webgpu::context::Context;

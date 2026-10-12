@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat;
 use pbrt_r4::gpu::webgpu::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, validate_affine, AttributeRef,

@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use std::process::Command;
 
 use pbrt_r4::gpu::webgpu::context::Context;

@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat::texture::{
     ColorSpace, TextureInstruction, TextureLibrary, TextureRoot, TextureValueType,
     TypedTextureProgram,

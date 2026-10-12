@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use pbrt_r4::gpu::flat::SourceShape;
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, node_ref_to_json, prepare_triangle_meshes,
     remove_invalid_triangles, tessellate_shapes, triangle_mesh_from_params, Camera,

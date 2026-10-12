@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use pbrt_r4::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization};
 use pbrt_r4::gpu::webgpu::sampler::{build_sampler_data, build_sampler_data_with_subsurface};
 use pbrt_r4::util::lowdiscrepancy::primes::PRIMES;

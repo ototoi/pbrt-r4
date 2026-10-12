@@ -1,3 +1,5 @@
+#![cfg(feature = "webgpu")]
+
 use std::collections::HashSet;
 
 use pbrt_r4::gpu::webgpu::shader::{compose_source_with_noise, resource_bindings};
@@ -31,7 +33,7 @@ fn duplicate_bindings_are_rejected_before_device_creation() {
 #[test]
 fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
     let bindings = canonical_wavefront_bindings();
-    assert_eq!(bindings.len(), 74);
+    assert_eq!(bindings.len(), 76);
     for (index, left) in bindings.iter().enumerate() {
         for right in &bindings[index + 1..] {
             assert!(!(left.group == right.group && left.binding == right.binding));
@@ -94,11 +96,11 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
 #[test]
 fn canonical_layout_drives_required_limits() {
     let limits = RequiredLimits::from_bindings(&canonical_wavefront_bindings()).unwrap();
-    assert_eq!(limits.storage_buffers_per_shader_stage, 63);
+    assert_eq!(limits.storage_buffers_per_shader_stage, 65);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 6);
     assert_eq!(
         limits.buffers_and_acceleration_structures_per_shader_stage,
-        70
+        72
     );
     assert_eq!(limits.bind_groups, 2);
 }
