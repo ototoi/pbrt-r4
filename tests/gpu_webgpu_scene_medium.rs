@@ -4,7 +4,7 @@ use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseSca
 use pbrt_r4::gpu::flat::{
     CloudMedium, ColorSpace, Medium, MediumData, NanoVDBMedium, RgbGridMedium, UniformGridMedium,
 };
-use pbrt_r4::gpu::webgpu::scene::medium::convert_media;
+use pbrt_r4::gpu::webgpu::scene::medium::{convert_media, validate_storage_array_size};
 
 fn homogeneous_medium() -> Medium {
     Medium {
@@ -75,6 +75,27 @@ fn rejects_invalid_spectrum_references() {
     medium.le = 3;
 
     assert!(convert_media(&[medium], 3).is_err());
+}
+
+#[test]
+fn validates_storage_buffer_device_limits_and_boundaries() {
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_buffer_binding_size = 8;
+    limits.max_buffer_size = 8;
+
+    assert!(validate_storage_array_size::<u32>(&limits, 2, "probe").is_ok());
+    assert!(validate_storage_array_size::<u32>(&limits, 1, "probe").is_ok());
+
+    let binding_error = validate_storage_array_size::<u32>(&limits, 3, "probe").unwrap_err();
+    assert!(binding_error
+        .to_string()
+        .contains("storage binding limit is 8 bytes"));
+
+    limits.max_storage_buffer_binding_size = 16;
+    let buffer_error = validate_storage_array_size::<u32>(&limits, 3, "probe").unwrap_err();
+    assert!(buffer_error
+        .to_string()
+        .contains("device buffer limit is 8 bytes"));
 }
 
 #[test]
