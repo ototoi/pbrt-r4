@@ -225,7 +225,7 @@ struct CommandOptions {
 
     /// Use GPU for rendering.
     #[arg(long, default_value = "false")]
-    pub use_gpu: bool,
+    pub gpu: bool,
 
     /// GPU wavefront tile side length in pixels (square tiles). Tiles are
     /// processed sequentially to bound per-pixel wavefront buffer sizes;
@@ -235,7 +235,7 @@ struct CommandOptions {
 
     /// Use Wavefront for rendering.
     #[arg(long, default_value = "false")]
-    pub use_wavefront: bool,
+    pub wavefront: bool,
 
     #[arg(value_name = "filename.pbrt")]
     pub pbrtfile: Option<Vec<PathBuf>>,
@@ -639,7 +639,7 @@ fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
 }
 
 fn render_device(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError> {
-    if opts.use_gpu || opts.use_wavefront {
+    if opts.gpu || opts.wavefront {
         render_gpu(input_path, opts)
     } else {
         render_cpu(input_path, opts)
