@@ -11,6 +11,7 @@ description = "A Rust implementation of pbrt-v4"
 repository = "https://github.com/ototoi/pbrt-r4"
 license = "Apache-2.0"
 readme = "README.md"
+include = ["/src/**", "/build/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
 [features]
 default = []
