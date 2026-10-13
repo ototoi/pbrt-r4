@@ -1,0 +1,27 @@
+Integrator "path"
+    "integer maxdepth" [ 2 ]
+Sampler "independent"
+    "integer pixelsamples" [ 1 ]
+Film "rgb"
+    "string filename" [ "gpu-noise-texture-smoke.exr" ]
+    "integer xresolution" [ 32 ]
+    "integer yresolution" [ 32 ]
+LookAt 0 0 4
+    0 0 0
+    0 1 0
+Camera "perspective"
+    "float fov" [ 30 ]
+
+WorldBegin
+
+LightSource "point"
+    "rgb I" [ 60 60 60 ]
+    "point3 from" [ 1.5 1.5 3 ]
+
+Texture "noise" "spectrum" "fbm"
+    "integer octaves" [ 4 ]
+    "float roughness" [ 0.5 ]
+Material "diffuse"
+    "texture reflectance" [ "noise" ]
+Shape "sphere"
+    "float radius" [ 1 ]

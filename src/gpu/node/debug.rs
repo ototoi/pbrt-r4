@@ -1,0 +1,284 @@
+use super::component::Component;
+use super::node::{Node, NodeRef};
+use super::shape::Shape;
+use super::texture::{TextureComponent, TextureKind, TextureMapping, TextureNode};
+use crate::paramdict::ParameterDictionary;
+use serde_json::{json, Map, Value};
+
+pub fn node_ref_to_json(node: &NodeRef) -> Value {
+    let node = node.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    node_to_json(&node)
+}
+
+pub fn node_ref_to_json_string(node: &NodeRef) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&node_ref_to_json(node))
+}
+
+pub fn node_to_json(node: &Node) -> Value {
+    json!({
+        "name": node.name,
+        "transform": node.transform.matrix,
+        "components": node.components.iter().map(component_to_json).collect::<Vec<_>>(),
+        "children": node.children.iter().map(node_ref_to_json).collect::<Vec<_>>(),
+    })
+}
+
+pub fn node_to_json_string(node: &Node) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&node_to_json(node))
+}
+
+fn component_to_json(component: &Component) -> Value {
+    match component {
+        Component::Scene(component) => json!({
+            "type": "Scene",
+            "texture_nodes": component
+                .scene
+                .texture_nodes
+                .iter()
+                .map(|texture| texture_node_to_json(texture))
+                .collect::<Vec<_>>(),
+            "media": component
+                .scene
+                .media
+                .iter()
+                .map(|medium| {
+                    json!({
+                        "name": medium.name,
+                        "kind": medium.kind,
+                        "params": params_to_json(&medium.params),
+                        "transform": medium.transform.matrix,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        }),
+        Component::Sampler(component) => named_params_to_json(
+            "Sampler",
+            &component.sampler.name,
+            &component.sampler.params,
+        ),
+        Component::Integrator(component) => named_params_to_json(
+            "Integrator",
+            &component.integrator.name,
+            &component.integrator.params,
+        ),
+        Component::Accelerator(component) => named_params_to_json(
+            "Accelerator",
+            &component.accelerator.name,
+            &component.accelerator.params,
+        ),
+        Component::Filter(component) => {
+            named_params_to_json("Filter", &component.filter.name, &component.filter.params)
+        }
+        Component::Camera(component) => json!({
+            "type": "Camera",
+            "medium": component.camera.medium.as_ref().map(|medium| medium.name.clone()),
+            "params": params_to_json(&component.camera.params),
+        }),
+        Component::Film(component) => {
+            named_params_to_json("Film", &component.film.name, &component.film.params)
+        }
+        Component::Output(component) => json!({
+            "type": "Output",
+            "filename": component.output.filename,
+        }),
+        Component::Shape(component) => {
+            let mut value = shape_to_json(&component.shape);
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "reverse_orientation".to_string(),
+                    json!(component.reverse_orientation),
+                );
+            }
+            value
+        }
+        Component::Material(component) => json!({
+            "type": "Material",
+            "name": component.material.name,
+            "kind": component.material.kind,
+            "params": params_to_json(&component.material.params),
+            "texture_attributes": component
+                .material
+                .texture_attributes
+                .iter()
+                .map(|(name, texture)| json!({ "name": name, "texture": texture.name }))
+                .collect::<Vec<_>>(),
+        }),
+        Component::Light(component) => json!({
+            "type": "Light",
+            "name": component.light.name,
+            "medium": component.light.medium.as_ref().map(|medium| medium.name.clone()),
+            "params": params_to_json(&component.light.params),
+            "transform": component.light.transform.matrix,
+        }),
+        Component::AreaLight(component) => json!({
+            "type": "AreaLight",
+            "name": component.area_light.name,
+            "params": params_to_json(&component.area_light.params),
+        }),
+        Component::Medium(component) => json!({
+            "type": "MediumInterface",
+            "inside": component.medium_interface.inside.as_ref().map(|medium| medium.name.clone()),
+            "outside": component.medium_interface.outside.as_ref().map(|medium| medium.name.clone()),
+        }),
+        Component::Instance(component) => json!({
+            "type": "Instance",
+            "target": node_name(&component.instance.target),
+            "transform": component.instance.transform.matrix,
+        }),
+    }
+}
+
+fn texture_node_to_json(node: &TextureNode) -> Value {
+    json!({
+        "name": node.name,
+        "components": node.components.iter().map(texture_component_to_json).collect::<Vec<_>>(),
+        "children": node.children.iter().map(|child| texture_node_to_json(child)).collect::<Vec<_>>(),
+    })
+}
+
+fn texture_component_to_json(component: &TextureComponent) -> Value {
+    match component {
+        TextureComponent::Texture(texture) => json!({
+            "type": "Texture",
+            "name": texture.name,
+            "kind": texture_kind_name(texture.kind),
+            "params": params_to_json(&texture.params),
+        }),
+        TextureComponent::Mapping(mapping) => match mapping {
+            TextureMapping::Uv(mapping) => json!({
+                "type": "Mapping",
+                "kind": "uv",
+                "uscale": mapping.uscale,
+                "vscale": mapping.vscale,
+                "udelta": mapping.udelta,
+                "vdelta": mapping.vdelta,
+            }),
+            TextureMapping::Planar(transform) => {
+                json!({ "type": "Mapping", "kind": "planar", "transform": transform.matrix })
+            }
+            TextureMapping::Spherical(transform) => {
+                json!({ "type": "Mapping", "kind": "spherical", "transform": transform.matrix })
+            }
+            TextureMapping::Cylindrical(transform) => {
+                json!({ "type": "Mapping", "kind": "cylindrical", "transform": transform.matrix })
+            }
+            TextureMapping::PointTransform(transform) => json!({
+                "type": "Mapping",
+                "kind": "point_transform",
+                "transform": transform.matrix,
+            }),
+        },
+    }
+}
+
+fn named_params_to_json(kind: &str, name: &str, params: &ParameterDictionary) -> Value {
+    json!({
+        "type": kind,
+        "name": name,
+        "params": params_to_json(params),
+    })
+}
+
+fn shape_to_json(shape: &Shape) -> Value {
+    match shape {
+        Shape::Sphere(sphere) => json!({
+            "type": "Shape",
+            "kind": "Sphere",
+            "params": params_to_json(&sphere.params),
+        }),
+        Shape::Disk(disk) => json!({
+            "type": "Shape",
+            "kind": "Disk",
+            "params": params_to_json(&disk.params),
+        }),
+        Shape::Cylinder(cylinder) => json!({
+            "type": "Shape",
+            "kind": "Cylinder",
+            "params": params_to_json(&cylinder.params),
+        }),
+        Shape::Cone(cone) => json!({
+            "type": "Shape",
+            "kind": "Cone",
+            "params": params_to_json(&cone.params),
+        }),
+        Shape::Paraboloid(shape) => {
+            json!({ "type": "Shape", "kind": "Paraboloid", "params": params_to_json(&shape.params) })
+        }
+        Shape::HeightField(shape) => {
+            json!({ "type": "Shape", "kind": "HeightField", "params": params_to_json(&shape.params) })
+        }
+        Shape::BilinearMesh(shape) => {
+            json!({ "type": "Shape", "kind": "BilinearMesh", "params": params_to_json(&shape.params) })
+        }
+        Shape::Hyperboloid(shape) => {
+            json!({ "type": "Shape", "kind": "Hyperboloid", "params": params_to_json(&shape.params) })
+        }
+        Shape::Nurbs(shape) => {
+            json!({ "type": "Shape", "kind": "NURBS", "params": params_to_json(&shape.params) })
+        }
+        Shape::TriangleMesh(mesh) => json!({
+            "source_shape": mesh.source_shape,
+            "type": "Shape",
+            "kind": "TriangleMesh",
+            "position_count": mesh.positions.len(),
+            "index_count": mesh.indices.len(),
+            "normal_count": mesh.normals.as_ref().map_or(0, Vec::len),
+            "tangent_count": mesh.tangents.as_ref().map_or(0, Vec::len),
+            "uv_count": mesh.uvs.as_ref().map_or(0, Vec::len),
+        }),
+    }
+}
+
+fn node_name(node: &NodeRef) -> String {
+    let node = node.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    node.name.clone()
+}
+
+fn texture_kind_name(kind: TextureKind) -> &'static str {
+    match kind {
+        TextureKind::Float => "Float",
+        TextureKind::Spectrum => "Spectrum",
+    }
+}
+
+fn params_to_json(params: &ParameterDictionary) -> Value {
+    let mut output = Map::new();
+    for key in params.get_keys() {
+        let name = params.get_key_name(&key);
+        let value = if let Some(values) = non_empty(params.get_bools(&name)) {
+            json!(values)
+        } else if let Some(values) = non_empty(params.get_ints(&name)) {
+            json!(values)
+        } else if let Some(values) = non_empty(params.get_floats(&name)) {
+            json!(values)
+        } else if let Some(values) = non_empty(params.get_strings(&name)) {
+            json!(values)
+        } else if let Some(values) = non_empty(params.get_points(&name)) {
+            json!(values)
+        } else if let Some(values) = non_empty(params.get_spectrums(&name)) {
+            json!(values
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect::<Vec<_>>())
+        } else if let Some(values) = non_empty(params.get_sampled_spectra(&name)) {
+            json!(values
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect::<Vec<_>>())
+        } else {
+            Value::Null
+        };
+        output.insert(
+            name,
+            json!({
+                "type": params.get_key_type(&key),
+                "values": value,
+            }),
+        );
+    }
+    Value::Object(output)
+}
+
+fn non_empty<T>(values: Vec<T>) -> Option<Vec<T>> {
+    (!values.is_empty()).then_some(values)
+}

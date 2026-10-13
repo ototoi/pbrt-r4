@@ -1,0 +1,645 @@
+use super::types::Vec2f;
+use super::types::Vec3f;
+use crate::base::shape::Shape as CpuShape;
+use crate::paramdict::ParameterDictionary;
+use crate::shapes::LoopSubdiv;
+use crate::util::error::PbrtError;
+use crate::util::mesh::TriQuadMesh;
+use crate::util::transform::Transform as CpuTransform;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriangleMeshShape {
+    pub source_shape: String,
+    pub positions: Vec<Vec3f>,
+    pub indices: Vec<u32>,
+    /// Object-space normals before ReverseOrientation.
+    pub normals: Option<Vec<Vec3f>>,
+    pub tangents: Option<Vec<Vec3f>>,
+    pub uvs: Option<Vec<Vec2f>>,
+}
+
+#[derive(Clone)]
+pub struct SphereShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
+pub struct DiskShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
+pub struct CylinderShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
+pub struct ConeShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct ParaboloidShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct HeightFieldShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct BilinearMeshShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct HyperboloidShape {
+    pub params: ParameterDictionary,
+}
+#[derive(Clone)]
+pub struct NurbsShape {
+    pub params: ParameterDictionary,
+}
+
+#[derive(Clone)]
+pub enum Shape {
+    TriangleMesh(Box<TriangleMeshShape>),
+    Sphere(Box<SphereShape>),
+    Disk(Box<DiskShape>),
+    Cylinder(Box<CylinderShape>),
+    Cone(Box<ConeShape>),
+    Paraboloid(Box<ParaboloidShape>),
+    HeightField(Box<HeightFieldShape>),
+    BilinearMesh(Box<BilinearMeshShape>),
+    Hyperboloid(Box<HyperboloidShape>),
+    Nurbs(Box<NurbsShape>),
+}
+
+pub fn triangle_mesh_from_params(
+    shape_name: &str,
+    params: &ParameterDictionary,
+) -> Result<Option<TriangleMeshShape>, PbrtError> {
+    if shape_name == "plymesh" {
+        let filename = params.get_one_string("filename", "");
+        let mut mesh = TriQuadMesh::read_ply(&filename)?;
+        mesh.convert_to_only_triangles();
+        return Ok(tri_quad_mesh_to_node_mesh(&mesh));
+    }
+
+    let points = params.get_points("P");
+    if points.len() < 9 || points.len() % 3 != 0 {
+        return Ok(None);
+    }
+    let positions = points
+        .chunks_exact(3)
+        .map(|p| Vec3f([p[0] as f32, p[1] as f32, p[2] as f32]))
+        .collect::<Vec<_>>();
+    let vertex_count = positions.len();
+    let raw_indices = params.get_ints("indices");
+    let indices = if raw_indices.is_empty() {
+        if positions.len() == 3 {
+            vec![0, 1, 2]
+        } else {
+            return Ok(None);
+        }
+    } else {
+        if raw_indices.len() % 3 != 0 {
+            return Ok(None);
+        }
+        let mut indices = Vec::with_capacity(raw_indices.len());
+        for index in raw_indices {
+            if index < 0 || index as usize >= positions.len() {
+                return Ok(None);
+            }
+            indices.push(index as u32);
+        }
+        indices
+    };
+
+    Ok(Some(TriangleMeshShape {
+        source_shape: "trianglemesh".to_string(),
+        positions,
+        indices,
+        normals: node_vec3_attribute(params, "N", vertex_count)?,
+        tangents: node_vec3_attribute(params, "S", vertex_count)?,
+        uvs: node_vec2_attribute(params, "uv", vertex_count)?,
+    }))
+}
+
+/// Converts the CPU Loop Subdivision result into the Node IR mesh form.
+///
+/// The CPU implementation creates one `Triangle` value per output face, but
+/// all of those values share a single `TriangleMesh`. The GPU IR stores that
+/// shared mesh once instead of creating one Node IR shape per face.
+pub fn loop_subdiv_mesh_from_params(
+    params: &ParameterDictionary,
+) -> Result<Option<TriangleMeshShape>, PbrtError> {
+    let identity = CpuTransform::identity();
+    // Node IR keeps normals before ReverseOrientation; flattening applies
+    // the actual shape flag through the shared CPU normal processing.
+    let triangles = LoopSubdiv::create(&identity, &identity, false, params)?;
+    let Some(CpuShape::Triangle(triangle)) = triangles.first() else {
+        return Ok(None);
+    };
+    let mesh = &triangle.mesh;
+    let positions = mesh
+        .p
+        .iter()
+        .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
+        .collect();
+    let normals = if mesh.n.len() == mesh.p.len() {
+        Some(
+            mesh.n
+                .iter()
+                .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let tangents = (mesh.s.len() == mesh.p.len()).then(|| {
+        mesh.s
+            .iter()
+            .map(|s| Vec3f([s.x as f32, s.y as f32, s.z as f32]))
+            .collect()
+    });
+    let uvs = (mesh.uv.len() == mesh.p.len()).then(|| {
+        mesh.uv
+            .iter()
+            .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+            .collect()
+    });
+    Ok(Some(TriangleMeshShape {
+        source_shape: "loopsubdiv".to_string(),
+        positions,
+        indices: mesh.vertex_indices.clone(),
+        normals,
+        tangents,
+        uvs,
+    }))
+}
+
+/// Completes the attributes required by the renderable GPU Node IR mesh
+/// contract. This intentionally runs before Flat IR construction.
+///
+/// A missing normal or non-explicit tangent is left as `None` rather than
+/// synthesized here: `shade_surface.wgsl` already recomputes a fresh
+/// per-triangle geometric normal / dpdu whenever the interpolated vertex
+/// value is zero, so there's nothing to gain from precomputing and
+/// duplicating vertices to store one.
+pub fn complete_triangle_attributes(
+    mut shape: TriangleMeshShape,
+    node_name: &str,
+) -> Result<TriangleMeshShape, PbrtError> {
+    let vertex_count = shape.positions.len();
+    if vertex_count == 0 || shape.indices.is_empty() || shape.indices.len() % 3 != 0 {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" has no complete triangle mesh.",
+            node_name
+        )));
+    }
+    if !shape
+        .positions
+        .iter()
+        .all(|position| position.0.iter().all(|value| value.is_finite()))
+    {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" contains a non-finite position.",
+            node_name
+        )));
+    }
+    for &index in &shape.indices {
+        if index as usize >= vertex_count {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" contains an out-of-range vertex index.",
+                node_name
+            )));
+        }
+    }
+    validate_node_attribute_len(node_name, shape.normals.as_deref(), vertex_count, "normal")?;
+    validate_node_attribute_len(
+        node_name,
+        shape.tangents.as_deref(),
+        vertex_count,
+        "tangent",
+    )?;
+    validate_node_attribute_len(node_name, shape.uvs.as_deref(), vertex_count, "UV")?;
+
+    if !shape
+        .uvs
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .all(|uv| uv.0.iter().all(|value| value.is_finite()))
+    {
+        return Err(PbrtError::error(&format!(
+            "Shape node \"{}\" contains a non-finite UV.",
+            node_name
+        )));
+    }
+
+    if let Some(tangents) = shape.tangents.as_deref() {
+        if !tangents
+            .iter()
+            .all(|tangent| tangent.0.iter().all(|value| value.is_finite()))
+        {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" contains an invalid tangent.",
+                node_name
+            )));
+        }
+    }
+    if let Some(mut normals) = shape.normals.take() {
+        if !normals
+            .iter()
+            .all(|normal| normal.0.iter().all(|value| value.is_finite()))
+        {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" contains an invalid normal.",
+                node_name
+            )));
+        }
+        repair_zero_normals(&shape.positions, &shape.indices, &mut normals);
+        if normals.iter().any(|normal| length_squared(normal.0) == 0.0) {
+            shape.indices = shape
+                .indices
+                .chunks_exact(3)
+                .filter(|triangle| {
+                    triangle
+                        .iter()
+                        .all(|&index| length_squared(normals[index as usize].0) > 0.0)
+                })
+                .flatten()
+                .copied()
+                .collect();
+            shape.normals = Some(normals);
+            remove_unreferenced_vertices(&mut shape);
+            if shape.indices.is_empty() {
+                return Ok(shape);
+            }
+            normals = shape.normals.take().unwrap();
+        }
+        shape.normals = Some(normals);
+    }
+
+    let uvs = shape
+        .uvs
+        .take()
+        .unwrap_or_else(|| generate_planar_uvs(&shape.positions));
+    let tangents = shape.tangents.take().filter(|tangents| {
+        tangents
+            .iter()
+            .all(|tangent| length_squared(tangent.0) > 0.0)
+    });
+    Ok(TriangleMeshShape {
+        source_shape: shape.source_shape,
+        positions: shape.positions,
+        indices: shape.indices,
+        normals: shape.normals,
+        tangents,
+        uvs: Some(uvs),
+    })
+}
+
+/// Produces the renderable triangle-mesh invariant stored in GPU Node IR.
+pub fn prepare_triangle_mesh(
+    shape: TriangleMeshShape,
+    node_name: &str,
+) -> Result<TriangleMeshShape, PbrtError> {
+    let shape = remove_invalid_triangles(shape)?;
+    if shape.indices.is_empty() {
+        return Ok(shape);
+    }
+    complete_triangle_attributes(shape, node_name)
+}
+
+/// Reconstructs zero shading normals from the unit normals of adjacent faces.
+///
+/// This follows pbrt-v4's `TriQuadMesh::ComputeNormals()` weighting while
+/// preserving every nonzero authored normal.
+fn repair_zero_normals(positions: &[Vec3f], indices: &[u32], normals: &mut [Vec3f]) {
+    if normals.iter().all(|normal| length_squared(normal.0) > 0.0) {
+        return;
+    }
+    let mut reconstructed = vec![[0.0; 3]; normals.len()];
+    for triangle in indices.chunks_exact(3) {
+        let p0 = positions[triangle[0] as usize].0;
+        let p1 = positions[triangle[1] as usize].0;
+        let p2 = positions[triangle[2] as usize].0;
+        let face_normal = cross(sub(p1, p0), sub(p2, p0));
+        if !face_normal.iter().all(|value| value.is_finite()) || length_squared(face_normal) == 0.0
+        {
+            continue;
+        }
+        let face_normal = normalize(face_normal);
+        for &corner in triangle {
+            let accumulated = &mut reconstructed[corner as usize];
+            *accumulated = add(*accumulated, face_normal);
+        }
+    }
+    for (normal, reconstructed) in normals.iter_mut().zip(reconstructed) {
+        if length_squared(normal.0) == 0.0 && length_squared(reconstructed) > 0.0 {
+            normal.0 = normalize(reconstructed);
+        }
+    }
+}
+
+/// Removes triangles whose geometric normal is zero or non-finite.
+pub fn remove_invalid_triangles(
+    mut shape: TriangleMeshShape,
+) -> Result<TriangleMeshShape, PbrtError> {
+    if shape.indices.len() % 3 != 0 {
+        return Err(PbrtError::error(
+            "Triangle mesh index count must be divisible by three.",
+        ));
+    }
+    if shape
+        .indices
+        .iter()
+        .any(|&index| index as usize >= shape.positions.len())
+    {
+        return Err(PbrtError::error(
+            "Triangle mesh contains an out-of-range vertex index.",
+        ));
+    }
+    if shape
+        .positions
+        .iter()
+        .any(|position| !position.0.iter().all(|value| value.is_finite()))
+    {
+        return Err(PbrtError::error(
+            "Triangle mesh contains a non-finite position.",
+        ));
+    }
+
+    shape.indices = shape
+        .indices
+        .chunks_exact(3)
+        .filter(|triangle| {
+            let p = [
+                shape.positions[triangle[0] as usize].0,
+                shape.positions[triangle[1] as usize].0,
+                shape.positions[triangle[2] as usize].0,
+            ];
+            let normal = cross(sub(p[1], p[0]), sub(p[2], p[0]));
+            normal.iter().all(|value| value.is_finite()) && length_squared(normal) > 0.0
+        })
+        .flatten()
+        .copied()
+        .collect();
+    remove_unreferenced_vertices(&mut shape);
+    Ok(shape)
+}
+
+/// Compacts vertex attributes after invalid triangles have been removed.
+fn remove_unreferenced_vertices(shape: &mut TriangleMeshShape) {
+    if shape.indices.is_empty() {
+        shape.positions.clear();
+        if let Some(normals) = shape.normals.as_mut() {
+            normals.clear();
+        }
+        if let Some(tangents) = shape.tangents.as_mut() {
+            tangents.clear();
+        }
+        if let Some(uvs) = shape.uvs.as_mut() {
+            uvs.clear();
+        }
+        return;
+    }
+
+    let old_vertex_count = shape.positions.len();
+    let mut referenced = vec![false; old_vertex_count];
+    for &index in &shape.indices {
+        referenced[index as usize] = true;
+    }
+    if referenced.iter().all(|referenced| *referenced) {
+        return;
+    }
+
+    let mut remap = vec![u32::MAX; old_vertex_count];
+    let mut next_index = 0u32;
+    for (index, referenced) in referenced.iter().copied().enumerate() {
+        if referenced {
+            remap[index] = next_index;
+            next_index += 1;
+        }
+    }
+    for index in &mut shape.indices {
+        *index = remap[*index as usize];
+    }
+    shape.positions = compact_attribute(&shape.positions, &referenced);
+    compact_optional_attribute(&mut shape.normals, &referenced, old_vertex_count);
+    compact_optional_attribute(&mut shape.tangents, &referenced, old_vertex_count);
+    compact_optional_attribute(&mut shape.uvs, &referenced, old_vertex_count);
+}
+
+fn compact_attribute<T: Copy>(values: &[T], referenced: &[bool]) -> Vec<T> {
+    values
+        .iter()
+        .copied()
+        .zip(referenced.iter().copied())
+        .filter_map(|(value, referenced)| referenced.then_some(value))
+        .collect()
+}
+
+fn compact_optional_attribute<T: Copy>(
+    values: &mut Option<Vec<T>>,
+    referenced: &[bool],
+    old_vertex_count: usize,
+) {
+    if let Some(values) = values {
+        if values.len() == old_vertex_count {
+            *values = compact_attribute(values, referenced);
+        }
+    }
+}
+
+fn generate_planar_uvs(positions: &[Vec3f]) -> Vec<Vec2f> {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for position in positions {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(position.0[axis]);
+            max[axis] = max[axis].max(position.0[axis]);
+        }
+    }
+    let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+    let drop_axis = if extent[0] <= extent[1] && extent[0] <= extent[2] {
+        0
+    } else if extent[1] <= extent[2] {
+        1
+    } else {
+        2
+    };
+    let axes = match drop_axis {
+        0 => [1, 2],
+        1 => [0, 2],
+        _ => [0, 1],
+    };
+    positions
+        .iter()
+        .map(|position| {
+            let coordinate = |axis: usize| {
+                if extent[axis] > 0.0 {
+                    (position.0[axis] - min[axis]) / extent[axis]
+                } else {
+                    0.0
+                }
+            };
+            Vec2f([coordinate(axes[0]), coordinate(axes[1])])
+        })
+        .collect()
+}
+
+fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn scale(a: [f32; 3], s: f32) -> [f32; 3] {
+    [a[0] * s, a[1] * s, a[2] * s]
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn length_squared(a: [f32; 3]) -> f32 {
+    dot(a, a)
+}
+
+fn normalize(a: [f32; 3]) -> [f32; 3] {
+    let length = length_squared(a).sqrt();
+    scale(a, 1.0 / length)
+}
+
+fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
+    if mesh.p.is_empty() || mesh.tri_indices.is_empty() {
+        return None;
+    }
+    let positions = mesh
+        .p
+        .iter()
+        .map(|p| Vec3f([p.x as f32, p.y as f32, p.z as f32]))
+        .collect::<Vec<_>>();
+    let normals = if mesh.n.len() == positions.len() {
+        Some(
+            mesh.n
+                .iter()
+                .map(|n| Vec3f([n.x as f32, n.y as f32, n.z as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let uvs = if mesh.uv.len() == positions.len() {
+        Some(
+            mesh.uv
+                .iter()
+                .map(|uv| Vec2f([uv.x as f32, uv.y as f32]))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    Some(TriangleMeshShape {
+        source_shape: "plymesh".to_string(),
+        positions,
+        indices: mesh.tri_indices.clone(),
+        normals,
+        tangents: None,
+        uvs,
+    })
+}
+
+fn node_vec3_attribute(
+    params: &ParameterDictionary,
+    key: &str,
+    vertex_count: usize,
+) -> Result<Option<Vec<Vec3f>>, PbrtError> {
+    let values = params.get_points(key);
+    if values.is_empty() {
+        if params.has_parameter(key) {
+            return Err(PbrtError::error(&format!(
+                "Mesh attribute \"{}\" must contain {} values.",
+                key,
+                vertex_count * 3
+            )));
+        }
+        return Ok(None);
+    }
+    if values.len() != vertex_count * 3 {
+        return Err(PbrtError::error(&format!(
+            "Mesh attribute \"{}\" must contain {} values, got {}.",
+            key,
+            vertex_count * 3,
+            values.len()
+        )));
+    }
+    Ok(Some(
+        values
+            .chunks_exact(3)
+            .map(|value| Vec3f([value[0] as f32, value[1] as f32, value[2] as f32]))
+            .collect(),
+    ))
+}
+
+fn node_vec2_attribute(
+    params: &ParameterDictionary,
+    key: &str,
+    vertex_count: usize,
+) -> Result<Option<Vec<Vec2f>>, PbrtError> {
+    let values = params.get_points(key);
+    if values.is_empty() {
+        if params.has_parameter(key) {
+            return Err(PbrtError::error(&format!(
+                "Mesh attribute \"{}\" must contain {} values.",
+                key,
+                vertex_count * 2
+            )));
+        }
+        return Ok(None);
+    }
+    if values.len() != vertex_count * 2 {
+        return Err(PbrtError::error(&format!(
+            "Mesh attribute \"{}\" must contain {} values, got {}.",
+            key,
+            vertex_count * 2,
+            values.len()
+        )));
+    }
+    Ok(Some(
+        values
+            .chunks_exact(2)
+            .map(|value| Vec2f([value[0] as f32, value[1] as f32]))
+            .collect(),
+    ))
+}
+
+fn validate_node_attribute_len<T>(
+    node_name: &str,
+    attribute: Option<&[T]>,
+    vertex_count: usize,
+    attribute_name: &str,
+) -> Result<(), PbrtError> {
+    if let Some(attribute) = attribute {
+        if attribute.len() != vertex_count {
+            return Err(PbrtError::error(&format!(
+                "Shape node \"{}\" has {} {} values for {} vertices.",
+                node_name,
+                attribute.len(),
+                attribute_name,
+                vertex_count
+            )));
+        }
+    }
+    Ok(())
+}

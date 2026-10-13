@@ -17,13 +17,16 @@ use crate::paramdict::*;
 use crate::samplers::*;
 use crate::util::base::*;
 use crate::util::error::*;
+use crate::util::lowdiscrepancy::{murmur_hash_64a, permutation_element};
 use crate::util::math::{is_power_of_four, log4_int, round_up_power_of_four};
 use crate::util::rng::mix_bits;
 
 // --- pmj02bnSamples (5 × 65536 × 2 u32) ---------------------------------
 const N_PMJ02BN_SETS: usize = 5;
-const N_PMJ02BN_SAMPLES: usize = 65536;
-const PMJ02BN_BYTES: &[u8] = include_bytes!("data/pmj02bn_samples.bin");
+/// Number of samples stored per PMJ02BN set.
+pub const N_PMJ02BN_SAMPLES: usize = 65536;
+/// Embedded pbrt-v4 PMJ02BN sample table shared by CPU and GPU samplers.
+pub const PMJ02BN_BYTES: &[u8] = include_bytes!("data/pmj02bn_samples.bin");
 
 fn pmj02bn_sample(set_index: usize, sample_index: usize) -> Point2f {
     let set = set_index % N_PMJ02BN_SETS;
@@ -41,48 +44,16 @@ fn pmj02bn_sample(set_index: usize, sample_index: usize) -> Point2f {
 // --- BlueNoiseTextures (48 × 128 × 128 u16) -----------------------------
 const BLUENOISE_RESOLUTION: usize = 128;
 const N_BLUENOISE_TEXTURES: usize = 48;
-const BLUENOISE_BYTES: &[u8] = include_bytes!("data/bluenoise_textures.bin");
+/// Embedded pbrt-v4 blue-noise table shared by CPU and GPU samplers.
+pub const BLUE_NOISE_BYTES: &[u8] = include_bytes!("data/bluenoise_textures.bin");
 
 fn blue_noise(texture_index: i32, p: Point2i) -> Float {
     let tex = (texture_index.rem_euclid(N_BLUENOISE_TEXTURES as i32)) as usize;
     let x = p.x.rem_euclid(BLUENOISE_RESOLUTION as i32) as usize;
     let y = p.y.rem_euclid(BLUENOISE_RESOLUTION as i32) as usize;
     let off = ((tex * BLUENOISE_RESOLUTION + x) * BLUENOISE_RESOLUTION + y) * 2;
-    let v = u16::from_le_bytes(BLUENOISE_BYTES[off..off + 2].try_into().unwrap());
+    let v = u16::from_le_bytes(BLUE_NOISE_BYTES[off..off + 2].try_into().unwrap());
     v as Float / 65535.0
-}
-
-// --- Hash + PermutationElement ------------------------------------------
-
-/// pbrt-v4 `MurmurHash64A` (`util/hash.h:35-72`). Standard 64-bit Murmur2
-/// variant used by `Hash(...)` to mix multiple arguments.
-fn murmur_hash_64a(key: &[u8], seed: u64) -> u64 {
-    const M: u64 = 0xc6a4a7935bd1e995u64;
-    const R: u32 = 47;
-    let len = key.len() as u64;
-    let mut h = seed ^ len.wrapping_mul(M);
-    let nblocks = key.len() / 8;
-    for i in 0..nblocks {
-        let s = i * 8;
-        let mut k = u64::from_le_bytes(key[s..s + 8].try_into().unwrap());
-        k = k.wrapping_mul(M);
-        k ^= k >> R;
-        k = k.wrapping_mul(M);
-        h ^= k;
-        h = h.wrapping_mul(M);
-    }
-    let tail = &key[nblocks * 8..];
-    if !tail.is_empty() {
-        let mut hi = h;
-        for (i, b) in tail.iter().enumerate() {
-            hi ^= (*b as u64) << (i * 8);
-        }
-        h = hi.wrapping_mul(M);
-    }
-    h ^= h >> R;
-    h = h.wrapping_mul(M);
-    h ^= h >> R;
-    h
 }
 
 /// pbrt-v4 `Hash(pixel, dimension, seed)`. The variadic v4 helper packs its
@@ -96,43 +67,6 @@ fn hash_pixel_dim_seed(pixel: Point2i, dim: i32, seed: i32) -> u64 {
     buf[8..12].copy_from_slice(&dim.to_le_bytes());
     buf[12..16].copy_from_slice(&seed.to_le_bytes());
     murmur_hash_64a(&buf, 0)
-}
-
-/// pbrt-v4 `PermutationElement(i, l, p)` (`util/math.h`). Owen-style
-/// permutation that maps an index `i ∈ [0, l)` to another index in
-/// `[0, l)` under the seed `p`.
-fn permutation_element(i: u32, l: u32, p: u32) -> u32 {
-    let mut w = l - 1;
-    w |= w >> 1;
-    w |= w >> 2;
-    w |= w >> 4;
-    w |= w >> 8;
-    w |= w >> 16;
-    let mut i = i;
-    loop {
-        i ^= p;
-        i = i.wrapping_mul(0xe170893d);
-        i ^= p >> 16;
-        i ^= (i & w) >> 4;
-        i ^= p >> 8;
-        i = i.wrapping_mul(0x0929eb3f);
-        i ^= p >> 23;
-        i ^= (i & w) >> 1;
-        i = i.wrapping_mul(1 | p >> 27);
-        i = i.wrapping_mul(0x6935fa69);
-        i ^= (i & w) >> 11;
-        i = i.wrapping_mul(0x74dcb303);
-        i ^= (i & w) >> 2;
-        i = i.wrapping_mul(0x9e501cc3);
-        i ^= (i & w) >> 2;
-        i = i.wrapping_mul(0xc860a3df);
-        i &= w;
-        i ^= i >> 5;
-        if i < l {
-            break;
-        }
-    }
-    (i + p) % l
 }
 
 // --- PMJ02BNSampler ------------------------------------------------------

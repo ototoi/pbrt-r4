@@ -1,0 +1,3353 @@
+#![cfg(feature = "webgpu")]
+
+use pbrt_r4::gpu::flat::SourceShape;
+use std::f32::consts::PI;
+use std::sync::{Arc, RwLock};
+
+use image::{ImageBuffer, Rgb};
+use pbrt_r4::gpu::flat::portal::prepare_portal_image;
+use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
+use pbrt_r4::gpu::flat::{
+    area_light_flags, area_light_is_two_sided, area_light_is_zero_alpha_sample_only,
+    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, MediumData,
+    SamplerKind, SamplerRandomization, Scene as FlatScene, INVALID_INDEX,
+};
+use pbrt_r4::gpu::node::{
+    complete_triangle_attributes, prepare_triangle_meshes, tessellate_shapes,
+    AreaLight as NodeAreaLight, AreaLightComponent, Camera, CameraComponent, Component, Film,
+    FilmComponent, Instance as NodeInstance, InstanceComponent, Integrator as NodeIntegrator,
+    IntegratorComponent, Light as NodeLight, LightComponent, Material, MaterialComponent,
+    Medium as NodeMedium, MediumComponent, MediumInterface, Node, Output, OutputComponent,
+    Sampler as NodeSampler, SamplerComponent, Scene as NodeScene, SceneComponent, Shape,
+    ShapeComponent, Transform, TriangleMeshShape,
+};
+use pbrt_r4::gpu::node::{Vec2f, Vec3f};
+use pbrt_r4::media::sample_grid::SampledGrid;
+use pbrt_r4::paramdict::ParameterDictionary;
+use pbrt_r4::shapes::TriangleMesh;
+use pbrt_r4::util::base::{Float, Normal3f, Point3f};
+use pbrt_r4::util::error::PbrtError;
+use pbrt_r4::util::geometry::Bounds3f;
+use pbrt_r4::util::spectrum::rgb_to_spectrum::{ACES2065_1, SRGB};
+use pbrt_r4::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use pbrt_r4::util::transform::Transform as CpuTransform;
+
+#[test]
+fn area_light_flags_use_named_encoders_and_decoders() {
+    let flags = area_light_flags(true, true);
+    assert!(area_light_is_two_sided(flags));
+    assert!(area_light_is_zero_alpha_sample_only(flags));
+
+    let flags = area_light_flags(false, false);
+    assert!(!area_light_is_two_sided(flags));
+    assert!(!area_light_is_zero_alpha_sample_only(flags));
+}
+
+fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Node>> {
+    let mut node = Node::new(name);
+    node.transform.matrix[3] = offset[0];
+    node.transform.matrix[7] = offset[1];
+    node.transform.matrix[11] = offset[2];
+    node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            source_shape: "trianglemesh".to_string(),
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+    }));
+    node.add_component(Component::Medium(MediumComponent {
+        medium_interface: MediumInterface::default(),
+    }));
+    node.add_component(Component::Material(MaterialComponent {
+        material: Arc::new(Material {
+            name: material.to_string(),
+            kind: material.to_string(),
+            params: Default::default(),
+            material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
+        }),
+    }));
+    Arc::new(RwLock::new(node))
+}
+
+fn homogeneous_medium(name: &str) -> Arc<NodeMedium> {
+    let mut params = ParameterDictionary::default();
+    params.add_string("string type", "homogeneous");
+    params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+    Arc::new(NodeMedium {
+        name: name.to_string(),
+        kind: "homogeneous".to_string(),
+        params,
+        transform: Transform::default(),
+    })
+}
+
+fn set_medium_interface(node: &Arc<RwLock<Node>>, medium_interface: MediumInterface) {
+    let mut node = node.write().unwrap();
+    for component in &mut node.components {
+        if let Component::Medium(component) = component {
+            component.medium_interface = medium_interface;
+            return;
+        }
+    }
+    panic!("triangle fixture must have a MediumComponent");
+}
+
+fn add_camera_and_film(root: &mut Node, camera_params: ParameterDictionary) {
+    add_camera_and_named_film(root, camera_params, "rgb");
+}
+
+fn add_camera_and_named_film(root: &mut Node, camera_params: ParameterDictionary, film_name: &str) {
+    root.add_component(Component::Output(OutputComponent {
+        output: Output {
+            filename: "test.exr".to_string(),
+        },
+    }));
+    let mut camera = Node::new("camera");
+    camera.add_component(Component::Camera(CameraComponent {
+        camera: Camera {
+            kind: "perspective".to_string(),
+            params: camera_params,
+            medium: None,
+        },
+    }));
+    let mut film_params = ParameterDictionary::default();
+    film_params.add_int("integer xresolution", 64);
+    film_params.add_int("integer yresolution", 32);
+    camera.add_component(Component::Film(FilmComponent {
+        film: Film {
+            name: film_name.to_string(),
+            params: film_params,
+        },
+    }));
+    root.add_child(Arc::new(RwLock::new(camera)));
+}
+
+#[test]
+fn flatten_node_treats_gbuffer_film_as_rgb_output() {
+    let mut root = Node::new("root");
+    add_camera_and_named_film(&mut root, Default::default(), "gbuffer");
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.viewport.resolution, [64, 32]);
+    assert_eq!(scene.film.sensor_response, [0, 1, 2]);
+}
+
+#[test]
+fn flatten_node_still_rejects_other_film_types() {
+    let mut root = Node::new("root");
+    add_camera_and_named_film(&mut root, Default::default(), "spectral");
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("does not support film \"spectral\""));
+}
+
+fn light_node(name: &str, light_kind: &str, params: ParameterDictionary) -> Arc<RwLock<Node>> {
+    let mut node = Node::new(name);
+    node.add_component(Component::Light(LightComponent {
+        light: NodeLight {
+            name: light_kind.to_string(),
+            params,
+            transform: Transform::default(),
+            medium: None,
+        },
+    }));
+    Arc::new(RwLock::new(node))
+}
+
+fn instance_node(name: &str, target: &Arc<RwLock<Node>>, offset: [f32; 3]) -> Arc<RwLock<Node>> {
+    let mut node = Node::new(name);
+    let mut transform = Transform::default();
+    transform.matrix[3] = offset[0];
+    transform.matrix[7] = offset[1];
+    transform.matrix[11] = offset[2];
+    node.add_component(Component::Instance(InstanceComponent {
+        instance: NodeInstance {
+            target: Arc::clone(target),
+            transform,
+        },
+    }));
+    Arc::new(RwLock::new(node))
+}
+
+#[test]
+fn flatten_node_packs_mesh_ranges_and_instances() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    root.add_child(triangle_node("first", "diffuse", [1.0, 2.0, 3.0]));
+    root.add_child(triangle_node("second", "dielectric", [4.0, 5.0, 6.0]));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.geometry.vertices.len(), 6);
+    assert_eq!(scene.geometry.indices, vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(scene.attributes.spectra.len(), 5);
+    assert_eq!(scene.film.sensor_response, [0, 1, 2]);
+    assert_eq!(scene.film.imaging_ratio, 1.0);
+    validate_dense_spectra(&scene.attributes.spectra).unwrap();
+    assert_eq!(scene.attributes.scalars.len(), 3);
+    assert_eq!(scene.materials.nodes[0].attributes.len(), 1);
+    assert_eq!(scene.materials.nodes[1].attributes.len(), 4);
+    assert_eq!(
+        scene.geometry.geometries,
+        vec![
+            pbrt_r4::gpu::flat::Geometry {
+                source_shape: SourceShape::TriangleMesh,
+                first_vertex: 0,
+                vertex_count: 3,
+                first_index: 0,
+                index_count: 3,
+            },
+            pbrt_r4::gpu::flat::Geometry {
+                source_shape: SourceShape::TriangleMesh,
+                first_vertex: 3,
+                vertex_count: 3,
+                first_index: 3,
+                index_count: 3,
+            },
+        ]
+    );
+    assert_eq!(scene.instances.len(), 2);
+    assert_eq!(scene.instances[0].geometry, 0);
+    assert_eq!(scene.instances[0].material_root, 0);
+    assert_eq!(scene.instances[0].transform[3], 1.0);
+    assert_eq!(scene.instances[0].transform[7], 2.0);
+    assert_eq!(scene.instances[0].transform[11], 3.0);
+    assert_eq!(scene.instances[1].geometry, 1);
+    assert_eq!(scene.instances[1].material_root, 1);
+    assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+    assert_eq!(scene.materials.nodes[1].kind, "dielectric");
+    assert_eq!(scene.camera.fov, 60.0);
+    assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
+    assert_eq!(scene.viewport.resolution, [64, 32]);
+    assert!(scene.lights.primitive_distribution_map.offsets == vec![0]);
+}
+
+#[test]
+fn flatten_node_resolves_medium_interface_and_camera_medium() {
+    let mut root = Node::new("root");
+    root.transform.matrix[3] = 7.0;
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut medium_params = ParameterDictionary::default();
+    medium_params.add_string("string type", "homogeneous");
+    medium_params.add_floats("rgb sigma_a", &[1.0, 0.1, 0.01]);
+    medium_params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+    let blue = Arc::new(NodeMedium {
+        name: "blue".to_string(),
+        kind: "homogeneous".to_string(),
+        params: medium_params,
+        transform: Transform::default(),
+    });
+    let mut amber_params = ParameterDictionary::default();
+    amber_params.add_string("string type", "homogeneous");
+    amber_params.add_floats("rgb sigma_a", &[0.2, 0.1, 0.05]);
+    amber_params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+    let amber = Arc::new(NodeMedium {
+        name: "amber".to_string(),
+        kind: "homogeneous".to_string(),
+        params: amber_params,
+        transform: Transform::default(),
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::clone(&blue), amber],
+            ..Default::default()
+        },
+    }));
+    let camera_node = Arc::clone(&root.children[0]);
+    for component in &mut camera_node.write().unwrap().components {
+        if let Component::Camera(component) = component {
+            component.camera.medium = Some(Arc::clone(&blue));
+        }
+    }
+
+    let mut shape_node = Node::new("gem");
+    shape_node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            source_shape: "trianglemesh".to_string(),
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+    }));
+    shape_node.add_component(Component::Medium(MediumComponent {
+        medium_interface: MediumInterface::new(Some(Arc::clone(&blue)), None),
+    }));
+    shape_node.add_component(Component::Material(MaterialComponent {
+        material: Arc::new(Material {
+            name: "dielectric".to_string(),
+            kind: "dielectric".to_string(),
+            params: Default::default(),
+            material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
+        }),
+    }));
+    root.add_child(Arc::new(RwLock::new(shape_node)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.media.len(), 2);
+    assert_eq!(scene.media[0].name, "blue");
+    assert_eq!(scene.media[1].name, "amber");
+    assert_eq!(scene.media[0].kind, "homogeneous");
+    assert_eq!(scene.media[0].transform[3], 7.0);
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
+    assert_eq!(scene.camera.medium, 0);
+}
+
+#[test]
+fn flatten_node_keeps_distinct_same_named_media_separate() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let first = homogeneous_medium("same-name");
+    let second = homogeneous_medium("same-name");
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::clone(&first), Arc::clone(&second)],
+            ..Default::default()
+        },
+    }));
+    let first_shape = triangle_node("first", "diffuse", [0.0; 3]);
+    let second_shape = triangle_node("second", "diffuse", [0.0; 3]);
+    set_medium_interface(&first_shape, MediumInterface::new(Some(first), None));
+    set_medium_interface(&second_shape, MediumInterface::new(Some(second), None));
+    root.add_child(first_shape);
+    root.add_child(second_shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.media.len(), 2);
+    assert_eq!(scene.media[0].name, scene.media[1].name);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[1].inside_medium, 1);
+}
+
+#[test]
+fn flatten_node_preserves_medium_references_across_object_instances() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut medium_transform = Transform::default();
+    medium_transform.matrix[3] = 2.0;
+    let medium = Arc::new(NodeMedium {
+        name: "object-medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: {
+            let mut params = ParameterDictionary::default();
+            params.add_string("string type", "homogeneous");
+            params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+            params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+            params
+        },
+        transform: medium_transform,
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::clone(&medium)],
+            ..Default::default()
+        },
+    }));
+
+    let definition = Arc::new(RwLock::new(Node::new("object")));
+    let shape = triangle_node("object-shape", "diffuse", [0.0; 3]);
+    set_medium_interface(&shape, MediumInterface::new(Some(medium), None));
+    definition.write().unwrap().add_child(shape);
+    root.add_child(instance_node("object-use", &definition, [10.0, 0.0, 0.0]));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
+    assert_eq!(scene.instances[0].transform[3], 10.0);
+    assert_eq!(scene.media[0].transform[3], 2.0);
+}
+
+#[test]
+fn flatten_node_requires_one_medium_component_per_shape_node() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("shape", "diffuse", [0.0; 3]);
+    shape
+        .write()
+        .unwrap()
+        .components
+        .retain(|component| !matches!(component, Component::Medium(_)));
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("exactly one MediumComponent"));
+
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("shape", "diffuse", [0.0; 3]);
+    shape
+        .write()
+        .unwrap()
+        .add_component(Component::Medium(MediumComponent {
+            medium_interface: MediumInterface::default(),
+        }));
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("exactly one MediumComponent"));
+}
+
+#[test]
+fn flatten_node_rejects_medium_references_missing_from_scene_media() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![homogeneous_medium("registered")],
+            ..Default::default()
+        },
+    }));
+    let shape = triangle_node("shape", "diffuse", [0.0; 3]);
+    set_medium_interface(
+        &shape,
+        MediumInterface::new(Some(homogeneous_medium("unregistered")), None),
+    );
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+
+    assert!(error.to_string().contains("not in Scene.media"));
+}
+
+#[test]
+fn flatten_node_accepts_homogeneous_scattering() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut medium_params = ParameterDictionary::default();
+    medium_params.add_string("string type", "homogeneous");
+    medium_params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    medium_params.add_floats("rgb sigma_s", &[0.01, 0.01, 0.01]);
+    let scattering_medium = Arc::new(NodeMedium {
+        name: "scattering-medium".to_string(),
+        kind: "homogeneous".to_string(),
+        params: medium_params,
+        transform: Transform::default(),
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![scattering_medium],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.media.len(), 1);
+    let medium = &scene.media[0];
+    assert_eq!(medium.name, "scattering-medium");
+    assert!(scene.attributes.spectra[medium.sigma_s as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample > 0.0));
+    assert!(scene.attributes.spectra[medium.le as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample == 0.0));
+}
+
+#[test]
+fn flatten_node_preserves_cloud_parameters_and_bounds() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut params = ParameterDictionary::default();
+    params.add_float("float density", 2.0);
+    params.add_float("float wispiness", 0.25);
+    params.add_float("float frequency", 3.0);
+    params.add_point3f("point3f p0", &Point3f::new(-1.0, 0.0, -2.0));
+    params.add_point3f("point3f p1", &Point3f::new(1.0, 3.0, 2.0));
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "cloud".to_string(),
+                kind: "cloud".to_string(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let medium = &scene.media[0];
+    assert_eq!(medium.kind, "cloud");
+    assert_eq!(
+        medium.data,
+        pbrt_r4::gpu::flat::MediumData::Cloud(pbrt_r4::gpu::flat::CloudMedium {
+            bounds_min: [-1.0, 0.0, -2.0],
+            bounds_max: [1.0, 3.0, 2.0],
+            density: 2.0,
+            wispiness: 0.25,
+            frequency: 3.0,
+        })
+    );
+}
+
+#[test]
+fn cloud_coefficients_ignore_homogeneous_preset_and_scale_parameters() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut params = ParameterDictionary::default();
+    params.add_string("string preset", "Chicken1");
+    params.add_float("float scale", 7.0);
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "cloud".to_string(),
+                kind: "cloud".to_string(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let medium = &scene.media[0];
+    assert!(scene.attributes.spectra[medium.sigma_a as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample == 1.0));
+    assert!(scene.attributes.spectra[medium.sigma_s as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample == 1.0));
+}
+
+#[test]
+fn cloud_factory_rejects_empty_bounds_and_non_finite_parameters() {
+    let flatten_cloud = |params| {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_component(Component::Scene(SceneComponent {
+            scene: NodeScene {
+                media: vec![Arc::new(NodeMedium {
+                    name: "cloud".to_string(),
+                    kind: "cloud".to_string(),
+                    params,
+                    transform: Transform::default(),
+                })],
+                ..Default::default()
+            },
+        }));
+        flatten_node(Arc::new(RwLock::new(root)))
+    };
+
+    let mut empty_bounds = ParameterDictionary::default();
+    empty_bounds.add_point3f("point3f p0", &Point3f::new(1.0, 0.0, 0.0));
+    empty_bounds.add_point3f("point3f p1", &Point3f::new(1.0, 1.0, 1.0));
+    let error = flatten_cloud(empty_bounds).unwrap_err();
+    assert!(error.to_string().contains("finite, non-empty bounds"));
+
+    let mut non_finite_density = ParameterDictionary::default();
+    non_finite_density.add_float("float density", Float::INFINITY);
+    let error = flatten_cloud(non_finite_density).unwrap_err();
+    assert!(error.to_string().contains("finite density parameters"));
+}
+
+#[test]
+fn flatten_node_accepts_emission_in_a_homogeneous_scattering_medium() {
+    let flatten_emission = |lescale| {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        let mut params = ParameterDictionary::default();
+        params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+        params.add_floats("rgb sigma_s", &[0.2, 0.2, 0.2]);
+        params.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);
+        params.add_float("float Lescale", lescale);
+        root.add_component(Component::Scene(SceneComponent {
+            scene: NodeScene {
+                media: vec![Arc::new(NodeMedium {
+                    name: "emitting-fog".to_string(),
+                    kind: "homogeneous".to_string(),
+                    params,
+                    transform: Transform::default(),
+                })],
+                ..Default::default()
+            },
+        }));
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        let medium = &scene.media[0];
+        scene.attributes.spectra[medium.le as usize].samples.clone()
+    };
+
+    let scale_one = flatten_emission(1.0);
+    let scale_two = flatten_emission(2.0);
+    assert!(scale_one
+        .iter()
+        .all(|sample| sample.is_finite() && *sample > 0.0));
+    for (one, two) in scale_one.iter().zip(scale_two) {
+        assert!((two - 2.0 * one).abs() <= 1e-6 * one.max(1.0));
+    }
+}
+
+#[test]
+fn flatten_node_allows_a_medium_interface_shape_with_no_material() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut medium_params = ParameterDictionary::default();
+    medium_params.add_string("string type", "homogeneous");
+    medium_params.add_floats("rgb sigma_a", &[0.1, 0.1, 0.1]);
+    medium_params.add_floats("rgb sigma_s", &[0.0, 0.0, 0.0]);
+    let fog = Arc::new(NodeMedium {
+        name: "fog".to_string(),
+        kind: "homogeneous".to_string(),
+        params: medium_params,
+        transform: Transform::default(),
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::clone(&fog)],
+            ..Default::default()
+        },
+    }));
+
+    // `Material ""`/`"interface"`: a shape with no Material component,
+    // used as a volume boundary.
+    let mut shape_node = Node::new("boundary");
+    shape_node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            source_shape: "trianglemesh".to_string(),
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+    }));
+    shape_node.add_component(Component::Medium(MediumComponent {
+        medium_interface: MediumInterface::new(Some(fog), None),
+    }));
+    root.add_child(Arc::new(RwLock::new(shape_node)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].material_root, INVALID_INDEX);
+    assert_eq!(scene.instances[0].inside_medium, 0);
+    assert_eq!(scene.instances[0].outside_medium, INVALID_INDEX);
+    assert!(scene.materials.roots.is_empty());
+    assert!(scene.materials.nodes.is_empty());
+}
+
+#[test]
+fn flatten_node_rejects_an_area_light_on_a_shape_with_no_material() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let mut shape_node = Node::new("boundary");
+    shape_node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
+            source_shape: "trianglemesh".to_string(),
+            positions: vec![
+                Vec3f([0.0, 0.0, 0.0]),
+                Vec3f([1.0, 0.0, 0.0]),
+                Vec3f([0.0, 1.0, 0.0]),
+            ],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]),
+            tangents: Some(vec![Vec3f([1.0, 0.0, 0.0]); 3]),
+            uvs: Some(vec![
+                Vec2f([0.0, 0.0]),
+                Vec2f([1.0, 0.0]),
+                Vec2f([0.0, 1.0]),
+            ]),
+        })),
+        reverse_orientation: false,
+    }));
+    shape_node.add_component(Component::Medium(MediumComponent {
+        medium_interface: MediumInterface::default(),
+    }));
+    shape_node.add_component(Component::AreaLight(AreaLightComponent {
+        area_light: NodeAreaLight {
+            name: "diffuse".to_string(),
+            params: Default::default(),
+        },
+    }));
+    root.add_child(Arc::new(RwLock::new(shape_node)));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("no Material component"));
+}
+
+#[test]
+fn flatten_node_rejects_unsupported_medium_kinds() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    let fog = Arc::new(NodeMedium {
+        name: "fog".to_string(),
+        kind: "heterogeneous".to_string(),
+        params: Default::default(),
+        transform: Transform::default(),
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![fog],
+            ..Default::default()
+        },
+    }));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("heterogeneous"));
+}
+
+#[test]
+fn flatten_node_lowers_area_light_to_instance_and_global_light_handle() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = area.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.positions.push(Vec3f([2.0, 1.0, 0.0]));
+        mesh.indices.extend_from_slice(&[1, 3, 2]);
+        mesh.normals.as_mut().unwrap().push(Vec3f([0.0, 0.0, 1.0]));
+        mesh.tangents.as_mut().unwrap().push(Vec3f([1.0, 0.0, 0.0]));
+        mesh.uvs.as_mut().unwrap().push(Vec2f([1.0, 1.0]));
+        node.add_component(Component::AreaLight(AreaLightComponent {
+            area_light: NodeAreaLight {
+                name: "diffuse".to_string(),
+                params: Default::default(),
+            },
+        }));
+    }
+    root.add_child(area);
+    prepare_triangle_meshes(&mut root).unwrap();
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances.len(), 1);
+    assert_eq!(scene.instances[0].area_light, 0);
+    assert_eq!(scene.lights.sampling_models.len(), 1);
+    assert_eq!(scene.lights.sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_offset, 0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_count, 2);
+    assert_eq!(scene.lights.sampling_models[0].total_area, 1.5);
+    assert_eq!(scene.lights.triangle_distributions.len(), 2);
+    assert_eq!(scene.lights.triangle_distributions[0].primitive, 0);
+    assert!((scene.lights.triangle_distributions[0].cdf - 1.0 / 3.0).abs() < 1e-6);
+    assert_eq!(scene.lights.triangle_distributions[1].primitive, 1);
+    assert_eq!(scene.lights.triangle_distributions[1].cdf, 1.0);
+    assert_eq!(scene.lights.lights.len(), 1);
+    assert_eq!(scene.lights.lights[0].sampling_model, 0);
+    assert_eq!(
+        scene.lights.lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::Area
+    );
+    assert_eq!(scene.lights.primitive_distribution_map.offsets, vec![0, 2]);
+    assert_eq!(scene.lights.primitive_distribution_map.entries, vec![0, 1]);
+    let scale = &scene.lights.lights[0].attributes[1];
+    let expected = 1.0 / spectrum_to_photometric(&Spectrum::from(1.0));
+    assert!((scene.attributes.scalars[scale.index as usize] - expected).abs() < 1e-6);
+}
+
+#[test]
+fn flatten_node_rejects_zero_tangents() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = area.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.tangents = Some(vec![Vec3f([0.0, 0.0, 0.0]); 3]);
+    }
+    root.add_child(area);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("zero or non-finite tangent"));
+}
+
+#[test]
+fn flatten_node_rejects_tangents_parallel_to_normal() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("emitter", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = area.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.tangents = Some(vec![Vec3f([0.0, 0.0, 1.0]); 3]);
+    }
+    root.add_child(area);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("not reasonably orthogonal to its normal"));
+}
+
+#[test]
+fn flatten_node_rejects_unsupported_area_light_power() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let area = triangle_node("powered-emitter", "diffuse", [0.0, 0.0, 0.0]);
+    let mut params = ParameterDictionary::default();
+    params.add_float("float power", 10.0);
+    area.write()
+        .unwrap()
+        .add_component(Component::AreaLight(AreaLightComponent {
+            area_light: NodeAreaLight {
+                name: "diffuse".to_string(),
+                params,
+            },
+        }));
+    root.add_child(area);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("area light power"));
+}
+
+#[test]
+fn flatten_node_preserves_explicit_camera_screen_window() {
+    let mut root = Node::new("root");
+    root.add_component(Component::Output(OutputComponent {
+        output: Output {
+            filename: "test.exr".to_string(),
+        },
+    }));
+    let mut camera = Node::new("camera");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    camera_params.add_float("float halffov", 10.0);
+    camera_params.add_float("float frameaspectratio", 1.0);
+    camera_params.add_float("float[] screenwindow", -3.0);
+    camera_params.add_float("float[] screenwindow", 3.0);
+    camera_params.add_float("float[] screenwindow", -2.0);
+    camera_params.add_float("float[] screenwindow", 2.0);
+    camera.add_component(Component::Camera(CameraComponent {
+        camera: Camera {
+            kind: "perspective".to_string(),
+            params: camera_params,
+            medium: None,
+        },
+    }));
+    let mut film_params = ParameterDictionary::default();
+    film_params.add_int("integer xresolution", 64);
+    film_params.add_int("integer yresolution", 32);
+    camera.add_component(Component::Film(FilmComponent {
+        film: Film {
+            name: "rgb".to_string(),
+            params: film_params,
+        },
+    }));
+    root.add_child(Arc::new(RwLock::new(camera)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.camera.fov, 60.0);
+    assert_eq!(scene.camera.screen_window, [-3.0, 3.0, -2.0, 2.0]);
+}
+
+#[test]
+fn flatten_node_shares_geometry_across_instances() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let target = triangle_node("target", "diffuse", [0.0, 0.0, 0.0]);
+    root.add_child(instance_node("first-instance", &target, [1.0, 0.0, 0.0]));
+    root.add_child(instance_node("second-instance", &target, [0.0, 2.0, 0.0]));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.geometry.vertices.len(), 3);
+    assert_eq!(scene.geometry.indices, vec![0, 1, 2]);
+    assert_eq!(scene.geometry.geometries.len(), 1);
+    assert_eq!(scene.instances.len(), 2);
+    assert_eq!(scene.instances[0].geometry, 0);
+    assert_eq!(scene.instances[1].geometry, 0);
+    assert_eq!(scene.materials.roots.len(), 1);
+    assert_eq!(scene.materials.nodes.len(), 1);
+    assert_eq!(
+        scene.instances[0].material_root,
+        scene.instances[1].material_root
+    );
+    assert_eq!(scene.instances[0].transform[3], 1.0);
+    assert_eq!(scene.instances[1].transform[7], 2.0);
+}
+
+#[test]
+fn flatten_node_preserves_shape_reverse_orientation() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    let shape = triangle_node("reversed", "diffuse", [0.0, 0.0, 0.0]);
+    if let Component::Shape(component) = &mut shape.write().unwrap().components[0] {
+        component.reverse_orientation = true;
+    }
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert!(scene.instances[0].reverse_orientation);
+}
+
+#[test]
+fn flattened_normals_match_cpu_mesh_under_transforms_and_orientation() {
+    for transform in [
+        CpuTransform::identity(),
+        CpuTransform::translate(1.0, 2.0, 3.0),
+        CpuTransform::rotate_y(37.0),
+        CpuTransform::scale(2.0, 3.0, 4.0),
+        CpuTransform::scale(-2.0, 3.0, 4.0),
+    ] {
+        for reverse_orientation in [false, true] {
+            // Deliberately oppose the winding, as LTE Orb's limit normals do.
+            let source_normal = Normal3f::new(0.0, 0.0, -1.0);
+            let cpu = TriangleMesh::new(
+                &transform,
+                reverse_orientation,
+                false,
+                vec![0, 1, 2],
+                vec![
+                    Point3f::new(0.0, 0.0, 0.0),
+                    Point3f::new(1.0, 0.0, 0.0),
+                    Point3f::new(0.0, 1.0, 0.0),
+                ],
+                Vec::new(),
+                vec![source_normal; 3],
+                Vec::new(),
+            );
+            let target = triangle_node("oriented", "diffuse", [0.0; 3]);
+            {
+                let mut node = target.write().unwrap();
+                node.transform.matrix = transform.m.m.map(|v| v as f32);
+                let Component::Shape(component) = &mut node.components[0] else {
+                    unreachable!()
+                };
+                component.reverse_orientation = reverse_orientation;
+                let Shape::TriangleMesh(mesh) = &mut component.shape else {
+                    unreachable!()
+                };
+                mesh.normals = Some(vec![Vec3f([0.0, 0.0, -1.0]); 3]);
+            }
+            let mut root = Node::new("root");
+            add_camera_and_film(&mut root, Default::default());
+            root.add_child(instance_node("first", &target, [0.0; 3]));
+            root.add_child(instance_node("second", &target, [1.0, 2.0, 3.0]));
+            let root = Arc::new(RwLock::new(root));
+            // Repeated preparation/flattening must not mutate shared mesh normals.
+            for _ in 0..2 {
+                prepare_triangle_meshes(&mut root.write().unwrap()).unwrap();
+                let flat = flatten_node(Arc::clone(&root)).unwrap();
+                assert_eq!(flat.geometry.geometries.len(), 1);
+                assert_eq!(flat.instances.len(), 2);
+                assert_eq!(flat.geometry.indices, vec![0, 1, 2]);
+                for vertex in &flat.geometry.vertices {
+                    let n = vertex.normal;
+                    let world =
+                        transform.transform_normal(&Normal3f::new(n[0] as _, n[1] as _, n[2] as _));
+                    assert!((world - cpu.n[0]).length() < 1e-6);
+                }
+                assert!(flat
+                    .instances
+                    .iter()
+                    .all(|instance| instance.reverse_orientation == reverse_orientation));
+                let target = target.read().unwrap();
+                let Component::Shape(component) = &target.components[0] else {
+                    unreachable!()
+                };
+                let Shape::TriangleMesh(mesh) = &component.shape else {
+                    unreachable!()
+                };
+                assert_eq!(
+                    mesh.normals.as_ref().unwrap(),
+                    &vec![Vec3f([0.0, 0.0, -1.0]); 3]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn flatten_node_requires_tessellated_shapes() {
+    let mut root = Node::new("root");
+    let mut shape = Node::new("sphere");
+    shape.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Sphere(Box::new(pbrt_r4::gpu::node::SphereShape {
+            params: Default::default(),
+        })),
+        reverse_orientation: false,
+    }));
+    shape.add_component(Component::Medium(MediumComponent {
+        medium_interface: MediumInterface::default(),
+    }));
+    shape.add_component(Component::Material(MaterialComponent {
+        material: Arc::new(Material {
+            name: "diffuse".to_string(),
+            kind: "diffuse".to_string(),
+            params: Default::default(),
+            material_attributes: Vec::new(),
+            texture_attributes: Vec::new(),
+        }),
+    }));
+    root.add_child(Arc::new(RwLock::new(shape)));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(format!("{error:?}").contains("tessellated"));
+}
+
+#[test]
+fn flatten_node_composes_parent_and_child_transforms() {
+    let child = triangle_node("triangle", "diffuse", [0.0, 2.0, 0.0]);
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    add_camera_and_film(&mut root, camera_params);
+    root.transform = Transform {
+        matrix: [
+            1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 0.0, 0.0, 0.0, 1.0,
+        ],
+    };
+    root.add_child(child);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.instances[0].transform[3], 1.0);
+    assert_eq!(scene.instances[0].transform[7], 2.0);
+    assert_eq!(scene.instances[0].transform[11], 3.0);
+}
+
+#[test]
+fn flatten_node_extracts_render_settings_and_point_lights() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut sampler_params = ParameterDictionary::default();
+    sampler_params.add_int("integer pixelsamples", 8);
+    sampler_params.add_int("integer seed", 13);
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "independent".to_string(),
+            params: sampler_params,
+        },
+    }));
+    let mut integrator_params = ParameterDictionary::default();
+    integrator_params.add_int("integer maxdepth", 3);
+    integrator_params.add_string("string lightsampler", "uniform");
+    root.add_component(Component::Integrator(IntegratorComponent {
+        integrator: NodeIntegrator {
+            name: "path".to_string(),
+            params: integrator_params,
+        },
+    }));
+    let mut light_params = ParameterDictionary::default();
+    light_params.add_point("point from", &[1.0, 2.0, 3.0]);
+    light_params.add_rgb("rgb I", &[2.0, 2.0, 2.0]);
+    let mut light = Node::new("point");
+    light.add_component(Component::Light(LightComponent {
+        light: NodeLight {
+            name: "point".to_string(),
+            params: light_params,
+            transform: Transform::default(),
+            medium: None,
+        },
+    }));
+    root.add_child(Arc::new(RwLock::new(light)));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.samples_per_pixel, 8);
+    assert_eq!(scene.render_settings.sampler_kind, SamplerKind::Independent);
+    assert_eq!(
+        scene.render_settings.randomization,
+        SamplerRandomization::None
+    );
+    assert_eq!(scene.render_settings.max_depth, 3);
+    assert_eq!(scene.render_settings.seed, 13);
+    assert_eq!(scene.render_settings.light_sampler, "uniform");
+    assert_eq!(scene.lights.positions, vec![[1.0, 2.0, 3.0]]);
+    assert_eq!(scene.lights.lights[0].attributes.len(), 2);
+    let scale = &scene.lights.lights[0].attributes[1];
+    let intensity = Spectrum::from_rgb(&[2.0, 2.0, 2.0], SpectrumType::Illuminant);
+    let expected = 1.0 / spectrum_to_photometric(&intensity);
+    assert!((scene.attributes.scalars[scale.index as usize] - expected).abs() < 1e-6);
+}
+
+#[test]
+fn flatten_node_preserves_halton_sampler_settings() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_int("integer seed", 29);
+    params.add_string("string randomization", "none");
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "halton".to_string(),
+            params,
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.sampler_kind, SamplerKind::Halton);
+    assert_eq!(
+        scene.render_settings.randomization,
+        SamplerRandomization::None
+    );
+    assert_eq!(scene.render_settings.samples_per_pixel, 16);
+    assert_eq!(scene.render_settings.seed, 29);
+}
+
+#[test]
+fn flatten_node_uses_halton_defaults() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "halton".to_string(),
+            params: Default::default(),
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.samples_per_pixel, 16);
+    assert_eq!(
+        scene.render_settings.randomization,
+        SamplerRandomization::PermuteDigits
+    );
+}
+
+#[test]
+fn flatten_node_preserves_remaining_sampler_settings() {
+    let cases = [
+        ("sobol", SamplerKind::Sobol, SamplerRandomization::FastOwen),
+        (
+            "paddedsobol",
+            SamplerKind::PaddedSobol,
+            SamplerRandomization::FastOwen,
+        ),
+        (
+            "zsobol",
+            SamplerKind::ZSobol,
+            SamplerRandomization::FastOwen,
+        ),
+        ("pmj02bn", SamplerKind::Pmj02Bn, SamplerRandomization::None),
+        (
+            "stratified",
+            SamplerKind::Stratified,
+            SamplerRandomization::None,
+        ),
+    ];
+    for (name, kind, randomization) in cases {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_component(Component::Sampler(SamplerComponent {
+            sampler: NodeSampler {
+                name: name.to_string(),
+                params: Default::default(),
+            },
+        }));
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        assert_eq!(scene.render_settings.sampler_kind, kind);
+        assert_eq!(scene.render_settings.randomization, randomization);
+        assert_eq!(scene.render_settings.samples_per_pixel, 16);
+    }
+}
+
+#[test]
+fn flatten_node_normalizes_zsobol_samples_to_power_of_two() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_int("integer pixelsamples", 13);
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "zsobol".to_string(),
+            params,
+        },
+    }));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.render_settings.samples_per_pixel, 8);
+}
+
+#[test]
+fn flatten_node_rejects_unimplemented_gpu_sampler() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "random".to_string(),
+            params: Default::default(),
+        },
+    }));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(format!("{error:?}").contains("not implemented"));
+}
+
+#[test]
+fn flatten_node_rejects_unimplemented_halton_randomization() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_string("string randomization", "fastowen");
+    root.add_component(Component::Sampler(SamplerComponent {
+        sampler: NodeSampler {
+            name: "halton".to_string(),
+            params,
+        },
+    }));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(format!("{error:?}").contains("randomization 'fastowen' is not supported"));
+}
+
+#[test]
+fn flatten_node_separates_spot_and_distant_light_sampling_models() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut distant_params = ParameterDictionary::default();
+    distant_params.add_point("point from", &[0.0, 0.0, 2.0]);
+    distant_params.add_point("point to", &[0.0, 0.0, 0.0]);
+    root.add_child(light_node("distant", "distant", distant_params));
+
+    let mut spot_params = ParameterDictionary::default();
+    spot_params.add_point("point from", &[1.0, 2.0, 3.0]);
+    spot_params.add_point("point to", &[1.0, 2.0, 4.0]);
+    spot_params.add_float("float coneangle", 40.0);
+    spot_params.add_float("float conedelta", 10.0);
+    spot_params.add_float("float power", 10.0);
+    let spot = light_node("spot", "spot", spot_params);
+    spot.write().unwrap().transform.matrix = [
+        2.0, 0.5, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    root.add_child(spot);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.lights.lights.len(), 1);
+    assert_eq!(scene.lights.infinite_lights.len(), 1);
+    assert_eq!(
+        scene.lights.lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::Spot
+    );
+    assert_eq!(scene.lights.lights[0].attributes.len(), 4);
+    assert_eq!(
+        scene.lights.infinite_lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::Distant
+    );
+    assert_eq!(scene.lights.bvh.bounded_handles, vec![0]);
+
+    let spot_model = &scene.lights.sampling_models[scene.lights.lights[0].sampling_model as usize];
+    assert_eq!(spot_model.kind, pbrt_r4::gpu::flat::LightKind::Spot);
+    assert_eq!(
+        spot_model.geometry_kind,
+        pbrt_r4::gpu::flat::LightGeometryKind::Position
+    );
+    let distant_model =
+        &scene.lights.sampling_models[scene.lights.infinite_lights[0].sampling_model as usize];
+    assert_eq!(distant_model.kind, pbrt_r4::gpu::flat::LightKind::Distant);
+    assert_eq!(
+        distant_model.geometry_kind,
+        pbrt_r4::gpu::flat::LightGeometryKind::Direction
+    );
+    assert_ne!(scene.lights.lights[0].sampling_model, 0);
+    assert_eq!(scene.lights.infinite_lights[0].sampling_model, 0);
+    assert_eq!(
+        spot_model.world_to_light,
+        [
+            [0.5, -1.0 / 12.0, 0.0, 0.0],
+            [0.0, 1.0 / 3.0, 0.0, 0.0],
+            [0.0, 0.0, 0.25, 0.0],
+        ]
+    );
+
+    let cos_start = scene.attributes.scalars[scene.lights.lights[0].attributes[2].index as usize];
+    let cos_end = scene.attributes.scalars[scene.lights.lights[0].attributes[3].index as usize];
+    assert!((cos_start - 30.0_f32.to_radians().cos()).abs() < 1e-6);
+    assert!((cos_end - 40.0_f32.to_radians().cos()).abs() < 1e-6);
+    let scale = scene.attributes.scalars[scene.lights.lights[0].attributes[1].index as usize];
+    let intensity = Spectrum::from(1.0);
+    let k_e = 2.0 * PI * ((1.0 - cos_start) + (cos_start - cos_end) / 2.0);
+    let expected_scale = 10.0 / (spectrum_to_photometric(&intensity) * k_e);
+    assert!((scale - expected_scale).abs() < 1e-6);
+}
+
+#[test]
+fn flattened_spot_light_maps_its_axis_to_local_positive_z() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_point("point from", &[1.0, 2.0, 3.0]);
+    params.add_point("point to", &[2.0, 2.0, 3.0]);
+    let spot = light_node("spot", "spot", params);
+    spot.write().unwrap().transform.matrix = [
+        2.0, 0.5, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    root.add_child(spot);
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let model = &scene.lights.sampling_models[scene.lights.lights[0].sampling_model as usize];
+
+    // These render-space rays are the transformed cone axis and two rays
+    // at 45 degrees to it before the nonuniform scale and shear.
+    for (direction, expected_cosine) in [
+        ([2.0, 0.0, 0.0], 1.0),
+        ([2.5, 3.0, 0.0], std::f32::consts::FRAC_1_SQRT_2),
+        ([2.0, 0.0, 4.0], std::f32::consts::FRAC_1_SQRT_2),
+    ] {
+        let local = model
+            .world_to_light
+            .map(|row| row[0] * direction[0] + row[1] * direction[1] + row[2] * direction[2]);
+        let length = local.iter().map(|value| value * value).sum::<f32>().sqrt();
+        assert!((local[2] / length - expected_cosine).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn flatten_node_classifies_infinite_light_variants() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let cases = [
+        (
+            Default::default(),
+            pbrt_r4::gpu::flat::LightKind::UniformInfinite,
+        ),
+        (
+            {
+                let mut params = ParameterDictionary::default();
+                params.add_string("string filename", image_path.to_str().unwrap());
+                params.add_string("string encoding", "linear");
+                params
+            },
+            pbrt_r4::gpu::flat::LightKind::ImageInfinite,
+        ),
+    ];
+    for (params, expected_kind) in cases {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(light_node("infinite", "infinite", params));
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        assert_eq!(scene.lights.infinite_lights[0].kind, expected_kind);
+        assert_eq!(scene.lights.sampling_models.len(), 1);
+        assert_eq!(
+            scene.lights.sampling_models[0].geometry_kind,
+            if expected_kind == pbrt_r4::gpu::flat::LightKind::ImageInfinite {
+                pbrt_r4::gpu::flat::LightGeometryKind::ImageInfinite
+            } else {
+                pbrt_r4::gpu::flat::LightGeometryKind::Direction
+            }
+        );
+        if expected_kind == pbrt_r4::gpu::flat::LightKind::ImageInfinite {
+            assert_eq!(scene.lights.infinite_sampling.image_records.len(), 1);
+            assert_eq!(
+                scene.lights.infinite_sampling.image_records[0].resolution,
+                [2, 2]
+            );
+            assert_eq!(scene.lights.infinite_sampling.image_distribution.len(), 4);
+            assert_eq!(scene.lights.infinite_sampling.image_row_cdf.len(), 2);
+        }
+    }
+}
+
+#[test]
+fn flattened_image_infinite_lights_keep_distinct_cdfs_and_light_transforms() {
+    let directory = tempfile::tempdir().unwrap();
+    let first_path = directory.path().join("first.png");
+    let second_path = directory.path().join("second.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(2, 2, Rgb([32, 64, 128]))
+        .save(&first_path)
+        .unwrap();
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(2, 2, Rgb([255, 128, 32]))
+        .save(&second_path)
+        .unwrap();
+
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for (name, path) in [("first", first_path), ("second", second_path)] {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", path.to_str().unwrap());
+        params.add_string("string encoding", "linear");
+        let light = light_node(name, "infinite", params);
+        if name == "first" {
+            light.write().unwrap().transform.matrix = [
+                0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ];
+        }
+        root.add_child(light);
+    }
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.lights.infinite_sampling.image_records.len(), 2);
+    assert_eq!(scene.lights.infinite_sampling.image_distribution.len(), 8);
+    assert_eq!(scene.lights.infinite_sampling.image_row_cdf.len(), 4);
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[0].distribution_offset,
+        0
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[0].row_cdf_offset,
+        0
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[1].distribution_offset,
+        4
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[1].row_cdf_offset,
+        2
+    );
+    assert_eq!(scene.lights.sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.lights.sampling_models[1].geometry_index, 1);
+    assert_eq!(
+        scene.lights.infinite_sampling.image_records[0].light_to_render,
+        [
+            [0.0, -1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    );
+    let local_x = [1.0, 0.0, 0.0];
+    let render_direction = scene.lights.infinite_sampling.image_records[0]
+        .light_to_render
+        .map(|row| row[0] * local_x[0] + row[1] * local_x[1] + row[2] * local_x[2]);
+    assert_eq!(render_direction, [0.0, 1.0, 0.0]);
+    let recovered_local = scene.lights.sampling_models[0].world_to_light.map(|row| {
+        row[0] * render_direction[0] + row[1] * render_direction[1] + row[2] * render_direction[2]
+    });
+    assert_eq!(recovered_local, local_x);
+}
+
+#[test]
+fn flatten_node_accepts_portal_infinite_image() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(
+        scene.lights.infinite_lights[0].kind,
+        pbrt_r4::gpu::flat::LightKind::PortalImageInfinite
+    );
+    assert_eq!(
+        scene.lights.sampling_models[0].geometry_kind,
+        pbrt_r4::gpu::flat::LightGeometryKind::Portal
+    );
+    assert_eq!(scene.lights.sampling_models[0].distribution_offset, 0);
+    assert_eq!(scene.lights.sampling_models[0].distribution_count, 0);
+    assert_eq!(scene.lights.sampling_models[0].total_area, 0.0);
+}
+
+#[test]
+fn flatten_node_keeps_multiple_portal_images_and_distributions_separate() {
+    let directory = tempfile::tempdir().unwrap();
+    let red_path = directory.path().join("red.png");
+    let blue_path = directory.path().join("blue.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([255, 0, 0]))
+        .save(&red_path)
+        .unwrap();
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([0, 0, 255]))
+        .save(&blue_path)
+        .unwrap();
+
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for (name, image_path, x) in [("red", red_path, 0.0), ("blue", blue_path, 2.0)] {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", image_path.to_str().unwrap());
+        params.add_string("string encoding", "linear");
+        params.add_point(
+            "point portal",
+            &[
+                x,
+                0.0,
+                1.0,
+                x,
+                1.0,
+                1.0,
+                x + 1.0,
+                1.0,
+                1.0,
+                x + 1.0,
+                0.0,
+                1.0,
+            ],
+        );
+        root.add_child(light_node(name, "infinite", params));
+    }
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.lights.infinite_lights.len(), 2);
+    assert_eq!(scene.lights.infinite_sampling.portal_records.len(), 2);
+    assert_eq!(scene.lights.sampling_models[0].geometry_index, 0);
+    assert_eq!(scene.lights.sampling_models[1].geometry_index, 1);
+    assert_eq!(
+        scene.lights.infinite_sampling.portal_records[0].distribution_offset,
+        0
+    );
+    assert_eq!(
+        scene.lights.infinite_sampling.portal_records[1].distribution_offset,
+        9
+    );
+    assert_eq!(scene.lights.infinite_sampling.portal_distribution.len(), 18);
+    assert_ne!(
+        scene.lights.infinite_lights[0].image_index,
+        scene.lights.infinite_lights[1].image_index
+    );
+    scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap();
+}
+
+fn one_pixel_portal_scene() -> FlatScene {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+    flatten_node(Arc::new(RwLock::new(root))).unwrap()
+}
+
+#[test]
+fn portal_static_view_validation_rejects_inconsistent_flat_data() {
+    let scene = one_pixel_portal_scene();
+
+    let mut missing_record = scene.clone();
+    missing_record
+        .lights
+        .infinite_sampling
+        .portal_records
+        .clear();
+    assert!(missing_record
+        .lights
+        .validate_consistency(&missing_record.texture_library)
+        .unwrap_err()
+        .to_string()
+        .contains("not one-to-one"));
+
+    let mut legacy_fields = scene.clone();
+    legacy_fields.lights.sampling_models[0].distribution_count = 1;
+    assert!(legacy_fields
+        .lights
+        .validate_consistency(&legacy_fields.texture_library)
+        .unwrap_err()
+        .to_string()
+        .contains("invalid legacy geometry fields"));
+
+    let mut non_finite_geometry = scene.clone();
+    non_finite_geometry.lights.infinite_sampling.portal_records[0].portal[0][0] = f32::NAN;
+    assert!(non_finite_geometry
+        .lights
+        .validate_consistency(&non_finite_geometry.texture_library)
+        .unwrap_err()
+        .to_string()
+        .contains("non-finite geometry"));
+
+    let mut non_finite_distribution = scene.clone();
+    non_finite_distribution
+        .lights
+        .infinite_sampling
+        .portal_distribution[0]
+        .summed_area = f32::INFINITY;
+    assert!(non_finite_distribution
+        .lights
+        .validate_consistency(&non_finite_distribution.texture_library)
+        .unwrap_err()
+        .to_string()
+        .contains("non-finite value"));
+
+    let mut image_mismatch = scene.clone();
+    let image = image_mismatch.lights.infinite_lights[0].image_index as usize;
+    image_mismatch.texture_library.mipmaps[image] = Arc::new({
+        let mut mipmap = (*image_mismatch.texture_library.mipmaps[image]).clone();
+        mipmap.levels[0].resolution = [2, 1];
+        mipmap
+    });
+    assert!(image_mismatch
+        .lights
+        .validate_consistency(&image_mismatch.texture_library)
+        .unwrap_err()
+        .to_string()
+        .contains("resolutions differ"));
+
+    let mut orphan_texel = scene;
+    orphan_texel
+        .lights
+        .infinite_sampling
+        .portal_distribution
+        .push(orphan_texel.lights.infinite_sampling.portal_distribution[0]);
+    assert!(orphan_texel
+        .lights
+        .validate_consistency(&orphan_texel.texture_library)
+        .unwrap_err()
+        .to_string()
+        .contains("not owned"));
+}
+
+#[test]
+fn light_validation_preserves_image_record_error_order_before_portal_image_lookup() {
+    let mut scene = one_pixel_portal_scene();
+    scene.lights.infinite_lights[0].image_index = INVALID_INDEX;
+    scene.lights.infinite_sampling.image_records.push(
+        pbrt_r4::gpu::flat::ImageInfiniteSamplingRecord {
+            distribution_offset: 0,
+            row_cdf_offset: 0,
+            resolution: [1, 1],
+            light_to_render: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        },
+    );
+
+    let error = scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("Image infinite lights and sampling records are not one-to-one"));
+}
+
+#[test]
+fn light_validation_preserves_order_between_internal_data_and_references() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(1, 1, vec![255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("image", "infinite", params.clone()));
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    );
+    root.add_child(light_node("portal", "infinite", params));
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let mut cases = Vec::new();
+
+    let mut invalid = scene.clone();
+    invalid.lights.primitive_distribution_map.offsets.clear();
+    invalid.lights.infinite_sampling.portal_records.clear();
+    cases.push((
+        invalid,
+        "Primitive distribution map offsets do not match area lights.",
+    ));
+
+    let mut invalid = scene.clone();
+    invalid.lights.infinite_sampling.portal_records.clear();
+    invalid.lights.infinite_sampling.image_records.clear();
+    cases.push((
+        invalid,
+        "Portal infinite lights and geometry records are not one-to-one.",
+    ));
+
+    let mut invalid = scene.clone();
+    invalid.lights.infinite_sampling.portal_distribution[0].function = f32::NAN;
+    invalid.lights.infinite_sampling.image_records.clear();
+    cases.push((
+        invalid,
+        "Portal infinite light 0 distribution contains a non-finite value.",
+    ));
+
+    let mut invalid = scene.clone();
+    invalid.lights.infinite_sampling.image_distribution[0].conditional_cdf = f32::NAN;
+    for light in &mut invalid.lights.infinite_lights {
+        light.image_index = INVALID_INDEX;
+    }
+    cases.push((
+        invalid,
+        "Image infinite light 0 has an invalid conditional CDF.",
+    ));
+
+    let mut invalid = scene;
+    for light in &mut invalid.lights.infinite_lights {
+        light.image_index = INVALID_INDEX;
+    }
+    cases.push((
+        invalid,
+        "Portal infinite light references an invalid image.",
+    ));
+
+    for (invalid, expected) in cases {
+        let error = invalid
+            .lights
+            .validate_consistency(&invalid.texture_library)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "expected {expected}, got {error}");
+    }
+}
+
+#[test]
+fn flatten_node_rejects_portal_without_an_image_source() {
+    let mut params = ParameterDictionary::default();
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    assert!(flatten_node(Arc::new(RwLock::new(root))).is_err());
+}
+
+#[test]
+fn flatten_node_rejects_non_finite_final_portal_scale() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_float("float scale", f32::MAX);
+    params.add_float("float illuminance", f32::MAX);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-finite scale"));
+}
+
+#[test]
+fn flatten_node_rejects_non_finite_final_uniform_infinite_scale() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_float("float scale", f32::MAX);
+    params.add_float("float illuminance", f32::MAX);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-finite scale"));
+}
+
+#[test]
+fn flatten_node_rejects_non_finite_final_image_infinite_scale() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("white.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([255, 255, 255]))
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    params.add_float("float scale", f32::MAX);
+    params.add_float("float illuminance", f32::MAX);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-finite scale"));
+}
+
+#[test]
+fn flatten_node_reports_degenerate_portal_geometry() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("degenerate"));
+}
+
+#[test]
+fn flatten_node_builds_portal_jacobian_weighted_sat() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("white.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(3, 3, Rgb([255, 255, 255]))
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+    );
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("portal", "infinite", params));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let center = scene.lights.infinite_sampling.portal_distribution[4];
+    assert!((center.function - PI.powi(2)).abs() < 1e-4);
+    let total: f32 = scene
+        .lights
+        .infinite_sampling
+        .portal_distribution
+        .iter()
+        .map(|texel| texel.function)
+        .sum();
+    assert!(
+        (scene.lights.infinite_sampling.portal_distribution[8].summed_area - total).abs() < 1e-4
+    );
+}
+
+#[test]
+fn flatten_node_rejects_l_and_filename_without_portal() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("white.png");
+    ImageBuffer::<Rgb<u8>, _>::from_pixel(1, 1, Rgb([255, 255, 255]))
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_string("string filename", image_path.to_str().unwrap());
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    assert!(flatten_node(Arc::new(RwLock::new(root))).is_err());
+}
+
+#[test]
+fn flatten_node_keeps_portal_points_in_world_space() {
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb L", &[1.0, 1.0, 1.0]);
+    params.add_point(
+        "point portal",
+        &[0.0, 0.0, 2.0, 1.0, 0.0, 2.0, 1.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+    );
+    let light = light_node("portal", "infinite", params);
+    light.write().unwrap().transform.matrix[3] = 10.0;
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(
+        scene.lights.infinite_sampling.portal_records[0].portal[0],
+        [0.0, 0.0, 2.0]
+    );
+    assert_eq!(
+        scene.lights.sampling_models[0].world_to_light,
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    );
+}
+
+#[test]
+fn portal_distribution_preserves_negative_v4_weights() {
+    let source =
+        build_linear_rgb_mipmap([3, 3], &[[-1.0, -1.0, -1.0]; 9], ColorSpace::Srgb).unwrap();
+    let prepared = prepare_portal_image(
+        &source,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+    )
+    .unwrap();
+    assert!((prepared.distribution[4].function + PI.powi(2)).abs() < 1e-4);
+}
+
+#[test]
+fn flatten_node_prepares_equal_area_infinite_image_and_transform() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    let light = light_node("environment", "infinite", params);
+    light.write().unwrap().transform.matrix = [
+        2.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let light = &scene.lights.infinite_lights[0];
+    let model = &scene.lights.sampling_models[light.sampling_model as usize];
+    assert_eq!(model.world_to_light[0][0], 0.5);
+    assert_eq!(model.world_to_light[1][1], 0.25);
+    assert_eq!(model.world_to_light[2][2], 0.2);
+    let mipmap = &scene.texture_library.mipmaps[light.image_index as usize];
+    assert_eq!(mipmap.levels[0].resolution, [2, 2]);
+    assert_eq!(mipmap.levels[0].channels, 3);
+    assert_eq!(light.attributes.len(), 3);
+    assert_eq!(light.attributes[2].name, "image-illuminant");
+    let actual =
+        evaluate_dense_spectrum(&scene.attributes.spectra, light.attributes[2].index, 450.0)
+            .unwrap();
+    assert!((actual - SRGB.illuminant.sample_at(450.0)).abs() < 1e-6);
+}
+
+#[test]
+fn flatten_node_rejects_non_square_infinite_image() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 1, vec![255, 0, 0, 0, 255, 0])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut params = ParameterDictionary::default();
+    params.add_string("string filename", image_path.to_str().unwrap());
+    params.add_string("string encoding", "linear");
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("environment", "infinite", params));
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("non-square resolution"));
+}
+
+#[test]
+fn flatten_node_allows_multiple_infinite_lights() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(light_node("distant-a", "distant", Default::default()));
+    root.add_child(light_node("distant-b", "distant", Default::default()));
+    root.add_child(light_node("uniform", "infinite", Default::default()));
+    root.add_child(light_node("duplicate", "infinite", Default::default()));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.lights.infinite_lights.len(), 4);
+    assert_eq!(scene.lights.sampling_models.len(), 4);
+    scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap();
+}
+
+#[test]
+fn flatten_node_uses_color_space_illuminant_for_default_light_spectra() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+
+    let mut spot_params = ParameterDictionary::default();
+    spot_params.set_color_space(&ACES2065_1);
+    root.add_child(light_node("spot", "spot", spot_params));
+
+    let mut distant_params = ParameterDictionary::default();
+    distant_params.set_color_space(&ACES2065_1);
+    root.add_child(light_node("distant", "distant", distant_params));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let expected = ACES2065_1.illuminant.sample_at(450.0);
+    for light in [&scene.lights.lights[0], &scene.lights.infinite_lights[0]] {
+        let actual =
+            evaluate_dense_spectrum(&scene.attributes.spectra, light.attributes[0].index, 450.0)
+                .unwrap();
+        assert!((actual - expected).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn flatten_node_defaults_light_sampler_to_bvh() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Integrator(IntegratorComponent {
+        integrator: NodeIntegrator {
+            name: "path".to_string(),
+            params: Default::default(),
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.render_settings.light_sampler, "bvh");
+}
+
+#[test]
+fn flatten_node_extracts_explicit_diffuse_reflectance() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_rgb("rgb reflectance", &[0.5, 0.5, 0.5]);
+    }
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root)))
+        .expect("diffuse reflectance should be normalized into Flat IR");
+    assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+    assert_eq!(scene.materials.nodes[0].attributes.len(), 1);
+    assert_eq!(
+        scene.materials.nodes[0].attributes[0].kind,
+        AttributeKind::Spectrum
+    );
+    assert_eq!(scene.materials.nodes[0].attributes[0].name, "reflectance");
+    let attribute = &scene.materials.nodes[0].attributes[0];
+    let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
+    assert!(
+        scene.attributes.spectra[attribute.index as usize].samples[..3]
+            .iter()
+            .all(|v| v.is_finite())
+    );
+}
+
+#[test]
+fn flatten_node_names_unsupported_gpu_material() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let shape = triangle_node("triangle", "unsupported-material", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material).unwrap().name = "unsupported-substrate".to_string();
+    }
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("unsupported-substrate"), "{message}");
+    assert!(message.contains("unsupported-material"), "{message}");
+}
+
+#[test]
+fn flatten_node_extracts_diffuse_transmission_attributes() {
+    let shape = triangle_node("triangle", "diffusetransmission", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let material = &scene.materials.nodes[0];
+    assert_eq!(material.kind, "diffusetransmission");
+    assert_eq!(material.attributes.len(), 3);
+    assert_eq!(material.attributes[0].name, "reflectance");
+    assert_eq!(material.attributes[1].name, "transmittance");
+    assert_eq!(material.attributes[2].name, "scale");
+    assert_eq!(
+        scene.attributes.scalars[material.attributes[2].index as usize],
+        1.0
+    );
+}
+
+#[test]
+fn flatten_node_extracts_dielectric_eta() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_float("float eta", 1.33);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials.nodes[0].attributes.len(), 4);
+    assert_eq!(
+        scene.materials.nodes[0].attributes[0].kind,
+        AttributeKind::Spectrum
+    );
+    assert_eq!(scene.materials.nodes[0].attributes[0].name, "eta");
+    assert_eq!(scene.materials.nodes[0].attributes[1].name, "uroughness");
+    assert_eq!(scene.materials.nodes[0].attributes[2].name, "vroughness");
+    assert_eq!(
+        scene.materials.nodes[0].attributes[3].name,
+        "remaproughness"
+    );
+    let attribute = &scene.materials.nodes[0].attributes[0];
+    assert!(
+        (evaluate_dense_spectrum(&scene.attributes.spectra, attribute.index, 550.0).unwrap()
+            - 1.33)
+            .abs()
+            < 1e-5
+    );
+    assert_eq!(
+        scene.attributes.spectra[attribute.index as usize].flags
+            & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
+        pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT
+    );
+}
+
+#[test]
+fn flatten_dielectric_named_eta_keeps_nonconstant_spectrum_flag() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .unwrap()
+            .params
+            .add_string("spectrum eta", "glass-BAF10");
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let eta = &scene.materials.nodes[0].attributes[0];
+    assert_eq!(eta.name, "eta");
+    assert_eq!(
+        scene.attributes.spectra[eta.index as usize].flags
+            & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
+        0
+    );
+}
+
+#[test]
+fn flatten_node_extracts_thin_dielectric_leaf() {
+    let shape = triangle_node("triangle", "thindielectric", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials.nodes[0].attributes.len(), 1);
+    assert_eq!(
+        scene.materials.nodes[0].attributes[0].kind,
+        AttributeKind::Spectrum
+    );
+    assert_eq!(scene.materials.nodes[0].attributes[0].name, "eta");
+}
+
+#[test]
+fn flatten_node_expands_coateddiffuse_children() {
+    let shape = triangle_node("coated", "coateddiffuse", [0.0; 3]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    let layout = scene.materials.roots[scene.instances[0].material_root as usize];
+    let material = &scene.materials.nodes[layout.node_offset as usize];
+    assert_eq!(material.source_kind, "coateddiffuse");
+    assert_eq!(material.kind, "coateddiffuse");
+    assert_eq!(material.attributes.len(), 10);
+    assert_eq!(material.attributes[0].name, "thickness");
+    assert_eq!(material.attributes[1].name, "reflectance");
+    assert_eq!(material.attributes[2].name, "g");
+    assert_eq!(material.attributes[3].name, "maxdepth");
+    assert_eq!(material.attributes[4].name, "nsamples");
+    assert_eq!(material.attributes[5].name, "albedo");
+    assert_eq!(material.attributes[6].name, "eta");
+    assert_eq!(material.attributes[7].name, "uroughness");
+    assert_eq!(material.attributes[8].name, "vroughness");
+    assert_eq!(material.attributes[9].name, "remaproughness");
+    assert_ne!(material.child0, pbrt_r4::gpu::flat::INVALID_INDEX);
+    assert_ne!(material.child1, pbrt_r4::gpu::flat::INVALID_INDEX);
+    assert_eq!(
+        pbrt_r4::gpu::flat::max_attributes_eval_work_items_per_surface(&scene).unwrap(),
+        3
+    );
+}
+
+#[test]
+fn flatten_node_preserves_coatedconductor_layer_parameters() {
+    let shape = triangle_node("coated", "coatedconductor", [0.0; 3]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .unwrap()
+            .params
+            .add_rgb("rgb reflectance", &[0.25, 0.5, 0.75]);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let layout = scene.materials.roots[scene.instances[0].material_root as usize];
+    let material = &scene.materials.nodes[layout.node_offset as usize];
+    assert_eq!(material.kind, "coatedconductor");
+    assert_eq!(material.attributes.len(), 15);
+    assert_eq!(material.attributes[5].name, "interface.eta");
+    assert_eq!(material.attributes[8].name, "conductor.eta");
+    assert_eq!(material.attributes[9].name, "conductor.k");
+    assert_eq!(material.attributes[13].name, "reflectance");
+    assert_eq!(material.attributes[14].name, "use_reflectance");
+    assert_eq!(
+        scene.attributes.scalars[material.attributes[14].index as usize],
+        1.0,
+    );
+    assert_eq!(
+        scene.materials.nodes[material.child1 as usize].kind,
+        "conductor_reflectance"
+    );
+    assert_eq!(
+        scene.materials.nodes[material.child1 as usize]
+            .attributes
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn flatten_coated_materials_keep_nonconstant_interface_eta_flags() {
+    for (kind, parameter, ordinal, name) in [
+        ("coateddiffuse", "eta", 6, "eta"),
+        ("coatedconductor", "interface.eta", 5, "interface.eta"),
+    ] {
+        let shape = triangle_node("coated", kind, [0.0; 3]);
+        {
+            let mut node = shape.write().unwrap();
+            let material = node
+                .components
+                .iter_mut()
+                .find_map(|component| match component {
+                    Component::Material(component) => Some(&mut component.material),
+                    _ => None,
+                })
+                .unwrap();
+            Arc::get_mut(material)
+                .unwrap()
+                .params
+                .add_string(&format!("spectrum {parameter}"), "glass-BAF10");
+        }
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(shape);
+
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        let layout = scene.materials.roots[scene.instances[0].material_root as usize];
+        let material = &scene.materials.nodes[layout.node_offset as usize];
+        let eta = &material.attributes[ordinal];
+        assert_eq!(material.kind, kind);
+        assert_eq!(eta.name, name);
+        assert_eq!(
+            scene.attributes.spectra[eta.index as usize].flags
+                & pbrt_r4::gpu::flat::SPECTRUM_FLAG_CONSTANT,
+            0
+        );
+    }
+}
+
+#[test]
+fn flatten_node_rejects_coated_layer_limits() {
+    let shape = triangle_node("coated", "coateddiffuse", [0.0; 3]);
+    {
+        let mut node = shape.write().unwrap();
+        if let Some(Component::Material(material)) = node
+            .components
+            .iter_mut()
+            .find(|component| matches!(component, Component::Material(_)))
+        {
+            Arc::get_mut(&mut material.material)
+                .unwrap()
+                .params
+                .add_int("maxdepth", 33);
+        }
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("maxdepth 33"));
+}
+
+#[test]
+fn material_table_uses_generic_attribute_ranges() {
+    use pbrt_r4::gpu::webgpu::material::MaterialTable;
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for kind in [
+        "diffuse",
+        "coateddiffuse",
+        "dielectric",
+        "diffuse",
+        "thindielectric",
+    ] {
+        root.add_child(triangle_node(kind, kind, [0.0; 3]));
+    }
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let table = MaterialTable::from_flat(&scene).unwrap();
+    assert_eq!(table.nodes.len(), scene.materials.nodes.len());
+    assert_eq!(table.roots.len(), scene.materials.roots.len());
+    assert!(table.roots.iter().any(|root| root.node_count > 1));
+    for (record, source) in table.roots.iter().zip(&scene.materials.roots) {
+        assert_eq!(record.node_offset, source.node_offset);
+        assert_eq!(record.node_count, source.node_count);
+    }
+    for instance in &scene.instances {
+        let root = &table.roots[instance.material_root as usize];
+        let end = root.node_offset as usize + root.node_count as usize;
+        assert!(end <= table.nodes.len());
+    }
+    assert_eq!(
+        table.attributes.len(),
+        scene
+            .materials
+            .nodes
+            .iter()
+            .map(|m| m.attributes.len())
+            .sum::<usize>()
+    );
+    for record in &table.nodes {
+        assert!(
+            (record.attribute_offset as usize) + (record.attribute_count as usize)
+                <= table.attributes.len()
+        );
+    }
+}
+
+#[test]
+fn flatten_node_rejects_invalid_dielectric_eta() {
+    let shape = triangle_node("triangle", "dielectric", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(component) => Some(&mut component.material),
+                _ => None,
+            })
+            .unwrap();
+        Arc::get_mut(material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_float("float eta", 0.0);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("invalid dielectric eta"));
+}
+
+#[test]
+fn flatten_node_extracts_conductor_attributes() {
+    let shape = triangle_node("triangle", "conductor_eta_k", [0.0, 0.0, 0.0]);
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials.nodes[0].kind, "conductor_eta_k");
+    assert_eq!(scene.materials.nodes[0].attributes.len(), 4);
+    let remap = &scene.materials.nodes[0].attributes[3];
+    assert_eq!(remap.name, "remaproughness");
+    assert_eq!(scene.attributes.scalars[remap.index as usize], 1.0);
+    for attribute in &scene.materials.nodes[0].attributes[..2] {
+        let base = attribute.index as usize * pbrt_r4::gpu::flat::DENSE_SAMPLE_COUNT;
+        assert!(
+            scene.attributes.spectra[attribute.index as usize].samples[..3]
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.0)
+        );
+    }
+    assert_eq!(scene.attributes.scalars[0], 0.0);
+}
+
+#[test]
+fn flatten_node_keeps_conductor_reflectance_layout_separate() {
+    let shape = triangle_node("triangle", "conductor_reflectance", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let material = node
+            .components
+            .iter_mut()
+            .find_map(|component| match component {
+                Component::Material(material) => Some(material),
+                _ => None,
+            })
+            .expect("expected material component");
+        Arc::get_mut(&mut material.material)
+            .expect("test material should be uniquely owned")
+            .params
+            .add_rgb("rgb reflectance", &[0.5, 0.5, 0.5]);
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.materials.nodes[0].kind, "conductor_reflectance");
+    assert_eq!(scene.materials.nodes[0].attributes.len(), 3);
+    let remap = &scene.materials.nodes[0].attributes[2];
+    assert_eq!(remap.name, "remaproughness");
+    assert_eq!(scene.attributes.scalars[remap.index as usize], 1.0);
+    assert_eq!(scene.materials.nodes[0].attributes[0].name, "reflectance");
+    assert_eq!(scene.materials.nodes[0].attributes[1].name, "roughness");
+}
+
+#[test]
+fn node_ir_preparation_completes_missing_mesh_uvs_before_flattening() {
+    let shape = triangle_node("triangle", "diffuse", [0.0, 0.0, 0.0]);
+    {
+        let mut node = shape.write().unwrap();
+        let Component::Shape(shape) = &mut node.components[0] else {
+            panic!("expected shape component");
+        };
+        let Shape::TriangleMesh(mesh) = &mut shape.shape else {
+            panic!("expected triangle mesh");
+        };
+        mesh.normals = None;
+        mesh.tangents = None;
+        mesh.uvs = None;
+    }
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_child(shape);
+    tessellate_shapes(&mut root).unwrap();
+    prepare_triangle_meshes(&mut root).unwrap();
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(scene.geometry.vertices.len(), 3);
+    assert_eq!(scene.geometry.vertices[0].uv, [0.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[1].uv, [1.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[2].uv, [0.0, 1.0]);
+    // Missing normal/tangent are left zero: shade_surface.wgsl recomputes a
+    // fresh per-triangle geometric normal / dpdu whenever the interpolated
+    // vertex value is zero, so there is nothing to precompute here.
+    assert_eq!(scene.geometry.vertices[0].normal, [0.0, 0.0, 0.0]);
+    assert_eq!(scene.geometry.vertices[0].tangent, [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn missing_normals_are_left_for_shade_surface_to_recompute() {
+    let mesh = TriangleMeshShape {
+        source_shape: "trianglemesh".to_string(),
+        positions: vec![
+            Vec3f([0.0, 0.0, 0.0]),
+            Vec3f([1.0, 0.0, 0.0]),
+            Vec3f([1.0, 1.0, 0.0]),
+            Vec3f([0.0, 1.0, 1.0]),
+        ],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        normals: None,
+        tangents: None,
+        uvs: None,
+    };
+
+    let completed = complete_triangle_attributes(mesh, "shared").unwrap();
+    assert_eq!(completed.positions.len(), 4);
+    assert_eq!(completed.indices, vec![0, 1, 2, 0, 2, 3]);
+    assert!(completed.normals.is_none());
+    assert!(completed.tangents.is_none());
+}
+
+#[test]
+fn flatten_preserves_source_shape_through_mesh_preparation() {
+    use pbrt_r4::gpu::node::{DiskShape, SphereShape};
+
+    for (source, shape) in [
+        (
+            SourceShape::Disk,
+            Shape::Disk(Box::new(DiskShape {
+                params: Default::default(),
+            })),
+        ),
+        (
+            SourceShape::Sphere,
+            Shape::Sphere(Box::new(SphereShape {
+                params: Default::default(),
+            })),
+        ),
+    ] {
+        let mut root = Node::new("source-shape");
+        add_camera_and_film(&mut root, ParameterDictionary::default());
+        let child = triangle_node("shape", "diffuse", [0.0; 3]);
+        if let Component::Shape(component) = &mut child.write().unwrap().components[0] {
+            component.shape = shape;
+        }
+        root.add_child(child.clone());
+        root.add_child(instance_node("shared", &child, [2.0, 0.0, 0.0]));
+        tessellate_shapes(&mut root).unwrap();
+        prepare_triangle_meshes(&mut root).unwrap();
+        let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        assert_eq!(flat.geometry.geometries.len(), 1);
+        assert_eq!(flat.geometry.geometries[0].source_shape, source);
+        assert_eq!(flat.instances.len(), 2);
+        assert_eq!(flat.instances[0].geometry, flat.instances[1].geometry);
+    }
+}
+
+#[test]
+fn flatten_keeps_shape_handedness_separate_from_instance_handedness() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, ParameterDictionary::default());
+    let shape = triangle_node("mirrored-shape", "diffuse", [0.0; 3]);
+    shape.write().unwrap().transform.matrix[0] = -1.0;
+    let instance = instance_node("mirrored-instance", &shape, [0.0; 3]);
+    if let Component::Instance(component) = &mut instance.write().unwrap().components[0] {
+        component.instance.transform.matrix[0] = -1.0;
+    }
+    root.add_child(shape);
+    root.add_child(instance);
+    let flat = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    assert_eq!(flat.instances.len(), 2);
+    assert!(flat.instances[0].shape_transform_swaps_handedness);
+    assert!(flat.instances[1].shape_transform_swaps_handedness);
+    assert!(pbrt_r4::gpu::flat::transform_swaps_handedness(
+        flat.instances[0].transform
+    ));
+    assert!(!pbrt_r4::gpu::flat::transform_swaps_handedness(
+        flat.instances[1].transform
+    ));
+}
+
+#[test]
+fn flatten_rejects_unknown_source_shape_name() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, ParameterDictionary::default());
+    let child = triangle_node("unknown", "diffuse", [0.0; 3]);
+    if let Component::Shape(component) = &mut child.write().unwrap().components[0] {
+        if let Shape::TriangleMesh(mesh) = &mut component.shape {
+            mesh.source_shape = "unknown".to_string();
+        }
+    }
+    root.add_child(child);
+    let error = flatten_node(Arc::new(RwLock::new(root))).unwrap_err();
+    assert!(error.to_string().contains("Unknown GPU source shape"));
+}
+
+#[test]
+fn flatten_node_preserves_disabled_conductor_roughness_remapping() {
+    for kind in ["conductor_eta_k", "conductor_reflectance"] {
+        let shape = triangle_node("triangle", kind, [0.0; 3]);
+        {
+            let mut node = shape.write().unwrap();
+            let material = node
+                .components
+                .iter_mut()
+                .find_map(|component| match component {
+                    Component::Material(material) => Some(material),
+                    _ => None,
+                })
+                .expect("expected material component");
+            Arc::get_mut(&mut material.material)
+                .unwrap()
+                .params
+                .add_bool("bool remaproughness", false);
+        }
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        root.add_child(shape);
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        let remap = scene.materials.nodes[0].attributes.last().unwrap();
+        assert_eq!(remap.name, "remaproughness");
+        assert_eq!(scene.attributes.scalars[remap.index as usize], 0.0);
+    }
+}
+
+fn subsurface_test_scene(
+    materials: Vec<Arc<Material>>,
+) -> Result<FlatScene, pbrt_r4::util::error::PbrtError> {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for (index, material) in materials.into_iter().enumerate() {
+        let shape = triangle_node("sss", "subsurface", [index as f32, 0.0, 0.0]);
+        for component in &mut shape.write().unwrap().components {
+            if let Component::Material(component) = component {
+                component.material = material.clone();
+            }
+        }
+        root.add_child(shape);
+    }
+    flatten_node(Arc::new(RwLock::new(root)))
+}
+
+fn subsurface_test_material(params: ParameterDictionary) -> Arc<Material> {
+    Arc::new(Material {
+        name: "sss".to_string(),
+        kind: "subsurface".to_string(),
+        params,
+        material_attributes: Vec::new(),
+        texture_attributes: Vec::new(),
+    })
+}
+
+#[test]
+fn flatten_subsurface_preserves_all_coefficient_variants() {
+    use pbrt_r4::gpu::flat::BSSRDFCoefficientKind;
+    let mut preset = ParameterDictionary::default();
+    preset.add_string("string name", "Apple");
+    preset.add_float("float g", 0.5);
+    let mut sigma = ParameterDictionary::default();
+    sigma.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
+    sigma.add_rgb("rgb sigma_s", &[1.0, 2.0, 3.0]);
+    sigma.add_float("float scale", 2.0);
+    let mut diffuse = ParameterDictionary::default();
+    diffuse.add_rgb("rgb reflectance", &[0.4, 0.5, 0.6]);
+    let scene = subsurface_test_scene(vec![
+        subsurface_test_material(preset),
+        subsurface_test_material(sigma),
+        subsurface_test_material(diffuse),
+        subsurface_test_material(Default::default()),
+    ])
+    .unwrap();
+    assert_eq!(scene.materials.bssrdfs.len(), 4);
+    assert_eq!(scene.materials.bssrdf_tables.len(), 1);
+    assert_eq!(scene.materials.bssrdfs[0].g, 0.0);
+    assert_eq!(scene.materials.bssrdfs[1].scale, 2.0);
+    for (index, expected) in [
+        (0, BSSRDFCoefficientKind::Sigma),
+        (1, BSSRDFCoefficientKind::Sigma),
+        (2, BSSRDFCoefficientKind::ReflectanceMfp),
+        (3, BSSRDFCoefficientKind::Sigma),
+    ] {
+        let bssrdf = &scene.materials.bssrdfs[index];
+        assert_eq!(bssrdf.coefficient_kind, expected);
+        assert_eq!(bssrdf.table_index, 0);
+        assert_eq!(bssrdf.eta, 1.33);
+        let node = &scene.materials.nodes[index];
+        assert_eq!(node.kind, "subsurface");
+        assert_eq!(node.source_kind, "subsurface");
+        assert_eq!(node.bssrdf_index, index as u32);
+        assert_eq!(&node.attributes[4..], &bssrdf.coefficients);
+    }
+    let sample = |index: usize, slot: usize, lambda: f32| {
+        evaluate_dense_spectrum(
+            &scene.attributes.spectra,
+            scene.materials.bssrdfs[index].coefficients[slot].index,
+            lambda,
+        )
+        .unwrap()
+    };
+    let (apple_a, apple_s) = pbrt_r4::media::get_medium_scattering_properties("Apple").unwrap();
+    for lambda in [400.0, 550.0, 700.0] {
+        assert!((sample(0, 0, lambda) - apple_a.sample_at(lambda as _) as f32).abs() < 1e-5);
+        assert!((sample(0, 1, lambda) - apple_s.sample_at(lambda as _) as f32).abs() < 1e-5);
+        let specified_s = Spectrum::from([1.0, 2.0, 3.0]);
+        assert!((sample(1, 1, lambda) - specified_s.sample_at(lambda as _) as f32).abs() < 1e-5);
+        assert_eq!(sample(2, 1, lambda), 1.0);
+        let default_a = Spectrum::from([0.0011, 0.0024, 0.014]);
+        assert!((sample(3, 0, lambda) - default_a.sample_at(lambda as _) as f32).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn flatten_subsurface_rejects_missing_pair_and_unknown_preset() {
+    for key in ["sigma_a", "sigma_s"] {
+        let mut params = ParameterDictionary::default();
+        params.add_rgb(&format!("rgb {key}"), &[0.1, 0.2, 0.3]);
+        let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+        assert!(error.to_string().contains("required together"));
+    }
+    let mut params = ParameterDictionary::default();
+    params.add_string("string name", "unknown-sss-preset");
+    let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+    assert!(error.to_string().contains("unknown-sss-preset"));
+}
+
+#[test]
+fn flatten_subsurface_shares_material_identity_and_tables_by_g_eta() {
+    let shared = subsurface_test_material(Default::default());
+    let mut other_g = ParameterDictionary::default();
+    other_g.add_float("float g", 0.2);
+    let mut other_eta = ParameterDictionary::default();
+    other_eta.add_float("float eta", 1.5);
+    let scene = subsurface_test_scene(vec![
+        shared.clone(),
+        shared,
+        subsurface_test_material(Default::default()),
+        subsurface_test_material(other_g),
+        subsurface_test_material(other_eta),
+    ])
+    .unwrap();
+    assert_eq!(
+        scene.instances[0].material_root,
+        scene.instances[1].material_root
+    );
+    assert_ne!(
+        scene.instances[0].material_root,
+        scene.instances[2].material_root
+    );
+    assert_eq!(scene.materials.bssrdfs.len(), 4);
+    assert_eq!(scene.materials.bssrdf_tables.len(), 3);
+    assert_eq!(
+        scene.materials.bssrdfs[0].table_index,
+        scene.materials.bssrdfs[1].table_index
+    );
+    assert_ne!(
+        scene.materials.bssrdfs[0].table_index,
+        scene.materials.bssrdfs[2].table_index
+    );
+    assert_ne!(
+        scene.materials.bssrdfs[0].table_index,
+        scene.materials.bssrdfs[3].table_index
+    );
+    let table = &scene.materials.bssrdf_tables[0];
+    assert_eq!(table.rho_samples.len(), 100);
+    assert_eq!(table.radius_samples.len(), 64);
+    assert_eq!(table.profile.len(), 6400);
+    assert_eq!(table.profile_cdf.len(), 6400);
+    assert_eq!(table.rho_eff.len(), 100);
+    assert!(table.profile.iter().all(|v| v.is_finite()));
+    assert!(table.rho_eff.windows(2).all(|v| v[0] <= v[1]));
+}
+
+#[test]
+fn flatten_subsurface_texture_coefficients_keep_spectrum_types() {
+    use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureNode};
+    let mut params = ParameterDictionary::default();
+    params.add_rgb("rgb reflectance", &[0.3, 0.4, 0.5]);
+    let mut material = subsurface_test_material(params);
+    let material_mut = Arc::get_mut(&mut material).unwrap();
+    for key in ["reflectance", "mfp"] {
+        let mut texture_params = ParameterDictionary::default();
+        texture_params.add_rgb("rgb value", &[0.4, 0.5, 0.6]);
+        let mut node = TextureNode::new(key);
+        node.components.push(TextureComponent::Texture(Texture {
+            name: "constant".to_string(),
+            kind: TextureKind::Spectrum,
+            params: texture_params,
+        }));
+        material_mut
+            .texture_attributes
+            .push((key.to_string(), Arc::new(node)));
+    }
+    let scene = subsurface_test_scene(vec![material]).unwrap();
+    let coefficients = &scene.materials.bssrdfs[0].coefficients;
+    assert!(coefficients
+        .iter()
+        .all(|attribute| attribute.kind == AttributeKind::Texture));
+    assert_eq!(scene.texture_library.roots.len(), 2);
+    for (slot, expected) in [SpectrumType::Albedo, SpectrumType::Unbounded]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(matches!(
+            &scene.texture_library.roots[coefficients[slot].index as usize],
+            pbrt_r4::gpu::flat::texture::TextureRoot::Spectrum { spectrum_type, .. } if *spectrum_type == expected
+        ));
+    }
+    assert_eq!(
+        pbrt_r4::gpu::flat::max_texture_eval_results_per_surface(&scene).unwrap(),
+        2
+    );
+}
+
+#[cfg(feature = "webgpu")]
+#[test]
+fn webgpu_subsurface_preserves_bssrdf_index_and_dielectric_attributes() {
+    let scene = subsurface_test_scene(vec![subsurface_test_material(Default::default())]).unwrap();
+    let table = pbrt_r4::gpu::webgpu::material::MaterialTable::from_flat(&scene).unwrap();
+    let material = table.nodes.iter().find(|m| m.kind == 15).unwrap();
+    assert_eq!(material.bssrdf_index, 0);
+    assert_eq!(material.attribute_count, 6);
+}
+
+#[test]
+fn flatten_subsurface_keeps_scalar_eta_and_surface_roughness() {
+    let mut params = ParameterDictionary::default();
+    params.add_float("float eta", 1.4);
+    params.add_float("float roughness", 0.2);
+    params.add_float("float uroughness", 0.3);
+    params.add_bool("bool remaproughness", false);
+    let scene = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap();
+    let attributes = &scene.materials.nodes[0].attributes;
+    assert_eq!(scene.materials.bssrdfs[0].eta, 1.4);
+    assert_eq!(
+        evaluate_dense_spectrum(&scene.attributes.spectra, attributes[0].index, 550.0).unwrap(),
+        1.4
+    );
+    assert_eq!(scene.attributes.scalars[attributes[1].index as usize], 0.3);
+    assert_eq!(scene.attributes.scalars[attributes[2].index as usize], 0.2);
+    assert_eq!(scene.attributes.scalars[attributes[3].index as usize], 0.0);
+}
+
+#[test]
+fn flatten_subsurface_rejects_unresolved_coefficient_texture() {
+    let mut params = ParameterDictionary::default();
+    params.add_string("texture reflectance", "missing-reflectance");
+    let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+    assert!(error.to_string().contains("unresolved subsurface texture"));
+}
+
+#[test]
+fn flatten_surface_roughness_prefers_axis_constants_over_common_texture() {
+    use pbrt_r4::gpu::node::{Texture, TextureComponent, TextureKind, TextureNode};
+    for kind in ["subsurface", "dielectric"] {
+        for axes in [
+            vec!["uroughness"],
+            vec!["vroughness"],
+            vec!["uroughness", "vroughness"],
+        ] {
+            let mut params = ParameterDictionary::default();
+            for axis in &axes {
+                params.add_float(&format!("float {axis}"), 0.3);
+            }
+            let mut material = subsurface_test_material(params);
+            let material_mut = Arc::get_mut(&mut material).unwrap();
+            material_mut.kind = kind.to_string();
+            let mut texture_params = ParameterDictionary::default();
+            texture_params.add_float("float value", 0.8);
+            let mut texture = TextureNode::new("roughness");
+            texture.components.push(TextureComponent::Texture(Texture {
+                name: "constant".to_string(),
+                kind: TextureKind::Float,
+                params: texture_params,
+            }));
+            material_mut
+                .texture_attributes
+                .push(("roughness".to_string(), Arc::new(texture)));
+            let scene = subsurface_test_scene(vec![material]).unwrap();
+            let attributes = &scene.materials.nodes[0].attributes;
+            for (slot, axis) in [(1, "uroughness"), (2, "vroughness")] {
+                if axes.contains(&axis) {
+                    assert_eq!(attributes[slot].kind, AttributeKind::Scalar);
+                    assert_eq!(
+                        scene.attributes.scalars[attributes[slot].index as usize],
+                        0.3
+                    );
+                } else {
+                    assert_eq!(attributes[slot].kind, AttributeKind::Texture);
+                }
+            }
+            assert_eq!(
+                scene.texture_library.roots.len(),
+                usize::from(axes.len() == 1)
+            );
+            if kind == "dielectric" {
+                assert_eq!(attributes.len(), 4);
+                #[cfg(feature = "webgpu")]
+                assert!(pbrt_r4::gpu::webgpu::material::MaterialTable::from_flat(&scene).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn flatten_subsurface_generates_finite_tables_across_eta_one() {
+    for eta in [0.9, 1.0, 1.33] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("float eta", eta);
+        let scene = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap();
+        let table = &scene.materials.bssrdf_tables[0];
+        assert!(table
+            .profile
+            .iter()
+            .chain(&table.profile_cdf)
+            .chain(&table.rho_eff)
+            .all(|v| v.is_finite()));
+        assert!(table.rho_eff.last().unwrap() > &0.0);
+    }
+}
+
+#[test]
+fn flatten_subsurface_rejects_normal_maps_instead_of_ignoring_them() {
+    let mut params = ParameterDictionary::default();
+    params.add_string("string normalmap", "surface-normals.png");
+    let error = subsurface_test_scene(vec![subsurface_test_material(params)]).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("subsurface normal maps are not supported"));
+
+    let mut empty = ParameterDictionary::default();
+    empty.add_string("string normalmap", "");
+    assert!(subsurface_test_scene(vec![subsurface_test_material(empty)]).is_ok());
+}
+
+#[test]
+fn flatten_node_packs_multiple_portal_and_image_distributions_independently() {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("environment.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, vec![255; 12])
+        .unwrap()
+        .save(&image_path)
+        .unwrap();
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for index in 0..2 {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", image_path.to_str().unwrap());
+        params.add_string("string encoding", "linear");
+        root.add_child(light_node(
+            &format!("image-{index}"),
+            "infinite",
+            params.clone(),
+        ));
+        params.add_point(
+            "point portal",
+            &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+        );
+        root.add_child(light_node(&format!("portal-{index}"), "infinite", params));
+    }
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let sampling = &scene.lights.infinite_sampling;
+    assert_eq!(sampling.portal_records.len(), 2);
+    assert_eq!(sampling.image_records.len(), 2);
+    let mut portal_offset = 0;
+    let mut image_offset = 0;
+    let mut row_offset = 0;
+    for index in 0..2 {
+        let portal = &sampling.portal_records[index];
+        assert_eq!(portal.distribution_offset, portal_offset);
+        portal_offset += portal.resolution[0] * portal.resolution[1];
+        let image = &sampling.image_records[index];
+        assert_eq!(image.distribution_offset, image_offset);
+        assert_eq!(image.row_cdf_offset, row_offset);
+        image_offset += image.resolution[0] * image.resolution[1];
+        row_offset += image.resolution[1];
+        let image_light = &scene.lights.infinite_lights[index * 2];
+        let portal_light = &scene.lights.infinite_lights[index * 2 + 1];
+        assert_eq!(
+            scene.lights.sampling_models[image_light.sampling_model as usize].geometry_index,
+            index as u32
+        );
+        assert_eq!(
+            scene.lights.sampling_models[portal_light.sampling_model as usize].geometry_index,
+            index as u32
+        );
+        assert_eq!(image_light.image_index, (index * 2) as u32);
+        assert_eq!(portal_light.image_index, (index * 2 + 1) as u32);
+    }
+    assert_eq!(sampling.portal_distribution.len(), portal_offset as usize);
+    assert_eq!(sampling.image_distribution.len(), image_offset as usize);
+    assert_eq!(sampling.image_row_cdf.len(), row_offset as usize);
+    scene
+        .lights
+        .validate_consistency(&scene.texture_library)
+        .unwrap();
+}
+
+#[test]
+fn flatten_node_preserves_uniformgrid_density_and_majorants() {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_int("ny", 1);
+    params.add_int("nz", 1);
+    params.add_floats("density", &[0.25, 1.0]);
+    let medium = Arc::new(NodeMedium {
+        name: "grid".to_owned(),
+        kind: "uniformgrid".to_owned(),
+        params,
+        transform: Transform::default(),
+    });
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![medium],
+            ..Default::default()
+        },
+    }));
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let medium = &scene.media[0];
+    assert_eq!(medium.kind, "uniformgrid");
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &medium.data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.resolution, [2, 1, 1]);
+    assert_eq!(grid.density, [0.25, 1.0]);
+    assert_eq!(grid.emission_scale_resolution, [1, 1, 1]);
+    assert_eq!(grid.emission_scale, [1.0]);
+    assert_eq!(grid.majorant_resolution, [16; 3]);
+    assert_eq!(grid.majorant.len(), 16 * 16 * 16);
+    assert!(grid.majorant.iter().all(|value| *value <= 1.0));
+    assert!(grid.majorant.iter().any(|value| *value == 1.0));
+}
+
+fn uniform_grid_scene(params: ParameterDictionary) -> Result<FlatScene, PbrtError> {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "grid".to_owned(),
+                kind: "uniformgrid".to_owned(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+    flatten_node(Arc::new(RwLock::new(root)))
+}
+
+#[test]
+fn uniform_grid_factory_orders_bounds_and_accepts_empty_optional_grids() {
+    let mut params = ParameterDictionary::default();
+    params.add_float("density", 1.0);
+    params.add_point3f("p0", &Point3f::new(2.0, 3.0, 4.0));
+    params.add_point3f("p1", &Point3f::new(-1.0, -2.0, -3.0));
+    params.add_floats("temperature", &[]);
+    params.add_floats("Lescale", &[]);
+    let scene = uniform_grid_scene(params).unwrap();
+    let MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.bounds_min, [-1.0, -2.0, -3.0]);
+    assert_eq!(grid.bounds_max, [2.0, 3.0, 4.0]);
+    for index in [scene.media[0].sigma_a, scene.media[0].sigma_s] {
+        assert_eq!(
+            evaluate_dense_spectrum(&scene.attributes.spectra, index, 500.0).unwrap(),
+            1.0
+        );
+    }
+}
+
+fn rgb_grid_scene(params: ParameterDictionary) -> Result<FlatScene, PbrtError> {
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    root.add_component(Component::Scene(SceneComponent {
+        scene: NodeScene {
+            media: vec![Arc::new(NodeMedium {
+                name: "rgb-grid".to_owned(),
+                kind: "rgbgrid".to_owned(),
+                params,
+                transform: Transform::default(),
+            })],
+            ..Default::default()
+        },
+    }));
+    flatten_node(Arc::new(RwLock::new(root)))
+}
+
+#[test]
+fn rgb_grid_factory_preserves_rgb_grids_scale_and_color_space() {
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_int("ny", 1);
+    params.add_int("nz", 1);
+    params.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    params.add_rgb("rgb sigma_s", &[0.7, 0.8, 0.9, 1.0, 1.1, 1.2]);
+    params.add_float("scale", 2.0);
+    params.set_color_space(&pbrt_r4::util::spectrum::rgb_to_spectrum::ACES2065_1);
+    let scene = rgb_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::RgbGrid(grid) = &scene.media[0].data else {
+        panic!("expected rgbgrid payload");
+    };
+    assert_eq!(grid.resolution, [2, 1, 1]);
+    assert_eq!(grid.sigma_a.as_ref().unwrap()[0], [0.1, 0.2, 0.3]);
+    assert_eq!(grid.sigma_s.as_ref().unwrap()[1], [1.0, 1.1, 1.2]);
+    assert_eq!(grid.scale, 2.0);
+    assert_eq!(grid.color_space, ColorSpace::Aces2065);
+    assert_eq!(grid.majorant_resolution, [16; 3]);
+    assert_eq!(grid.majorant.len(), 16 * 16 * 16);
+}
+
+#[test]
+fn rgb_grid_majorants_match_v4_spectral_maximum_rule() {
+    let rgb_a = [[0.1, 0.3, 0.2], [0.4, 0.2, 0.1]];
+    let rgb_s = [[0.2, 0.1, 0.3], [0.1, 0.5, 0.2]];
+    let spectra_a: Vec<_> = rgb_a
+        .iter()
+        .map(|rgb| pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(&SRGB, *rgb))
+        .collect();
+    let spectra_s: Vec<_> = rgb_s
+        .iter()
+        .map(|rgb| pbrt_r4::util::spectrum::RGBUnboundedSpectrum::from_color_space(&SRGB, *rgb))
+        .collect();
+    let reference_a = SampledGrid::new(2, 1, 1, spectra_a);
+    let reference_s = SampledGrid::new(2, 1, 1, spectra_s);
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_rgb("rgb sigma_a", &[0.1, 0.3, 0.2, 0.4, 0.2, 0.1]);
+    params.add_rgb("rgb sigma_s", &[0.2, 0.1, 0.3, 0.1, 0.5, 0.2]);
+    params.add_float("scale", 1.5);
+    let scene = rgb_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::RgbGrid(grid) = &scene.media[0].data else {
+        panic!("expected rgbgrid payload");
+    };
+    for z in 0..16 {
+        for y in 0..16 {
+            for x in 0..16 {
+                let p0 = Point3f::new(x as Float / 16.0, y as Float / 16.0, z as Float / 16.0);
+                let p1 = Point3f::new(
+                    (x + 1) as Float / 16.0,
+                    (y + 1) as Float / 16.0,
+                    (z + 1) as Float / 16.0,
+                );
+                let bounds = Bounds3f::new(&p0, &p1);
+                let index = (z * 16 + y) * 16 + x;
+                let expected =
+                    1.5 * (reference_a.max_value(&bounds) + reference_s.max_value(&bounds));
+                assert_eq!(grid.majorant[index] as Float, expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn rgb_grid_factory_rejects_missing_or_invalid_coefficients_and_emission() {
+    assert!(rgb_grid_scene(ParameterDictionary::default())
+        .unwrap_err()
+        .to_string()
+        .contains("requires sigma_a and/or sigma_s"));
+
+    let mut wrong_count = ParameterDictionary::default();
+    wrong_count.add_int("nx", 2);
+    wrong_count.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
+    assert!(rgb_grid_scene(wrong_count)
+        .unwrap_err()
+        .to_string()
+        .contains("expected 2"));
+
+    let mut negative = ParameterDictionary::default();
+    negative.add_rgb("rgb sigma_s", &[-0.1, 0.2, 0.3]);
+    assert!(rgb_grid_scene(negative)
+        .unwrap_err()
+        .to_string()
+        .contains("finite, non-negative sigma_s"));
+
+    let mut spectral_overflow = ParameterDictionary::default();
+    spectral_overflow.add_rgb("rgb sigma_a", &[f32::MAX, f32::MAX, f32::MAX]);
+    assert!(rgb_grid_scene(spectral_overflow)
+        .unwrap_err()
+        .to_string()
+        .contains("finite sigma_a spectral maxima representable as f32"));
+
+    let mut emission = ParameterDictionary::default();
+    emission.add_rgb("rgb sigma_a", &[0.1, 0.2, 0.3]);
+    emission.add_rgb("rgb Le", &[1.0, 1.0, 1.0]);
+    assert!(rgb_grid_scene(emission)
+        .unwrap_err()
+        .to_string()
+        .contains("does not support emission yet"));
+}
+
+#[test]
+fn uniform_grid_factory_rejects_invalid_payloads_and_accepts_emission() {
+    for value in [-1.0, Float::NAN, Float::INFINITY] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", value);
+        assert!(uniform_grid_scene(params)
+            .unwrap_err()
+            .to_string()
+            .contains("finite, non-negative density"));
+    }
+    for resolution in [0, -1, i32::MAX] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", 1.0);
+        for axis in ["nx", "ny", "nz"] {
+            params.add_int(axis, resolution);
+        }
+        assert!(uniform_grid_scene(params).is_err());
+    }
+    assert!(uniform_grid_scene(ParameterDictionary::default())
+        .unwrap_err()
+        .to_string()
+        .contains("requires density"));
+    for parameter in ["temperature", "Lescale"] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", 1.0);
+        params.add_floats(parameter, &[1.0, 2.0]);
+        assert!(uniform_grid_scene(params).is_err());
+    }
+    let mut params = ParameterDictionary::default();
+    params.add_float("density", 1.0);
+    params.add_spectrum("Le", &Spectrum::one());
+    let scene = uniform_grid_scene(params).unwrap();
+    let le = &scene.attributes.spectra[scene.media[0].le as usize];
+    let expected_le = 1.0 / spectrum_to_photometric(&Spectrum::one());
+    assert!((le.samples[0] - expected_le).abs() < 1e-6);
+    assert!(scene.attributes.spectra[scene.media[0].le as usize]
+        .samples
+        .iter()
+        .all(|sample| *sample > 0.0));
+    let MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.emission_scale_resolution, [1, 1, 1]);
+    assert_eq!(grid.emission_scale.len(), 1);
+    assert!(grid.emission_scale[0] > 0.0);
+    for bound in [
+        Point3f::new(0.0, 1.0, 1.0),
+        Point3f::new(Float::NAN, 1.0, 1.0),
+    ] {
+        let mut params = ParameterDictionary::default();
+        params.add_float("density", 1.0);
+        params.add_point3f("p1", &bound);
+        assert!(uniform_grid_scene(params).is_err());
+    }
+}
+
+#[test]
+fn uniform_grid_emission_scale_uses_v4_resolution_without_changing_input_scale() {
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 2);
+    params.add_float("density", 1.0);
+    params.add_float("density", 1.0);
+    params.add_floats("Lescale", &[2.0, 4.0]);
+    params.add_spectrum("Le", &Spectrum::one());
+    let scene = uniform_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    assert_eq!(grid.emission_scale_resolution, [2, 1, 1]);
+    assert_eq!(grid.emission_scale.len(), 2);
+    assert_eq!(grid.emission_scale, [2.0, 4.0]);
+}
+
+#[test]
+fn uniform_grid_majorants_match_sampled_grid_max_value() {
+    let density: Vec<Float> = (0..24).map(|index| index as Float / 8.0).collect();
+    let reference = SampledGrid::new(3, 2, 4, density.clone());
+    let mut params = ParameterDictionary::default();
+    params.add_int("nx", 3);
+    params.add_int("ny", 2);
+    params.add_int("nz", 4);
+    params.add_floats("density", &density);
+    let scene = uniform_grid_scene(params).unwrap();
+    let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &scene.media[0].data else {
+        panic!("expected uniformgrid payload");
+    };
+    for z in 0..16 {
+        for y in 0..16 {
+            for x in 0..16 {
+                let p0 = Point3f::new(x as Float / 16.0, y as Float / 16.0, z as Float / 16.0);
+                let p1 = Point3f::new(
+                    (x + 1) as Float / 16.0,
+                    (y + 1) as Float / 16.0,
+                    (z + 1) as Float / 16.0,
+                );
+                let bounds = Bounds3f::new(&p0, &p1);
+                let majorant = grid.majorant[(z * 16 + y) * 16 + x];
+                assert_eq!(majorant, reference.max_value(&bounds) as f32);
+                for corner in 0..8 {
+                    let point = bounds.corner(corner);
+                    assert!(majorant as Float >= reference.lookup(&point, None));
+                }
+            }
+        }
+    }
+}

@@ -15,6 +15,7 @@ use crate::base::camera::Camera;
 use crate::base::light::Light;
 use crate::base::medium::sample_t_maj;
 use crate::cpu::primitive::*;
+use crate::displays::Display;
 use crate::interaction::{Interaction, ShapeIntersection};
 use crate::scene::*;
 use crate::util::base::*;
@@ -23,6 +24,7 @@ use crate::util::rng::RNG;
 use crate::util::spectrum::*;
 
 use std::sync::Arc;
+use std::sync::RwLock;
 
 /// Equivalent of pbrt-v4 `class Integrator`'s data members: the scene
 /// geometry aggregate and the light lists. Held by Arc so each
@@ -146,6 +148,11 @@ unsafe impl Sync for IntegratorBase {}
 pub trait Integrator {
     fn render(&mut self);
     fn get_camera(&self) -> Arc<Camera>;
+    fn add_display(&self, display: &Arc<RwLock<dyn Display>>) {
+        let camera = self.get_camera();
+        let film = camera.get_film();
+        film.write().unwrap().add_display(&display);
+    }
 }
 
 fn hash_f32(x: Float) -> u64 {
