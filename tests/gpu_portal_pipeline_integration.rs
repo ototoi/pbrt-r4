@@ -186,7 +186,7 @@ fn render_scene(
     let output = directory.join(format!("{name}.exr"));
     let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
         .args([
-            "--use-gpu",
+            "--gpu",
             "--outfile",
             output.to_str().unwrap(),
             scene.to_str().unwrap(),

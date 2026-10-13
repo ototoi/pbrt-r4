@@ -464,7 +464,7 @@ Shape "trianglemesh"
             .join(if gpu { "gpu.exr" } else { "cpu.exr" });
         let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
         if gpu {
-            command.arg("--use-gpu");
+            command.arg("--gpu");
         }
         let status = command
             .args([
@@ -519,7 +519,7 @@ Shape "trianglemesh"
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .env("PBRT_R4_GPU_DEBUG_MATERIAL", "uv")
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--outfile",
                 output.to_str().unwrap(),
                 input.to_str().unwrap(),
@@ -574,7 +574,7 @@ Shape "trianglemesh"
             .join(if gpu { "half-gpu.exr" } else { "half-cpu.exr" });
         let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
         if gpu {
-            command.arg("--use-gpu");
+            command.arg("--gpu");
         }
         let status = command
             .args([
@@ -639,7 +639,7 @@ Shape "trianglemesh"
             .join(if gpu { "area-gpu.exr" } else { "area-cpu.exr" });
         let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
         if gpu {
-            command.arg("--use-gpu");
+            command.arg("--gpu");
         }
         let status = command
             .args([
@@ -712,7 +712,7 @@ Shape "trianglemesh"
         let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
         let status = command
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--outfile",
                 output.to_str().unwrap(),
                 scene.to_str().unwrap(),

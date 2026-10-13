@@ -67,7 +67,7 @@ fn spot_and_distant_lights_render_with_separate_sampling_paths() {
     let output = directory.path().join("spot-distant.exr");
     let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
         .args([
-            "--use-gpu",
+            "--gpu",
             "--outfile",
             output.to_str().unwrap(),
             scene.to_str().unwrap(),
@@ -119,7 +119,7 @@ Shape "trianglemesh"
     let output = directory.path().join("image-infinite.exr");
     let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
         .args([
-            "--use-gpu",
+            "--gpu",
             "--outfile",
             output.to_str().unwrap(),
             scene.to_str().unwrap(),
@@ -159,7 +159,7 @@ fn render_and_validate_with_sampler(scene: &std::path::Path, light_sampler: Opti
     };
     let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
         .args([
-            "--use-gpu",
+            "--gpu",
             "--quick-full-resolution",
             "--outfile",
             output.to_str().unwrap(),
@@ -196,7 +196,7 @@ fn render_pixels_with_maxdepth(scene: &std::path::Path, maxdepth: u32) -> Vec<RG
     std::fs::write(&render_scene, source).unwrap();
     let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
         .args([
-            "--use-gpu",
+            "--gpu",
             "--quick-full-resolution",
             "--outfile",
             output.to_str().unwrap(),
