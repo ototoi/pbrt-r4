@@ -274,7 +274,7 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (triangle.valid == 0u) {
             return;
         }
-        if (!(dot(triangle.position - shadow_origin, shadow_direction) > 0.0)) {
+        if (!(intersection.t > 0.0)) {
             set_render_error();
             return;
         }

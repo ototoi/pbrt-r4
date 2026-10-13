@@ -371,8 +371,7 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
         boundary.position = vec4<f32>(triangle.position, 1.0);
         boundary.position_error = vec4<f32>(triangle.position_error, 0.0);
         boundary.geometric_normal = vec4<f32>(triangle.geometric_normal, 0.0);
-        let segment_progress = dot(triangle.position - ray.origin.xyz, ray.direction.xyz);
-        if (!(segment_progress > 0.0)) {
+        if (!(surface.t > 0.0)) {
             set_render_error();
             return;
         }
