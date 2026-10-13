@@ -1,5 +1,6 @@
 use crate::base::bxdf::*;
 use crate::util::base::*;
+use crate::util::error::PbrtError;
 use crate::util::geometry::*;
 use crate::util::sampling::PiecewiseLinear2D;
 use crate::util::scattering::{abs_cos_theta, cos_theta, reflect, same_hemisphere};
@@ -62,18 +63,8 @@ impl MeasuredBxDFData {
         if filename.is_empty() {
             return Arc::new(Self::new(String::new()));
         }
-        match TensorFile::open(filename) {
-            Ok(tf) => match Self::from_tensor(filename, tf) {
-                Ok(data) => Arc::new(data),
-                Err(e) => {
-                    log::warn!(
-                        "Material \"measured\": failed to interpret \"{}\": {} -- using empty data",
-                        filename,
-                        e
-                    );
-                    Arc::new(Self::new(filename.to_string()))
-                }
-            },
+        match Self::load_file(filename) {
+            Ok(data) => Arc::new(data),
             Err(e) => {
                 log::warn!(
                     "Material \"measured\": failed to load \"{}\": {} -- using empty data",
@@ -83,6 +74,24 @@ impl MeasuredBxDFData {
                 Arc::new(Self::new(filename.to_string()))
             }
         }
+    }
+
+    pub fn try_from_file(filename: &str) -> Result<Self, PbrtError> {
+        if filename.is_empty() {
+            return Err(PbrtError::error(
+                "Filename must be provided for measured BSDF data.",
+            ));
+        }
+        Self::load_file(filename).map_err(|error| {
+            PbrtError::error(&format!(
+                "Unable to load measured BSDF \"{filename}\": {error}"
+            ))
+        })
+    }
+
+    fn load_file(filename: &str) -> Result<Self, String> {
+        let tensor = TensorFile::open(filename).map_err(|error| error.to_string())?;
+        Self::from_tensor(filename, tensor)
     }
 
     fn from_tensor(filename: &str, tf: TensorFile) -> Result<Self, String> {
@@ -101,6 +110,23 @@ impl MeasuredBxDFData {
                 .ok_or_else(|| format!("missing field `{}`", name))
         };
 
+        let description = field("description")?;
+        let jacobian = field("jacobian")?;
+        let theta_i_field = field("theta_i")?;
+        let phi_i_field = field("phi_i")?;
+        let wavelengths_field = field("wavelengths")?;
+        if description.dtype != TensorType::UInt8 || description.shape.len() != 1 {
+            return Err("`description` must be a 1D UInt8 field".into());
+        }
+        if jacobian.dtype != TensorType::UInt8 || jacobian.shape != [1] {
+            return Err("`jacobian` must be a one-element UInt8 field".into());
+        }
+        if theta_i_field.shape.len() != 1
+            || phi_i_field.shape.len() != 1
+            || wavelengths_field.shape.len() != 1
+        {
+            return Err("`theta_i`, `phi_i`, and `wavelengths` must be 1D".into());
+        }
         let theta_i = f32_field("theta_i")?;
         let phi_i = f32_field("phi_i")?;
         let wavelengths = f32_field("wavelengths")?.to_vec();

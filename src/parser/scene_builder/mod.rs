@@ -16,6 +16,7 @@
 //! switched at the CLI level.
 
 pub mod build;
+pub mod build_gpu;
 pub mod parse_target_impl;
 pub mod path_resolver;
 pub mod scene_entity;
@@ -72,6 +73,10 @@ pub struct SceneBuilder {
     pub camera_name: String,
     pub camera_params: ParameterDictionary,
     pub camera_to_world: TransformSet,
+    /// The outside medium of the `MediumInterface` active at the `Camera`
+    /// directive, snapshotted there (not read later from `graphics_states`,
+    /// which reflects the state after the whole scene has been parsed).
+    pub camera_medium: String,
     pub transform_start_time: Float,
     pub transform_end_time: Float,
 
@@ -139,6 +144,7 @@ impl SceneBuilder {
             camera_name: String::from("perspective"),
             camera_params: ParameterDictionary::default(),
             camera_to_world: TransformSet::new(),
+            camera_medium: String::new(),
             transform_start_time: 0.0,
             transform_end_time: 1.0,
 

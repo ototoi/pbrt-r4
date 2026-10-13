@@ -82,7 +82,7 @@ impl SceneBuilder {
     /// historical — it actually holds `cameraFromWorld`, see
     /// `parse_target_impl.rs::camera`), so we invert here to obtain
     /// `worldFromCamera` and feed it through `CameraTransform::new`.
-    fn build_camera_transform(&self) -> Result<CameraTransform, PbrtError> {
+    pub fn build_camera_transform(&self) -> Result<CameraTransform, PbrtError> {
         let mut world_from_camera = TransformSet::new();
         world_from_camera[0] = self.camera_to_world[0].inverse();
         world_from_camera[1] = self.camera_to_world[1].inverse();
@@ -1268,17 +1268,8 @@ impl SceneBuilder {
         // equals the established `cameraToWorld` (since renderFromWorld is
         // identity), so existing camera code carries over unchanged.
         let animated = camera_transform.render_from_camera().clone();
-        // Camera's medium is the outside of the current MediumInterface at
-        // Camera time. We didn't capture per-Camera medium interface; use the
-        // global current_outside_medium recorded at parse time (graphics_state
-        // is preserved through WorldBegin).
-        let cur_outside = &self
-            .graphics_states
-            .last()
-            .map(|gs| gs.current_outside_medium.as_str())
-            .unwrap_or("");
-        let medium = if !cur_outside.is_empty() {
-            named_media.get(*cur_outside).cloned()
+        let medium = if !self.camera_medium.is_empty() {
+            named_media.get(&self.camera_medium).cloned()
         } else {
             None
         };

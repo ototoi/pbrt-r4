@@ -1,0 +1,147 @@
+enable wgpu_ray_query;
+enable wgpu_binding_array;
+
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
+@group(0) @binding(1)
+var<uniform> viewport: ViewportUniform;
+@group(0) @binding(2)
+var tlas: acceleration_structure;
+@group(0) @binding(3)
+var<storage, read> vertices: array<Vertex>;
+@group(0) @binding(4)
+var<storage, read> indices: array<u32>;
+@group(0) @binding(5)
+var<storage, read> geometries: array<Geometry>;
+@group(0) @binding(6)
+var<storage, read> instances: array<Instance>;
+@group(0) @binding(7)
+var<uniform> film_params: FilmUniform;
+@group(0) @binding(8)
+var<storage, read_write> surfaces: array<SurfaceWorkItem>;
+@group(0) @binding(9)
+var<storage, read_write> framebuffer: array<vec4<f32>>;
+@group(0) @binding(10)
+var<storage, read_write> queue_counters: QueueCounters;
+@group(0) @binding(11)
+var<storage, read_write> render_error: RenderError;
+@group(0) @binding(12)
+var<storage, read_write> pixel_sample_states: array<PixelSampleState>;
+@group(0) @binding(13)
+var<storage, read_write> current_rays: array<RayWorkItem>;
+@group(0) @binding(14)
+var<storage, read_write> next_rays: array<RayWorkItem>;
+@group(0) @binding(15)
+var<storage, read_write> shadow_rays: array<ShadowRayWorkItem>;
+@group(0) @binding(16)
+var<storage, read_write> material_ray_indices: array<u32>;
+@group(0) @binding(37)
+var<storage, read_write> attributes_eval_work_items: array<AttributesEvalWorkItem>;
+@group(0) @binding(17)
+var<storage, read_write> hit_area_ray_indices: array<u32>;
+@group(0) @binding(18)
+var<storage, read_write> escaped_ray_indices: array<u32>;
+@group(0) @binding(19)
+var<uniform> material_table: MaterialTableUniform;
+@group(0) @binding(20)
+var<uniform> light_table: LightTableUniform;
+@group(0) @binding(21)
+var<uniform> sampler_params: SamplerUniform;
+@group(0) @binding(22)
+var<storage, read> attribute_refs: array<AttributeRef>;
+@group(0) @binding(23)
+var<storage, read> scalar_attributes: array<f32>;
+@group(0) @binding(24)
+var<storage, read> portal_infinite_lights: array<PortalImageInfiniteRecord>;
+@group(0) @binding(25)
+var<storage, read> portal_distribution: array<PortalDistributionTexel>;
+@group(0) @binding(51)
+var<storage, read_write> direct_light_samples: array<DirectLightSample>;
+@group(0) @binding(52)
+var<storage, read_write> direct_eval_ray_indices: array<u32>;
+@group(0) @binding(53)
+var<storage, read_write> scatter_diffuse_ray_indices: array<u32>;
+@group(0) @binding(54)
+var<storage, read_write> scatter_diffuse_transmission_ray_indices: array<u32>;
+@group(0) @binding(55)
+var<storage, read_write> scatter_conductor_ray_indices: array<u32>;
+@group(0) @binding(56)
+var<storage, read_write> scatter_dielectric_ray_indices: array<u32>;
+@group(0) @binding(57)
+var<storage, read_write> scatter_thin_dielectric_ray_indices: array<u32>;
+@group(0) @binding(58)
+var<storage, read_write> scatter_measured_ray_indices: array<u32>;
+@group(0) @binding(59)
+var<storage, read_write> scatter_coated_ray_indices: array<u32>;
+@group(0) @binding(28)
+var<storage, read> light_records: array<LightRecord>;
+@group(0) @binding(29)
+var<storage, read> light_sampling_models: array<LightSamplingModel>;
+@group(0) @binding(30)
+var<storage, read> triangle_distributions: array<TriangleDistributionEntry>;
+@group(0) @binding(31)
+var<storage, read> light_bvh_header: array<u32>;
+@group(0) @binding(32)
+var<storage, read> light_bvh_nodes: array<u32>;
+@group(0) @binding(33)
+var<storage, read> light_bvh_leaves: array<u32>;
+@group(0) @binding(34)
+var<storage, read> spectrum_attributes: array<DenseSpectrum>;
+@group(0) @binding(35)
+var<storage, read> texture_nodes: array<TextureNodeRecord>;
+@group(0) @binding(38)
+var<storage, read> texture_child_indices: array<u32>;
+@group(1) @binding(0)
+var texture_images: binding_array<texture_2d<f32>>;
+@group(1) @binding(1)
+var texture_samplers: binding_array<sampler>;
+@group(0) @binding(41)
+var<storage, read> rgb_spectrum_table: array<f32>;
+@group(0) @binding(42)
+var<storage, read> texture_roots: array<TextureRootRecord>;
+@group(0) @binding(43)
+var texture_noise_table: texture_2d<u32>;
+@group(0) @binding(44)
+var<storage, read_write> texture_eval_results: array<TextureEvalResult>;
+@group(0) @binding(45)
+var<storage, read> material_roots: array<MaterialRoot>;
+@group(0) @binding(46)
+var<storage, read> material_nodes: array<MaterialNode>;
+@group(0) @binding(47)
+var<storage, read> measured_bsdfs: array<MeasuredBsdfRecord>;
+@group(0) @binding(48)
+var<storage, read> measured_tables: array<MeasuredTableRecord>;
+@group(0) @binding(49)
+var sampler_table: texture_2d<u32>;
+@group(0) @binding(36)
+var<storage, read> light_positions: array<vec4<f32>>;
+@group(0) @binding(60)
+var<storage, read_write> queue_dispatch_args: array<DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_COUNT>;
+@group(0) @binding(61)
+var<storage, read> media: array<MediumRecord>;
+@group(0) @binding(62)
+var<storage, read_write> active_medium_indices: array<u32>;
+@group(0) @binding(63)
+var<storage, read_write> next_medium_indices: array<u32>;
+@group(0) @binding(64)
+var<storage, read_write> active_shadow_indices: array<u32>;
+@group(0) @binding(65)
+var<storage, read_write> next_shadow_indices: array<u32>;
+
+@group(0) @binding(66) var<storage, read> bssrdf_materials: array<BSSRDFMaterialRecord>;
+@group(0) @binding(67) var<storage, read> bssrdf_tables: array<BSSRDFTableRecord>;
+@group(0) @binding(68) var<storage, read> bssrdf_values: array<f32>;
+@group(0) @binding(69) var<storage, read_write> bssrdf_work: BSSRDFProbeQueue;
+@group(0) @binding(70) var<storage, read_write> bssrdf_results: array<BSSRDFProbeResult>;
+@group(0) @binding(71) var<storage, read_write> medium_scatter_indices: array<u32>;
+@group(0) @binding(72) var<storage, read> image_infinite_sampling_records: array<ImageInfiniteSamplingRecord>;
+@group(0) @binding(73) var<storage, read> image_infinite_distribution: array<ImageInfiniteDistributionTexel>;
+@group(0) @binding(74) var<storage, read> image_infinite_row_cdf: array<f32>;
+@group(0) @binding(75)
+var<storage, read> volume_media: array<VolumeMediumRecord>;
+@group(0) @binding(76)
+var<storage, read> volume_data: array<f32>;
+@group(0) @binding(77)
+var<storage, read> sparse_grid_roots: array<SparseGridRootRecord>;
+@group(0) @binding(78)
+var<storage, read> sparse_grid_entries: array<SparseGridEntryRecord>;

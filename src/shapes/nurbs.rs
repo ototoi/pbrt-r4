@@ -206,6 +206,7 @@ fn create_tesselated_mesh(
     let mut veval = vec![0.0; dicev];
     let mut eval_ps = vec![Point3f::default(); diceu * dicev];
     let mut eval_ns = vec![Normal3f::default(); diceu * dicev];
+    let mut eval_ss = vec![Vector3f::default(); diceu * dicev];
     let mut uvs = vec![Point2f::default(); diceu * dicev];
     for i in 0..diceu {
         ueval[i] = lerp(i as Float / (diceu - 1) as Float, u0, u1);
@@ -227,6 +228,7 @@ fn create_tesselated_mesh(
                 nurbs_evaluate_surface(uorder, &uknots, nu, uu, vorder, &vknots, nv, vv, &pw);
 
             eval_ps[v * diceu + u] = p;
+            eval_ss[v * diceu + u] = dpdu.normalize();
             eval_ns[v * diceu + u] = Vector3f::cross(&dpdu, &dpdv).normalize();
         }
     }
@@ -258,7 +260,7 @@ fn create_tesselated_mesh(
         reverse_orientation,
         vertex_indices,
         eval_ps,
-        Vec::new(),
+        eval_ss,
         eval_ns,
         uvs,
         &params,

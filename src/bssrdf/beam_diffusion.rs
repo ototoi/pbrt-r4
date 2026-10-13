@@ -1,6 +1,7 @@
 use crate::media::phase_hg;
 use crate::util::base::*;
 use crate::util::interpolation::{integrate_catmull_rom, invert_catmull_rom};
+use crate::util::sampling::sampling::safe_sqrt;
 use crate::util::spectrum::*;
 
 #[derive(Debug)]
@@ -171,7 +172,7 @@ fn beam_diffusion_ms(sigma_s: Float, sigma_a: Float, g: Float, eta: Float, r: Fl
 fn beam_diffusion_ss(sigma_s: Float, sigma_a: Float, g: Float, eta: Float, r: Float) -> Float {
     let sigma_t = sigma_a + sigma_s;
     let rho = sigma_s / sigma_t;
-    let t_crit = r * Float::sqrt(eta * eta - 1.0);
+    let t_crit = r * safe_sqrt(eta * eta - 1.0);
     let mut ess = 0.0;
 
     for i in 0..N_SAMPLES {

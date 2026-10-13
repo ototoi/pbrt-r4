@@ -116,26 +116,20 @@ impl Sampler {
     /// the canonical entry point for the tile-loop driver. Sets the
     /// current pixel, advances to `sample_index`, and (for LDS
     /// samplers that track an explicit per-sample dimension counter)
-    /// seeds at `dimension`. Independent / Stratified / MLT don't carry
-    /// a per-sample dimension
-    /// state, so `dimension` is silently ignored there -- matches v4
-    /// where those samplers' `StartPixelSample` overrides drop the
-    /// argument too.
+    /// seeds at `dimension`. MLT has no per-sample seek, so its dimension
+    /// argument is ignored.
     pub fn start_pixel_sample(&mut self, p: Point2i, sample_index: u32, dimension: u32) {
         match self {
             Sampler::PMJ02BN(s) => {
                 s.start_pixel(&p);
-                s.set_sample_number(sample_index);
-                let _ = dimension;
+                s.start_pixel_sample(sample_index, dimension);
             }
             Sampler::Independent(s) => {
                 s.start_pixel(&p);
                 s.start_pixel_sample(sample_index, dimension);
             }
             Sampler::Stratified(s) => {
-                s.start_pixel(&p);
-                s.set_sample_number(sample_index);
-                let _ = dimension;
+                s.start_pixel_sample(p, sample_index, dimension);
             }
             Sampler::Halton(s) => {
                 s.start_pixel(&p);

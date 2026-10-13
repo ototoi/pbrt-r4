@@ -113,12 +113,8 @@ impl PortalImageInfiniteLight {
                 );
                 let (_, duv_dw) = render_from_image_with_jacobian(&portal_frame, uv);
                 let rgb = image.texel(0, x as i32, y as i32).to_rgb();
-                let avg = (rgb[0] + rgb[1] + rgb[2]) / 3.0;
-                dist[y * width + x] = if duv_dw > 0.0 {
-                    avg.max(0.0) * duv_dw
-                } else {
-                    0.0
-                };
+                let avg = ((rgb[0] + rgb[1] + rgb[2]) / 3.0).max(0.0);
+                dist[y * width + x] = if duv_dw > 0.0 { avg * duv_dw } else { 0.0 };
             }
         }
         let distribution = WindowedPiecewiseConstant2D::new(dist, width, height);

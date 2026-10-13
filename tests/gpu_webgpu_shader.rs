@@ -1,0 +1,785 @@
+#![cfg(feature = "webgpu")]
+
+use std::mem::{offset_of, size_of};
+
+use pbrt_r4::gpu::webgpu::abi::{PortalDistributionTexel, PortalImageInfiniteRecord};
+use pbrt_r4::gpu::webgpu::shader::{
+    common_library_source, compose_source, compose_source_with_features, compose_source_with_noise,
+    required_limits_for_sources, required_limits_for_sources_with_nanovdb,
+};
+use pbrt_r4::gpu::webgpu::stages::canonical_wavefront_bindings;
+
+const INTERSECT_SHADOW_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/intersect_shadow.wgsl");
+const SAMPLE_MEDIUM_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sample_medium.wgsl");
+const CLASSIFY_SURFACE_SCATTER_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/classify_surface_scatter.wgsl");
+const SAMPLE_DIRECT_LIGHT_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_direct_light.wgsl");
+const EVALUATE_ATTRIBUTES_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/evaluate_attributes.wgsl");
+const EVALUATE_TEXTURES_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/evaluate_textures.wgsl");
+const GENERATE_CAMERA_RAYS_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/generate_camera_rays.wgsl");
+const ESCAPED_TEST_SHADER: &str =
+    r#"@compute @workgroup_size(1) fn test_stage() { append_escaped_ray(0u); }"#;
+const HANDLE_EMISSIVE_INTERSECTION_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/handle_emissive_intersection.wgsl");
+const SCATTER_DIFFUSE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/scatter_diffuse.wgsl");
+const SCATTER_DIFFUSE_TRANSMISSION_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_diffuse_transmission.wgsl");
+const SCATTER_DIELECTRIC_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_dielectric.wgsl");
+const SAMPLE_SUBSURFACE_PROBE_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_subsurface_probe.wgsl");
+const SCATTER_THIN_DIELECTRIC_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_thin_dielectric.wgsl");
+const SCATTER_CONDUCTOR_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_conductor.wgsl");
+const SCATTER_MEASURED_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/scatter_measured.wgsl");
+const SCATTER_COATED_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/scatter_coated.wgsl");
+const SHADE_SURFACE_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/shade_surface.wgsl");
+const TYPES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/types.wgsl");
+const RESOURCES_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/resources.wgsl");
+const SAMPLER_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sampler.wgsl");
+const SPECTRUM_TEST_SHADER: &str = r#"
+    @compute @workgroup_size(1) fn test_stage() {
+        let value = evaluate_spectrum(0u, vec4<f32>(360.0, 400.5, 700.0, 830.0));
+        let divided = safe_div(value, vec4<f32>(1.0, 0.0, 2.0, 4.0));
+        if (spectrum_is_constant(0u) && sampled_spectrum_average(divided) > sampled_spectrum_max_component_value(divided)) {
+            set_render_error();
+        }
+    }
+"#;
+
+#[test]
+fn portal_gpu_records_match_wgsl_storage_layout() {
+    assert_eq!(size_of::<PortalImageInfiniteRecord>(), 128);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, portal), 0);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, world_to_portal), 64);
+    assert_eq!(
+        offset_of!(PortalImageInfiniteRecord, distribution_offset),
+        112
+    );
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, width), 116);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, height), 120);
+    assert_eq!(offset_of!(PortalImageInfiniteRecord, reserved), 124);
+    assert_eq!(size_of::<PortalDistributionTexel>(), 8);
+    assert_eq!(offset_of!(PortalDistributionTexel, function), 0);
+    assert_eq!(offset_of!(PortalDistributionTexel, summed_area), 4);
+}
+
+#[test]
+fn dense_spectrum_module_declares_one_structured_table() {
+    let source = compose_source(SPECTRUM_TEST_SHADER);
+    assert!(source.contains("var<storage, read> spectrum_attributes: array<DenseSpectrum>;"));
+    assert!(source.contains("struct DenseSpectrum"));
+    assert!(source.contains("fn safe_div"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialNode>;"));
+}
+
+#[test]
+fn homogeneous_medium_stage_tracks_path_medium_and_spectral_weights() {
+    let stage = include_str!("../src/gpu/webgpu/shaders/sample_medium.wgsl");
+    let source = compose_source(stage);
+    assert!(source.contains("var<storage, read> media: array<MediumRecord>;"));
+    assert!(source.contains("let event_distance = -log(1.0 - u_distance) / sigma_t.x;"));
+    assert!(source.contains("ray.beta *= weight;"));
+    assert!(source.contains("ray.r_u *= weight;"));
+    assert!(source.contains("ray.r_l *= weight;"));
+    assert!(source.contains("append_medium_continuation(ray_index);"));
+    assert!(source.contains("append_escaped_ray(ray_index);"));
+    assert!(source.contains("active_medium_indices[queue_index]"));
+}
+
+#[test]
+fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
+    let scatter = compose_source(SCATTER_DIELECTRIC_SHADER);
+    assert!(scatter.contains("interaction_get_medium(ray, surface, direction)"));
+    assert!(scatter.contains("dot(direction, surface.geometric_normal.xyz) > 0.0"));
+
+    let primary = compose_source(GENERATE_CAMERA_RAYS_SHADER);
+    assert!(primary.contains("camera.medium_id"));
+
+    let shadow = compose_source(INTERSECT_SHADOW_SHADER);
+    assert!(shadow.contains("shadow.medium_id"));
+    assert!(shadow.contains("shadow.infinite_distance"));
+    assert!(shadow.contains("shadow.depth"));
+    assert!(shadow.contains("append_shadow_continuation(ray_index)"));
+    assert!(shadow.contains("active_shadow_indices[queue_index]"));
+    assert!(shadow.contains("random01_stream("));
+
+    let thin_dielectric = compose_source(SCATTER_THIN_DIELECTRIC_SHADER);
+    assert!(thin_dielectric.contains("interaction_get_medium(ray, surface, direction)"));
+}
+
+#[test]
+fn medium_side_and_alpha_candidates_handle_instance_edge_cases() {
+    let interaction = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/lib/interaction.wgsl"
+    ));
+    assert!(interaction.contains(
+        "instance_orientation_is_reversed(flags)\n        != instance_orientation_swaps_handedness(flags)"
+    ));
+
+    let alpha = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl"
+    ));
+    let accept = alpha
+        .split("fn alpha_mask_candidate_accept")
+        .nth(1)
+        .unwrap();
+    let material_less = accept.find("if (instance.material_root == 0xffffffffu)");
+    let material_validation =
+        accept.find("if (instance.material_root >= arrayLength(&material_roots))");
+    assert!(material_less.is_some() && material_less < material_validation);
+}
+
+#[test]
+fn measured_material_shader_uses_packed_texture_tables() {
+    let direct = compose_source(SCATTER_MEASURED_SHADER);
+    assert!(direct.contains("fn measured_bxdf_f("));
+    assert!(direct.contains("fn measured_bxdf_pdf("));
+    assert!(direct.contains("textureLoad("));
+    assert!(direct.contains("var<storage, read> measured_bsdfs"));
+    assert!(direct.contains("var<storage, read> measured_tables"));
+
+    let bounce = compose_source(SCATTER_MEASURED_SHADER);
+    assert!(bounce.contains("fn measured_bxdf_sample_f("));
+    assert!(bounce.contains("frame_to_local(wo, tangent, normal)"));
+
+    assert!(SHADE_SURFACE_SHADER.contains("surfaces[pixel_index].tangent"));
+    assert!(SHADE_SURFACE_SHADER.contains("object_dpdu"));
+    assert!(common_shader().contains("fn frame_to_local("));
+    assert!(common_shader().contains("fn frame_from_local("));
+    assert!(!direct.contains("max(p1 - p0"));
+    assert!(!direct.contains("max(abs(r0 + r1)"));
+}
+
+#[test]
+fn attribute_shader_evaluates_procedural_texture_programs() {
+    let source = compose_source(EVALUATE_TEXTURES_SHADER);
+    assert!(source.contains("fn sample_texture_program(root: TextureRootRecord"));
+    assert!(source.contains("node.operation == TEXTURE_OPERATION_CHECKERBOARD"));
+    assert!(source.contains("node.operation == TEXTURE_OPERATION_DIRECTION_MIX"));
+    assert!(source.contains("node.operation == TEXTURE_OPERATION_BILERP"));
+    assert!(source.contains("values[local] = mix(mix(values[v00], values[v10], st.x)"));
+    assert!(!source.contains("if (node.operation >= 4u)"));
+    assert!(source.contains("fn noise"));
+    assert!(source.contains("fn texture_fbm"));
+    assert!(source.contains("fn texture_marble"));
+    assert!(source.contains("textureLoad(texture_noise_table"));
+    assert!(!source.contains("TEXTURE_NOISE_PERM"));
+}
+
+#[test]
+fn texture_shader_uses_v4_non_uv_mapping_conventions() {
+    assert!(common_shader()
+        .contains("return vec2<f32>(acos(clamp(q.z, -1.0, 1.0)) / 3.14159265359, phi);"));
+    assert!(common_shader()
+        .contains("let s = (3.14159265359 + atan2(p.y, p.x)) / (2.0 * 3.14159265359);"));
+}
+
+#[test]
+fn texture_shader_samples_black_wrap_borders_as_zero_texels() {
+    let source = compose_source(EVALUATE_TEXTURES_SHADER);
+    assert!(source.contains("fn load_image_texel("));
+    assert!(source.contains("textureLoad(image, wrapped, level).rgb"));
+    assert!(source.contains("coordinate.x < 0 || coordinate.x >= size.x"));
+    assert!(source.contains("value = mix("));
+}
+
+#[test]
+fn attribute_shader_omits_noise_call_graph_when_disabled() {
+    let source = compose_source_with_noise(EVALUATE_TEXTURES_SHADER, false);
+    assert!(!source.contains("fn noise"));
+    assert!(!source.contains("texture_noise_table"));
+}
+
+#[test]
+fn uniform_grid_shader_composes_its_records_and_density_lookup() {
+    let stage = r#"
+        @compute @workgroup_size(1)
+        fn test_uniform_grid() {
+            let grid = volume_media[0];
+            let density = uniform_grid_density(grid, vec3<f32>(0.5));
+            var dda = uniform_grid_dda_init(
+                grid, vec3<f32>(0.5), vec3<f32>(1.0, 0.0, 0.0), 0.0, 1.0,
+            );
+            let segment = uniform_grid_dda_next(grid, vec4<f32>(1.0), &dda);
+            let value = volume_data[grid.majorant_offset_count.x];
+            if (density + segment.sigma_maj.x < value) { return; }
+        }
+    "#;
+    let source = compose_source(stage);
+    assert!(source.contains("var<storage, read> volume_media: array<VolumeMediumRecord>;"));
+    assert!(source.contains("var<storage, read> volume_data: array<f32>;"));
+    let module = wgpu::naga::front::wgsl::parse_str(&source).expect("uniform grid WGSL parses");
+    wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("uniform grid WGSL validates");
+}
+
+#[test]
+fn uniform_grid_tracking_stages_validate_as_wgsl() {
+    for stage in [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER] {
+        let source = compose_source(stage);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn cloud_tracking_stages_keep_noise_and_validate_as_wgsl() {
+    for stage in [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER] {
+        let source = compose_source_with_noise(stage, false);
+        assert!(source.contains("fn cloud_density"));
+        assert!(source.contains("fn noise"));
+        assert!(source.contains("texture_noise_table"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn required_limits_are_derived_from_each_composed_stage() {
+    let bindings = canonical_wavefront_bindings();
+    let limits = required_limits_for_sources(&bindings, &[GENERATE_CAMERA_RAYS_SHADER]).unwrap();
+
+    assert_eq!(limits.storage_buffers_per_shader_stage, 9);
+    assert_eq!(limits.uniform_buffers_per_shader_stage, 4);
+    assert_eq!(limits.bind_groups, 1);
+}
+
+#[test]
+fn nanovdb_bindings_are_composed_only_for_nanovdb_scenes() {
+    let bindings = canonical_wavefront_bindings();
+    let stage_sources = [SAMPLE_MEDIUM_SHADER, INTERSECT_SHADOW_SHADER];
+    let with_nanovdb =
+        required_limits_for_sources_with_nanovdb(&bindings, &stage_sources, true).unwrap();
+    let without_nanovdb =
+        required_limits_for_sources_with_nanovdb(&bindings, &stage_sources, false).unwrap();
+    assert_eq!(
+        with_nanovdb.storage_buffers_per_shader_stage,
+        without_nanovdb.storage_buffers_per_shader_stage + 2
+    );
+
+    for stage_source in stage_sources {
+        let source = compose_source_with_features(stage_source, true, false);
+        assert!(!source.contains("sparse_grid_roots"));
+        assert!(!source.contains("sparse_grid_entries"));
+        assert!(!source.contains("sparse_grid_density"));
+        assert!(source.contains("medium.kind > 3u"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    for stage_source in stage_sources {
+        let source = compose_source_with_features(stage_source, true, true);
+        assert!(source.contains("sparse_grid_roots"));
+        assert!(source.contains("sparse_grid_entries"));
+        assert!(source.contains("sparse_grid_density"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn primary_and_path_samples_use_the_sampler_module() {
+    let primary = compose_source(GENERATE_CAMERA_RAYS_SHADER);
+    assert!(primary.contains("fn sampler_get_1d("));
+    assert!(primary.contains("fn sampler_get_pixel_2d("));
+    assert!(primary.contains("var sampler_table: texture_2d<u32>;"));
+    assert!(GENERATE_CAMERA_RAYS_SHADER.contains("sampler_get_1d(pixel_index, 0u)"));
+    assert!(GENERATE_CAMERA_RAYS_SHADER.contains("sampler_get_pixel_2d(pixel_index)"));
+    assert!(common_shader().contains("select(8u, 13u, material_table.have_subsurface != 0u)"));
+    assert!(SAMPLER_SHADER.contains("SAMPLER_RANDOMIZATION_PERMUTE_DIGITS"));
+}
+
+#[test]
+fn subsurface_gpu_path_clamps_unsafe_inputs_and_skips_black_probe() {
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("e.values[1].x = clamp(e.values[1].x, 0.0, 1.0);"));
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("e.values[2].x = clamp(e.values[2].x, 0.0, 1.0);"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("max(vec4<f32>(1e-6)"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("if (any(sigma_t > vec4<f32>(0.0)))"));
+    assert!(SAMPLE_SUBSURFACE_PROBE_SHADER
+        .contains("if (dot(next_origin - origin, direction) <= 0.0) { break; }"));
+}
+
+#[test]
+fn required_limits_reject_unregistered_group_zero_bindings() {
+    let bindings = canonical_wavefront_bindings();
+    let source = r#"
+        @group(0) @binding(99) var<storage, read> unknown_resource: array<u32>;
+        @compute @workgroup_size(1) fn test_stage() {
+            let value = unknown_resource[0];
+        }
+    "#;
+
+    let error = required_limits_for_sources(&bindings, &[source]).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("unregistered group 0 binding 99"));
+}
+
+#[test]
+fn immutable_scene_metadata_is_separate_from_viewport_state() {
+    let common = common_shader();
+    let viewport = common
+        .split("struct ViewportUniform {")
+        .nth(1)
+        .and_then(|tail| tail.split("};").next())
+        .unwrap();
+    assert!(!viewport.contains("light_count"));
+    assert!(common.contains("struct MaterialTableUniform {"));
+    assert!(common.contains("struct LightTableUniform {"));
+    assert!(common.contains("finite_light_count: u32"));
+    assert!(common.contains("infinite_light_count: u32"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(19)"));
+    assert!(RESOURCES_SHADER.contains("var<uniform> material_table: MaterialTableUniform;"));
+    assert!(RESOURCES_SHADER.contains("var<uniform> light_table: LightTableUniform;"));
+    assert!(common.contains("struct MaterialNode {"));
+    assert!(!common.contains("tree_size"));
+    assert!(!common.contains("tree_base"));
+    assert!(RESOURCES_SHADER.contains("@group(0) @binding(46)"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> material_nodes: array<MaterialNode>;"));
+    assert!(common.contains("struct AttributeRef {"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> attribute_refs: array<AttributeRef>;"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> scalar_attributes: array<f32>;"));
+    assert!(!common.contains("scene_data"));
+    assert!(RESOURCES_SHADER.contains("var<storage, read> light_records: array<LightRecord>;"));
+    assert!(!common.contains("material_light_data"));
+}
+
+#[test]
+fn light_sampling_uses_record_models_and_separate_infinite_probability() {
+    assert!(common_shader().contains("light_records[index].sampling_model"));
+    assert!(common_shader().contains("light_table.infinite_light_count + finite_group_count"));
+    assert!(common_shader().contains("light_table.finite_light_count + offset"));
+}
+
+#[test]
+fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
+    // Light selection and its MIS weight are computed once in
+    // sample_direct_light and handed to evaluate_materials as
+    // DirectLightSample.use_mis.
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("fn sample_uniform_sphere("));
+    assert!(sample.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
+    assert!(sample.contains("is_infinite_light_kind(light_kind)"));
+    assert!(sample.contains(
+        "let use_mis = (light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))"
+    ));
+    assert!(sample.contains("|| is_infinite_light_kind(light_kind);"));
+    assert!(sample.contains("piecewise_constant_2d_sample("));
+    assert!(sample.contains("equal_area_square_to_sphere("));
+    assert!(sample.contains("load_light_image_spectrum_uv("));
+    assert!(sample.contains("image_sample.pdf / (4.0 * PI * jacobian)"));
+    assert!(sample.contains("wi = normalize(transformed)"));
+    assert!(sample.contains("image_infinite_direction_jacobian(image, w_light)"));
+    assert!(sample.contains("model.flags >> 28u"));
+    assert!(sample.contains(
+        "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
+    ));
+    assert!(!sample.contains("atan2(d.y, d.x)"));
+
+    // MIS weighting and the infinite-light shadow-direction check are shared
+    // by every non-specular scatter kind through add_direct_lighting.
+    let common = common_shader();
+    assert!(common.contains("if (light_sample.use_mis != 0u) {"));
+    assert!(common.contains("is_infinite_light_kind(light_kind)"));
+
+    let escaped = compose_source(include_str!(
+        "../src/gpu/webgpu/shaders/handle_escaped_rays.wgsl"
+    ));
+    assert!(escaped.contains("LIGHT_KIND_UNIFORM_INFINITE"));
+    assert!(escaped.contains("piecewise_constant_2d_pdf(image, map_uv)"));
+    assert!(escaped.contains("map_pdf / (4.0 * PI * jacobian)"));
+    assert!(escaped.contains("fn equal_area_sphere_to_square("));
+    assert!(escaped.contains("dot(model.world_to_light0.xyz, direction)"));
+    assert!(escaped.contains("ray.beta * radiance"));
+    assert!(escaped.contains("radiance += light_radiance / denom;"));
+    assert!(!escaped.contains("mis_weight"));
+
+    for source in [sample, escaped] {
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn hard_edged_spot_light_uses_a_defined_step() {
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("fn spot_falloff("));
+    assert!(sample.contains("if (falloff_start == falloff_end)"));
+    assert!(sample.contains("dot(model.world_to_light0.xyz, world_direction)"));
+    assert!(sample.contains("spot_falloff(light_index, spot_w)"));
+}
+
+#[test]
+fn composed_stage_contains_only_referenced_resources() {
+    let source = compose_source(GENERATE_CAMERA_RAYS_SHADER);
+    assert!(source.contains("var<uniform> camera: CameraUniform;"));
+    assert!(source.contains("var<uniform> viewport: ViewportUniform;"));
+    assert!(source.contains("var<storage, read_write> queue_counters: QueueCounters;"));
+    assert!(source.contains("var<storage, read_write> current_rays: array<RayWorkItem>;"));
+    assert!(
+        source.contains("var<storage, read_write> pixel_sample_states: array<PixelSampleState>;")
+    );
+    assert!(!source.contains("var<storage, read> light_records: array<LightRecord>;"));
+    assert!(!source.contains("var<storage, read> materials: array<MaterialNode>;"));
+}
+
+#[test]
+fn shadow_direction_is_loaded_from_the_typed_shadow_queue() {
+    let source = compose_source(INTERSECT_SHADOW_SHADER);
+
+    assert!(source.contains("let shadow_direction = shadow.direction.xyz;"));
+    assert!(source.contains("shadow_rays[ray_index] = shadow;"));
+    assert!(!source.contains("bitcast<f32>(atomicLoad"));
+}
+
+#[test]
+fn escaped_queue_is_a_typed_ray_index_queue() {
+    let source = compose_source(ESCAPED_TEST_SHADER);
+    assert!(source.contains("escaped_ray_indices[index] = ray_index;"));
+    assert!(source.contains("queue_counters.escaped.capacity"));
+    assert!(!source.contains("escaped_data_offset"));
+}
+
+#[test]
+fn classification_queues_resolve_current_rays_in_constant_time() {
+    let classify = compose_source(CLASSIFY_SURFACE_SCATTER_SHADER);
+    assert!(classify.contains("let ray_index = load_material_eval_ray(queue_index);"));
+    assert!(classify.contains("let ray = load_current_ray(ray_index);"));
+    assert!(!classify.contains("find_current_ray_for_pixel"));
+
+    let emissive = compose_source(HANDLE_EMISSIVE_INTERSECTION_SHADER);
+    assert!(emissive.contains("let ray_index = load_hit_area_ray(queue_index);"));
+    assert!(!emissive.contains("find_current_ray_for_pixel"));
+}
+
+#[test]
+fn shadow_queue_carries_the_complete_rgb_contribution() {
+    // add_direct_lighting is the single shared place every scatter kind
+    // enqueues its shadow ray from.
+    assert!(common_shader().contains("let direct = ray.beta * light_sample.radiance * f * cosine;"));
+
+    let shadow = compose_source(INTERSECT_SHADOW_SHADER);
+    assert!(shadow.contains("shadow.direct * shadow.transmittance / denom"));
+    assert!(shadow.contains("append_shadow_continuation(ray_index)"));
+    assert!(shadow.contains("shadow.endpoint.xyz"));
+    assert!(shadow.contains("shadow.r_u * shadow.inv_w_u + shadow.r_l * shadow.inv_w_l"));
+    assert!(!shadow.contains("load_current_ray"));
+}
+
+#[test]
+fn wavefront_stages_use_persisted_sample_dimensions() {
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("load_ray_samples(pixel_index)"));
+    assert!(sample.contains("light_sampler_sample(samples.direct.x, position, normal)"));
+    assert!(sample.contains("let finite_selection = bvh_light_sampler_sample("));
+    assert!(sample.contains("cos_sub_clamped("));
+    let emissive = compose_source(HANDLE_EMISSIVE_INTERSECTION_SHADER);
+    assert!(emissive.contains("light_sampler_pmf("));
+    assert!(sample.contains("select_area_triangle(light_payload, samples.direct.y)"));
+    assert!(sample.contains("vec2<f32>(triangle_selection.u_remapped, samples.direct.z)"));
+    assert!(sample.contains("sample_uniform_triangle_for_context("));
+    assert!(!sample.contains("sample_spherical_triangle("));
+    assert!(!sample.contains("MIN_SPHERICAL_SAMPLE_AREA"));
+    assert!(!sample.contains("MAX_SPHERICAL_SAMPLE_AREA"));
+    assert!(!SAMPLE_DIRECT_LIGHT_SHADER.contains("random01("));
+
+    // The direct-lighting pdf/MIS bookkeeping is shared by every scatter
+    // kind through add_direct_lighting.
+    assert!(common_shader().contains("let r_l = ray.r_u * sampled_light_pdf;"));
+
+    let bounce = compose_source(SCATTER_DIFFUSE_SHADER);
+    assert!(bounce.contains("let u = vec2<f32>(samples.indirect.y, samples.indirect.z);"));
+    assert!(bounce.contains("if (samples.indirect.w < q)"));
+    assert!(bounce.contains("generate_ray_samples(pixel_index, ray.depth + 1u)"));
+    assert!(!SCATTER_DIFFUSE_SHADER.contains("random01("));
+}
+
+#[test]
+fn emissive_hit_resolves_the_triangle_light_handle() {
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("let light_handle = instance.area_light;"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("triangle_selection.pmf * triangle_pdf"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("load_light_payload(light_handle)"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("light_sampler_pmf(light_handle"));
+    assert!(!common_shader().contains("fn light_pmf_for_area"));
+}
+
+#[test]
+fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
+    let source = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(source.contains(
+        "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
+    ));
+    assert!(source.contains("sample_uniform_triangle_for_context"));
+    assert!(
+        source.contains("instance_orientation_flips_geometric_normal(triangle.orientation_flags)")
+    );
+    assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
+    assert!(source.contains("load_area_distribution_count(light_payload)"));
+}
+
+#[test]
+fn diffuse_shaders_load_type_specific_reflectance() {
+    assert!(common_shader()
+        .contains("fn load_diffuse_reflectance(material_node: u32, lambda: vec4<f32>)"));
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("load_diffuse_reflectance"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("let reflectance = evaluated.values[0];"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("reflectance / PI"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("ray.beta * reflectance"));
+}
+
+#[test]
+fn diffuse_transmission_shader_uses_reflection_and_transmission_paths() {
+    let source = compose_source(SCATTER_DIFFUSE_TRANSMISSION_SHADER);
+    assert!(source.contains("pr / total"));
+    assert!(source.contains("pt / total"));
+    assert!(source.contains("next_beta = ray.beta * f * cosine / pdf"));
+    assert!(EVALUATE_ATTRIBUTES_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
+    // classify_surface_scatter is the only place that still checks the kind
+    // by name; scatter_diffuse_transmission's queue membership is proof enough.
+    assert!(CLASSIFY_SURFACE_SCATTER_SHADER.contains("MATERIAL_KIND_DIFFUSE_TRANSMISSION"));
+}
+
+#[test]
+fn dielectric_shader_uses_eta_for_reflection_and_transmission() {
+    assert!(common_shader().contains("const MATERIAL_KIND_DIELECTRIC: u32 = 3u;"));
+    assert!(
+        common_shader().contains("fn load_dielectric_eta(material_node: u32, lambda: vec4<f32>)")
+    );
+    // The rough (GGX) and eta==1/smooth (delta) interface math is shared
+    // with the layered top interface via lib/bxdfs/dielectric.wgsl, so a
+    // standalone rough dielectric matches pbrt-v4 DielectricBxDF exactly.
+    let source = compose_source(SCATTER_DIELECTRIC_SHADER);
+    assert!(source.contains("fn dielectric_bxdf_sample_f("));
+    assert!(source.contains("fn dielectric_bxdf_f("));
+    assert!(source.contains("fn dielectric_bxdf_pdf("));
+    assert!(source.contains("fn dielectric_bxdf_sample_f_rough("));
+    assert!(source.contains("fn dielectric_bxdf_sample_f_smooth("));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("evaluated.values[0]"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("dielectric_bxdf_sample_f(\n        evaluated,"));
+}
+
+#[test]
+fn dielectric_scatter_terminates_secondary_wavelengths_for_nonconstant_eta() {
+    let common = common_shader();
+    assert!(common.contains("return attr_ref.kind == 1u && spectrum_is_constant(attr_ref.index);"));
+    for shader in [SCATTER_DIELECTRIC_SHADER, SCATTER_THIN_DIELECTRIC_SHADER] {
+        assert!(shader.contains(
+            "if (!material_spectrum_attribute_is_constant(evaluated.material_node, 0u))"
+        ));
+        let source = compose_source(shader);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    assert!(SCATTER_COATED_SHADER.contains(
+        "if (!material_spectrum_attribute_is_constant(root.material_node, eta_ordinal))"
+    ));
+    assert!(
+        SCATTER_COATED_SHADER.contains("select(6u, 5u, kind == MATERIAL_KIND_COATED_CONDUCTOR)")
+    );
+    let source = compose_source(SCATTER_COATED_SHADER);
+    let module = wgpu::naga::front::wgsl::parse_str(&source)
+        .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
+    wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn dielectric_transmission_updates_eta_scale_for_russian_roulette() {
+    // v4 VolPathIntegrator::Li: `if bs.is_transmission() { eta_scale *= bs.eta * bs.eta; }`,
+    // consumed later by RR as `beta * eta_scale / r_u.Average()`. Reflection
+    // (including TIR) must leave eta_scale unchanged.
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("if (bs.transmission != 0u) {"));
+    assert!(SCATTER_DIELECTRIC_SHADER.contains("eta_scale = eta_scale * bs.etap * bs.etap;"));
+}
+
+#[test]
+fn conductor_shader_uses_complex_fresnel_attributes() {
+    let source = compose_source(SCATTER_CONDUCTOR_SHADER);
+    assert!(source.contains("evaluated.values[0]"));
+    assert!(source.contains("evaluated.values[1]"));
+    assert!(source.contains("fr_complex"));
+    assert!(source.contains("fn scatter_conductor"));
+}
+
+#[test]
+fn composite_shader_uses_evaluated_material_nodes() {
+    let source = compose_source(SCATTER_COATED_SHADER);
+    assert!(source.contains("MATERIAL_KIND_COATED_DIFFUSE"));
+    assert!(source.contains("load_attributes_eval_work_item"));
+    assert!(source.contains("dielectric_bxdf_sample_f"));
+    assert!(source.contains("conductor_bxdf_sample_f"));
+    assert!(source.contains("sample_exponential"));
+    assert!(source.contains("sample_henyey_greenstein"));
+    assert!(source.contains("queue_counters.next"));
+}
+
+#[test]
+fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
+    let source = compose_source(SCATTER_COATED_SHADER);
+    let attributes_source = compose_source(EVALUATE_ATTRIBUTES_SHADER);
+    assert!(source.contains("layered_bxdf_f"));
+    assert!(source.contains("layered_bxdf_pdf"));
+    assert!(source.contains("sample_layered_bottom"));
+    assert!(attributes_source.contains("load_material_spectrum(material_node, 1u, lambda)"));
+    assert!(!source.contains("Phase 1 of layered evaluation"));
+    // Material textures are resolved by evaluate_textures; the layered
+    // estimators must not re-evaluate texture programs.
+    let layered = compose_source(
+        "@compute @workgroup_size(1) fn test_stage() { layered_bxdf_f(); layered_bxdf_pdf(); }",
+    );
+    assert!(layered.contains("fn layered_bxdf_f("));
+    assert!(!layered.contains("fn sample_texture_program"));
+    // Area-light alpha masking happens during light selection in
+    // sample_direct_light, as pbrt-v4 DiffuseAreaLight::SampleLi does; the
+    // BSDF evaluation stage does not need the texture VM.
+    assert!(!source.contains("alpha_area_sample_accept("));
+    assert!(!source.contains("fn sample_texture_program"));
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(sample.contains("alpha_area_sample_accept("));
+    assert!(sample.contains("fn sample_texture_program"));
+}
+
+#[test]
+fn thin_dielectric_shader_uses_thin_interface_transport() {
+    assert!(common_shader().contains("const MATERIAL_KIND_THIN_DIELECTRIC: u32 = 5u;"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("frame_to_local("));
+    let grazing_guard = SCATTER_THIN_DIELECTRIC_SHADER.find("if (wo.z == 0.0) { return; }");
+    let fresnel = SCATTER_THIN_DIELECTRIC_SHADER.find("let r0 =").unwrap();
+    assert!(grazing_guard.is_some_and(|guard| guard < fresnel));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("direction_local = select(-wo"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("frame_from_local(direction_local"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("t / abs(direction_local.z)"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("f * abs(direction_local.z) / probability"));
+    assert!(SCATTER_THIN_DIELECTRIC_SHADER.contains("r0 + (1.0 - r0)"));
+}
+
+#[test]
+fn primary_rays_initialize_depth_zero_sample_state() {
+    assert!(GENERATE_CAMERA_RAYS_SHADER
+        .contains("store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));"));
+    assert!(GENERATE_CAMERA_RAYS_SHADER.contains("vec4<f32>(0.0),\n        pixel_index,"));
+    assert!(
+        SCATTER_DIFFUSE_SHADER.contains(
+            "surface.position,\n        surface.position_error,\n        surface.geometric_normal,\n        vec4<f32>(normal, 0.0),"
+        )
+    );
+}
+
+#[test]
+fn emissive_mis_uses_the_unoffset_previous_interaction_context() {
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.prev_position.xyz"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.prev_shading_normal.xyz"));
+    assert!(HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.direction.xyz"));
+    assert!(!HANDLE_EMISSIVE_INTERSECTION_SHADER.contains("ray.origin.xyz - surface.position.xyz"));
+}
+
+#[test]
+fn bounce_rays_preserve_the_complete_previous_interaction_context() {
+    assert!(SCATTER_DIFFUSE_SHADER.contains("surface.position,"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("surface.position_error,"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("surface.geometric_normal,"));
+    assert!(SCATTER_DIFFUSE_SHADER.contains("vec4<f32>(normal, 0.0),"));
+}
+
+#[test]
+fn triangle_area_fallback_uses_the_v4_folding_map() {
+    // triangle_sampling.wgsl is attached to every composed stage
+    // unconditionally, so any stage source demonstrates this.
+    let source = compose_source(SCATTER_DIFFUSE_SHADER);
+    assert!(source.contains("fn sample_uniform_triangle(u: vec2<f32>)"));
+    assert!(source.contains("if (u.x < u.y)"));
+    assert!(!source.contains("let su = sqrt(u.x)"));
+}
+
+#[test]
+fn triangle_hit_position_is_reconstructed_from_barycentrics() {
+    assert!(SHADE_SURFACE_SHADER.contains("let position = p0 * b0 + p1 * b1 + p2 * b2;"));
+    assert!(!SHADE_SURFACE_SHADER
+        .contains("let position = ray.origin.xyz + ray.direction.xyz * surface.t;"));
+}
+
+#[test]
+fn random_samples_are_independent_across_pixel_sample_and_depth() {
+    let common = common_shader();
+    let random01 = common
+        .split("fn random01(")
+        .nth(1)
+        .and_then(|tail| tail.split("\nfn ").next())
+        .expect("random01 must be defined in the shared library");
+    let random01_stream = common
+        .split("fn random01_stream(")
+        .nth(1)
+        .and_then(|tail| tail.split("\nfn ").next())
+        .expect("random01_stream must be defined in the shared library");
+
+    assert!(random01.contains("random01_stream(pixel_index, dimension, depth, 0u)"));
+    assert!(random01_stream.contains("pixel_index"));
+    assert!(random01_stream.contains("viewport.sample_index"));
+    assert!(random01_stream.contains("dimension + depth * 8u"));
+}
+
+fn common_shader() -> String {
+    format!("{TYPES_SHADER}\n{}", common_library_source(true))
+}
+
+#[test]
+fn area_alpha_uses_sampling_normal_separately_from_intersection_normal() {
+    let alpha = include_str!("../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl");
+    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    assert!(alpha.contains("instance.material_root, surface.uv, position, sampling_normal,"));
+    assert!(sample
+        .contains("light_payload, triangle_selection.primitive, b, light_position, light_normal,"));
+}
