@@ -10,6 +10,7 @@ use crate::gpu::node::{
     AreaLight as NodeAreaLight, Light as NodeLight, TextureComponent, TextureKind,
     TriangleMeshShape,
 };
+use crate::paramdict::ParameterDictionary;
 use crate::util::base::{Point2f, Vector3f};
 use crate::util::error::PbrtError;
 use crate::util::geometry::equal_area_square_to_sphere;
@@ -287,7 +288,7 @@ pub fn infinite_light(
     node_name: &str,
 ) -> Result<(LightKind, Spectrum, f32, f32), PbrtError> {
     let has_l = light.params.has_parameter("L");
-    let filename = light.params.get_one_string("filename", "");
+    let filename = infinite_light_filename(&light.params);
     let portal = light.params.get_points("portal");
     if portal.is_empty() && has_l && !filename.is_empty() {
         return Err(PbrtError::error(&format!(
@@ -319,6 +320,15 @@ pub fn infinite_light(
         )));
     }
     Ok((kind, intensity, scale, illuminance as f32))
+}
+
+fn infinite_light_filename(params: &ParameterDictionary) -> String {
+    let filename = params.get_one_filename("filename", "");
+    if filename.is_empty() {
+        params.get_one_filename("mapname", "")
+    } else {
+        filename
+    }
 }
 
 pub fn area_light_record(
@@ -413,7 +423,7 @@ pub fn flatten_light(
             kind,
             LightKind::ImageInfinite | LightKind::PortalImageInfinite
         ) {
-            let filename = light.params.get_one_string("filename", "");
+            let filename = infinite_light_filename(&light.params);
             if filename.is_empty() && kind == LightKind::ImageInfinite {
                 return Err(PbrtError::error(
                     "Image infinite light is missing filename.",
@@ -662,6 +672,7 @@ pub fn flatten_light(
     }
     Ok(())
 }
+
 pub fn append_area_light(
     area_light: NodeAreaLight,
     shape: &TriangleMeshShape,

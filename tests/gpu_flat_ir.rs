@@ -1390,6 +1390,15 @@ fn flatten_node_classifies_infinite_light_variants() {
             },
             pbrt_r4::gpu::flat::LightKind::ImageInfinite,
         ),
+        (
+            {
+                let mut params = ParameterDictionary::default();
+                params.add_string("string mapname", image_path.to_str().unwrap());
+                params.add_string("string encoding", "linear");
+                params
+            },
+            pbrt_r4::gpu::flat::LightKind::ImageInfinite,
+        ),
     ];
     for (params, expected_kind) in cases {
         let mut root = Node::new("root");
