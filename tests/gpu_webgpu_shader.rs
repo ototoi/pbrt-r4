@@ -183,6 +183,15 @@ fn texture_shader_uses_v4_non_uv_mapping_conventions() {
 }
 
 #[test]
+fn texture_shader_samples_black_wrap_borders_as_zero_texels() {
+    let source = compose_source(EVALUATE_TEXTURES_SHADER);
+    assert!(source.contains("fn load_image_texel("));
+    assert!(source.contains("textureLoad(image, wrapped, level).rgb"));
+    assert!(source.contains("coordinate.x < 0 || coordinate.x >= size.x"));
+    assert!(source.contains("value = mix("));
+}
+
+#[test]
 fn attribute_shader_omits_noise_call_graph_when_disabled() {
     let source = compose_source_with_noise(EVALUATE_TEXTURES_SHADER, false);
     assert!(!source.contains("fn noise"));

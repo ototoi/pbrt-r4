@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 
 use image::{ImageBuffer, Rgb};
 use pbrt_r4::gpu::flat::portal::prepare_portal_image;
-use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace};
+use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace, MipmapLevelData};
 use pbrt_r4::gpu::flat::{
     area_light_flags, area_light_is_two_sided, area_light_is_zero_alpha_sample_only,
     evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, MediumData,
@@ -905,8 +905,21 @@ fn flatten_node_preserves_explicit_camera_screen_window() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
 
-    assert_eq!(scene.camera.fov, 60.0);
+    assert_eq!(scene.camera.fov, 20.0);
     assert_eq!(scene.camera.screen_window, [-3.0, 3.0, -2.0, 2.0]);
+}
+
+#[test]
+fn flatten_node_uses_halffov_for_perspective_field_of_view() {
+    let mut root = Node::new("root");
+    let mut camera_params = ParameterDictionary::default();
+    camera_params.add_float("float fov", 60.0);
+    camera_params.add_float("float halffov", 10.0);
+    add_camera_and_film(&mut root, camera_params);
+
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+
+    assert_eq!(scene.camera.fov, 20.0);
 }
 
 #[test]
@@ -1941,7 +1954,7 @@ fn flatten_node_keeps_portal_points_in_world_space() {
 }
 
 #[test]
-fn portal_distribution_preserves_negative_v4_weights() {
+fn portal_distribution_clamps_negative_importance_weights() {
     let source =
         build_linear_rgb_mipmap([3, 3], &[[-1.0, -1.0, -1.0]; 9], ColorSpace::Srgb).unwrap();
     let prepared = prepare_portal_image(
@@ -1959,7 +1972,25 @@ fn portal_distribution_preserves_negative_v4_weights() {
         ],
     )
     .unwrap();
-    assert!((prepared.distribution[4].function + PI.powi(2)).abs() < 1e-4);
+    assert!(prepared
+        .distribution
+        .iter()
+        .all(|texel| texel.function == 0.0 && texel.summed_area == 0.0));
+}
+
+#[test]
+fn odd_sized_mipmap_downsampling_includes_edge_texels() {
+    let mipmap = build_linear_rgb_mipmap(
+        [3, 1],
+        &[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 3.0, 3.0]],
+        ColorSpace::Srgb,
+    )
+    .unwrap();
+    let MipmapLevelData::F32(last_level) = &mipmap.levels[1].data else {
+        panic!("expected float mip level");
+    };
+    assert_eq!(mipmap.levels[1].resolution, [1, 1]);
+    assert_eq!(last_level, &[1.0, 1.0, 1.0]);
 }
 
 #[test]

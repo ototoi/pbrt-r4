@@ -128,6 +128,56 @@ fn mapped_texture_position(node: TextureNodeRecord) -> vec3<f32> {
     return (node.mapping * vec4<f32>(material_texture_position, 1.0)).xyz;
 }
 
+fn wrap_texture_index(index: i32, size: i32, mode: u32) -> i32 {
+    if (mode == 0u) {
+        return ((index % size) + size) % size;
+    }
+    return clamp(index, 0, size - 1);
+}
+
+fn load_image_texel(
+    texture_index: u32, coordinate: vec2<i32>, level: i32, swrap: u32, twrap: u32,
+) -> vec3<f32> {
+    let image = texture_images[texture_index];
+    let size = vec2<i32>(textureDimensions(image, level));
+    if ((swrap == 2u && (coordinate.x < 0 || coordinate.x >= size.x))
+        || (twrap == 2u && (coordinate.y < 0 || coordinate.y >= size.y))) {
+        return vec3<f32>(0.0);
+    }
+    let wrapped = vec2<i32>(
+        wrap_texture_index(coordinate.x, size.x, swrap),
+        wrap_texture_index(coordinate.y, size.y, twrap),
+    );
+    return textureLoad(image, wrapped, level).rgb;
+}
+
+fn sample_image_level(
+    texture_index: u32, uv: vec2<f32>, level: i32, filter_mode: u32,
+    swrap: u32, twrap: u32,
+) -> vec3<f32> {
+    let image = texture_images[texture_index];
+    let size = vec2<f32>(textureDimensions(image, level));
+    if (filter_mode == 0u) {
+        return load_image_texel(
+            texture_index, vec2<i32>(floor(uv * size)), level, swrap, twrap,
+        );
+    }
+    let position = uv * size - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(position));
+    let weight = fract(position);
+    let top = mix(
+        load_image_texel(texture_index, base, level, swrap, twrap),
+        load_image_texel(texture_index, base + vec2<i32>(1, 0), level, swrap, twrap),
+        weight.x,
+    );
+    let bottom = mix(
+        load_image_texel(texture_index, base + vec2<i32>(0, 1), level, swrap, twrap),
+        load_image_texel(texture_index, base + vec2<i32>(1, 1), level, swrap, twrap),
+        weight.x,
+    );
+    return mix(top, bottom, weight.y);
+}
+
 fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
     if (texture_index >= arrayLength(&texture_nodes)) { set_render_error(); return vec3<f32>(0.0); }
     let node = texture_nodes[texture_index];
@@ -170,9 +220,34 @@ fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
         sample_level = level;
     }
     sample_level = clamp(sample_level, 0.0, max_level);
-    var value = textureSampleLevel(
-        image, texture_samplers[node.sampler], image_uv, sample_level,
-    ).rgb * node.constant_value.x;
+    var value: vec3<f32>;
+    if (node.swrap_mode == 2u || node.twrap_mode == 2u) {
+        if (node.image_filter_mode == 2u) {
+            let lower_level = i32(floor(sample_level));
+            let upper_level = min(lower_level + 1, i32(max_level));
+            value = mix(
+                sample_image_level(
+                    node.texture_index, image_uv, lower_level, 1u,
+                    node.swrap_mode, node.twrap_mode,
+                ),
+                sample_image_level(
+                    node.texture_index, image_uv, upper_level, 1u,
+                    node.swrap_mode, node.twrap_mode,
+                ),
+                fract(sample_level),
+            );
+        } else {
+            value = sample_image_level(
+                node.texture_index, image_uv, i32(sample_level), node.image_filter_mode,
+                node.swrap_mode, node.twrap_mode,
+            );
+        }
+    } else {
+        value = textureSampleLevel(
+            image, texture_samplers[node.sampler], image_uv, sample_level,
+        ).rgb;
+    }
+    value *= node.constant_value.x;
     if (node.constant_value.y > 0.5) {
         value = max(vec3<f32>(0.0), vec3<f32>(1.0) - value);
     }

@@ -88,13 +88,15 @@ impl super::WavefrontPathIntegrator {
                     )
                 })
             });
-        let medium_scattering_enabled = flat_scene.media.iter().any(|medium| {
-            flat_scene
-                .attributes
-                .spectra
-                .get(medium.sigma_s as usize)
-                .is_some_and(|spectrum| spectrum.samples.iter().any(|sample| *sample != 0.0))
-        });
+        let medium_scattering_enabled = flat_scene.render_settings.integrator_kind
+            == flat::IntegratorKind::VolPath
+            && flat_scene.media.iter().any(|medium| {
+                flat_scene
+                    .attributes
+                    .spectra
+                    .get(medium.sigma_s as usize)
+                    .is_some_and(|spectrum| spectrum.samples.iter().any(|sample| *sample != 0.0))
+            });
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );

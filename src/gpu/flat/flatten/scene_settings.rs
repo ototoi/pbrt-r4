@@ -1,5 +1,7 @@
 use crate::base::film::Film as CpuFilm;
-use crate::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization, MAX_GPU_RENDER_DEPTH};
+use crate::gpu::flat::{
+    IntegratorKind, RenderSettings, SamplerKind, SamplerRandomization, MAX_GPU_RENDER_DEPTH,
+};
 use crate::gpu::node::{Integrator as NodeIntegrator, Sampler as NodeSampler};
 use crate::options::PbrtOptions;
 use crate::paramdict::ParameterDictionary;
@@ -31,6 +33,15 @@ pub fn render_settings(
 ) -> Result<RenderSettings, PbrtError> {
     let sampler = sampler.as_ref();
     let integrator = integrator.as_ref();
+    let integrator_kind = match integrator.map(|integrator| integrator.name.as_str()) {
+        None | Some("volpath") => IntegratorKind::VolPath,
+        Some("path") => IntegratorKind::Path,
+        Some(name) => {
+            return Err(PbrtError::error(&format!(
+                "GPU integrator '{name}' is not implemented."
+            )))
+        }
+    };
     let sampler_kind = match sampler.map(|sampler| sampler.name.as_str()) {
         None | Some("independent") => SamplerKind::Independent,
         Some("halton") => SamplerKind::Halton,
@@ -141,6 +152,7 @@ pub fn render_settings(
         samples_per_pixel
     };
     Ok(RenderSettings {
+        integrator_kind,
         sampler_kind,
         randomization,
         samples_per_pixel,

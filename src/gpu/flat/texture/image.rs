@@ -121,33 +121,7 @@ impl ImageDecoder {
                 break;
             }
             let next_resolution = [(resolution[0] / 2).max(1), (resolution[1] / 2).max(1)];
-            let channel_count = channels as usize;
-            let mut next =
-                vec![
-                    0.0;
-                    next_resolution[0] as usize * next_resolution[1] as usize * channel_count
-                ];
-            for y in 0..next_resolution[1] {
-                for x in 0..next_resolution[0] {
-                    let mut count = 0.0f32;
-                    for oy in 0..2 {
-                        for ox in 0..2 {
-                            let sx = (2 * x + ox).min(resolution[0] - 1);
-                            let sy = (2 * y + oy).min(resolution[1] - 1);
-                            let source_offset = (sy * resolution[0] + sx) as usize * channel_count;
-                            let target = (y * next_resolution[0] + x) as usize * channel_count;
-                            for channel in 0..channel_count {
-                                next[target + channel] += data[source_offset + channel];
-                            }
-                            count += 1.0;
-                        }
-                    }
-                    let target = (y * next_resolution[0] + x) as usize * channel_count;
-                    for channel in 0..channel_count {
-                        next[target + channel] /= count;
-                    }
-                }
-            }
+            let next = downsample_level(&data, resolution, next_resolution, channels as usize);
             resolution = next_resolution;
             data = next;
         }
@@ -607,28 +581,7 @@ pub fn build_linear_rgb_mipmap(
             (current_resolution[0] / 2).max(1),
             (current_resolution[1] / 2).max(1),
         ];
-        let mut next = vec![0.0; next_resolution[0] as usize * next_resolution[1] as usize * 3];
-        for y in 0..next_resolution[1] {
-            for x in 0..next_resolution[0] {
-                let mut count = 0.0;
-                for oy in 0..2 {
-                    for ox in 0..2 {
-                        let sx = (2 * x + ox).min(current_resolution[0] - 1);
-                        let sy = (2 * y + oy).min(current_resolution[1] - 1);
-                        let source = (sy * current_resolution[0] + sx) as usize * 3;
-                        let target = (y * next_resolution[0] + x) as usize * 3;
-                        for channel in 0..3 {
-                            next[target + channel] += data[source + channel];
-                        }
-                        count += 1.0;
-                    }
-                }
-                let target = (y * next_resolution[0] + x) as usize * 3;
-                for channel in 0..3 {
-                    next[target + channel] /= count;
-                }
-            }
-        }
+        let next = downsample_level(&data, current_resolution, next_resolution, 3);
         current_resolution = next_resolution;
         data = next;
     }
@@ -637,6 +590,44 @@ pub fn build_linear_rgb_mipmap(
         color_space,
         encoding: MipmapEncoding::Linear,
     }))
+}
+
+fn downsample_level(
+    source: &[f32],
+    source_resolution: [u32; 2],
+    target_resolution: [u32; 2],
+    channels: usize,
+) -> Vec<f32> {
+    let mut target =
+        vec![0.0; target_resolution[0] as usize * target_resolution[1] as usize * channels];
+    for y in 0..target_resolution[1] {
+        let y0 = y as f32 * source_resolution[1] as f32 / target_resolution[1] as f32;
+        let y1 = (y + 1) as f32 * source_resolution[1] as f32 / target_resolution[1] as f32;
+        for x in 0..target_resolution[0] {
+            let x0 = x as f32 * source_resolution[0] as f32 / target_resolution[0] as f32;
+            let x1 = (x + 1) as f32 * source_resolution[0] as f32 / target_resolution[0] as f32;
+            let target_offset = (y * target_resolution[0] + x) as usize * channels;
+            let mut total_weight = 0.0;
+            for source_y in y0.floor() as u32..y1.ceil() as u32 {
+                let weight_y = (y1.min(source_y as f32 + 1.0) - y0.max(source_y as f32)).max(0.0);
+                for source_x in x0.floor() as u32..x1.ceil() as u32 {
+                    let weight_x =
+                        (x1.min(source_x as f32 + 1.0) - x0.max(source_x as f32)).max(0.0);
+                    let weight = weight_x * weight_y;
+                    let source_offset =
+                        (source_y * source_resolution[0] + source_x) as usize * channels;
+                    for channel in 0..channels {
+                        target[target_offset + channel] += source[source_offset + channel] * weight;
+                    }
+                    total_weight += weight;
+                }
+            }
+            for channel in 0..channels {
+                target[target_offset + channel] /= total_weight;
+            }
+        }
+    }
+    target
 }
 
 fn mipmap_level_values(level: &MipmapLevel) -> Vec<f32> {

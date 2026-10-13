@@ -705,14 +705,82 @@ fn scene_builder_preserves_scene_level_and_camera_parameters() {
 fn scene_builder_gpu_camera_node_uses_camera_to_world_transform() {
     let mut builder = SceneBuilder::new();
     builder.camera_to_world[0] = pbrt_r4::util::transform::Transform::translate(-1.0, -2.0, -3.0);
+    builder.camera_to_world[1] = builder.camera_to_world[0];
 
     let root = builder.build_gpu_ir_node().unwrap();
     let root = root.read().unwrap();
     let camera = root.children[0].read().unwrap();
 
+    assert_eq!(root.transform.matrix[3], -1.0);
+    assert_eq!(root.transform.matrix[7], -2.0);
+    assert_eq!(root.transform.matrix[11], -3.0);
     assert_eq!(camera.transform.matrix[3], 1.0);
     assert_eq!(camera.transform.matrix[7], 2.0);
     assert_eq!(camera.transform.matrix[11], 3.0);
+}
+
+#[test]
+fn gpu_node_builder_rejects_animated_shape_transforms() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+ActiveTransform StartTime
+Translate 0 0 0
+ActiveTransform EndTime
+Translate 1 0 0
+ActiveTransform All
+Shape "sphere"
+"#,
+        &mut builder,
+    )
+    .expect("animated shape scene should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("animated shape transforms must not silently use the start pose"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("does not support animated scene transforms"));
+}
+
+#[test]
+fn gpu_node_builder_rejects_unsupported_shapes_instead_of_dropping_them() {
+    let mut builder = SceneBuilder::new();
+    parse_string("Shape \"curve\"", &mut builder).expect("curve directive should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("unsupported geometry must not be silently omitted"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("does not support shape"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn gpu_node_builder_rejects_area_lights_in_object_definitions() {
+    let mut builder = SceneBuilder::new();
+    parse_string(
+        r#"
+ObjectBegin "emissive-object"
+AreaLightSource "diffuse" "rgb L" [1 1 1]
+Shape "sphere"
+ObjectEnd
+ObjectInstance "emissive-object"
+"#,
+        &mut builder,
+    )
+    .expect("instanced area light scene should parse");
+
+    let error = match builder.build_gpu_ir_node() {
+        Ok(_) => panic!("instanced area lights must not silently lose emission"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("does not support area lights inside ObjectBegin definitions"));
 }
 
 #[test]
@@ -1264,6 +1332,23 @@ fn malformed_mesh_attribute_is_rejected_in_node_ir() {
 
     let error = triangle_mesh_from_params("trianglemesh", &params).unwrap_err();
     assert!(error.to_string().contains("attribute \"N\""));
+}
+
+#[test]
+fn triangle_mesh_uses_st_when_uv_is_absent() {
+    let mut params = pbrt_r4::paramdict::ParameterDictionary::default();
+    params.add_point("P", &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    params.add_ints("indices", &[0, 1, 2]);
+    params.add_owned_points_typed("point2", "st", vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+
+    let mesh = triangle_mesh_from_params("trianglemesh", &params)
+        .unwrap()
+        .unwrap();
+    let uvs = mesh
+        .uvs
+        .expect("st should be preserved as texture coordinates");
+    assert_eq!(uvs[0].0, [0.1, 0.2]);
+    assert_eq!(uvs[2].0, [0.5, 0.6]);
 }
 
 #[test]

@@ -119,7 +119,10 @@ pub fn triangle_mesh_from_params(
         indices,
         normals: node_vec3_attribute(params, "N", vertex_count)?,
         tangents: node_vec3_attribute(params, "S", vertex_count)?,
-        uvs: node_vec2_attribute(params, "uv", vertex_count)?,
+        uvs: match node_vec2_attribute(params, "uv", vertex_count)? {
+            Some(uvs) => Some(uvs),
+            None => node_vec2_attribute(params, "st", vertex_count)?,
+        },
     }))
 }
 

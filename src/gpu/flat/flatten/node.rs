@@ -309,7 +309,12 @@ pub fn flatten_node_ref(
         }
         let lens_radius = camera.params.get_one_float("lensradius", 0.0);
         let focal_distance = camera.params.get_one_float("focaldistance", 1.0e6);
-        let fov = camera.params.get_one_float("fov", 90.0) as f32;
+        let mut fov = camera.params.get_one_float("fov", 90.0);
+        let halffov = camera.params.get_one_float("halffov", -1.0);
+        if halffov > 0.0 {
+            fov = 2.0 * halffov;
+        }
+        let fov = fov as f32;
         if builder.camera.is_some() {
             return Err(PbrtError::error(
                 "Multiple cameras were found while flattening GPU Node IR.",

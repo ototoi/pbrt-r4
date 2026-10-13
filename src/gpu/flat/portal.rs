@@ -217,7 +217,7 @@ pub fn prepare_portal_image(
                 level.channels,
                 [source_uv.x, source_uv.y],
             );
-            functions.push((rgb[0] + rgb[1] + rgb[2]) / 3.0 * jacobian);
+            functions.push(((rgb[0] + rgb[1] + rgb[2]) / 3.0).max(0.0) * jacobian);
             rectified.push(rgb);
         }
     }

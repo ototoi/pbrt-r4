@@ -82,7 +82,7 @@ impl SceneBuilder {
     /// historical — it actually holds `cameraFromWorld`, see
     /// `parse_target_impl.rs::camera`), so we invert here to obtain
     /// `worldFromCamera` and feed it through `CameraTransform::new`.
-    fn build_camera_transform(&self) -> Result<CameraTransform, PbrtError> {
+    pub fn build_camera_transform(&self) -> Result<CameraTransform, PbrtError> {
         let mut world_from_camera = TransformSet::new();
         world_from_camera[0] = self.camera_to_world[0].inverse();
         world_from_camera[1] = self.camera_to_world[1].inverse();

@@ -19,8 +19,15 @@ pub enum SamplerRandomization {
     Owen,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntegratorKind {
+    Path,
+    VolPath,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderSettings {
+    pub integrator_kind: IntegratorKind,
     pub sampler_kind: SamplerKind,
     pub randomization: SamplerRandomization,
     pub samples_per_pixel: u32,

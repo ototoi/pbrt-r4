@@ -6,6 +6,7 @@ use pbrt_r4::gpu::webgpu::render_settings::RenderSettings;
 #[test]
 fn render_settings_keep_only_webgpu_render_loop_values() {
     let settings = RenderSettings::from_flat(flat::RenderSettings {
+        integrator_kind: flat::IntegratorKind::VolPath,
         sampler_kind: flat::SamplerKind::Halton,
         randomization: flat::SamplerRandomization::PermuteDigits,
         samples_per_pixel: 8,

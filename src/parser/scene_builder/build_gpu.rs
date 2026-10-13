@@ -18,6 +18,7 @@ use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
+use crate::util::transform::Transform as CpuTransform;
 
 use super::SceneBuilder;
 
@@ -81,7 +82,10 @@ impl SceneBuilder {
 
     pub fn build_gpu_ir_node(&self) -> Result<Arc<RwLock<Node>>, PbrtError> {
         self.check_gpu_medium_support()?;
-        let texture_nodes = self.build_texture_resources()?;
+        self.check_gpu_animated_transforms()?;
+        let camera_transform = self.build_camera_transform()?;
+        let render_from_world = camera_transform.render_from_world();
+        let texture_nodes = self.build_texture_resources(&render_from_world)?;
         let texture_lookup = texture_node_lookup(&texture_nodes);
         let mut named_media = HashMap::new();
         let mut media = Vec::with_capacity(self.media.len());
@@ -99,6 +103,7 @@ impl SceneBuilder {
             media.push(medium);
         }
         let mut root_node = Node::new("root");
+        root_node.transform = node_transform(&render_from_world);
         root_node.add_component(Component::Scene(SceneComponent {
             scene: Scene {
                 texture_nodes,
@@ -189,6 +194,42 @@ impl SceneBuilder {
         }
 
         return Ok(Arc::new(RwLock::new(root_node)));
+    }
+
+    fn check_gpu_animated_transforms(&self) -> Result<(), PbrtError> {
+        let has_animated_transform = self.camera_to_world.is_animated()
+            || !self.animated_shapes.is_empty()
+            || self
+                .instance_definitions
+                .values()
+                .any(|definition| !definition.animated_shapes.is_empty())
+            || self
+                .instance_uses
+                .iter()
+                .any(|instance| instance.render_from_instance.is_animated())
+            || self
+                .shapes
+                .iter()
+                .any(|shape| shape.render_from_object.is_animated())
+            || self
+                .instance_definitions
+                .values()
+                .flat_map(|definition| &definition.shapes)
+                .any(|shape| shape.render_from_object.is_animated())
+            || self
+                .lights
+                .iter()
+                .any(|light| light.base.render_from_object.is_animated())
+            || self
+                .media
+                .values()
+                .any(|medium| medium.render_from_medium.is_animated());
+        if has_animated_transform {
+            return Err(PbrtError::error(
+                "WebGPU does not support animated scene transforms.",
+            ));
+        }
+        Ok(())
     }
 
     /// Rejects medium references whose data is not represented in the GPU IR.
@@ -322,7 +363,10 @@ impl SceneBuilder {
             .collect()
     }
 
-    fn build_texture_resources(&self) -> Result<Vec<Arc<TextureNode>>, PbrtError> {
+    fn build_texture_resources(
+        &self,
+        render_from_world: &CpuTransform,
+    ) -> Result<Vec<Arc<TextureNode>>, PbrtError> {
         let mut raw_textures =
             Vec::with_capacity(self.float_textures.len() + self.spectrum_textures.len());
         let float_names = texture_names_by_index(&self.named_float_textures);
@@ -337,7 +381,7 @@ impl SceneBuilder {
                 &texture.base.name,
                 NodeTextureKind::Float,
                 &texture.base.params,
-                &texture.render_from_texture,
+                &(*render_from_world * texture.render_from_texture),
             )?);
         }
         for (index, texture) in self.spectrum_textures.iter().enumerate() {
@@ -350,7 +394,7 @@ impl SceneBuilder {
                 &texture.base.name,
                 NodeTextureKind::Spectrum,
                 &texture.base.params,
-                &texture.render_from_texture,
+                &(*render_from_world * texture.render_from_texture),
             )?);
         }
         let mut lookup = HashMap::new();
@@ -401,6 +445,11 @@ impl SceneBuilder {
         if !has_alpha_texture && alpha <= 0.0 && shape.area_light_index.is_none() {
             return Ok(None);
         }
+        if shape.area_light_index.is_some() && shape.instance_name.is_some() {
+            return Err(PbrtError::error(
+                "WebGPU does not support area lights inside ObjectBegin definitions.",
+            ));
+        }
         let params = &shape.base.params;
         let shape_value = match shape.base.name.as_str() {
             "sphere" => Shape::Sphere(Box::new(SphereShape {
@@ -433,14 +482,29 @@ impl SceneBuilder {
             "trianglemesh" | "plymesh" => {
                 match triangle_mesh_from_params(shape.base.name.as_str(), params)? {
                     Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
-                    None => return Ok(None),
+                    None => {
+                        return Err(PbrtError::error(&format!(
+                            "WebGPU could not create triangle mesh for shape \"{}\".",
+                            shape.base.name
+                        )))
+                    }
                 }
             }
             "loopsubdiv" => match loop_subdiv_mesh_from_params(params)? {
                 Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
-                None => return Ok(None),
+                None => {
+                    return Err(PbrtError::error(&format!(
+                        "WebGPU could not create LoopSubdiv mesh for shape \"{}\".",
+                        shape.base.name
+                    )))
+                }
             },
-            _ => return Ok(None),
+            _ => {
+                return Err(PbrtError::error(&format!(
+                    "WebGPU does not support shape \"{}\".",
+                    shape.base.name
+                )))
+            }
         };
         let mut node = Node::new(&shape.base.name);
         node.transform = node_transform(&shape.render_from_object.primary());

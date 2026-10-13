@@ -602,6 +602,12 @@ fn render_cpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
 }
 
 fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError> {
+    let options = PbrtOptions::get();
+    if options.mse_reference_image.is_some() || options.mse_reference_output.is_some() {
+        return Err(PbrtError::error(
+            "MSE comparison is not supported by the GPU renderer.",
+        ));
+    }
     let integrator = create_gpu_integrator(input_path, opts)?;
     if let Some(hostname) = opts.display_server.as_ref() {
         match create_display(hostname) {
@@ -628,10 +634,6 @@ fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
         let mut integrator = integrator.write().unwrap();
         integrator.render()?;
     }
-
-    //{
-    //    write_mse_image(&integrator)?;
-    //}
 
     return Ok(());
 }
