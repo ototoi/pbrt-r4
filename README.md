@@ -10,8 +10,9 @@
 ## What is pbrt-r4
 
 pbrt-r4 is a Rust implementation of [pbrt-v4](https://github.com/mmp/pbrt-v4),
-evolved from a pbrt-r3 (pbrt-v3 Rust port) foundation. It is a CPU renderer
-whose primary compatibility target is pbrt-v4 behavior and input files.
+evolved from a pbrt-r3 (pbrt-v3 Rust port) foundation. It provides a CPU
+renderer and an optional WebGPU renderer. Its primary compatibility target is
+pbrt-v4 behavior and input files.
 
 The codebase now mirrors pbrt-v4's class structure on every major axis — `Spectrum` / `SampledSpectrum` are 4-wavelength packets, `BSDF`/`BxDF` carry per-path `SampledSpectrum` reflectance, the `Light` trait matches pbrt-v4's `SampleLi` / `PDF_Li` / `SampleLe` / `Phi` shapes, and integrators (Path / VolPath / SPPM / BDPT / MLT / LightPath / SimpleVolPath / RandomWalk / SimplePath / AO / Function) translate their pbrt-v4 counterparts line-by-line. pbrt-v4 scene files render through the same pipeline; legacy pbrt-v3 input should first be upgraded to pbrt-v4 format.
 
@@ -78,6 +79,32 @@ pbrt-r4 has several options as Rust features.
 |---------|-------------|
 | `stats` | Enables the pbrt-v4 `pixelstats` scene option. |
 | `float-as-double` | Uses double precision (64-bit) for floating-point calculations. This increases precision but also increases execution time and memory usage. |
+| `webgpu` | Enables the optional WebGPU renderer. It is not enabled by default. |
+
+## GPU rendering
+
+The default build uses the CPU renderer. Build with the `webgpu` feature to
+enable GPU rendering:
+
+```sh
+cargo build --release --features webgpu
+./target/release/pbrt-r4 \
+  --gpu \
+  --spp 64 \
+  --outfile /tmp/output.exr \
+  <example.pbrt>
+```
+
+`--wavefront` also selects the GPU renderer. The GPU path currently supports
+the `path` and `volpath` scene integrators; other integrators are not
+implemented for GPU rendering. `--gpu-tile-size` controls the square tile size
+and defaults to 512 pixels.
+
+The WebGPU backend requires an adapter that provides experimental ray-query
+support and the resource limits required by the scene. Cargo enables Vulkan on
+Linux, Direct3D 12 or Vulkan on Windows, and Metal on macOS. Project CI currently
+runs on Linux only, so Windows and macOS builds and GPU devices have not been
+verified by CI.
 
 ## Example scenes
 pbrt-r4 renders pbrt-v4 scene files directly. The compatibility comparison
@@ -128,7 +155,7 @@ input. These utilities are CPU implementations. GPU-only utilities such as
 
 The tables below describe the current implementation scope, not a claim of
 complete pixel-level parity for every feature combination. Known limitations
-include GPU/wavefront rendering, PTex, and photometric film calibration.
+include partial GPU feature support, PTex, and photometric film calibration.
 
 ### Integrators (`Integrator "<name>" ...`)
 | Name | pbrt-v4 reference | Status in pbrt-r4 |
@@ -187,9 +214,9 @@ pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rew
 
 ### Out of scope
 
-The following areas are intentionally outside the current CPU release scope:
+The following areas are not included in the default CPU build or remain
+unimplemented:
 
-- **GPU / wavefront rendering**: pbrt-v4's CUDA / OptiX backend is out of scope. pbrt-r4 is CPU-only.
 - **PTex textures**: not implemented.
 - **GPU-only command-line utilities**: `pspec_gpu` and `denoise-optix` require GPU backends and are not included in the CPU release.
 - **Build and test utilities**: `soac`, `rgb2spec_opt`, and `pbrt_test` are handled by build generation or Rust's test infrastructure rather than shipped as user-facing binaries.
