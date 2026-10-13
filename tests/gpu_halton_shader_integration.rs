@@ -1,6 +1,6 @@
 #![cfg(feature = "webgpu")]
 
-use pbrt_r4::gpu::flat::{RenderSettings, SamplerKind, SamplerRandomization};
+use pbrt_r4::gpu::flat::{IntegratorKind, RenderSettings, SamplerKind, SamplerRandomization};
 use pbrt_r4::gpu::webgpu::abi::{RenderError, ViewportUniform};
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::sampler::SamplerResources;
@@ -148,6 +148,7 @@ fn remaining_shader_samplers_match_cpu() {
         resolution,
         seed,
         RenderSettings {
+            integrator_kind: IntegratorKind::Path,
             sampler_kind: SamplerKind::Stratified,
             randomization: SamplerRandomization::None,
             samples_per_pixel: spp,
@@ -171,6 +172,7 @@ fn compare_strategy(
     let resolution = [320, 180];
     let seed = 17;
     let settings = RenderSettings {
+        integrator_kind: IntegratorKind::Path,
         sampler_kind: SamplerKind::Halton,
         randomization: gpu_randomization,
         samples_per_pixel: 16,
@@ -200,6 +202,7 @@ fn compare_sampler(
     cpu: Sampler,
 ) {
     let settings = RenderSettings {
+        integrator_kind: IntegratorKind::Path,
         sampler_kind: kind,
         randomization,
         samples_per_pixel: 16,
