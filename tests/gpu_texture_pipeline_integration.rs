@@ -298,7 +298,7 @@ fn render(
     let output = directory.join(filename);
     let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
     if gpu {
-        command.arg("--use-gpu");
+        command.arg("--gpu");
     }
     let status = command
         .args([

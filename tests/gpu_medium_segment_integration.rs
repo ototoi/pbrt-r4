@@ -63,7 +63,7 @@ AttributeEnd
         std::fs::write(&scene, input).unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--quiet",
                 "--outfile",
                 output.to_str().unwrap(),
@@ -159,7 +159,7 @@ Shape "trianglemesh"
         std::fs::write(&scene_path, scene).unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--quiet",
                 "--outfile",
                 output_path.to_str().unwrap(),
@@ -241,7 +241,7 @@ AttributeEnd
         std::fs::write(&scene, input).unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--quiet",
                 "--outfile",
                 output.to_str().unwrap(),
@@ -322,7 +322,7 @@ AttributeEnd
         std::fs::write(&scene, input).unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--quiet",
                 "--outfile",
                 output.to_str().unwrap(),
@@ -386,7 +386,7 @@ Shape "trianglemesh"
         std::fs::write(&scene, input).unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--quiet",
                 "--outfile",
                 output.to_str().unwrap(),
@@ -474,7 +474,7 @@ AttributeEnd
         std::fs::write(&scene, input).unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
             .args([
-                "--use-gpu",
+                "--gpu",
                 "--quiet",
                 "--outfile",
                 output.to_str().unwrap(),
@@ -543,7 +543,7 @@ AttributeEnd
             .arg(&output)
             .arg(&scene);
         if gpu {
-            command.arg("--use-gpu");
+            command.arg("--gpu");
         }
         assert!(command.status().unwrap().success());
         let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
@@ -599,7 +599,7 @@ Shape "sphere" "float radius" [1]
             .arg(&output)
             .arg(&scene);
         if gpu {
-            command.arg("--use-gpu");
+            command.arg("--gpu");
         }
         assert!(command.status().unwrap().success());
         let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
@@ -662,7 +662,7 @@ Shape "sphere" "float radius" [1]
             .arg(&output)
             .arg(&scene);
         if gpu {
-            command.arg("--use-gpu");
+            command.arg("--gpu");
         }
         assert!(command.status().unwrap().success());
         let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();

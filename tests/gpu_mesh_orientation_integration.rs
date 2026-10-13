@@ -203,7 +203,7 @@ WorldEnd
 fn render_energy(scene: &Path, output: &Path, gpu: bool) -> f32 {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"));
     if gpu {
-        command.arg("--use-gpu");
+        command.arg("--gpu");
     }
     let result = command
         .arg("--nthreads")
