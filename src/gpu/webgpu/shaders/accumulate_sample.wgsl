@@ -12,8 +12,9 @@ fn accumulate_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
         viewport.tile_y + global_id.y - viewport.region_y,
     );
     let framebuffer_index = region_pixel.y * viewport.region_width + region_pixel.x;
+    let filter_weight = pixel_sample_states[pixel_index].filter_weight;
     if (film_params.mode != 0u) {
-        framebuffer[framebuffer_index] += vec4<f32>(load_sample_radiance(pixel_index).xyz, 1.0);
+        framebuffer[framebuffer_index] += vec4<f32>(load_sample_radiance(pixel_index).xyz * filter_weight, filter_weight);
         return;
     }
     let lambda = load_sample_lambda(pixel_index);
@@ -27,5 +28,5 @@ fn accumulate_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (film_params.max_sample_luminance > 0.0 && maximum > film_params.max_sample_luminance) {
         sensor_rgb *= film_params.max_sample_luminance / maximum;
     }
-    framebuffer[framebuffer_index] += vec4<f32>(sensor_rgb, 1.0);
+    framebuffer[framebuffer_index] += vec4<f32>(sensor_rgb * filter_weight, filter_weight);
 }

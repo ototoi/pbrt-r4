@@ -23,6 +23,7 @@ const NANOVDB_BRANCH_END: &str = "// NANOVDB_BRANCH_END";
 /// Stages only receive the functions they transitively call, so the file
 /// boundaries are for readers and do not affect the composed modules.
 pub const COMMON_LIBRARY: &[(&str, &str)] = &[
+    ("filters", include_str!("shaders/lib/filters.wgsl")),
     ("float", include_str!("shaders/lib/float.wgsl")),
     ("vecmath", include_str!("shaders/lib/vecmath.wgsl")),
     ("hash_u32", include_str!("shaders/lib/hash_u32.wgsl")),

@@ -53,6 +53,18 @@ impl FilterSampler {
         }
     }
 
+    pub fn values(&self) -> &[Float] {
+        &self.f
+    }
+
+    pub fn dimensions(&self) -> [usize; 2] {
+        [self.nx, self.ny]
+    }
+
+    pub fn distribution(&self) -> &Distribution2D {
+        &self.distrib
+    }
+
     pub fn sample(&self, u: &Point2f) -> FilterSample {
         let (d, pdf_unit, ix, iy) = self.distrib.sample_continuous_with_indices(u);
         let p = Point2f::new(

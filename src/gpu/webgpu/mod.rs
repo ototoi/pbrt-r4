@@ -3,6 +3,7 @@ pub mod acceleration;
 pub mod bssrdf;
 pub mod context;
 pub mod film;
+pub mod filter;
 pub mod integrator;
 pub mod light;
 pub mod light_bvh;

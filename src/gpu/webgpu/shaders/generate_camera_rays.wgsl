@@ -26,16 +26,17 @@ fn generate_camera_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let lambda_pdf = vec4<f32>(0.0039398042)
         / pow(cosh(0.0072 * (lambda - vec4<f32>(538.0))), vec4<f32>(2.0));
     store_sample_wavelengths(pixel_index, lambda, lambda_pdf);
-    let jitter = select(
-        sampler_get_pixel_2d(pixel_index), vec2<f32>(0.5),
-        camera.disable_pixel_jitter != 0u,
-    );
+    var fs = sample_filter(sampler_get_pixel_2d(pixel_index));
+    if (camera.disable_pixel_jitter != 0u) {
+        fs = FilterSample(vec2<f32>(0.0), 1.0);
+    }
+    pixel_sample_states[pixel_index].filter_weight = fs.weight;
     store_ray_samples(pixel_index, generate_ray_samples(pixel_index, 0u));
     // camera.raster_to_camera expects a raster coordinate in the full image,
     // not a tile-local one.
     let pixel = vec4<f32>(
-        f32(viewport.tile_x + global_id.x) + jitter.x - 0.5,
-        f32(viewport.tile_y + global_id.y) + jitter.y - 0.5,
+        f32(viewport.tile_x + global_id.x) + fs.offset.x,
+        f32(viewport.tile_y + global_id.y) + fs.offset.y,
         1.0,
         1.0,
     );

@@ -222,6 +222,26 @@ struct SamplerUniform {
     variant_words: array<vec4<u32>, 2>,
 };
 
+struct FilterSample {
+    offset: vec2<f32>,
+    weight: f32,
+};
+
+struct FilterData {
+    kind: u32,
+    nx: u32,
+    ny: u32,
+    _padding: u32,
+    radius: vec2<f32>,
+    absolute_integral: f32,
+    _padding1: u32,
+    values_offset: u32,
+    conditional_offset: u32,
+    marginal_offset: u32,
+    _padding2: u32,
+    data: array<u32>,
+};
+
 struct FilmUniform {
     sensor_response: vec4<u32>,
     imaging_ratio: f32,
@@ -542,6 +562,10 @@ struct PixelSampleState {
     lambda_pdf: vec4<f32>,
     direct: vec4<f32>,
     indirect: vec4<f32>,
+    filter_weight: f32,
+    _filter_padding0: f32,
+    _filter_padding1: f32,
+    _filter_padding2: f32,
 };
 
 struct ShadowRayWorkItem {

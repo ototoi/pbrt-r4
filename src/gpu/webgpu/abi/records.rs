@@ -435,4 +435,6 @@ pub struct PixelSampleState {
     pub lambda_pdf: [f32; 4],
     pub direct: [f32; 4],
     pub indirect: [f32; 4],
+    pub filter_weight: f32,
+    pub filter_padding: [f32; 3],
 }

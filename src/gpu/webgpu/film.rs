@@ -152,8 +152,12 @@ impl Film {
         let values = bytemuck::try_cast_slice::<u8, f32>(&mapped)
             .map_err(|_| PbrtError::error("WebGPU framebuffer readback was not f32-aligned."))?;
         for (source, destination) in values.chunks_exact(4).zip(self.pixels.chunks_exact_mut(3)) {
-            let weight = source[3].max(1e-7);
-            let sensor = [source[0] / weight, source[1] / weight, source[2] / weight];
+            let mut sensor = [source[0], source[1], source[2]];
+            if source[3] != 0.0 {
+                for value in &mut sensor {
+                    *value /= source[3];
+                }
+            }
             for channel in 0..3 {
                 destination[channel] = if self.display_mode {
                     sensor[channel]

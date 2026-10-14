@@ -3391,3 +3391,38 @@ fn uniform_grid_majorants_match_sampled_grid_max_value() {
         }
     }
 }
+
+#[test]
+fn flatten_filter_component_reaches_film_with_default_gaussian() {
+    use pbrt_r4::gpu::flat::FilterKind;
+    use pbrt_r4::gpu::node::{Filter as NodeFilter, FilterComponent};
+    for name in [None, Some("triangle"), Some("mitchell")] {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        if let Some(name) = name {
+            let mut params = ParameterDictionary::default();
+            params.add_float("xradius", 1.25);
+            root.add_component(Component::Filter(FilterComponent {
+                filter: NodeFilter {
+                    name: name.to_string(),
+                    params,
+                },
+            }));
+        }
+        let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+        match name {
+            None => {
+                assert_eq!(scene.film.filter.kind, FilterKind::Gaussian);
+                assert_eq!(scene.film.filter.radius, [1.5, 1.5]);
+            }
+            Some("triangle") => {
+                assert_eq!(scene.film.filter.kind, FilterKind::Triangle);
+                assert_eq!(scene.film.filter.radius, [1.25, 2.0]);
+            }
+            _ => {
+                assert_eq!(scene.film.filter.kind, FilterKind::Mitchell);
+                assert!(scene.film.filter.distribution.is_some());
+            }
+        }
+    }
+}
