@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [develop]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+
+      - name: Build release binaries
+        run: cargo build --locked --release --bins --target ${{ matrix.target }}
+
+      - name: Package Windows binaries
+        if: github.event_name == 'release' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'pbrt-r4'
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          New-Item -ItemType Directory -Force $stage, $dist | Out-Null
+          $releaseDir = "target/$env:TARGET/release"
+          $binaries = @(Get-ChildItem "$releaseDir/*.exe")
+          if ($binaries.Count -ne 6) {
+            throw "Expected six release binaries, found $($binaries.Count)"
+          }
+          $binaries | ForEach-Object {
+            Copy-Item $_.FullName -Destination $stage
+          }
+          Copy-Item LICENSE, README.md -Destination $stage
+          $archive = "pbrt-r4-$env:RELEASE_TAG-windows-x86_64.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath (Join-Path $dist $archive)
+
+      - name: Package macOS binaries
+        if: github.event_name == 'release' && runner.os == 'macOS'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/pbrt-r4"
+          mkdir -p "$stage" dist
+          cp "target/$TARGET/release/"{pbrt-r4,plytool,imgtool,cyhair2pbrt,nanovdb2pbrt,pspec} "$stage/"
+          cp LICENSE README.md "$stage/"
+          archive="pbrt-r4-${RELEASE_TAG}-macos-${TARGET}.tar.gz"
+          tar -C "$RUNNER_TEMP" -czf "$GITHUB_WORKSPACE/dist/$archive" pbrt-r4
+
+      - name: Upload build artifact
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Attach artifacts to GitHub Release
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
