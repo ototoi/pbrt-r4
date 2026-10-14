@@ -1,5 +1,6 @@
 #[derive(Clone, Debug, PartialEq)]
 pub struct Film {
+    pub filter: super::Filter,
     pub sensor_response: [u32; 3],
     pub output_rgb_from_sensor_rgb: [[f32; 3]; 3],
     pub imaging_ratio: f32,

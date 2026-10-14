@@ -1,3 +1,4 @@
+use super::super::filter::Filter as FlatFilter;
 use super::{
     append_area_light, flatten_light, geometry_index, identity_transform, multiply_transform,
     region_bounds, register_material_source, register_medium, register_root_component,
@@ -30,6 +31,7 @@ pub fn flatten_node_ref(
         local_transform,
         camera,
         film,
+        filter,
         output,
         sampler,
         integrator,
@@ -89,6 +91,20 @@ pub fn flatten_node_ref(
                 Component::Film(component) => Some(component.film.clone()),
                 _ => None,
             });
+        let filter = node
+            .components
+            .iter()
+            .filter_map(|component| match component {
+                Component::Filter(component) => Some(component.filter.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if filter.len() > 1 {
+            return Err(PbrtError::error(
+                "Multiple Filter components on one GPU node.",
+            ));
+        }
+        let filter = filter.into_iter().next();
         let output = node
             .components
             .iter()
@@ -213,6 +229,7 @@ pub fn flatten_node_ref(
             node.transform.matrix,
             camera,
             film,
+            filter,
             output,
             sampler,
             integrator,
@@ -228,6 +245,9 @@ pub fn flatten_node_ref(
     let shape_transform = multiply_transform(shape_parent_transform, &local_transform);
     for medium in &media {
         register_medium(medium, &world_transform, builder)?;
+    }
+    if let Some(filter) = filter {
+        register_root_component(&mut builder.filter, filter, stack.len(), "Filter")?;
     }
     if let Some(sampler) = sampler {
         register_root_component(&mut builder.sampler, sampler, stack.len(), "Sampler")?;
@@ -290,7 +310,12 @@ pub fn flatten_node_ref(
         for (id, response) in sensor_response.iter_mut().zip(sensor.response_spectra()) {
             *id = builder.spectrum_table_builder.intern_dense(response, 0)?;
         }
+        let filter = match &builder.filter {
+            Some(filter) => FlatFilter::create(&filter.name, &filter.params)?,
+            None => FlatFilter::create("gaussian", &Default::default())?,
+        };
         builder.film = Some(Film {
+            filter,
             sensor_response,
             output_rgb_from_sensor_rgb: sensor.output_rgb_from_sensor_rgb(),
             imaging_ratio: sensor.imaging_ratio(),

@@ -13,6 +13,7 @@ pub enum ResourceId {
     DepthParams,
     LightSamplingParams,
     FilmParams,
+    Filter,
     RenderError,
     Tlas,
     Vertex,
@@ -348,6 +349,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         push(binding, resource, BindingClass::Storage, Access::ReadWrite);
     }
     for (binding, resource) in [
+        (79, ResourceId::Filter),
         (66, ResourceId::BSSRDFMaterial),
         (67, ResourceId::BSSRDFTable),
         (68, ResourceId::BSSRDFValues),

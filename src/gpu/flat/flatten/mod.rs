@@ -287,6 +287,7 @@ struct FlatBuilder {
     camera: Option<Camera>,
     viewport: Option<Viewport>,
     film: Option<Film>,
+    filter: Option<crate::gpu::node::Filter>,
     geometry: GeometryBuilder,
     instances: Vec<Instance>,
     medium: MediumBuilder,

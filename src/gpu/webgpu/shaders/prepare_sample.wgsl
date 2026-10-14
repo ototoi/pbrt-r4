@@ -26,6 +26,7 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
             atomicStore(&render_error.value, 0u);
         }
     }
+    pixel_sample_states[pixel_index].filter_weight = 1.0;
     store_sample_radiance(pixel_index, vec4<f32>(0.0));
     store_ray_samples(pixel_index, RaySamples(vec4<f32>(0.0), vec4<f32>(0.0)));
     surfaces[pixel_index].hit = 0u;

@@ -12,6 +12,7 @@ use super::abi::{
 };
 use super::acceleration::{self, Acceleration};
 use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
+use super::filter::FilterResources;
 use super::light_bvh::{pack_light_bvh, LightBvhUploadData};
 use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
 use super::material::MaterialKind;
@@ -50,6 +51,7 @@ pub struct Scene {
     pub camera: CameraUniform,
     pub viewport: ViewportUniform,
     pub film: FilmUniform,
+    pub filter: FilterResources,
     pub film_output_matrix: [[f32; 3]; 3],
     pub film_scale: f32,
     pub material_table: MaterialTableUniform,
@@ -187,6 +189,7 @@ impl Scene {
             !flat.materials.bssrdfs.is_empty(),
         )?;
         let film = film_uniform(&flat.film);
+        let filter = FilterResources::new(device, &flat.film.filter)?;
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
         let film_scale = flat.film.scale;
         if vertices.is_empty() || indices.is_empty() || instances.is_empty() {
@@ -517,6 +520,7 @@ impl Scene {
             camera,
             viewport,
             film,
+            filter,
             film_output_matrix,
             film_scale,
             material_table,
@@ -577,6 +581,7 @@ impl Scene {
             ResourceId::Tlas => Some(wgpu::BindingResource::AccelerationStructure(
                 &self.acceleration.tlas,
             )),
+            ResourceId::Filter => Some(self.filter.buffer.as_entire_binding()),
             ResourceId::Vertex => Some(self.vertex_buffer.as_entire_binding()),
             ResourceId::Index => Some(self.index_buffer.as_entire_binding()),
             ResourceId::Geometry => Some(self.geometry_buffer.as_entire_binding()),
