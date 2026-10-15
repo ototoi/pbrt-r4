@@ -1,3 +1,7 @@
+/// Wavefront pipelines reserve both the buffer and texture-array groups,
+/// even when the composed shader does not declare resources in group 1.
+pub const WAVEFRONT_BIND_GROUP_COUNT: u32 = 2;
+
 pub struct ComputeStageSpec {
     pub id: ComputeStageId,
     pub label: &'static str,

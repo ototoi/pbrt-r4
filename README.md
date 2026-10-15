@@ -106,6 +106,21 @@ Linux, Direct3D 12 or Vulkan on Windows, and Metal on macOS. Project CI currentl
 runs on Linux only, so Windows and macOS builds and GPU devices have not been
 verified by CI.
 
+To inspect per-stage buffer requirements and adapter headroom, enable the
+WebGPU debug log:
+
+```sh
+RUST_LOG=pbrt_r4::gpu::webgpu=debug ./target/release/pbrt-r4 --gpu <example.pbrt>
+```
+
+The binding report lists storage buffers, uniform buffers, acceleration
+structures, and resource names for each composed wavefront stage. Texture and
+sampler bindings are listed separately. If adapter buffer limits are exceeded,
+the error includes the over-budget stages even without debug logging. Counts
+are binding counts, not buffer sizes in bytes. The report identifies its noise
+and NanoVDB variants and covers wavefront stages; the separately constructed
+BSSRDF probe is outside its scope.
+
 ## Example scenes
 pbrt-r4 renders pbrt-v4 scene files directly. The compatibility comparison
 set used by this project comes from the official

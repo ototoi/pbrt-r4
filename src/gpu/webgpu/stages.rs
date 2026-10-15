@@ -394,6 +394,22 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
 }
 
 impl RequiredLimits {
+    /// Device limits are maxima of individual stages, not sums across stages.
+    pub fn maximum(self, other: Self) -> Self {
+        Self {
+            storage_buffers_per_shader_stage: self
+                .storage_buffers_per_shader_stage
+                .max(other.storage_buffers_per_shader_stage),
+            uniform_buffers_per_shader_stage: self
+                .uniform_buffers_per_shader_stage
+                .max(other.uniform_buffers_per_shader_stage),
+            buffers_and_acceleration_structures_per_shader_stage: self
+                .buffers_and_acceleration_structures_per_shader_stage
+                .max(other.buffers_and_acceleration_structures_per_shader_stage),
+            bind_groups: self.bind_groups.max(other.bind_groups),
+        }
+    }
+
     pub fn from_bindings(bindings: &[BindingSpec]) -> Result<Self, PbrtError> {
         let mut required = Self::default();
         for (index, left) in bindings.iter().enumerate() {
