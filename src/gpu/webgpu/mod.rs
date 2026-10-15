@@ -1,5 +1,6 @@
 pub mod abi;
 pub mod acceleration;
+pub mod binding_report;
 pub mod bssrdf;
 pub mod context;
 pub mod film;

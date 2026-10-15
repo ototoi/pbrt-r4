@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::util::error::PbrtError;
 
 use super::shader;
-use super::stage::{ComputeStageId, COMPUTE_STAGES};
+use super::stage::{ComputeStageId, COMPUTE_STAGES, WAVEFRONT_BIND_GROUP_COUNT};
 use super::stages::{canonical_wavefront_bindings, BindingClass, BindingSpec, ResourceId};
 
 pub struct StagePipeline {
@@ -34,41 +34,39 @@ impl Pipeline {
     ) -> Result<Self, PbrtError> {
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let canonical_bindings = canonical_wavefront_bindings();
-        let stages: HashMap<ComputeStageId, StagePipeline> = COMPUTE_STAGES
+        let stages: Result<HashMap<ComputeStageId, StagePipeline>, PbrtError> = COMPUTE_STAGES
             .iter()
             .map(|stage| {
                 log::info!("GPU pipeline: creating {}", stage.label);
-                let source = shader::compose_source_with_features(
-                    stage.source,
-                    texture_noise_enabled,
-                    nanovdb_enabled,
-                )
-                .replace(
-                    "const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;",
-                    &format!("const TEXTURE_PROGRAM_CAPACITY: u32 = {texture_program_capacity}u;"),
-                )
-                .replace(
-                    "binding_array<texture_2d<f32>>",
-                    &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
-                )
-                .replace(
-                    "binding_array<sampler>",
-                    &format!("binding_array<sampler, {texture_sampler_count}u>"),
+                let source = shader::specialize_source(
+                    shader::compose_source_with_features(
+                        stage.source,
+                        texture_noise_enabled,
+                        nanovdb_enabled,
+                    ),
+                    texture_image_count,
+                    texture_sampler_count,
+                    texture_program_capacity,
                 );
                 log::info!(
                     "GPU pipeline: {} source composed ({} bytes)",
                     stage.label,
                     source.len()
                 );
-                let used_bindings = shader::resource_bindings(&source);
-                let bind_group_layouts = (0..=1)
+                let bindings = shader::resolve_resource_bindings(
+                    &canonical_bindings,
+                    stage.entry_point,
+                    &source,
+                )?;
+                let used_bindings = bindings
+                    .iter()
+                    .map(|binding| (binding.group, binding.binding))
+                    .collect();
+                let bind_group_layouts = (0..WAVEFRONT_BIND_GROUP_COUNT)
                     .map(|group| {
-                        let layout_entries = canonical_bindings
+                        let layout_entries = bindings
                             .iter()
-                            .filter(|binding| {
-                                binding.group == group
-                                    && used_bindings.contains(&(binding.group, binding.binding))
-                            })
+                            .filter(|binding| binding.group == group)
                             .map(|binding| {
                                 layout_entry(binding, texture_image_count, texture_sampler_count)
                             })
@@ -104,23 +102,22 @@ impl Pipeline {
                     cache: None,
                 });
                 log::info!("GPU pipeline: created {}", stage.label);
-                (
+                Ok((
                     stage.id,
                     StagePipeline {
                         pipeline,
                         bind_group_layouts,
                         used_bindings,
                     },
-                )
+                ))
             })
             .collect();
-        let pipeline = Self { stages };
         if let Some(error) = pollster::block_on(error_scope.pop()) {
             return Err(PbrtError::error(&format!(
                 "WebGPU primary-ray pipeline creation failed: {error}"
             )));
         }
-        Ok(pipeline)
+        Ok(Self { stages: stages? })
     }
 }
 

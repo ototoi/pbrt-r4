@@ -8,6 +8,7 @@ use crate::gpu::flat::texture::{ProceduralOperation, TextureInstruction};
 use crate::util::error::PbrtError;
 
 use super::super::abi::{BSSRDFProbeResult, BSSRDFProbeWorkItem};
+use super::super::binding_report::BindingReport;
 use super::super::bssrdf::BSSRDFProbePipeline;
 use super::super::context::Context;
 use super::super::film::Film;
@@ -16,7 +17,6 @@ use super::super::noise::NoiseRuntimeResources;
 use super::super::pipeline::Pipeline;
 use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
-use super::super::shader::required_limits_for_sources_with_nanovdb;
 use super::super::stage::{ComputeStageSpec, COMPUTE_STAGES};
 use super::super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
 use super::tiles::DEFAULT_GPU_TILE_SIZE;
@@ -44,17 +44,6 @@ impl super::WavefrontPathIntegrator {
             .iter()
             .any(|medium| matches!(&medium.data, flat::MediumData::NanoVDB(_)));
         let canonical_bindings = canonical_wavefront_bindings();
-        let mut required_limits = required_limits_for_sources_with_nanovdb(
-            &canonical_bindings,
-            &COMPUTE_STAGES
-                .iter()
-                .map(|stage| stage.source)
-                .collect::<Vec<_>>(),
-            nanovdb_enabled,
-        )?;
-        // Every deployed pipeline has a second group reserved for texture
-        // binding arrays, even when an individual stage does not sample one.
-        required_limits.bind_groups = required_limits.bind_groups.max(2);
         let (mut texture_image_count, texture_sampler_count) = texture_binding_counts(&flat_scene)?;
         texture_image_count = texture_image_count
             .checked_add(
@@ -88,6 +77,12 @@ impl super::WavefrontPathIntegrator {
                     )
                 })
             });
+        let binding_report = BindingReport::for_stages(
+            &canonical_bindings,
+            COMPUTE_STAGES,
+            texture_noise_enabled,
+            nanovdb_enabled,
+        )?;
         let medium_scattering_enabled = flat_scene.render_settings.integrator_kind
             == flat::IntegratorKind::VolPath
             && flat_scene.media.iter().any(|medium| {
@@ -100,8 +95,8 @@ impl super::WavefrontPathIntegrator {
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );
-        let context = Context::new(
-            required_limits,
+        let context = Context::with_binding_report(
+            &binding_report,
             texture_image_count.max(1),
             texture_sampler_count.max(1),
         )?;
