@@ -1,4 +1,5 @@
 pub mod accelerator;
+pub mod alpha;
 pub mod area_light;
 pub mod camera;
 pub mod component;
@@ -21,6 +22,7 @@ pub mod transform;
 pub mod types;
 
 pub use accelerator::*;
+pub use alpha::*;
 pub use area_light::*;
 pub use camera::*;
 pub use component::*;

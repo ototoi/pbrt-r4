@@ -85,7 +85,7 @@ fn reports_match_pipeline_declarations_for_all_feature_combinations() {
 }
 
 #[test]
-fn original_over_budget_stages_are_explained_without_a_gpu() {
+fn over_budget_stages_are_explained_without_a_gpu() {
     let report =
         BindingReport::for_stages(&canonical_wavefront_bindings(), COMPUTE_STAGES, true, false)
             .unwrap();
@@ -99,30 +99,31 @@ fn original_over_budget_stages_are_explained_without_a_gpu() {
         .iter()
         .find(|stage| stage.stage_id == ComputeStageId::SampleDirectLight)
         .unwrap();
-    assert_eq!(medium.required.storage_buffers_per_shader_stage, 32);
+    assert_eq!(medium.required.storage_buffers_per_shader_stage, 30);
     assert_eq!(medium.required.uniform_buffers_per_shader_stage, 4);
     assert_eq!(
         medium
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        36
+        34
     );
     assert_eq!(
         direct
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        34
+        32
     );
     assert_eq!(
         BindingHeadroom::new(medium.required, &mac_limits()).combined,
-        -7
+        -5
     );
     let text = report.format(Some(&mac_limits()), true);
     assert!(text.contains("scope=wavefront, noise=true, nanovdb=false"));
-    assert!(text.contains("stage=scatter_medium storage=32 uniform=4 as=0 combined=36"));
-    assert!(text.contains("stage=sample_direct_light storage=32 uniform=2 as=0 combined=34"));
-    assert!(text.contains("headroom: storage=-3 uniform=25 combined=-7"));
-    assert!(text.contains("resource=MaterialRoot class=Storage access=Read"));
+    assert!(text.contains("stage=scatter_medium storage=30 uniform=4 as=0 combined=34"));
+    assert!(text.contains("stage=sample_direct_light storage=30 uniform=2 as=0 combined=32"));
+    assert!(text.contains("headroom: storage=-1 uniform=25 combined=-5"));
+    assert!(!text.contains("resource=MaterialRoot class=Storage"));
+    assert!(!text.contains("resource=MaterialNode class=Storage"));
     assert!(text.contains("resource=TextureImageArray class=SampledTexture"));
     assert!(!text.contains("stage=prepare_sample "));
     println!("{text}");
@@ -338,12 +339,12 @@ fn limit_failure_explains_all_over_budget_stages_without_debug_logging() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("requested storage=32, uniform=4, buffers_and_acceleration_structures=36")
+        error.contains("requested storage=30, uniform=4, buffers_and_acceleration_structures=34")
     );
     assert!(error.contains("stage=scatter_medium"));
     assert!(error.contains("stage=sample_direct_light"));
-    assert!(error.contains("resource=MaterialRoot"));
-    assert!(error.contains("combined=-7"));
+    assert!(error.contains("resource=Instance"));
+    assert!(error.contains("combined=-5"));
     assert!(!error.contains("stage=prepare_sample "));
 }
 

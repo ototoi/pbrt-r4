@@ -3,14 +3,15 @@ use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
     loop_subdiv_mesh_from_params, prepare_triangle_meshes, tessellate_shapes,
-    triangle_mesh_from_params, Accelerator, AcceleratorComponent, AreaLight as NodeAreaLight,
-    AreaLightComponent, BilinearMeshShape, Camera, CameraComponent, Component, ConeShape,
-    CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent, HeightFieldShape,
-    HyperboloidShape, Instance, InstanceComponent, Integrator, IntegratorComponent, Light,
-    LightComponent, Material, MaterialComponent, Medium, MediumComponent, MediumInterface, Node,
-    NodeRef, NurbsShape, Output, OutputComponent, ParaboloidShape, Sampler, SamplerComponent,
-    Scene, SceneComponent, Shape, ShapeComponent, SphereShape, Texture, TextureComponent,
-    TextureKind as NodeTextureKind, TextureMapping, TextureNode, Transform, UvMapping,
+    triangle_mesh_from_params, Accelerator, AcceleratorComponent, AlphaMask, AlphaMaskComponent,
+    AreaLight as NodeAreaLight, AreaLightComponent, BilinearMeshShape, Camera, CameraComponent,
+    Component, ConeShape, CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent,
+    HeightFieldShape, HyperboloidShape, Instance, InstanceComponent, Integrator,
+    IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
+    MediumComponent, MediumInterface, Node, NodeRef, NurbsShape, Output, OutputComponent,
+    ParaboloidShape, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
+    SphereShape, Texture, TextureComponent, TextureKind as NodeTextureKind, TextureMapping,
+    TextureNode, Transform, UvMapping,
 };
 // Uncomment together with the diagnostic blocks below when Node IR JSON output is needed.
 // use crate::gpu::node::node_ref_to_json_string;
@@ -540,48 +541,32 @@ impl SceneBuilder {
         }
 
         if let Some(material) = self.resolve_gpu_material(shape, materials, named_materials) {
-            if let Some(names) = shape.base.params.get_textures_ref("alpha") {
-                if names.len() != 1 {
-                    return Err(PbrtError::error(
-                        "Shape alpha texture parameter must name exactly one float texture.",
-                    ));
-                }
-                let name = names.first().ok_or_else(|| {
-                    PbrtError::error("Shape alpha texture parameter has no texture name.")
-                })?;
-                let texture = texture_lookup
-                    .get(&(NodeTextureKind::Float, name.clone()))
-                    .cloned()
-                    .ok_or_else(|| {
-                        PbrtError::error(&format!(
-                            "Couldn't find float texture for shape alpha parameter: {name}"
-                        ))
-                    })?;
-                node.add_component(Component::Material(MaterialComponent {
-                    material: Arc::new(Material {
-                        name: format!("{}:alpha", shape.base.name),
-                        kind: "alphamask".to_string(),
-                        params: ParameterDictionary::default(),
-                        material_attributes: vec![("material".to_string(), material)],
-                        texture_attributes: vec![("alpha".to_string(), texture)],
-                    }),
-                }));
-            } else if alpha < 1.0 {
-                let mut params = ParameterDictionary::default();
-                params.add_float("alpha", alpha);
-                node.add_component(Component::Material(MaterialComponent {
-                    material: Arc::new(Material {
-                        name: format!("{}:alpha", shape.base.name),
-                        kind: "alphamask".to_string(),
-                        params,
-                        material_attributes: vec![("material".to_string(), material)],
-                        texture_attributes: Vec::new(),
-                    }),
-                }));
-            } else {
-                node.add_component(Component::Material(MaterialComponent { material }));
-            }
+            node.add_component(Component::Material(MaterialComponent { material }));
         }
+        let alpha = if let Some(names) = shape.base.params.get_textures_ref("alpha") {
+            if names.len() != 1 {
+                return Err(PbrtError::error(
+                    "Shape alpha texture parameter must name exactly one float texture.",
+                ));
+            }
+            let name = names.first().ok_or_else(|| {
+                PbrtError::error("Shape alpha texture parameter has no texture name.")
+            })?;
+            let texture = texture_lookup
+                .get(&(NodeTextureKind::Float, name.clone()))
+                .cloned()
+                .ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "Couldn't find float texture for shape alpha parameter: {name}"
+                    ))
+                })?;
+            AlphaMask::Texture(texture)
+        } else if alpha < 1.0 {
+            AlphaMask::Constant(alpha as f32)
+        } else {
+            AlphaMask::Opaque
+        };
+        node.add_component(Component::AlphaMask(AlphaMaskComponent { alpha }));
         Ok(Some(Arc::new(RwLock::new(node))))
     }
 

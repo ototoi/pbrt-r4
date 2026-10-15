@@ -8,35 +8,13 @@ fn load_material_kind_raw(index: u32) -> u32 {
 
 fn load_material_kind(index: u32) -> u32 {
     if (material_table.debug_material_kind != 0xffffffffu) {
-        let actual_kind = load_material_kind_raw(index);
-        if (actual_kind != MATERIAL_KIND_ALPHA_MASK) {
-            return material_table.debug_material_kind;
-        }
-        return actual_kind;
+        return material_table.debug_material_kind;
     }
     return load_material_kind_raw(index);
 }
 
 fn load_surface_material_kind(material_root: MaterialRoot) -> u32 {
-    var material_node = material_root.node_offset;
-    for (var depth = 0u; depth < material_root.node_count; depth++) {
-        if (load_material_kind_raw(material_node) != MATERIAL_KIND_ALPHA_MASK) {
-            return load_material_kind(material_node);
-        }
-        if (material_node >= arrayLength(&material_nodes)) {
-            set_render_error();
-            return MATERIAL_KIND_NORMAL;
-        }
-        let child = material_nodes[material_node].child0;
-        if (child == 0xffffffffu || child < material_root.node_offset
-            || child >= material_root.node_offset + material_root.node_count) {
-            set_render_error();
-            return MATERIAL_KIND_NORMAL;
-        }
-        material_node = child;
-    }
-    set_render_error();
-    return MATERIAL_KIND_NORMAL;
+    return load_material_kind(material_root.node_offset);
 }
 
 fn load_material_attribute(material_node: u32, ordinal: u32) -> AttributeRef {
@@ -121,11 +99,6 @@ fn resolve_attributes_eval_work_item(root: u32) -> AttributesEvalWorkItem {
     var current = root;
     for (var depth = 0u; depth < material_table.attributes_eval_stride; depth++) {
         let item = load_attributes_eval_work_item(current);
-        if (item.bxdf_kind == MATERIAL_KIND_ALPHA_MASK) {
-            if (item.child_work_item0 == 0xffffffffu) { set_render_error(); return item; }
-            current = item.child_work_item0;
-            continue;
-        }
         if (item.bxdf_kind != MATERIAL_KIND_MIX) { return item; }
         if (item.selected_child_work_item == 0xffffffffu) { set_render_error(); return item; }
         current = item.selected_child_work_item;

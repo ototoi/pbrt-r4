@@ -131,10 +131,10 @@ fn medium_side_and_alpha_candidates_handle_instance_edge_cases() {
         .split("fn alpha_mask_candidate_accept")
         .nth(1)
         .unwrap();
-    let material_less = accept.find("if (instance.material_root == 0xffffffffu)");
-    let material_validation =
-        accept.find("if (instance.material_root >= arrayLength(&material_roots))");
-    assert!(material_less.is_some() && material_less < material_validation);
+    assert!(accept.contains("if (instance.alpha_kind == ALPHA_MASK_OPAQUE) { return true; }"));
+    assert!(!accept.contains("material_root"));
+    assert!(!alpha.contains("material_roots"));
+    assert!(!alpha.contains("material_nodes"));
 }
 
 #[test]
@@ -779,7 +779,7 @@ fn common_shader() -> String {
 fn area_alpha_uses_sampling_normal_separately_from_intersection_normal() {
     let alpha = include_str!("../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl");
     let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
-    assert!(alpha.contains("instance.material_root, surface.uv, position, sampling_normal,"));
+    assert!(alpha.contains("instance, surface.uv, position, sampling_normal,"));
     assert!(sample
         .contains("light_payload, triangle_selection.primitive, b, light_position, light_normal,"));
 }

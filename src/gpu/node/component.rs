@@ -1,4 +1,5 @@
 use super::accelerator::Accelerator;
+use super::alpha::AlphaMask;
 use super::area_light::AreaLightComponent;
 use super::camera::Camera;
 use super::film::Film;
@@ -62,6 +63,11 @@ pub struct ShapeComponent {
 }
 
 #[derive(Clone)]
+pub struct AlphaMaskComponent {
+    pub alpha: AlphaMask,
+}
+
+#[derive(Clone)]
 pub struct MaterialComponent {
     pub material: Arc<Material>,
 }
@@ -93,6 +99,7 @@ pub enum Component {
     Output(OutputComponent),
     Shape(ShapeComponent),
     Material(MaterialComponent),
+    AlphaMask(AlphaMaskComponent),
     Light(LightComponent),
     Medium(MediumComponent),
     Instance(InstanceComponent),

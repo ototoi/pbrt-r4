@@ -51,7 +51,9 @@ pub struct Instance {
     pub orientation_flags: u32,
     pub medium_inside: u32,
     pub medium_outside: u32,
-    pub padding: [u32; 2],
+    pub alpha_kind: u32,
+    /// Constant f32 bits or float-texture root index, selected by alpha_kind.
+    pub alpha_value: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
 }
