@@ -2,6 +2,7 @@
 
 use pbrt_r4::gpu::webgpu::binding_report::{BindingHeadroom, BindingReport};
 use pbrt_r4::gpu::webgpu::bssrdf::probe_shader_source;
+use pbrt_r4::gpu::webgpu::context::validate_binding_limits;
 use pbrt_r4::gpu::webgpu::shader::{
     compose_source_with_features, required_limits_for_sources_with_nanovdb,
     resolve_resource_bindings, specialize_source,
@@ -320,4 +321,47 @@ fn separate_probe_pipeline_remains_below_wavefront_requirements() {
             assert!(required.bind_groups >= 1);
         }
     }
+}
+
+#[test]
+fn limit_failure_explains_all_over_budget_stages_without_debug_logging() {
+    let report =
+        BindingReport::for_stages(&canonical_wavefront_bindings(), COMPUTE_STAGES, true, false)
+            .unwrap();
+    let limits = wgpu::Limits {
+        max_storage_buffers_per_shader_stage: 29,
+        max_uniform_buffers_per_shader_stage: 29,
+        max_buffers_and_acceleration_structures_per_shader_stage: 29,
+        ..wgpu::Limits::default()
+    };
+    let error = validate_binding_limits(report.device_required(), &limits, Some(&report))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("requested storage=32, uniform=4, buffers_and_acceleration_structures=36")
+    );
+    assert!(error.contains("stage=scatter_medium"));
+    assert!(error.contains("stage=sample_direct_light"));
+    assert!(error.contains("resource=MaterialRoot"));
+    assert!(error.contains("combined=-7"));
+    assert!(!error.contains("stage=prepare_sample "));
+}
+
+#[test]
+fn legacy_context_limit_check_preserves_the_summary_without_a_report() {
+    let required = RequiredLimits {
+        storage_buffers_per_shader_stage: 30,
+        ..RequiredLimits::default()
+    };
+    let limits = wgpu::Limits {
+        max_storage_buffers_per_shader_stage: 29,
+        ..wgpu::Limits::default()
+    };
+    let error = validate_binding_limits(required, &limits, None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("requested storage=30"));
+    assert!(error.contains("available storage=29"));
+    assert!(!error.contains("stage="));
+    assert!(validate_binding_limits(RequiredLimits::default(), &limits, None).is_ok());
 }

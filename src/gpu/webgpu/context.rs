@@ -140,7 +140,9 @@ impl Context {
     }
 }
 
-fn validate_binding_limits(
+/// Validate buffer requirements against adapter limits without creating a device.
+/// Includes over-budget stage details when a binding report is provided.
+pub fn validate_binding_limits(
     required: RequiredLimits,
     available: &wgpu::Limits,
     report: Option<&BindingReport>,
@@ -160,53 +162,4 @@ fn validate_binding_limits(
         available.max_bind_groups,
         report.map(|report| format!("\n{}", report.format(Some(available), true))).unwrap_or_default(),
     )))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::stage::COMPUTE_STAGES;
-    use super::super::stages::canonical_wavefront_bindings;
-    use super::*;
-
-    #[test]
-    fn limit_failure_explains_all_over_budget_stages_without_debug_logging() {
-        let report =
-            BindingReport::for_stages(&canonical_wavefront_bindings(), COMPUTE_STAGES, true, false)
-                .unwrap();
-        let limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: 29,
-            max_uniform_buffers_per_shader_stage: 29,
-            max_buffers_and_acceleration_structures_per_shader_stage: 29,
-            ..wgpu::Limits::default()
-        };
-        let error = validate_binding_limits(report.device_required(), &limits, Some(&report))
-            .unwrap_err()
-            .to_string();
-        assert!(error
-            .contains("requested storage=32, uniform=4, buffers_and_acceleration_structures=36"));
-        assert!(error.contains("stage=scatter_medium"));
-        assert!(error.contains("stage=sample_direct_light"));
-        assert!(error.contains("resource=MaterialRoot"));
-        assert!(error.contains("combined=-7"));
-        assert!(!error.contains("stage=prepare_sample "));
-    }
-
-    #[test]
-    fn legacy_context_limit_check_preserves_the_summary_without_a_report() {
-        let required = RequiredLimits {
-            storage_buffers_per_shader_stage: 30,
-            ..RequiredLimits::default()
-        };
-        let limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: 29,
-            ..wgpu::Limits::default()
-        };
-        let error = validate_binding_limits(required, &limits, None)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("requested storage=30"));
-        assert!(error.contains("available storage=29"));
-        assert!(!error.contains("stage="));
-        assert!(validate_binding_limits(RequiredLimits::default(), &limits, None).is_ok());
-    }
 }
