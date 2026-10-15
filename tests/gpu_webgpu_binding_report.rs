@@ -111,7 +111,7 @@ fn over_budget_stages_are_explained_without_a_gpu() {
         direct
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        32
+        30
     );
     assert_eq!(
         BindingHeadroom::new(medium.required, &mac_limits()).combined,
@@ -120,7 +120,7 @@ fn over_budget_stages_are_explained_without_a_gpu() {
     let text = report.format(Some(&mac_limits()), true);
     assert!(text.contains("scope=wavefront, noise=true, nanovdb=false"));
     assert!(text.contains("stage=scatter_medium storage=30 uniform=4 as=0 combined=34"));
-    assert!(text.contains("stage=sample_direct_light storage=30 uniform=2 as=0 combined=32"));
+    assert!(text.contains("stage=sample_direct_light storage=29 uniform=1 as=0 combined=30"));
     assert!(text.contains("headroom: storage=-1 uniform=25 combined=-5"));
     assert!(!text.contains("resource=MaterialRoot class=Storage"));
     assert!(!text.contains("resource=MaterialNode class=Storage"));

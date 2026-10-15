@@ -46,6 +46,10 @@ fn classify_surface_scatter(@builtin(global_invocation_id) global_id: vec3<u32>)
         return;
     }
     if (supports_direct && ray.depth < viewport.max_depth && light_table.light_count != 0u) {
+        let origin = surface_direct_light_origin(surface, -ray.direction.xyz, root_kind);
+        surfaces[pixel_index].light_sample_origin_x = origin.x;
+        surfaces[pixel_index].light_sample_origin_y = origin.y;
+        surfaces[pixel_index].light_sample_origin_z = origin.z;
         append_direct_eval(ray_index);
     }
 }

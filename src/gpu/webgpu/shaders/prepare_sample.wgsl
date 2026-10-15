@@ -31,4 +31,7 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
     store_ray_samples(pixel_index, RaySamples(vec4<f32>(0.0), vec4<f32>(0.0)));
     surfaces[pixel_index].hit = 0u;
     surfaces[pixel_index].flags = 0u;
+    surfaces[pixel_index].light_sample_origin_x = 0.0;
+    surfaces[pixel_index].light_sample_origin_y = 0.0;
+    surfaces[pixel_index].light_sample_origin_z = 0.0;
 }

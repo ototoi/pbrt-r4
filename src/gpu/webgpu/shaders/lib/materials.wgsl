@@ -1,3 +1,19 @@
+// Prepare surface light-sampling context where the resolved BxDF kind is known.
+// Preserve the existing r4 kind-based offset policy; this does not read tables.
+fn surface_direct_light_origin(surface: SurfaceWorkItem, wo: vec3<f32>, material_kind: u32) -> vec3<f32> {
+    let offset_direction = select(wo, -wo, material_kind == MATERIAL_KIND_DIFFUSE_TRANSMISSION);
+    let light_sample_origin = select(
+        offset_ray_origin(
+            surface.position.xyz, surface.position_error.xyz,
+            surface.geometric_normal.xyz, offset_direction,
+        ),
+        surface.position.xyz,
+        (material_kind == MATERIAL_KIND_DIELECTRIC || material_kind == MATERIAL_KIND_SUBSURFACE)
+            && (surface.flags & SURFACE_FLAG_SUBSURFACE_EXIT) == 0u,
+    );
+    return light_sample_origin;
+}
+
 fn load_material_kind_raw(index: u32) -> u32 {
     if (index >= arrayLength(&material_nodes) || index >= material_table.material_node_count) {
         set_render_error();

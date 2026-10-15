@@ -250,8 +250,8 @@ pub struct SurfaceWorkItem {
     pub material_root: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,
-    pub padding: u32,
-    pub tail_padding: [u32; 2],
+    /// Prepared origin for surface direct-light sampling; valid for queued items.
+    pub light_sample_origin: [f32; 3],
 }
 
 #[repr(C)]

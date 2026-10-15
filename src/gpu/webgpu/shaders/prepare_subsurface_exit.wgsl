@@ -24,6 +24,12 @@ fn prepare_subsurface_exit(@builtin(global_invocation_id) id: vec3<u32>) {
     surface.instance_custom_data = result.instance_index;
     surface.primitive_index = result.primitive_index;
     surface.flags = SURFACE_FLAG_SUBSURFACE_EXIT;
+    if (light_table.light_count != 0u) {
+        let origin = surface_direct_light_origin(surface, -ray.direction.xyz, MATERIAL_KIND_SUBSURFACE);
+        surface.light_sample_origin_x = origin.x;
+        surface.light_sample_origin_y = origin.y;
+        surface.light_sample_origin_z = origin.z;
+    }
     surfaces[work.pixel_index] = surface;
     direct_light_samples[work.pixel_index].valid = 0u;
     if (light_table.light_count != 0u) { append_direct_eval(work.ray_index); }
