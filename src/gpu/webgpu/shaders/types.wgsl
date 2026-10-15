@@ -431,9 +431,9 @@ struct SurfaceWorkItem {
     material_root: u32,
     flags: u32,
     attributes_eval_work_item: u32,
-    _padding: u32,
-    _tail_padding0: u32,
-    _tail_padding1: u32,
+    light_sample_origin_x: f32,
+    light_sample_origin_y: f32,
+    light_sample_origin_z: f32,
 };
 
 struct LightRecord {
