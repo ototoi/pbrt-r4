@@ -1,8 +1,7 @@
 use bytemuck::{cast_slice, Zeroable};
 use wgpu::util::DeviceExt;
 
-use super::abi::{BSSRDFMaterialRecord, BSSRDFTableRecord};
-use super::material::MaterialKind;
+use super::abi::{BSSRDFMaterialRecord, BSSRDFTableRecord, ALPHA_MASK_OPAQUE};
 use super::scene::Scene;
 use crate::gpu::flat::{self, TabulatedBSSRDFTable, BSSRDF};
 use crate::util::error::PbrtError;
@@ -193,9 +192,9 @@ impl BSSRDFProbePipeline {
         error: &wgpu::Buffer,
     ) -> Result<wgpu::BindGroup, PbrtError> {
         if scene
-            .material_nodes
+            .instances
             .iter()
-            .any(|node| node.kind == MaterialKind::AlphaMask.tag())
+            .any(|instance| instance.alpha_kind != ALPHA_MASK_OPAQUE)
         {
             return Err(PbrtError::error(
                 "Subsurface probe alpha-mask traversal is not implemented yet.",

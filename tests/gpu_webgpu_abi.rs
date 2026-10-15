@@ -43,6 +43,9 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Geometry>(), 32);
     assert_eq!(std::mem::offset_of!(Geometry, intersection_normal_kind), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 160);
+    assert_eq!(std::mem::offset_of!(Instance, alpha_kind), 24);
+    assert_eq!(std::mem::offset_of!(Instance, alpha_value), 28);
+    assert_eq!(std::mem::offset_of!(Instance, world_from_object), 32);
     assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
     assert_eq!(std::mem::offset_of!(MediumRecord, volume_index), 20);
     assert_eq!(std::mem::size_of::<VolumeMediumRecord>(), 448);

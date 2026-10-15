@@ -16,8 +16,6 @@ pub fn build(
     geometries: &[Geometry],
     instances: &[Instance],
     flat_instances: &[flat::Instance],
-    material_roots: &[flat::MaterialRoot],
-    material_nodes: &[flat::MaterialNode],
     lights: &[flat::Light],
     light_sampling_models: &[flat::LightSamplingModel],
 ) -> Result<Acceleration, PbrtError> {
@@ -33,20 +31,7 @@ pub fn build(
     }
     let mut geometry_has_alpha_mask = vec![false; geometries.len()];
     for (index, instance) in flat_instances.iter().enumerate() {
-        if instance.material_root == flat::INVALID_INDEX {
-            continue;
-        }
-        let layout = material_roots
-            .get(instance.material_root as usize)
-            .ok_or_else(|| {
-                PbrtError::error(&format!(
-                    "Flat instance {index} references an invalid material layout."
-                ))
-            })?;
-        let root = material_nodes
-            .get(layout.node_offset as usize)
-            .ok_or_else(|| PbrtError::error("Flat material root node is missing."))?;
-        if root.kind == "alphamask" {
+        if instance.alpha != flat::AlphaMask::Opaque {
             let has_mask = geometry_has_alpha_mask
                 .get_mut(instance.geometry as usize)
                 .ok_or_else(|| {

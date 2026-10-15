@@ -43,7 +43,9 @@ const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
 const MATERIAL_KIND_MEASURED: u32 = 10u;
 const MATERIAL_KIND_DIFFUSE_TRANSMISSION: u32 = 13u;
-const MATERIAL_KIND_ALPHA_MASK: u32 = 14u;
+const ALPHA_MASK_OPAQUE: u32 = 0u;
+const ALPHA_MASK_CONSTANT: u32 = 1u;
+const ALPHA_MASK_TEXTURE: u32 = 2u;
 const AREA_LIGHT_FLAG_TWO_SIDED: u32 = 1u;
 const AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY: u32 = 2u;
 const INSTANCE_ORIENTATION_FLAG_REVERSED: u32 = 1u;
@@ -302,8 +304,8 @@ struct Instance {
     orientation_flags: u32,
     medium_inside: u32,
     medium_outside: u32,
-    _padding0: u32,
-    _padding1: u32,
+    alpha_kind: u32,
+    alpha_value: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
 };

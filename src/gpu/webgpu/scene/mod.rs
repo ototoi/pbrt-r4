@@ -511,8 +511,6 @@ impl Scene {
             &geometries,
             &instances,
             &flat.instances,
-            &flat.materials.roots,
-            &flat.materials.nodes,
             &flat.lights.lights,
             &flat.lights.sampling_models,
         )?;

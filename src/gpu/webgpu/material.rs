@@ -60,11 +60,16 @@ impl MaterialTable {
             .materials
             .roots
             .iter()
-            .map(|layout| MaterialRoot {
-                node_offset: layout.node_offset,
-                node_count: layout.node_count,
+            .map(|layout| {
+                if nodes.get(layout.node_offset as usize).is_none() {
+                    return Err(PbrtError::error("Flat material root node is missing."));
+                }
+                Ok(MaterialRoot {
+                    node_offset: layout.node_offset,
+                    node_count: layout.node_count,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, PbrtError>>()?;
         Ok(Self {
             roots,
             nodes,
@@ -74,21 +79,6 @@ impl MaterialTable {
 }
 
 fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), PbrtError> {
-    if material.kind == "alphamask" {
-        if material.attributes.len() != 1
-            || material.attributes[0].name != "alpha"
-            || !matches!(
-                material.attributes[0].kind,
-                flat::AttributeKind::Scalar | flat::AttributeKind::Texture
-            )
-        {
-            return Err(PbrtError::error(&format!(
-                "Material \"{}\" kind \"alphamask\" must have one scalar or texture alpha attribute.",
-                material.source_kind
-            )));
-        }
-        return Ok(());
-    }
     let expected = match material.kind.as_str() {
         "diffuse" => &[(0, flat::AttributeKind::Spectrum)][..],
         "dielectric" => &[
@@ -218,7 +208,6 @@ pub enum MaterialKind {
     CoatedDiffuse,
     CoatedConductor,
     Measured,
-    AlphaMask,
     Subsurface,
 }
 
@@ -238,7 +227,6 @@ impl MaterialKind {
             Self::CoatedDiffuse => 8,
             Self::CoatedConductor => 9,
             Self::Measured => 10,
-            Self::AlphaMask => 14,
             Self::Subsurface => 15,
         }
     }
@@ -258,7 +246,6 @@ impl MaterialKind {
             "coateddiffuse" => Ok(Self::CoatedDiffuse),
             "coatedconductor" => Ok(Self::CoatedConductor),
             "measured" => Ok(Self::Measured),
-            "alphamask" => Ok(Self::AlphaMask),
             "subsurface" => Ok(Self::Subsurface),
             other => Err(PbrtError::error(&format!(
                 "Unsupported initial WebGPU material kind: {other}."

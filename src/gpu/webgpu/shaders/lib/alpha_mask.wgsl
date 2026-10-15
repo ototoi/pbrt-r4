@@ -15,38 +15,18 @@ fn alpha_mask_point_hash(position: vec3<f32>) -> f32 {
     return f32(hash.x) * (1.0 / 4294967296.0);
 }
 
-fn alpha_mask_value(material_root_index: u32, uv: vec2<f32>, position: vec3<f32>, normal: vec3<f32>) -> f32 {
-    if (material_root_index >= arrayLength(&material_roots)) {
-        set_render_error();
-        return 0.0;
-    }
-    let material_root = material_roots[material_root_index];
-    if (material_root.node_count == 0u
-        || material_root.node_offset >= arrayLength(&material_nodes)) {
-        set_render_error();
-        return 0.0;
-    }
-    let material_node = material_root.node_offset;
-    if (load_material_kind_raw(material_node) != MATERIAL_KIND_ALPHA_MASK) {
-        return 1.0;
-    }
-    let alpha_ref = load_material_attribute(material_node, 0u);
-    if (alpha_ref.kind == 0u) {
-        if (alpha_ref.index >= arrayLength(&scalar_attributes)) {
-            set_render_error();
-            return 0.0;
-        }
-        return scalar_attributes[alpha_ref.index];
-    }
-    if (alpha_ref.kind == 2u) {
-        if (alpha_ref.index >= arrayLength(&texture_roots)) {
+fn alpha_mask_value(instance: Instance, uv: vec2<f32>, position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if (instance.alpha_kind == ALPHA_MASK_OPAQUE) { return 1.0; }
+    if (instance.alpha_kind == ALPHA_MASK_CONSTANT) { return bitcast<f32>(instance.alpha_value); }
+    if (instance.alpha_kind == ALPHA_MASK_TEXTURE) {
+        if (instance.alpha_value >= arrayLength(&texture_roots)) {
             set_render_error();
             return 0.0;
         }
         material_texture_uv = uv;
         material_texture_position = position;
         material_texture_normal = normal;
-        return sample_texture_program(texture_roots[alpha_ref.index], uv).x;
+        return sample_texture_program(texture_roots[instance.alpha_value], uv).x;
     }
     set_render_error();
     return 0.0;
@@ -71,7 +51,7 @@ fn alpha_area_sample_accept(
     if (surface.valid == 0u) { return false; }
     let instance = instances[instance_index];
     let alpha = alpha_mask_value(
-        instance.material_root, surface.uv, position, sampling_normal,
+        instance, surface.uv, position, sampling_normal,
     );
     return alpha_mask_point_accept(alpha, position);
 }
@@ -82,23 +62,7 @@ fn alpha_mask_candidate_accept(origin: vec3<f32>, direction: vec3<f32>, hit: Ray
         return false;
     }
     let instance = instances[hit.instance_custom_data];
-    if (instance.material_root == 0xffffffffu) {
-        return true;
-    }
-    if (instance.material_root >= arrayLength(&material_roots)) {
-        set_render_error();
-        return false;
-    }
-    let material_root = material_roots[instance.material_root];
-    if (material_root.node_count == 0u
-        || material_root.node_offset >= arrayLength(&material_nodes)) {
-        set_render_error();
-        return false;
-    }
-    let root_node_index = material_root.node_offset;
-    if (load_material_kind_raw(root_node_index) != MATERIAL_KIND_ALPHA_MASK) {
-        return true;
-    }
+    if (instance.alpha_kind == ALPHA_MASK_OPAQUE) { return true; }
     let b1 = hit.barycentrics.x;
     let b2 = hit.barycentrics.y;
     let surface = reconstruct_triangle_surface(
@@ -106,7 +70,7 @@ fn alpha_mask_candidate_accept(origin: vec3<f32>, direction: vec3<f32>, hit: Ray
     );
     if (surface.valid == 0u) { return false; }
     let alpha = alpha_mask_value(
-        instance.material_root, surface.uv, surface.position, surface.geometric_normal,
+        instance, surface.uv, surface.position, surface.geometric_normal,
     );
     if (alpha >= 1.0) { return true; }
     if (alpha <= 0.0) { return false; }

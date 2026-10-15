@@ -16,7 +16,7 @@ fn handle_emissive_intersection(@builtin(global_invocation_id) global_id: vec3<u
     let area_light = load_light_payload(light_handle);
     if (!area_light_is_zero_alpha_sample_only(area_light)) {
         let alpha = alpha_mask_value(
-            instance.material_root,
+            instance,
             surface.uv,
             surface.position.xyz,
             surface.normal.xyz,
