@@ -23,10 +23,12 @@ fn sample_subsurface_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     result.end = vec4<f32>(segment.end, 1.0);
     var origin = segment.start;
     var seed = bssrdf_segment_seed(segment);
+    // Naga emits a default-value assignment for loop-local variables, but
+    // Metal ray queries are not assignable. Reinitialize this query below.
+    var query: ray_query;
     loop {
         let direction = segment.end - origin;
         if (all(direction == vec3<f32>(0.0))) { break; }
-        var query: ray_query;
         // SpawnRayTo uses a segment parameterization and excludes the endpoint.
         rayQueryInitialize(&query, tlas, RayDesc(0u, 0xffu, 0.0, 1.0 - 0.0001, origin, direction));
         while (rayQueryProceed(&query)) {}
