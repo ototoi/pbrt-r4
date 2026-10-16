@@ -14,8 +14,14 @@ const INTERSECT_SHADOW_SHADER: &str =
 const SAMPLE_MEDIUM_SHADER: &str = include_str!("../src/gpu/webgpu/shaders/sample_medium.wgsl");
 const CLASSIFY_SURFACE_SCATTER_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/classify_surface_scatter.wgsl");
-const SAMPLE_DIRECT_LIGHT_SHADER: &str =
-    include_str!("../src/gpu/webgpu/shaders/sample_direct_light.wgsl");
+const SELECT_SURFACE_LIGHT_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/select_surface_light.wgsl");
+const SAMPLE_AREA_LIGHT_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_area_light.wgsl");
+const SAMPLE_IMAGE_INFINITE_LIGHT_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_image_infinite_light.wgsl");
+const SAMPLE_OTHER_LIGHT_SHADER: &str =
+    include_str!("../src/gpu/webgpu/shaders/sample_other_light.wgsl");
 const EVALUATE_ATTRIBUTES_SHADER: &str =
     include_str!("../src/gpu/webgpu/shaders/evaluate_attributes.wgsl");
 const EVALUATE_TEXTURES_SHADER: &str =
@@ -390,27 +396,27 @@ fn light_sampling_uses_record_models_and_separate_infinite_probability() {
 #[test]
 fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     // Light selection and its MIS weight are computed once in
-    // sample_direct_light and handed to evaluate_materials as
+    // typed light samplers and handed to evaluate_materials as
     // DirectLightSample.use_mis.
-    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
-    assert!(sample.contains("fn sample_uniform_sphere("));
-    assert!(sample.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
-    assert!(sample.contains("is_infinite_light_kind(light_kind)"));
-    assert!(sample.contains(
-        "let use_mis = (light_kind == LIGHT_KIND_AREA && !area_light_is_zero_alpha_sample_only(light_payload))"
-    ));
-    assert!(sample.contains("|| is_infinite_light_kind(light_kind);"));
-    assert!(sample.contains("piecewise_constant_2d_sample("));
-    assert!(sample.contains("equal_area_square_to_sphere("));
-    assert!(sample.contains("load_light_image_spectrum_uv("));
-    assert!(sample.contains("image_sample.pdf / (4.0 * PI * jacobian)"));
-    assert!(sample.contains("wi = normalize(transformed)"));
-    assert!(sample.contains("image_infinite_direction_jacobian(image, w_light)"));
-    assert!(sample.contains("model.flags >> 28u"));
-    assert!(sample.contains(
+    let image = compose_source(SAMPLE_IMAGE_INFINITE_LIGHT_SHADER);
+    let other = compose_source(SAMPLE_OTHER_LIGHT_SHADER);
+    assert!(other.contains("fn sample_uniform_sphere("));
+    assert!(other.contains("sampled_light_pdf = sampled_light_pdf / (4.0 * PI)"));
+    assert!(image.contains("piecewise_constant_2d_sample("));
+    assert!(image.contains("equal_area_square_to_sphere("));
+    assert!(image.contains("load_light_image_spectrum_uv("));
+    assert!(image.contains("image_sample.pdf / (4.0 * PI * jacobian)"));
+    assert!(image.contains("wi = normalize(transformed)"));
+    assert!(image.contains("image_infinite_direction_jacobian(image, w_light)"));
+    assert!(image.contains(
         "rgb_to_unbounded_spectrum4(max(rgb, vec3<f32>(0.0)), lambda, color_space) * illuminant"
     ));
-    assert!(!sample.contains("atan2(d.y, d.x)"));
+    assert!(image.contains("portal_sample.pdf / direction.duv_dw"));
+    assert!(!image.contains("atan2(d.y, d.x)"));
+    assert!(other.contains("let use_mis = light_kind == LIGHT_KIND_UNIFORM_INFINITE;"));
+    assert!(
+        compose_source(SAMPLE_AREA_LIGHT_SHADER).contains("area_light_is_zero_alpha_sample_only")
+    );
 
     // MIS weighting and the infinite-light shadow-direction check are shared
     // by every non-specular scatter kind through add_direct_lighting.
@@ -430,6 +436,7 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
     assert!(escaped.contains("radiance += light_radiance / denom;"));
     assert!(!escaped.contains("mis_weight"));
 
+    let sample = compose_source(SAMPLE_OTHER_LIGHT_SHADER);
     for source in [sample, escaped] {
         let module = wgpu::naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|error| panic!("{}", error.emit_to_string(&source)));
@@ -444,7 +451,7 @@ fn image_infinite_lights_use_importance_sampling_and_environment_misses() {
 
 #[test]
 fn hard_edged_spot_light_uses_a_defined_step() {
-    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    let sample = compose_source(SAMPLE_OTHER_LIGHT_SHADER);
     assert!(sample.contains("fn spot_falloff("));
     assert!(sample.contains("if (falloff_start == falloff_end)"));
     assert!(sample.contains("dot(model.world_to_light0.xyz, world_direction)"));
@@ -510,11 +517,12 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
 
 #[test]
 fn wavefront_stages_use_persisted_sample_dimensions() {
-    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
-    assert!(sample.contains("load_ray_samples(pixel_index)"));
-    assert!(sample.contains("light_sampler_sample(samples.direct.x, position, normal)"));
-    assert!(sample.contains("let finite_selection = bvh_light_sampler_sample("));
-    assert!(sample.contains("cos_sub_clamped("));
+    let selection = compose_source(SELECT_SURFACE_LIGHT_SHADER);
+    let sample = compose_source(SAMPLE_AREA_LIGHT_SHADER);
+    assert!(selection.contains("select_and_enqueue_light_sample("));
+    assert!(common_shader().contains("light_sampler_sample(samples.direct.x, position, normal)"));
+    assert!(selection.contains("let finite_selection = bvh_light_sampler_sample("));
+    assert!(selection.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_INTERSECTION_SHADER);
     assert!(emissive.contains("light_sampler_pmf("));
     assert!(sample.contains("select_area_triangle(light_payload, samples.direct.y)"));
@@ -523,7 +531,7 @@ fn wavefront_stages_use_persisted_sample_dimensions() {
     assert!(!sample.contains("sample_spherical_triangle("));
     assert!(!sample.contains("MIN_SPHERICAL_SAMPLE_AREA"));
     assert!(!sample.contains("MAX_SPHERICAL_SAMPLE_AREA"));
-    assert!(!SAMPLE_DIRECT_LIGHT_SHADER.contains("random01("));
+    assert!(!SAMPLE_AREA_LIGHT_SHADER.contains("random01("));
 
     // The direct-lighting pdf/MIS bookkeeping is shared by every scatter
     // kind through add_direct_lighting.
@@ -547,7 +555,7 @@ fn emissive_hit_resolves_the_triangle_light_handle() {
 
 #[test]
 fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
-    let source = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    let source = compose_source(SAMPLE_AREA_LIGHT_SHADER);
     assert!(source.contains(
         "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
     ));
@@ -683,11 +691,11 @@ fn direct_material_shader_uses_layered_f_and_pdf_estimators() {
     assert!(layered.contains("fn layered_bxdf_f("));
     assert!(!layered.contains("fn sample_texture_program"));
     // Area-light alpha masking happens during light selection in
-    // sample_direct_light, as pbrt-v4 DiffuseAreaLight::SampleLi does; the
+    // sample_area_light, as pbrt-v4 DiffuseAreaLight::SampleLi does; the
     // BSDF evaluation stage does not need the texture VM.
     assert!(!source.contains("alpha_area_sample_accept("));
     assert!(!source.contains("fn sample_texture_program"));
-    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    let sample = compose_source(SAMPLE_AREA_LIGHT_SHADER);
     assert!(sample.contains("alpha_area_sample_accept("));
     assert!(sample.contains("fn sample_texture_program"));
 }
@@ -778,7 +786,7 @@ fn common_shader() -> String {
 #[test]
 fn area_alpha_uses_sampling_normal_separately_from_intersection_normal() {
     let alpha = include_str!("../src/gpu/webgpu/shaders/lib/alpha_mask.wgsl");
-    let sample = compose_source(SAMPLE_DIRECT_LIGHT_SHADER);
+    let sample = compose_source(SAMPLE_AREA_LIGHT_SHADER);
     assert!(alpha.contains("instance, surface.uv, position, sampling_normal,"));
     assert!(sample
         .contains("light_payload, triangle_selection.primitive, b, light_position, light_normal,"));

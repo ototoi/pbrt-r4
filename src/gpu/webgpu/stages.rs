@@ -87,6 +87,7 @@ pub enum ResourceId {
     BSSRDFValues,
     BSSRDFWork,
     BSSRDFResults,
+    LightSampleWork,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,7 +142,7 @@ pub struct RequiredLimits {
 /// and the stage-specific layouts. Pipeline construction must consume this list
 /// instead of duplicating binding numbers.
 pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
-    let mut bindings = Vec::with_capacity(45);
+    let mut bindings = Vec::with_capacity(79);
     let mut push = |binding, resource, class, access| {
         bindings.push(BindingSpec {
             group: 0,
@@ -161,6 +162,12 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     push(
         71,
         ResourceId::MediumScatterQueue,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        80,
+        ResourceId::LightSampleWork,
         BindingClass::Storage,
         Access::ReadWrite,
     );

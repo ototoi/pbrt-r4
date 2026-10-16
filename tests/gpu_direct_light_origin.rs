@@ -72,10 +72,14 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
             let report =
                 BindingReport::for_stages(&registry, COMPUTE_STAGES, noise, nanovdb).unwrap();
             for (id, storage, uniform) in [
-                (ComputeStageId::SampleDirectLight, 29, 1),
+                (ComputeStageId::SelectSurfaceLight, 16, 1),
+                (ComputeStageId::SelectMediumLight, 15, 1),
+                (ComputeStageId::SampleAreaLight, 20, 0),
+                (ComputeStageId::SampleImageInfiniteLight, 22, 0),
+                (ComputeStageId::SampleOtherLight, 17, 0),
                 (ComputeStageId::ClassifySurfaceScatter, 19, 3),
                 (ComputeStageId::PrepareSubsurfaceExit, 14, 1),
-                (ComputeStageId::ScatterMedium, 30, 4),
+                (ComputeStageId::ScatterMedium, 14, 3),
             ] {
                 let stage = report
                     .stages
@@ -90,7 +94,9 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
                     stage.required.uniform_buffers_per_shader_stage, uniform,
                     "{id:?}"
                 );
-                if id == ComputeStageId::SampleDirectLight {
+                if id == ComputeStageId::SelectSurfaceLight
+                    || id == ComputeStageId::SelectMediumLight
+                {
                     assert!(stage.bindings.iter().all(|b| !matches!(
                         b.resource,
                         ResourceId::MaterialTable | ResourceId::AttributesEvalWorkItems
@@ -259,6 +265,10 @@ impl GpuFixture {
     }
 
     fn run(&self, id: ComputeStageId, groups: u32) {
+        assert_eq!(self.dispatch(id, groups), 0);
+    }
+
+    fn dispatch(&self, id: ComputeStageId, groups: u32) -> u32 {
         let stage = self.pipeline.stage(id);
         let views = [&self.image];
         let samplers = [&self.sampler];
@@ -286,7 +296,16 @@ impl GpuFixture {
                             ResourceId::NoiseTable => {
                                 wgpu::BindingResource::TextureView(&self.noise)
                             }
-                            _ => self.buffers[&b.resource].as_entire_binding(),
+                            ResourceId::SamplerTable => {
+                                wgpu::BindingResource::TextureView(&self.noise)
+                            }
+                            _ => self
+                                .buffers
+                                .get(&b.resource)
+                                .unwrap_or_else(|| {
+                                    panic!("missing fixture buffer for {:?}", b.resource)
+                                })
+                                .as_entire_binding(),
                         },
                     })
                     .collect::<Vec<_>>();
@@ -313,10 +332,7 @@ impl GpuFixture {
         }
         self.context.queue.submit(Some(encoder.finish()));
         self.context.wait().unwrap();
-        assert_eq!(
-            self.read::<RenderError>(ResourceId::RenderError, 1)[0].value,
-            0
-        );
+        self.read::<RenderError>(ResourceId::RenderError, 1)[0].value
     }
 
     fn assert_point_sample(&self, pixel: usize, origin: [f32; 3]) {
@@ -334,6 +350,174 @@ impl GpuFixture {
             );
         }
         assert!(sample.radiance.iter().all(|v| v.is_finite() && *v > 0.0));
+    }
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn typed_light_queue_overflow_preserves_regions_and_dispatch_is_clamped() {
+    let gpu = GpuFixture::new();
+    let sentinel = LightSampleWorkItem {
+        ray_index: 0xdead_beef,
+        source_kind: 0xdead_beef,
+        light_index: 0xdead_beef,
+        selection_pmf: f32::NAN,
+    };
+    gpu.write(ResourceId::LightSampleWork, &[sentinel; 6]);
+    gpu.write(
+        ResourceId::CurrentRay,
+        &[
+            RayWorkItem {
+                pixel_index: 0,
+                ..Zeroable::zeroed()
+            },
+            RayWorkItem {
+                pixel_index: 1,
+                ..Zeroable::zeroed()
+            },
+        ],
+    );
+    gpu.write(ResourceId::DirectEvalQueue, &[0u32, 1]);
+    gpu.write(
+        ResourceId::PixelSampleState,
+        &[
+            PixelSampleState {
+                direct: [0.1, 0.2, 0.3, 0.0],
+                ..Zeroable::zeroed()
+            },
+            PixelSampleState {
+                direct: [0.9, 0.2, 0.3, 0.0],
+                ..Zeroable::zeroed()
+            },
+        ],
+    );
+    gpu.write(
+        ResourceId::QueueCounters,
+        &[QueueCounters {
+            direct: state(2, 2),
+            sample_area_light: state(0, 1),
+            sample_image_infinite_light: state(0, 1),
+            sample_other_light: state(0, 1),
+            ..Zeroable::zeroed()
+        }],
+    );
+    assert_eq!(gpu.dispatch(ComputeStageId::SelectSurfaceLight, 1), 1);
+    let counters = gpu.read::<QueueCounters>(ResourceId::QueueCounters, 1)[0];
+    assert_eq!(counters.sample_other_light.count, 2);
+    assert_eq!(counters.sample_other_light.overflow, 1);
+    let work = gpu.read::<LightSampleWorkItem>(ResourceId::LightSampleWork, 6);
+    for index in [0, 1, 3, 4, 5] {
+        assert_eq!(work[index].ray_index, sentinel.ray_index);
+        assert_eq!(work[index].source_kind, sentinel.source_kind);
+        assert_eq!(work[index].light_index, sentinel.light_index);
+        assert_eq!(
+            work[index].selection_pmf.to_bits(),
+            sentinel.selection_pmf.to_bits()
+        );
+    }
+    assert_eq!(work[2].ray_index, 0);
+    assert_eq!(work[2].source_kind, 0);
+
+    for (count, expected) in [
+        (0, [0, 1, 1]),
+        (1, [1, 1, 1]),
+        (64, [1, 1, 1]),
+        (65, [2, 1, 1]),
+        (4_194_241, [65_535, 2, 1]),
+    ] {
+        gpu.write(
+            ResourceId::QueueCounters,
+            &[QueueCounters {
+                sample_other_light: state(count, count),
+                ..Zeroable::zeroed()
+            }],
+        );
+        assert_eq!(gpu.dispatch(ComputeStageId::PrepareQueueDispatch, 1), 1);
+        let args = gpu.read::<DispatchIndirectArgs>(ResourceId::QueueDispatchArgs, 18);
+        assert_eq!(
+            [
+                args[QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT as usize].x,
+                args[QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT as usize].y,
+                args[QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT as usize].z
+            ],
+            expected,
+            "count={count}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn production_selector_routes_every_supported_light_family() {
+    let gpu = GpuFixture::new();
+    let kinds = [1, 5, 6, 0, 2, 3, 4]; // area, image, portal, point, spot, distant, uniform infinite
+    let count = kinds.len() as u32;
+    gpu.write(
+        ResourceId::LightSamplingParams,
+        &[LightTableUniform {
+            light_count: count,
+            light_sampler_kind: LIGHT_SAMPLER_KIND_UNIFORM,
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.write(
+        ResourceId::LightRecord,
+        &kinds
+            .iter()
+            .map(|&kind| LightRecord {
+                kind,
+                ..Zeroable::zeroed()
+            })
+            .collect::<Vec<_>>(),
+    );
+    gpu.write(
+        ResourceId::CurrentRay,
+        &(0..count)
+            .map(|pixel_index| RayWorkItem {
+                pixel_index,
+                ..Zeroable::zeroed()
+            })
+            .collect::<Vec<_>>(),
+    );
+    gpu.write(ResourceId::DirectEvalQueue, &(0..count).collect::<Vec<_>>());
+    gpu.write(
+        ResourceId::Surface,
+        &vec![SurfaceWorkItem::zeroed(); count as usize],
+    );
+    gpu.write(
+        ResourceId::PixelSampleState,
+        &(0..count)
+            .map(|index| PixelSampleState {
+                direct: [((index as f32) + 0.5) / count as f32, 0.25, 0.75, 0.0],
+                ..Zeroable::zeroed()
+            })
+            .collect::<Vec<_>>(),
+    );
+    gpu.write(
+        ResourceId::QueueCounters,
+        &[QueueCounters {
+            direct: state(count, count),
+            sample_area_light: state(0, count),
+            sample_image_infinite_light: state(0, count),
+            sample_other_light: state(0, count),
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.run(ComputeStageId::SelectSurfaceLight, 1);
+    let counters = gpu.read::<QueueCounters>(ResourceId::QueueCounters, 1)[0];
+    assert_eq!(counters.sample_area_light.count, 1);
+    assert_eq!(counters.sample_image_infinite_light.count, 2);
+    assert_eq!(counters.sample_other_light.count, 4);
+    let items = gpu.read::<LightSampleWorkItem>(ResourceId::LightSampleWork, count as usize * 3);
+    assert_eq!(items[0].light_index, 0);
+    assert_eq!(items[count as usize].light_index, 1);
+    assert_eq!(items[count as usize + 1].light_index, 2);
+    for (slot, indices) in [(2, [3, 4, 5, 6])].into_iter() {
+        for (offset, light_index) in indices.into_iter().enumerate() {
+            let item = items[slot * count as usize + offset];
+            assert_eq!(item.light_index, light_index as u32);
+            assert_eq!(item.ray_index, light_index as u32);
+        }
     }
 }
 
@@ -457,6 +641,9 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
         let mut counters = QueueCounters {
             material: state(count, count),
             direct: state(0, count),
+            sample_area_light: state(0, count),
+            sample_image_infinite_light: state(0, count),
+            sample_other_light: state(0, count),
             ..Zeroable::zeroed()
         };
         // Every scatter queue uses the same capacity, including non-direct kinds.
@@ -504,13 +691,141 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
                 "case {i}, round {round}"
             );
         }
-        gpu.run(ComputeStageId::SampleDirectLight, 1);
+        gpu.run(ComputeStageId::SelectSurfaceLight, 1);
+        gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+        gpu.run(ComputeStageId::SampleAreaLight, 1);
+        gpu.run(ComputeStageId::SampleImageInfiniteLight, 1);
+        gpu.run(ComputeStageId::SampleOtherLight, 1);
         for (i, origin) in expected.iter().enumerate() {
             if let Some(origin) = origin {
                 gpu.assert_point_sample(i, *origin);
             }
         }
     }
+
+    // Medium scatter work selects and samples through the same typed queues,
+    // then ScatterMedium consumes that sample to publish its shadow ray.
+    let medium_origin = [1.0, 2.0, 10.0];
+    gpu.write(
+        ResourceId::CurrentRay,
+        &[RayWorkItem {
+            origin: [medium_origin[0], medium_origin[1], medium_origin[2], 1.0],
+            direction: [0.0, 0.0, 1.0, 0.0],
+            beta: [1.0; 4],
+            r_u: [1.0; 4],
+            r_l: [1.0; 4],
+            pixel_index: 0,
+            medium_id: 0,
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.write(ResourceId::MediumScatterQueue, &[0u32]);
+    gpu.write(
+        ResourceId::PixelSampleState,
+        &[PixelSampleState {
+            lambda: [550.0; 4],
+            direct: [0.3, 0.4, 0.5, 0.0],
+            indirect: [0.2, 0.3, 0.4, 0.0],
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.write(
+        ResourceId::QueueCounters,
+        &[QueueCounters {
+            medium_scatter: state(1, 3),
+            next: state(0, 3),
+            shadow: state(0, 3),
+            sample_area_light: state(0, 3),
+            sample_image_infinite_light: state(0, 3),
+            sample_other_light: state(0, 3),
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.run(ComputeStageId::SelectMediumLight, 1);
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::SampleAreaLight, 1);
+    gpu.run(ComputeStageId::SampleImageInfiniteLight, 1);
+    gpu.run(ComputeStageId::SampleOtherLight, 1);
+    gpu.assert_point_sample(0, medium_origin);
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::ScatterMedium, 1);
+    assert_eq!(
+        gpu.read::<QueueCounters>(ResourceId::QueueCounters, 1)[0]
+            .shadow
+            .count,
+        1
+    );
+
+    // Surface and medium selectors can fill the same typed batch without
+    // overwriting one another; their source kinds preserve distinct origins.
+    let surface_origin = [1.0, 2.0, 10.0];
+    let mixed_medium_origin = [0.0, 1.0, 10.0];
+    gpu.write(
+        ResourceId::CurrentRay,
+        &[
+            RayWorkItem {
+                pixel_index: 0,
+                ..Zeroable::zeroed()
+            },
+            RayWorkItem {
+                pixel_index: 1,
+                origin: [
+                    mixed_medium_origin[0],
+                    mixed_medium_origin[1],
+                    mixed_medium_origin[2],
+                    1.0,
+                ],
+                ..Zeroable::zeroed()
+            },
+        ],
+    );
+    gpu.write(
+        ResourceId::Surface,
+        &[SurfaceWorkItem {
+            position: [surface_origin[0], surface_origin[1], surface_origin[2], 1.0],
+            light_sample_origin: surface_origin,
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.write(ResourceId::DirectEvalQueue, &[0u32]);
+    gpu.write(ResourceId::MediumScatterQueue, &[1u32]);
+    gpu.write(
+        ResourceId::PixelSampleState,
+        &[
+            PixelSampleState {
+                lambda: [550.0; 4],
+                direct: [0.2, 0.3, 0.4, 0.0],
+                ..Zeroable::zeroed()
+            },
+            PixelSampleState {
+                lambda: [550.0; 4],
+                direct: [0.8, 0.3, 0.4, 0.0],
+                ..Zeroable::zeroed()
+            },
+        ],
+    );
+    gpu.write(
+        ResourceId::QueueCounters,
+        &[QueueCounters {
+            direct: state(1, 2),
+            medium_scatter: state(1, 2),
+            sample_area_light: state(0, 2),
+            sample_image_infinite_light: state(0, 2),
+            sample_other_light: state(0, 2),
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.run(ComputeStageId::SelectSurfaceLight, 1);
+    gpu.run(ComputeStageId::SelectMediumLight, 1);
+    let counters = gpu.read::<QueueCounters>(ResourceId::QueueCounters, 1)[0];
+    assert_eq!(counters.sample_other_light.count, 2);
+    let work = gpu.read::<LightSampleWorkItem>(ResourceId::LightSampleWork, 6);
+    assert_eq!((work[4].ray_index, work[4].source_kind), (0, 0));
+    assert_eq!((work[5].ray_index, work[5].source_kind), (1, 1));
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::SampleOtherLight, 1);
+    gpu.assert_point_sample(0, surface_origin);
+    gpu.assert_point_sample(1, mixed_medium_origin);
 
     // A real BSSRDF exit replaces a different entry surface and deliberately
     // invalid/stale material-work-item index. The consumer must not resolve it.
@@ -612,6 +927,10 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
         ResourceId::QueueCounters,
         &[QueueCounters {
             direct: state(0, 3),
+            medium_scatter: state(1, 3),
+            sample_area_light: state(0, 3),
+            sample_image_infinite_light: state(0, 3),
+            sample_other_light: state(0, 3),
             ..Zeroable::zeroed()
         }],
     );
@@ -628,8 +947,18 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
             .count,
         1
     );
-    gpu.run(ComputeStageId::SampleDirectLight, 1);
+    gpu.run(ComputeStageId::SelectSurfaceLight, 1);
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::SampleAreaLight, 1);
+    gpu.run(ComputeStageId::SampleImageInfiniteLight, 1);
+    gpu.run(ComputeStageId::SampleOtherLight, 1);
     gpu.assert_point_sample(0, origin);
+    assert_eq!(
+        gpu.read::<QueueCounters>(ResourceId::QueueCounters, 1)[0]
+            .medium_scatter
+            .count,
+        1
+    );
 
     // Sample/tile reuse clears all stored origins; light-free classification
     // cannot publish an unprepared or previous-sample origin.

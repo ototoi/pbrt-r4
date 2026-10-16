@@ -21,11 +21,15 @@ fn typed_queue_sizes_follow_the_host_abi() {
     assert_eq!(sizes.texture_eval_results, 3 * 2 * 32);
     assert_eq!(sizes.hit_area_ray_indices, 3 * 4);
     assert_eq!(sizes.escaped_ray_indices, 3 * 4);
+    assert_eq!(sizes.light_sample_work_items, 3 * 3 * 16);
 }
 
 #[test]
 fn typed_queue_sizes_must_fit_shader_u32_indices() {
-    assert!(TypedQueueSizes::new(u64::from(u32::MAX) + 1, 3, 1).is_err());
+    let max_pixels = u64::from(u32::MAX / 3);
+    let sizes = TypedQueueSizes::new(max_pixels, 1, 1).unwrap();
+    assert_eq!(sizes.light_sample_work_items, max_pixels * 3 * 16);
+    assert!(TypedQueueSizes::new(max_pixels + 1, 1, 1).is_err());
 }
 
 #[test]
