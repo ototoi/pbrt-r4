@@ -1,4 +1,5 @@
 use super::super::filter::Filter as FlatFilter;
+use super::alpha::flatten_alpha;
 use super::{
     append_area_light, flatten_light, geometry_index, identity_transform, multiply_transform,
     region_bounds, register_material_source, register_medium, register_root_component,
@@ -51,6 +52,19 @@ pub fn flatten_node_ref(
                 Component::Material(component) => Some(Arc::clone(&component.material)),
                 _ => None,
             });
+        let mut alpha_components = node
+            .components
+            .iter()
+            .filter_map(|component| match component {
+                Component::AlphaMask(component) => Some(&component.alpha),
+                _ => None,
+            });
+        let alpha = alpha_components.next().cloned().unwrap_or_default();
+        if alpha_components.next().is_some() {
+            return Err(PbrtError::error(
+                "Shape node must have at most one AlphaMask component.",
+            ));
+        }
         let mut shapes = Vec::new();
         let mut instances = Vec::new();
         let mut media = Vec::new();
@@ -202,6 +216,7 @@ pub fn flatten_node_ref(
                         component_index,
                         shape,
                         material.clone(),
+                        alpha.clone(),
                         area_light.clone(),
                         component.reverse_orientation,
                         shape_medium_interfaces[0].clone(),
@@ -364,8 +379,15 @@ pub fn flatten_node_ref(
     if let Some(light) = light {
         flatten_light(light, &world_transform, &name, builder)?;
     }
-    for (component_index, shape, material, area_light, reverse_orientation, medium_interface) in
-        shapes
+    for (
+        component_index,
+        shape,
+        material,
+        alpha,
+        area_light,
+        reverse_orientation,
+        medium_interface,
+    ) in shapes
     {
         let geometry = geometry_index(
             node_key,
@@ -379,6 +401,7 @@ pub fn flatten_node_ref(
             Some(material) => register_material_source(material, builder, material_kind)?,
             None => INVALID_INDEX,
         };
+        let alpha = flatten_alpha(&alpha, builder)?;
         let instance_index = u32::try_from(builder.instances.len())
             .map_err(|_| PbrtError::error("The flattened GPU instance table exceeds u32."))?;
         let area_light_handle = if let Some(area_light) = area_light {
@@ -394,7 +417,7 @@ pub fn flatten_node_ref(
                 &name,
                 &world_transform,
                 instance_index,
-                material_root,
+                alpha,
                 reverse_orientation,
                 builder,
             )?
@@ -407,6 +430,7 @@ pub fn flatten_node_ref(
             geometry,
             transform: world_transform,
             material_root,
+            alpha,
             area_light: area_light_handle,
             reverse_orientation,
             shape_transform_swaps_handedness: transform_swaps_handedness(shape_transform),

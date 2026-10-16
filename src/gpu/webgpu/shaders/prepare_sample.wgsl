@@ -17,6 +17,12 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
         atomicStore(&queue_counters.hit_area.overflow, 0u);
         atomicStore(&queue_counters.escaped.count, 0u);
         atomicStore(&queue_counters.escaped.overflow, 0u);
+        atomicStore(&queue_counters.sample_area_light.count, 0u);
+        atomicStore(&queue_counters.sample_area_light.overflow, 0u);
+        atomicStore(&queue_counters.sample_image_infinite_light.count, 0u);
+        atomicStore(&queue_counters.sample_image_infinite_light.overflow, 0u);
+        atomicStore(&queue_counters.sample_other_light.count, 0u);
+        atomicStore(&queue_counters.sample_other_light.overflow, 0u);
         // Only the render's very first tile-sample clears the error flag:
         // every tile revisits sample_index == 0u, and a later tile must not
         // erase an error an earlier tile already reported before it's read.
@@ -31,4 +37,7 @@ fn prepare_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
     store_ray_samples(pixel_index, RaySamples(vec4<f32>(0.0), vec4<f32>(0.0)));
     surfaces[pixel_index].hit = 0u;
     surfaces[pixel_index].flags = 0u;
+    surfaces[pixel_index].light_sample_origin_x = 0.0;
+    surfaces[pixel_index].light_sample_origin_y = 0.0;
+    surfaces[pixel_index].light_sample_origin_z = 0.0;
 }

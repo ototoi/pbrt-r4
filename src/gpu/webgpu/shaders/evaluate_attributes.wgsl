@@ -77,13 +77,6 @@ fn resolved_bump_material_node(material_root: MaterialRoot, attributes_base: u32
                 return node_index;
             }
             node_index = material_root.node_offset + child_offset;
-        } else if (kind == MATERIAL_KIND_ALPHA_MASK) {
-            let child = material_nodes[node_index].child0;
-            if (child == 0xffffffffu) {
-                set_render_error();
-                return node_index;
-            }
-            node_index = child;
         } else {
             return node_index;
         }

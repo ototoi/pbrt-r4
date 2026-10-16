@@ -91,6 +91,15 @@ fn component_to_json(component: &Component) -> Value {
             }
             value
         }
+        Component::AlphaMask(component) => match &component.alpha {
+            super::AlphaMask::Opaque => json!({ "type": "AlphaMask", "kind": "opaque" }),
+            super::AlphaMask::Constant(value) => {
+                json!({ "type": "AlphaMask", "kind": "constant", "value": value })
+            }
+            super::AlphaMask::Texture(texture) => {
+                json!({ "type": "AlphaMask", "kind": "texture", "texture": texture_node_to_json(texture) })
+            }
+        },
         Component::Material(component) => json!({
             "type": "Material",
             "name": component.material.name,

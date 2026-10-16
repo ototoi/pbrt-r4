@@ -26,7 +26,12 @@ const QUEUE_DISPATCH_SLOT_HIT_AREA: u32 = 11u;
 const QUEUE_DISPATCH_SLOT_SHADOW: u32 = 12u;
 const QUEUE_DISPATCH_SLOT_NEXT_RAY: u32 = 13u;
 const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u32 = 14u;
-const QUEUE_DISPATCH_SLOT_COUNT: u32 = 15u;
+const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u32 = 15u;
+const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u32 = 16u;
+const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u32 = 17u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 18u;
+const LIGHT_SAMPLE_SOURCE_SURFACE: u32 = 0u;
+const LIGHT_SAMPLE_SOURCE_MEDIUM: u32 = 1u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
@@ -43,7 +48,9 @@ const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
 const MATERIAL_KIND_MEASURED: u32 = 10u;
 const MATERIAL_KIND_DIFFUSE_TRANSMISSION: u32 = 13u;
-const MATERIAL_KIND_ALPHA_MASK: u32 = 14u;
+const ALPHA_MASK_OPAQUE: u32 = 0u;
+const ALPHA_MASK_CONSTANT: u32 = 1u;
+const ALPHA_MASK_TEXTURE: u32 = 2u;
 const AREA_LIGHT_FLAG_TWO_SIDED: u32 = 1u;
 const AREA_LIGHT_FLAG_ZERO_ALPHA_SAMPLE_ONLY: u32 = 2u;
 const INSTANCE_ORIENTATION_FLAG_REVERSED: u32 = 1u;
@@ -302,8 +309,8 @@ struct Instance {
     orientation_flags: u32,
     medium_inside: u32,
     medium_outside: u32,
-    _padding0: u32,
-    _padding1: u32,
+    alpha_kind: u32,
+    alpha_value: u32,
     world_from_object: mat4x4<f32>,
     normal_from_object: mat4x4<f32>,
 };
@@ -429,9 +436,9 @@ struct SurfaceWorkItem {
     material_root: u32,
     flags: u32,
     attributes_eval_work_item: u32,
-    _padding: u32,
-    _tail_padding0: u32,
-    _tail_padding1: u32,
+    light_sample_origin_x: f32,
+    light_sample_origin_y: f32,
+    light_sample_origin_z: f32,
 };
 
 struct LightRecord {
@@ -541,6 +548,16 @@ struct QueueCounters {
     medium_active: QueueState,
     shadow_active: QueueState,
     medium_scatter: QueueState,
+    sample_area_light: QueueState,
+    sample_image_infinite_light: QueueState,
+    sample_other_light: QueueState,
+};
+
+struct LightSampleWorkItem {
+    ray_index: u32,
+    source_kind: u32,
+    light_index: u32,
+    selection_pmf: f32,
 };
 
 struct DispatchIndirectArgs {

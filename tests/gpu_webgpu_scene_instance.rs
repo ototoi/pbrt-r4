@@ -44,6 +44,7 @@ fn instance() -> flat::Instance {
             2.0, 1.0, 0.0, 3.0, 0.0, 4.0, 0.0, 5.0, 0.0, 0.0, -8.0, 7.0, 0.0, 0.0, 0.0, 1.0,
         ],
         material_root: INVALID_INDEX,
+        alpha: flat::AlphaMask::Opaque,
         area_light: INVALID_INDEX,
         reverse_orientation: false,
         shape_transform_swaps_handedness: false,
@@ -102,7 +103,7 @@ fn preserves_instance_order_matrices_indices_and_orientation_bits() {
         assert_eq!(record.area_light, INVALID_INDEX);
         assert_eq!(record.medium_inside, 0);
         assert_eq!(record.medium_outside, 1);
-        assert_eq!(record.padding, [0; 2]);
+        assert_eq!((record.alpha_kind, record.alpha_value), (0, 0));
         assert_eq!(
             record.world_from_object,
             [

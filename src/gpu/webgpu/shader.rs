@@ -136,6 +136,28 @@ pub fn compose_source_with_features(
     }
 }
 
+/// Apply scene capacities without changing the shader's binding declarations.
+pub fn specialize_source(
+    source: String,
+    texture_image_count: u32,
+    texture_sampler_count: u32,
+    texture_program_capacity: u32,
+) -> String {
+    source
+        .replace(
+            "const TEXTURE_PROGRAM_CAPACITY: u32 = 256u;",
+            &format!("const TEXTURE_PROGRAM_CAPACITY: u32 = {texture_program_capacity}u;"),
+        )
+        .replace(
+            "binding_array<texture_2d<f32>>",
+            &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
+        )
+        .replace(
+            "binding_array<sampler>",
+            &format!("binding_array<sampler, {texture_sampler_count}u>"),
+        )
+}
+
 /// Concatenates [`COMMON_LIBRARY`]; without noise support the texture noise
 /// branch is removed so stages do not require the noise tables.
 pub fn common_library_source(noise_enabled: bool) -> String {
@@ -219,6 +241,31 @@ pub fn resource_binding_numbers(source: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Resolve the composed shader ABI against the layout registry, rejecting
+/// unregistered resources and duplicate registry entries before device creation.
+pub fn resolve_resource_bindings(
+    canonical_bindings: &[BindingSpec],
+    stage_name: &str,
+    source: &str,
+) -> Result<Vec<BindingSpec>, PbrtError> {
+    RequiredLimits::from_bindings(canonical_bindings)
+        .map_err(|error| PbrtError::error(&format!("Shader {stage_name}: {error}")))?;
+    resource_bindings(source)
+        .into_iter()
+        .map(|(group, binding)| {
+            canonical_bindings
+                .iter()
+                .find(|candidate| candidate.group == group && candidate.binding == binding)
+                .copied()
+                .ok_or_else(|| {
+                    PbrtError::error(&format!(
+                        "Shader {stage_name} uses unregistered group {group} binding {binding}."
+                    ))
+                })
+        })
+        .collect()
+}
+
 pub fn required_limits_for_sources(
     canonical_bindings: &[BindingSpec],
     stage_sources: &[&str],
@@ -234,32 +281,8 @@ pub fn required_limits_for_sources_with_nanovdb(
     let mut required = RequiredLimits::default();
     for stage_source in stage_sources {
         let source = compose_source_with_features(stage_source, true, nanovdb_enabled);
-        let used_bindings = resource_bindings(&source);
-        let bindings = used_bindings
-            .iter()
-            .map(|(group, binding)| {
-                canonical_bindings
-                    .iter()
-                    .find(|candidate| candidate.group == *group && candidate.binding == *binding)
-                    .copied()
-                    .ok_or_else(|| {
-                        PbrtError::error(&format!(
-                            "Shader uses unregistered group {group} binding {binding}."
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let stage = RequiredLimits::from_bindings(&bindings)?;
-        required.storage_buffers_per_shader_stage = required
-            .storage_buffers_per_shader_stage
-            .max(stage.storage_buffers_per_shader_stage);
-        required.uniform_buffers_per_shader_stage = required
-            .uniform_buffers_per_shader_stage
-            .max(stage.uniform_buffers_per_shader_stage);
-        required.buffers_and_acceleration_structures_per_shader_stage = required
-            .buffers_and_acceleration_structures_per_shader_stage
-            .max(stage.buffers_and_acceleration_structures_per_shader_stage);
-        required.bind_groups = required.bind_groups.max(stage.bind_groups);
+        let bindings = resolve_resource_bindings(canonical_bindings, "anonymous stage", &source)?;
+        required = required.maximum(RequiredLimits::from_bindings(&bindings)?);
     }
     Ok(required)
 }

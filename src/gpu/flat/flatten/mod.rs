@@ -24,6 +24,7 @@ use super::geometry::{
     dot, scale3, transform_point, transform_vector, triangle_area, triangle_geometric_normal,
 };
 
+mod alpha;
 mod material;
 use material::{build_material_roots, register_material_source, MaterialSourceNode};
 mod material_attributes;

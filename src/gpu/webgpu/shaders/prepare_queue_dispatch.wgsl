@@ -25,6 +25,21 @@ fn prepare_queue_dispatch() {
         queue_counters.medium_scatter.capacity,
     );
     write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT,
+        atomicLoad(&queue_counters.sample_area_light.count),
+        queue_counters.sample_area_light.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT,
+        atomicLoad(&queue_counters.sample_image_infinite_light.count),
+        queue_counters.sample_image_infinite_light.capacity,
+    );
+    write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT,
+        atomicLoad(&queue_counters.sample_other_light.count),
+        queue_counters.sample_other_light.capacity,
+    );
+    write_dispatch_args(
         QUEUE_DISPATCH_SLOT_MATERIAL_EVAL, material_eval_count(), queue_counters.material.capacity,
     );
     write_dispatch_args(

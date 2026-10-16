@@ -51,7 +51,9 @@ pub struct Instance {
     pub orientation_flags: u32,
     pub medium_inside: u32,
     pub medium_outside: u32,
-    pub padding: [u32; 2],
+    pub alpha_kind: u32,
+    /// Constant f32 bits or float-texture root index, selected by alpha_kind.
+    pub alpha_value: u32,
     pub world_from_object: [[f32; 4]; 4],
     pub normal_from_object: [[f32; 4]; 4],
 }
@@ -248,8 +250,8 @@ pub struct SurfaceWorkItem {
     pub material_root: u32,
     pub flags: u32,
     pub attributes_eval_work_item: u32,
-    pub padding: u32,
-    pub tail_padding: [u32; 2],
+    /// Prepared origin for surface direct-light sampling; valid for queued items.
+    pub light_sample_origin: [f32; 3],
 }
 
 #[repr(C)]
@@ -392,6 +394,19 @@ pub struct QueueCounters {
     pub medium_active: QueueState,
     pub shadow_active: QueueState,
     pub medium_scatter: QueueState,
+    pub sample_area_light: QueueState,
+    pub sample_image_infinite_light: QueueState,
+    pub sample_other_light: QueueState,
+}
+
+/// A selected light and source ray routed to a typed sampling queue.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightSampleWorkItem {
+    pub ray_index: u32,
+    pub source_kind: u32,
+    pub light_index: u32,
+    pub selection_pmf: f32,
 }
 
 /// Indirect dispatch arguments, laid out identically to `wgpu::util::DispatchIndirectArgs`.
@@ -410,7 +425,10 @@ pub const QUEUE_DISPATCH_SLOT_HIT_AREA: u64 = 11;
 pub const QUEUE_DISPATCH_SLOT_SHADOW: u64 = 12;
 pub const QUEUE_DISPATCH_SLOT_NEXT_RAY: u64 = 13;
 pub const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u64 = 14;
-pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 15;
+pub const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u64 = 15;
+pub const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u64 = 16;
+pub const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u64 = 17;
+pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 18;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

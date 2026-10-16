@@ -3,6 +3,7 @@ use crate::util::error::PbrtError;
 
 use super::super::abi::{
     instance_orientation_flags, inverse_transpose_linear, row_major_to_columns, Instance,
+    ALPHA_MASK_CONSTANT, ALPHA_MASK_OPAQUE, ALPHA_MASK_TEXTURE,
     INSTANCE_ORIENTATION_FLAG_SHAPE_TRANSFORM_SWAPS_HANDEDNESS, INVALID_INDEX,
 };
 use super::light::validate_instance_area_lights;
@@ -37,6 +38,22 @@ pub fn convert_instances(
                     "Flat instance {index} references an invalid material."
                 )));
             }
+            let (alpha_kind, alpha_value) = match instance.alpha {
+                flat::AlphaMask::Opaque => (ALPHA_MASK_OPAQUE, 0),
+                flat::AlphaMask::Constant(value) => {
+                    if !value.is_finite() {
+                        return Err(PbrtError::error(&format!("Flat instance {index} has non-finite alpha.")));
+                    }
+                    (ALPHA_MASK_CONSTANT, value.to_bits())
+                }
+                flat::AlphaMask::Texture(root) => {
+                    if !matches!(flat.texture_library.roots.get(root as usize),
+                        Some(flat::texture::TextureRoot::Float { .. })) {
+                        return Err(PbrtError::error(&format!("Flat instance {index} alpha must reference a valid float texture root.")));
+                    }
+                    (ALPHA_MASK_TEXTURE, root)
+                }
+            };
             validate_instance_area_lights(index, instance, flat)?;
             let label = format!("Flat instance {index}");
             Ok(Instance {
@@ -53,7 +70,8 @@ pub fn convert_instances(
                 },
                 medium_inside: instance.inside_medium,
                 medium_outside: instance.outside_medium,
-                padding: [0; 2],
+                alpha_kind,
+                alpha_value,
                 world_from_object: row_major_to_columns(instance.transform),
                 normal_from_object: inverse_transpose_linear(instance.transform, &label)?,
             })

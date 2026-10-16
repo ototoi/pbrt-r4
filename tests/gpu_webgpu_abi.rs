@@ -4,10 +4,10 @@ use pbrt_r4::gpu::flat;
 use pbrt_r4::gpu::webgpu::abi::{
     camera_uniform, inverse_transpose_linear, row_major_to_columns, validate_affine, AttributeRef,
     BSSRDFMaterialRecord, CameraUniform, DenseSpectrum, DispatchIndirectArgs, FilmUniform,
-    Geometry, Instance, LightRecord, LightTableUniform, MaterialNode, MaterialTableUniform,
-    MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, PixelSampleState, QueueCounters,
-    QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem, TextureEvalResult,
-    TriangleDistributionEntry, Vertex, ViewportUniform, VolumeMediumRecord,
+    Geometry, Instance, LightRecord, LightSampleWorkItem, LightTableUniform, MaterialNode,
+    MaterialTableUniform, MeasuredBsdfRecord, MeasuredTableRecord, MediumRecord, PixelSampleState,
+    QueueCounters, QueueState, RayWorkItem, RenderError, ShadowRayWorkItem, SurfaceWorkItem,
+    TextureEvalResult, TriangleDistributionEntry, Vertex, ViewportUniform, VolumeMediumRecord,
     QUEUE_DISPATCH_SLOT_COUNT,
 };
 use pbrt_r4::gpu::webgpu::sampler::{SAMPLER_UNIFORM_SIZE, SAMPLER_UNIFORM_VARIANT_WORDS_OFFSET};
@@ -43,6 +43,9 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::size_of::<Geometry>(), 32);
     assert_eq!(std::mem::offset_of!(Geometry, intersection_normal_kind), 16);
     assert_eq!(std::mem::size_of::<Instance>(), 160);
+    assert_eq!(std::mem::offset_of!(Instance, alpha_kind), 24);
+    assert_eq!(std::mem::offset_of!(Instance, alpha_value), 28);
+    assert_eq!(std::mem::offset_of!(Instance, world_from_object), 32);
     assert_eq!(std::mem::size_of::<MediumRecord>(), 96);
     assert_eq!(std::mem::offset_of!(MediumRecord, volume_index), 20);
     assert_eq!(std::mem::size_of::<VolumeMediumRecord>(), 448);
@@ -177,7 +180,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
         80
     );
     assert_eq!(std::mem::size_of::<QueueState>(), 16);
-    assert_eq!(std::mem::size_of::<QueueCounters>(), 304);
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 352);
     assert_eq!(
         std::mem::offset_of!(QueueCounters, medium_continuation),
         224
@@ -189,6 +192,17 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(QueueCounters, medium_active), 256);
     assert_eq!(std::mem::offset_of!(QueueCounters, shadow_active), 272);
     assert_eq!(std::mem::offset_of!(QueueCounters, medium_scatter), 288);
+    assert_eq!(std::mem::offset_of!(QueueCounters, sample_area_light), 304);
+    assert_eq!(
+        std::mem::offset_of!(QueueCounters, sample_image_infinite_light),
+        320
+    );
+    assert_eq!(std::mem::offset_of!(QueueCounters, sample_other_light), 336);
+    assert_eq!(std::mem::size_of::<LightSampleWorkItem>(), 16);
+    assert_eq!(std::mem::align_of::<LightSampleWorkItem>(), 4);
+    assert_eq!(std::mem::offset_of!(LightSampleWorkItem, source_kind), 4);
+    assert_eq!(std::mem::offset_of!(LightSampleWorkItem, light_index), 8);
+    assert_eq!(std::mem::offset_of!(LightSampleWorkItem, selection_pmf), 12);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, endpoint), 32);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, transmittance), 112);
     assert_eq!(std::mem::offset_of!(ShadowRayWorkItem, segment_index), 164);
@@ -196,7 +210,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, x), 0);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, y), 4);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, z), 8);
-    assert_eq!(QUEUE_DISPATCH_SLOT_COUNT, 15);
+    assert_eq!(QUEUE_DISPATCH_SLOT_COUNT, 18);
     assert_eq!(std::mem::size_of::<RenderError>(), 16);
     assert_eq!(std::mem::offset_of!(RenderError, value), 0);
     assert_eq!(std::mem::offset_of!(RenderError, padding), 4);
@@ -351,6 +365,7 @@ fn webgpu_rust_struct_sizes_match_wgsl_types() {
         QueueState,
         FilmUniform,
         QueueCounters,
+        LightSampleWorkItem,
         DispatchIndirectArgs,
         RenderError,
         PixelSampleState,

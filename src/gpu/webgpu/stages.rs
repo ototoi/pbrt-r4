@@ -87,6 +87,7 @@ pub enum ResourceId {
     BSSRDFValues,
     BSSRDFWork,
     BSSRDFResults,
+    LightSampleWork,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,7 +142,7 @@ pub struct RequiredLimits {
 /// and the stage-specific layouts. Pipeline construction must consume this list
 /// instead of duplicating binding numbers.
 pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
-    let mut bindings = Vec::with_capacity(45);
+    let mut bindings = Vec::with_capacity(79);
     let mut push = |binding, resource, class, access| {
         bindings.push(BindingSpec {
             group: 0,
@@ -161,6 +162,12 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     push(
         71,
         ResourceId::MediumScatterQueue,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        80,
+        ResourceId::LightSampleWork,
         BindingClass::Storage,
         Access::ReadWrite,
     );
@@ -394,6 +401,22 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
 }
 
 impl RequiredLimits {
+    /// Device limits are maxima of individual stages, not sums across stages.
+    pub fn maximum(self, other: Self) -> Self {
+        Self {
+            storage_buffers_per_shader_stage: self
+                .storage_buffers_per_shader_stage
+                .max(other.storage_buffers_per_shader_stage),
+            uniform_buffers_per_shader_stage: self
+                .uniform_buffers_per_shader_stage
+                .max(other.uniform_buffers_per_shader_stage),
+            buffers_and_acceleration_structures_per_shader_stage: self
+                .buffers_and_acceleration_structures_per_shader_stage
+                .max(other.buffers_and_acceleration_structures_per_shader_stage),
+            bind_groups: self.bind_groups.max(other.bind_groups),
+        }
+    }
+
     pub fn from_bindings(bindings: &[BindingSpec]) -> Result<Self, PbrtError> {
         let mut required = Self::default();
         for (index, left) in bindings.iter().enumerate() {

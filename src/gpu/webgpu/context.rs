@@ -1,5 +1,6 @@
 use crate::util::error::PbrtError;
 
+use super::binding_report::{BindingHeadroom, BindingReport};
 use super::stages::RequiredLimits;
 
 pub struct Context {
@@ -13,13 +14,50 @@ impl Context {
         texture_image_count: u32,
         texture_sampler_count: u32,
     ) -> Result<Self, PbrtError> {
+        Self::create(required, texture_image_count, texture_sampler_count, None)
+    }
+
+    pub fn with_binding_report(
+        report: &BindingReport,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+    ) -> Result<Self, PbrtError> {
+        Self::create(
+            report.device_required(),
+            texture_image_count,
+            texture_sampler_count,
+            Some(report),
+        )
+    }
+
+    fn create(
+        required: RequiredLimits,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        report: Option<&BindingReport>,
+    ) -> Result<Self, PbrtError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
                 .map_err(|error| {
-                PbrtError::error(&format!("Could not request a WebGPU adapter: {error}"))
+                PbrtError::error(&format!(
+                    "Could not request a WebGPU adapter: {error}{}",
+                    report
+                        .map(|report| format!("\n{}", report.format(None, false)))
+                        .unwrap_or_default()
+                ))
             })?;
-        log::info!("GPU context: adapter selected: {:?}", adapter.get_info());
+        let adapter_info = adapter.get_info();
+        log::info!("GPU context: adapter selected: {adapter_info:?}");
+        let adapter_limits = adapter.limits();
+        if log::log_enabled!(log::Level::Debug) {
+            if let Some(report) = report {
+                log::debug!(
+                    "adapter: {adapter_info:?}\n{}",
+                    report.format(Some(&adapter_limits), false)
+                );
+            }
+        }
 
         let required_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
             | wgpu::Features::TEXTURE_BINDING_ARRAY
@@ -32,27 +70,8 @@ impl Context {
             )));
         }
 
-        let adapter_limits = adapter.limits();
-        if required.storage_buffers_per_shader_stage
-            > adapter_limits.max_storage_buffers_per_shader_stage
-            || required.uniform_buffers_per_shader_stage
-                > adapter_limits.max_uniform_buffers_per_shader_stage
-            || required.buffers_and_acceleration_structures_per_shader_stage
-                > adapter_limits.max_buffers_and_acceleration_structures_per_shader_stage
-            || required.bind_groups > adapter_limits.max_bind_groups
-        {
-            return Err(PbrtError::error(&format!(
-                "WebGPU adapter limits are insufficient: requested storage={}, uniform={}, buffers_and_acceleration_structures={}, bind_groups={}; available storage={}, uniform={}, buffers_and_acceleration_structures={}, bind_groups={}",
-                required.storage_buffers_per_shader_stage,
-                required.uniform_buffers_per_shader_stage,
-                required.buffers_and_acceleration_structures_per_shader_stage,
-                required.bind_groups,
-                adapter_limits.max_storage_buffers_per_shader_stage,
-                adapter_limits.max_uniform_buffers_per_shader_stage,
-                adapter_limits.max_buffers_and_acceleration_structures_per_shader_stage,
-                adapter_limits.max_bind_groups,
-            )));
-        }
+        validate_binding_limits(required, &adapter_limits, report)
+            .map_err(|error| PbrtError::error(&format!("{error}\nadapter: {adapter_info:?}")))?;
         if texture_image_count > adapter_limits.max_binding_array_elements_per_shader_stage
             || texture_sampler_count
                 > adapter_limits.max_binding_array_sampler_elements_per_shader_stage
@@ -99,7 +118,15 @@ impl Context {
         };
         let (device, queue) =
             pollster::block_on(adapter.request_device(&descriptor)).map_err(|error| {
-                PbrtError::error(&format!("Could not request a WebGPU device: {error}"))
+                PbrtError::error(&format!(
+                    "Could not request a WebGPU device: {error}{}",
+                    report
+                        .map(|report| format!(
+                            "\nadapter: {adapter_info:?}\n{}",
+                            report.format(Some(&adapter_limits), false)
+                        ))
+                        .unwrap_or_default()
+                ))
             })?;
         log::info!("GPU context: device created");
         Ok(Self { device, queue })
@@ -111,4 +138,28 @@ impl Context {
             .map(|_| ())
             .map_err(|error| PbrtError::error(&format!("WebGPU device polling failed: {error}")))
     }
+}
+
+/// Validate buffer requirements against adapter limits without creating a device.
+/// Includes over-budget stage details when a binding report is provided.
+pub fn validate_binding_limits(
+    required: RequiredLimits,
+    available: &wgpu::Limits,
+    report: Option<&BindingReport>,
+) -> Result<(), PbrtError> {
+    if BindingHeadroom::new(required, available).fits() {
+        return Ok(());
+    }
+    Err(PbrtError::error(&format!(
+        "WebGPU adapter limits are insufficient: requested storage={}, uniform={}, buffers_and_acceleration_structures={}, bind_groups={}; available storage={}, uniform={}, buffers_and_acceleration_structures={}, bind_groups={}{}",
+        required.storage_buffers_per_shader_stage,
+        required.uniform_buffers_per_shader_stage,
+        required.buffers_and_acceleration_structures_per_shader_stage,
+        required.bind_groups,
+        available.max_storage_buffers_per_shader_stage,
+        available.max_uniform_buffers_per_shader_stage,
+        available.max_buffers_and_acceleration_structures_per_shader_stage,
+        available.max_bind_groups,
+        report.map(|report| format!("\n{}", report.format(Some(available), true))).unwrap_or_default(),
+    )))
 }
