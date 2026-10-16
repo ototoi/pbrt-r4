@@ -5,6 +5,20 @@ fn invalid_direct_light_sample() -> DirectLightSample {
     );
 }
 
+fn select_and_enqueue_light_sample(
+    ray_index: u32,
+    pixel_index: u32,
+    source_kind: u32,
+    position: vec3<f32>,
+    normal: vec3<f32>,
+) {
+    direct_light_samples[pixel_index] = invalid_direct_light_sample();
+    let samples = load_ray_samples(pixel_index);
+    let selection = light_sampler_sample(samples.direct.x, position, normal);
+    if (selection.pmf <= 0.0 || selection.index == 0xffffffffu) { return; }
+    append_light_sample_work(ray_index, source_kind, selection);
+}
+
 fn append_light_sample_work(ray_index: u32, source_kind: u32, selection: LightSelection) {
     let light_kind = load_light_kind(selection.index);
     var slot = 2u;
@@ -126,9 +140,8 @@ fn sample_image_infinite_light_at(work: LightSampleWorkItem, position: vec3<f32>
     var distance_squared = 1.0;
     if (light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) {
 
-            // Selecting and sampling the portal here, in the same
-            // invocation that selected it, avoids re-deriving the same
-            // light_selection from samples.direct.x in a separate stage.
+            // The selector stage records the selected light so this stage only
+            // needs to sample the already-routed portal work item.
             let model = light_sampling_models[light_payload];
             if (model.geometry_kind != 3u || model.geometry_index >= arrayLength(&portal_infinite_lights)) {
                 set_render_error();

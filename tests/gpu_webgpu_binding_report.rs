@@ -63,6 +63,73 @@ fn reports_match_pipeline_declarations_for_all_feature_combinations() {
                     entry.required,
                     RequiredLimits::from_bindings(&entry.bindings).unwrap()
                 );
+                assert!(
+                    entry.required.storage_buffers_per_shader_stage <= 29,
+                    "{} exceeds the Mac storage-buffer budget: {}",
+                    stage.entry_point,
+                    entry.required.storage_buffers_per_shader_stage
+                );
+                assert!(
+                    entry.required.uniform_buffers_per_shader_stage <= 29,
+                    "{} exceeds the Mac uniform-buffer budget: {}",
+                    stage.entry_point,
+                    entry.required.uniform_buffers_per_shader_stage
+                );
+                assert!(
+                    entry
+                        .required
+                        .buffers_and_acceleration_structures_per_shader_stage
+                        <= 29,
+                    "{} exceeds the Mac combined-buffer budget: {}",
+                    stage.entry_point,
+                    entry
+                        .required
+                        .buffers_and_acceleration_structures_per_shader_stage
+                );
+                let resources = entry
+                    .bindings
+                    .iter()
+                    .map(|binding| binding.resource)
+                    .collect::<std::collections::HashSet<_>>();
+                match stage.id {
+                    ComputeStageId::SelectSurfaceLight | ComputeStageId::SelectMediumLight => {
+                        for excluded in [
+                            ResourceId::MaterialTable,
+                            ResourceId::MaterialRoot,
+                            ResourceId::MaterialNode,
+                            ResourceId::AttributesEvalWorkItems,
+                        ] {
+                            assert!(
+                                !resources.contains(&excluded),
+                                "{} unexpectedly binds {excluded:?}",
+                                stage.entry_point
+                            );
+                        }
+                        if stage.id == ComputeStageId::SelectSurfaceLight {
+                            assert!(
+                                !resources.contains(&ResourceId::MediumScatterQueue),
+                                "{} unexpectedly binds MediumScatterQueue",
+                                stage.entry_point
+                            );
+                        }
+                    }
+                    ComputeStageId::SampleAreaLight
+                    | ComputeStageId::SampleImageInfiniteLight
+                    | ComputeStageId::SampleOtherLight => {
+                        for excluded in [
+                            ResourceId::LightBvhHeader,
+                            ResourceId::LightBvhNode,
+                            ResourceId::LightLeaf,
+                        ] {
+                            assert!(
+                                !resources.contains(&excluded),
+                                "{} unexpectedly binds {excluded:?}",
+                                stage.entry_point
+                            );
+                        }
+                    }
+                    _ => {}
+                }
                 maximum = maximum.maximum(entry.required);
             }
             assert_eq!(report.required, maximum);
@@ -144,14 +211,21 @@ fn over_budget_stages_are_explained_without_a_gpu() {
         BindingHeadroom::new(image.required, &mac_limits()).combined,
         7
     );
-    let text = report.format(Some(&mac_limits()), false);
+    let tight_limits = wgpu::Limits {
+        max_storage_buffers_per_shader_stage: 20,
+        max_uniform_buffers_per_shader_stage: 2,
+        max_buffers_and_acceleration_structures_per_shader_stage: 20,
+        ..wgpu::Limits::default()
+    };
+    let text = report.format(Some(&tight_limits), true);
     assert!(text.contains("scope=wavefront, noise=true, nanovdb=false"));
     assert!(text.contains("stage=scatter_medium storage=14 uniform=3 as=0 combined=17"));
     assert!(
         text.contains("stage=sample_image_infinite_light storage=22 uniform=0 as=0 combined=22")
     );
-    assert!(text.contains("headroom: storage=7 uniform=29 combined=7"));
+    assert!(text.contains("headroom: storage=-2 uniform=2 combined=-2"));
     assert!(text.contains("resource=TextureImageArray class=SampledTexture"));
+    assert!(!text.contains("stage=prepare_sample "));
 }
 
 #[test]

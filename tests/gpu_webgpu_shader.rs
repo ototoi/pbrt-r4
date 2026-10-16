@@ -519,8 +519,8 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
 fn wavefront_stages_use_persisted_sample_dimensions() {
     let selection = compose_source(SELECT_SURFACE_LIGHT_SHADER);
     let sample = compose_source(SAMPLE_AREA_LIGHT_SHADER);
-    assert!(selection.contains("load_ray_samples(pixel_index)"));
-    assert!(selection.contains("light_sampler_sample(\n        samples.direct.x, surface.position.xyz, surface.normal.xyz,"));
+    assert!(selection.contains("select_and_enqueue_light_sample("));
+    assert!(common_shader().contains("light_sampler_sample(samples.direct.x, position, normal)"));
     assert!(selection.contains("let finite_selection = bvh_light_sampler_sample("));
     assert!(selection.contains("cos_sub_clamped("));
     let emissive = compose_source(HANDLE_EMISSIVE_INTERSECTION_SHADER);

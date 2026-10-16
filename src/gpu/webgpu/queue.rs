@@ -53,8 +53,11 @@ impl TypedQueueSizes {
         attributes_eval_stride: u64,
         texture_eval_stride: u64,
     ) -> Result<Self, PbrtError> {
-        u32::try_from(pixel_count)
-            .map_err(|_| PbrtError::error("WebGPU pixel count does not fit queue indices."))?;
+        if pixel_count > u64::from(u32::MAX / 3) {
+            return Err(PbrtError::error(
+                "WebGPU light sample work buffer indices do not fit u32.",
+            ));
+        }
         if attributes_eval_stride == 0 {
             return Err(PbrtError::error(
                 "WebGPU attributes eval stride must be greater than zero.",
