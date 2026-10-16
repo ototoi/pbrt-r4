@@ -31,6 +31,7 @@ pub struct TypedQueueSizes {
     pub hit_area_ray_indices: u64,
     pub escaped_ray_indices: u64,
     pub direct_light_samples: u64,
+    pub light_sample_work_items: u64,
     pub direct_eval_ray_indices: u64,
     pub scatter_diffuse_ray_indices: u64,
     pub scatter_diffuse_transmission_ray_indices: u64,
@@ -100,6 +101,12 @@ impl TypedQueueSizes {
                 std::mem::size_of::<DirectLightSample>(),
                 "direct light samples",
             )?,
+            light_sample_work_items: bytes(
+                std::mem::size_of::<super::abi::LightSampleWorkItem>(),
+                "typed light sample queues",
+            )?
+            .checked_mul(3)
+            .ok_or_else(|| PbrtError::error("Typed light sample queue size overflowed."))?,
             direct_eval_ray_indices: bytes(std::mem::size_of::<u32>(), "direct-eval queue")?,
             scatter_diffuse_ray_indices: bytes(
                 std::mem::size_of::<u32>(),
@@ -149,6 +156,7 @@ pub struct Queues {
     pub hit_area_ray_indices: wgpu::Buffer,
     pub escaped_ray_indices: wgpu::Buffer,
     pub direct_light_samples: wgpu::Buffer,
+    pub light_sample_work: wgpu::Buffer,
     pub direct_eval_ray_indices: wgpu::Buffer,
     pub scatter_diffuse_ray_indices: wgpu::Buffer,
     pub scatter_diffuse_transmission_ray_indices: wgpu::Buffer,
@@ -174,7 +182,20 @@ impl Queues {
         attributes_eval_stride: u64,
         texture_eval_stride: u64,
     ) -> Result<Self, PbrtError> {
+        if pixel_count > u64::from(u32::MAX / 3) {
+            return Err(PbrtError::error(
+                "WebGPU typed light sample queue offsets do not fit in u32.",
+            ));
+        }
         let sizes = TypedQueueSizes::new(pixel_count, attributes_eval_stride, texture_eval_stride)?;
+        if sizes.light_sample_work_items
+            > u64::from(device.limits().max_storage_buffer_binding_size)
+            || sizes.light_sample_work_items > device.limits().max_buffer_size
+        {
+            return Err(PbrtError::error(
+                "WebGPU typed light sample queues exceed the device storage buffer limit.",
+            ));
+        }
         let capacity = u32::try_from(pixel_count)
             .map_err(|_| PbrtError::error("WebGPU queue capacity does not fit in u32."))?;
         let state = QueueState {
@@ -203,6 +224,9 @@ impl Queues {
             medium_active: state,
             shadow_active: state,
             medium_scatter: state,
+            sample_area_light: state,
+            sample_image_infinite_light: state,
+            sample_other_light: state,
         };
         let storage = |label: &'static str, size: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -253,6 +277,10 @@ impl Queues {
             direct_light_samples: storage(
                 "pbrt-r4 direct light samples",
                 sizes.direct_light_samples,
+            ),
+            light_sample_work: storage(
+                "pbrt-r4 typed light sample work queues",
+                sizes.light_sample_work_items,
             ),
             direct_eval_ray_indices: storage(
                 "pbrt-r4 direct-eval ray index queue",
@@ -489,6 +517,7 @@ impl Queues {
         match resource {
             ResourceId::Surface => Some(self.surfaces.as_entire_binding()),
             ResourceId::QueueCounters => Some(self.counters.as_entire_binding()),
+            ResourceId::LightSampleWork => Some(self.light_sample_work.as_entire_binding()),
             ResourceId::RenderError => Some(self.render_error.as_entire_binding()),
             ResourceId::PixelSampleState => Some(self.pixel_sample_states.as_entire_binding()),
             ResourceId::CurrentRay => Some(self.current_rays.as_entire_binding()),

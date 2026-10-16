@@ -394,6 +394,19 @@ pub struct QueueCounters {
     pub medium_active: QueueState,
     pub shadow_active: QueueState,
     pub medium_scatter: QueueState,
+    pub sample_area_light: QueueState,
+    pub sample_image_infinite_light: QueueState,
+    pub sample_other_light: QueueState,
+}
+
+/// A selected light and source ray routed to a typed sampling queue.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightSampleWorkItem {
+    pub ray_index: u32,
+    pub source_kind: u32,
+    pub light_index: u32,
+    pub selection_pmf: f32,
 }
 
 /// Indirect dispatch arguments, laid out identically to `wgpu::util::DispatchIndirectArgs`.
@@ -412,7 +425,10 @@ pub const QUEUE_DISPATCH_SLOT_HIT_AREA: u64 = 11;
 pub const QUEUE_DISPATCH_SLOT_SHADOW: u64 = 12;
 pub const QUEUE_DISPATCH_SLOT_NEXT_RAY: u64 = 13;
 pub const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u64 = 14;
-pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 15;
+pub const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u64 = 15;
+pub const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u64 = 16;
+pub const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u64 = 17;
+pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 18;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

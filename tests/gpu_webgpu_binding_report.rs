@@ -94,39 +94,64 @@ fn over_budget_stages_are_explained_without_a_gpu() {
         .iter()
         .find(|stage| stage.stage_id == ComputeStageId::ScatterMedium)
         .unwrap();
-    let direct = report
+    let area = report
         .stages
         .iter()
-        .find(|stage| stage.stage_id == ComputeStageId::SampleDirectLight)
+        .find(|stage| stage.stage_id == ComputeStageId::SampleAreaLight)
         .unwrap();
-    assert_eq!(medium.required.storage_buffers_per_shader_stage, 30);
-    assert_eq!(medium.required.uniform_buffers_per_shader_stage, 4);
+    let image = report
+        .stages
+        .iter()
+        .find(|stage| stage.stage_id == ComputeStageId::SampleImageInfiniteLight)
+        .unwrap();
+    let other = report
+        .stages
+        .iter()
+        .find(|stage| stage.stage_id == ComputeStageId::SampleOtherLight)
+        .unwrap();
+    assert_eq!(medium.required.storage_buffers_per_shader_stage, 14);
+    assert_eq!(medium.required.uniform_buffers_per_shader_stage, 3);
     assert_eq!(
         medium
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        34
+        17
     );
     assert_eq!(
-        direct
+        area.required
+            .buffers_and_acceleration_structures_per_shader_stage,
+        20
+    );
+    assert_eq!(
+        image
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        30
+        22
     );
     assert_eq!(
-        BindingHeadroom::new(medium.required, &mac_limits()).combined,
-        -5
+        other
+            .required
+            .buffers_and_acceleration_structures_per_shader_stage,
+        17
     );
-    let text = report.format(Some(&mac_limits()), true);
+    assert_eq!(
+        image
+            .required
+            .buffers_and_acceleration_structures_per_shader_stage,
+        22
+    );
+    assert_eq!(
+        BindingHeadroom::new(image.required, &mac_limits()).combined,
+        7
+    );
+    let text = report.format(Some(&mac_limits()), false);
     assert!(text.contains("scope=wavefront, noise=true, nanovdb=false"));
-    assert!(text.contains("stage=scatter_medium storage=30 uniform=4 as=0 combined=34"));
-    assert!(text.contains("stage=sample_direct_light storage=29 uniform=1 as=0 combined=30"));
-    assert!(text.contains("headroom: storage=-1 uniform=25 combined=-5"));
-    assert!(!text.contains("resource=MaterialRoot class=Storage"));
-    assert!(!text.contains("resource=MaterialNode class=Storage"));
+    assert!(text.contains("stage=scatter_medium storage=14 uniform=3 as=0 combined=17"));
+    assert!(
+        text.contains("stage=sample_image_infinite_light storage=22 uniform=0 as=0 combined=22")
+    );
+    assert!(text.contains("headroom: storage=7 uniform=29 combined=7"));
     assert!(text.contains("resource=TextureImageArray class=SampledTexture"));
-    assert!(!text.contains("stage=prepare_sample "));
-    println!("{text}");
 }
 
 #[test]
@@ -330,19 +355,19 @@ fn limit_failure_explains_all_over_budget_stages_without_debug_logging() {
         BindingReport::for_stages(&canonical_wavefront_bindings(), COMPUTE_STAGES, true, false)
             .unwrap();
     let limits = wgpu::Limits {
-        max_storage_buffers_per_shader_stage: 29,
-        max_uniform_buffers_per_shader_stage: 29,
-        max_buffers_and_acceleration_structures_per_shader_stage: 29,
+        max_storage_buffers_per_shader_stage: 18,
+        max_uniform_buffers_per_shader_stage: 2,
+        max_buffers_and_acceleration_structures_per_shader_stage: 20,
         ..wgpu::Limits::default()
     };
     let error = validate_binding_limits(report.device_required(), &limits, Some(&report))
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("requested storage=30, uniform=4, buffers_and_acceleration_structures=34")
+        error.contains("requested storage=23, uniform=4, buffers_and_acceleration_structures=25")
     );
-    assert!(error.contains("stage=scatter_medium"));
-    assert!(error.contains("stage=sample_direct_light"));
+    assert!(error.contains("stage=sample_image_infinite_light"));
+    assert!(error.contains("stage=scatter_dielectric"));
     assert!(error.contains("resource=Instance"));
     assert!(error.contains("combined=-5"));
     assert!(!error.contains("stage=prepare_sample "));

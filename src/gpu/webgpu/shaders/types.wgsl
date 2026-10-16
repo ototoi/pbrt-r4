@@ -26,7 +26,12 @@ const QUEUE_DISPATCH_SLOT_HIT_AREA: u32 = 11u;
 const QUEUE_DISPATCH_SLOT_SHADOW: u32 = 12u;
 const QUEUE_DISPATCH_SLOT_NEXT_RAY: u32 = 13u;
 const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u32 = 14u;
-const QUEUE_DISPATCH_SLOT_COUNT: u32 = 15u;
+const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u32 = 15u;
+const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u32 = 16u;
+const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u32 = 17u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 18u;
+const LIGHT_SAMPLE_SOURCE_SURFACE: u32 = 0u;
+const LIGHT_SAMPLE_SOURCE_MEDIUM: u32 = 1u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
 const MATERIAL_KIND_UV: u32 = 1u;
 const MATERIAL_KIND_DIFFUSE: u32 = 2u;
@@ -543,6 +548,16 @@ struct QueueCounters {
     medium_active: QueueState,
     shadow_active: QueueState,
     medium_scatter: QueueState,
+    sample_area_light: QueueState,
+    sample_image_infinite_light: QueueState,
+    sample_other_light: QueueState,
+};
+
+struct LightSampleWorkItem {
+    ray_index: u32,
+    source_kind: u32,
+    light_index: u32,
+    selection_pmf: f32,
 };
 
 struct DispatchIndirectArgs {

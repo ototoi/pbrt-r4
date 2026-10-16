@@ -21,6 +21,7 @@ fn typed_queue_sizes_follow_the_host_abi() {
     assert_eq!(sizes.texture_eval_results, 3 * 2 * 32);
     assert_eq!(sizes.hit_area_ray_indices, 3 * 4);
     assert_eq!(sizes.escaped_ray_indices, 3 * 4);
+    assert_eq!(sizes.light_sample_work_items, 3 * 3 * 16);
 }
 
 #[test]

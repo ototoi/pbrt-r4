@@ -148,3 +148,5 @@ var<storage, read> volume_data: array<f32>;
 var<storage, read> sparse_grid_roots: array<SparseGridRootRecord>;
 @group(0) @binding(78)
 var<storage, read> sparse_grid_entries: array<SparseGridEntryRecord>;
+@group(0) @binding(80)
+var<storage, read_write> light_sample_work: array<LightSampleWorkItem>;

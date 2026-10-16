@@ -12,9 +12,7 @@ fn scatter_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let wo = -normalize(ray.direction.xyz);
     let g = medium.g;
 
-    let light_sample = sample_direct_light_at(
-        p, vec3<f32>(0.0), p, lambda, samples,
-    );
+    let light_sample = direct_light_samples[pixel_index];
     if (light_sample.valid != 0u && light_sample.direction_pdf.w > 0.0) {
         let wi = light_sample.direction_pdf.xyz;
         let p_phase = henyey_greenstein(dot(wo, wi), g);

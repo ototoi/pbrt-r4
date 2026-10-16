@@ -11,10 +11,12 @@ use super::super::abi::{
     QueueState, QUEUE_DISPATCH_SLOT_CURRENT_RAY, QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
     QUEUE_DISPATCH_SLOT_ESCAPED, QUEUE_DISPATCH_SLOT_HIT_AREA, QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
     QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER, QUEUE_DISPATCH_SLOT_NEXT_RAY,
-    QUEUE_DISPATCH_SLOT_SCATTER_COATED, QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
-    QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
-    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION, QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
-    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
+    QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT, QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT,
+    QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT, QUEUE_DISPATCH_SLOT_SCATTER_COATED,
+    QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR, QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
+    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
+    QUEUE_DISPATCH_SLOT_SCATTER_MEASURED, QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
+    QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
 use super::super::material::MaterialKind;
 use super::super::stage::ComputeStageId;
@@ -22,6 +24,41 @@ use super::dispatch::{dispatch, dispatch_count, dispatch_indirect};
 use super::tiles::{compute_tiles, tile_grid_dims, DEFAULT_DISPLAY_UPDATE_INTERVAL};
 
 impl super::WavefrontPathIntegrator {
+    fn sample_queued_lights(&self, encoder: &mut wgpu::CommandEncoder) {
+        dispatch(
+            encoder,
+            &self
+                .pipeline
+                .stage(ComputeStageId::PrepareQueueDispatch)
+                .pipeline,
+            self.bind_groups(ComputeStageId::PrepareQueueDispatch),
+            1,
+            1,
+        );
+        for (stage_id, slot) in [
+            (
+                ComputeStageId::SampleAreaLight,
+                QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT,
+            ),
+            (
+                ComputeStageId::SampleImageInfiniteLight,
+                QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT,
+            ),
+            (
+                ComputeStageId::SampleOtherLight,
+                QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT,
+            ),
+        ] {
+            dispatch_indirect(
+                encoder,
+                &self.pipeline.stage(stage_id).pipeline,
+                self.bind_groups(stage_id),
+                &self.queues.queue_dispatch_args,
+                slot,
+            );
+        }
+    }
+
     fn trace_shadow_rays(&self) -> Result<(), PbrtError> {
         self.queues.reset_shadow_active(&self.context.queue);
         let mut initialize_shadow_encoder =
@@ -361,8 +398,7 @@ impl super::WavefrontPathIntegrator {
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
             );
-            // The direct-eval and scatter queues' counts are final
-            // now that classify_surface_scatter has run.
+            // The surface and medium input queue counts are final now.
             dispatch(
                 &mut encoder,
                 &self
@@ -377,12 +413,23 @@ impl super::WavefrontPathIntegrator {
                 &mut encoder,
                 &self
                     .pipeline
-                    .stage(ComputeStageId::SampleDirectLight)
+                    .stage(ComputeStageId::SelectSurfaceLight)
                     .pipeline,
-                self.bind_groups(ComputeStageId::SampleDirectLight),
+                self.bind_groups(ComputeStageId::SelectSurfaceLight),
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
             );
+            dispatch_indirect(
+                &mut encoder,
+                &self
+                    .pipeline
+                    .stage(ComputeStageId::SelectMediumLight)
+                    .pipeline,
+                self.bind_groups(ComputeStageId::SelectMediumLight),
+                &self.queues.queue_dispatch_args,
+                QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
+            );
+            self.sample_queued_lights(&mut encoder);
             dispatch_indirect(
                 &mut encoder,
                 &self.pipeline.stage(ComputeStageId::ScatterMedium).pipeline,
@@ -525,12 +572,13 @@ impl super::WavefrontPathIntegrator {
                 &mut sss_encoder,
                 &self
                     .pipeline
-                    .stage(ComputeStageId::SampleDirectLight)
+                    .stage(ComputeStageId::SelectSurfaceLight)
                     .pipeline,
-                self.bind_groups(ComputeStageId::SampleDirectLight),
+                self.bind_groups(ComputeStageId::SelectSurfaceLight),
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
             );
+            self.sample_queued_lights(&mut sss_encoder);
             dispatch_count(
                 &mut sss_encoder,
                 &self

@@ -72,10 +72,14 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
             let report =
                 BindingReport::for_stages(&registry, COMPUTE_STAGES, noise, nanovdb).unwrap();
             for (id, storage, uniform) in [
-                (ComputeStageId::SampleDirectLight, 29, 1),
+                (ComputeStageId::SelectSurfaceLight, 16, 1),
+                (ComputeStageId::SelectMediumLight, 15, 1),
+                (ComputeStageId::SampleAreaLight, 20, 0),
+                (ComputeStageId::SampleImageInfiniteLight, 22, 0),
+                (ComputeStageId::SampleOtherLight, 17, 0),
                 (ComputeStageId::ClassifySurfaceScatter, 19, 3),
                 (ComputeStageId::PrepareSubsurfaceExit, 14, 1),
-                (ComputeStageId::ScatterMedium, 30, 4),
+                (ComputeStageId::ScatterMedium, 14, 3),
             ] {
                 let stage = report
                     .stages
@@ -90,7 +94,9 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
                     stage.required.uniform_buffers_per_shader_stage, uniform,
                     "{id:?}"
                 );
-                if id == ComputeStageId::SampleDirectLight {
+                if id == ComputeStageId::SelectSurfaceLight
+                    || id == ComputeStageId::SelectMediumLight
+                {
                     assert!(stage.bindings.iter().all(|b| !matches!(
                         b.resource,
                         ResourceId::MaterialTable | ResourceId::AttributesEvalWorkItems
@@ -286,7 +292,16 @@ impl GpuFixture {
                             ResourceId::NoiseTable => {
                                 wgpu::BindingResource::TextureView(&self.noise)
                             }
-                            _ => self.buffers[&b.resource].as_entire_binding(),
+                            ResourceId::SamplerTable => {
+                                wgpu::BindingResource::TextureView(&self.noise)
+                            }
+                            _ => self
+                                .buffers
+                                .get(&b.resource)
+                                .unwrap_or_else(|| {
+                                    panic!("missing fixture buffer for {:?}", b.resource)
+                                })
+                                .as_entire_binding(),
                         },
                     })
                     .collect::<Vec<_>>();
@@ -457,6 +472,9 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
         let mut counters = QueueCounters {
             material: state(count, count),
             direct: state(0, count),
+            sample_area_light: state(0, count),
+            sample_image_infinite_light: state(0, count),
+            sample_other_light: state(0, count),
             ..Zeroable::zeroed()
         };
         // Every scatter queue uses the same capacity, including non-direct kinds.
@@ -504,13 +522,70 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
                 "case {i}, round {round}"
             );
         }
-        gpu.run(ComputeStageId::SampleDirectLight, 1);
+        gpu.run(ComputeStageId::SelectSurfaceLight, 1);
+        gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+        gpu.run(ComputeStageId::SampleAreaLight, 1);
+        gpu.run(ComputeStageId::SampleImageInfiniteLight, 1);
+        gpu.run(ComputeStageId::SampleOtherLight, 1);
         for (i, origin) in expected.iter().enumerate() {
             if let Some(origin) = origin {
                 gpu.assert_point_sample(i, *origin);
             }
         }
     }
+
+    // Medium scatter work selects and samples through the same typed queues,
+    // then ScatterMedium consumes that sample to publish its shadow ray.
+    let medium_origin = [1.0, 2.0, 10.0];
+    gpu.write(
+        ResourceId::CurrentRay,
+        &[RayWorkItem {
+            origin: [medium_origin[0], medium_origin[1], medium_origin[2], 1.0],
+            direction: [0.0, 0.0, 1.0, 0.0],
+            beta: [1.0; 4],
+            r_u: [1.0; 4],
+            r_l: [1.0; 4],
+            pixel_index: 0,
+            medium_id: 0,
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.write(ResourceId::MediumScatterQueue, &[0u32]);
+    gpu.write(
+        ResourceId::PixelSampleState,
+        &[PixelSampleState {
+            lambda: [550.0; 4],
+            direct: [0.3, 0.4, 0.5, 0.0],
+            indirect: [0.2, 0.3, 0.4, 0.0],
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.write(
+        ResourceId::QueueCounters,
+        &[QueueCounters {
+            medium_scatter: state(1, 3),
+            next: state(0, 3),
+            shadow: state(0, 3),
+            sample_area_light: state(0, 3),
+            sample_image_infinite_light: state(0, 3),
+            sample_other_light: state(0, 3),
+            ..Zeroable::zeroed()
+        }],
+    );
+    gpu.run(ComputeStageId::SelectMediumLight, 1);
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::SampleAreaLight, 1);
+    gpu.run(ComputeStageId::SampleImageInfiniteLight, 1);
+    gpu.run(ComputeStageId::SampleOtherLight, 1);
+    gpu.assert_point_sample(0, medium_origin);
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::ScatterMedium, 1);
+    assert_eq!(
+        gpu.read::<QueueCounters>(ResourceId::QueueCounters, 1)[0]
+            .shadow
+            .count,
+        1
+    );
 
     // A real BSSRDF exit replaces a different entry surface and deliberately
     // invalid/stale material-work-item index. The consumer must not resolve it.
@@ -612,6 +687,9 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
         ResourceId::QueueCounters,
         &[QueueCounters {
             direct: state(0, 3),
+            sample_area_light: state(0, 3),
+            sample_image_infinite_light: state(0, 3),
+            sample_other_light: state(0, 3),
             ..Zeroable::zeroed()
         }],
     );
@@ -628,7 +706,11 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
             .count,
         1
     );
-    gpu.run(ComputeStageId::SampleDirectLight, 1);
+    gpu.run(ComputeStageId::SelectSurfaceLight, 1);
+    gpu.run(ComputeStageId::PrepareQueueDispatch, 1);
+    gpu.run(ComputeStageId::SampleAreaLight, 1);
+    gpu.run(ComputeStageId::SampleImageInfiniteLight, 1);
+    gpu.run(ComputeStageId::SampleOtherLight, 1);
     gpu.assert_point_sample(0, origin);
 
     // Sample/tile reuse clears all stored origins; light-free classification
