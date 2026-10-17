@@ -14,7 +14,7 @@ readme = "README.md"
 include = ["/src/**", "/build/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
 [features]
-default = []
+default = ["webgpu"]
 stats = []
 float-as-double = []
 cuda = []
