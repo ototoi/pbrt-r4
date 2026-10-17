@@ -44,6 +44,12 @@ impl AlphaMaskShape {
             match info {
                 AlphaMaskInfo::Texture { texture } => {
                     alpha_mask = Some(AlphaMaskSource::Texture(Arc::clone(texture)));
+                    if matches!(texture.as_ref(), FloatTexture::Constant(alpha) if alpha.value == 0.0)
+                    {
+                        test_intersection = false;
+                        test_intersection_p = false;
+                        constant_zero_alpha = true;
+                    }
                 }
                 AlphaMaskInfo::Value { value: alpha } => {
                     alpha_mask = Some(AlphaMaskSource::Value(*alpha));
