@@ -221,8 +221,7 @@ fn write_cache<T>(
         if target.join("COMPLETE").exists() {
             return Ok(());
         }
-        fs::remove_dir_all(target)
-            .map_err(|e| cache_io_error("remove incomplete", target, e))?;
+        fs::remove_dir_all(target).map_err(|e| cache_io_error("remove incomplete", target, e))?;
     }
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
