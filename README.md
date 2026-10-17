@@ -10,8 +10,8 @@
 ## What is pbrt-r4
 
 pbrt-r4 is a Rust implementation of [pbrt-v4](https://github.com/mmp/pbrt-v4),
-evolved from a pbrt-r3 (pbrt-v3 Rust port) foundation. It provides a CPU
-renderer and an optional WebGPU renderer. Its primary compatibility target is
+evolved from a pbrt-r3 (pbrt-v3 Rust port) foundation. It provides CPU and
+WebGPU renderers. Its primary compatibility target is
 pbrt-v4 behavior and input files.
 
 The codebase now mirrors pbrt-v4's class structure on every major axis — `Spectrum` / `SampledSpectrum` are 4-wavelength packets, `BSDF`/`BxDF` carry per-path `SampledSpectrum` reflectance, the `Light` trait matches pbrt-v4's `SampleLi` / `PDF_Li` / `SampleLe` / `Phi` shapes, and integrators (Path / VolPath / SPPM / BDPT / MLT / LightPath / SimpleVolPath / RandomWalk / SimplePath / AO / Function) translate their pbrt-v4 counterparts line-by-line. pbrt-v4 scene files render through the same pipeline; legacy pbrt-v3 input should first be upgraded to pbrt-v4 format.
@@ -79,15 +79,21 @@ pbrt-r4 has several options as Rust features.
 |---------|-------------|
 | `stats` | Enables the pbrt-v4 `pixelstats` scene option. |
 | `float-as-double` | Uses double precision (64-bit) for floating-point calculations. This increases precision but also increases execution time and memory usage. |
-| `webgpu` | Enables the optional WebGPU renderer. It is not enabled by default. |
+| `webgpu` | Enables the WebGPU renderer. Enabled by default. |
 
 ## GPU rendering
 
-The default build uses the CPU renderer. Build with the `webgpu` feature to
-enable GPU rendering:
+The default build enables WebGPU rendering. To build a CPU-only renderer, disable
+default features:
 
 ```sh
-cargo build --release --features webgpu
+cargo build --release --no-default-features
+```
+
+Render with WebGPU using the default build:
+
+```sh
+cargo build --release
 ./target/release/pbrt-r4 \
   --gpu \
   --spp 64 \
@@ -103,8 +109,8 @@ and defaults to 512 pixels.
 The WebGPU backend requires an adapter that provides experimental ray-query
 support and the resource limits required by the scene. Cargo enables Vulkan on
 Linux, Direct3D 12 or Vulkan on Windows, and Metal on macOS. Project CI currently
-runs on Linux only, so Windows and macOS builds and GPU devices have not been
-verified by CI.
+runs on Linux only. WebGPU has also been manually verified on Windows; macOS
+builds and GPU devices have not been verified by CI.
 
 To inspect per-stage buffer requirements and adapter headroom, enable the
 WebGPU debug log:
