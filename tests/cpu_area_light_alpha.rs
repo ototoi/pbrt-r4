@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::sync::Arc;
 
-use pbrt_r4::base::light::Light;
+use pbrt_r4::base::light::{Light, LightType};
+use pbrt_r4::base::lightsampler::LightSampleContext;
 use pbrt_r4::base::shape::{Shape, ShapeSampleContext};
 use pbrt_r4::media::MediumInterface;
 use pbrt_r4::paramdict::{ParameterDictionary, TextureParameterDictionary};
@@ -146,6 +147,23 @@ fn fractional_alpha_area_light_emission_sampling_accepts_half_its_points() {
 }
 
 #[test]
+fn constant_zero_alpha_texture_keeps_area_light_visible_to_sampling() {
+    let light = create_triangle_area_light_with_zero_alpha_texture();
+    assert_eq!(light.light_type(), LightType::DeltaPosition);
+
+    let context = LightSampleContext {
+        p: Point3f::zero(),
+        ..Default::default()
+    };
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let sample = light.sample_li(&context, Point2f::new(0.5, 0.5), &lambda, false);
+    assert!(
+        sample.is_some(),
+        "invisible area light must illuminate via sampling"
+    );
+}
+
+#[test]
 fn fractional_alpha_area_light_radiance_is_zero_for_masked_points() {
     let light = create_triangle_area_light(Some(0.5));
     let Light::DiffuseArea(area_light) = light.as_ref() else {
@@ -188,6 +206,36 @@ fn create_triangle_area_light(alpha: Option<Float>) -> Arc<Light> {
         false,
         &shape_params,
         &HashMap::new(),
+    )
+    .expect("triangle area-light shape")
+    .remove(0);
+    Light::create_area(
+        "diffuse",
+        &identity,
+        &MediumInterface::default(),
+        &ParameterDictionary::new(),
+        &Arc::new(shape),
+    )
+    .expect("diffuse area light")
+}
+
+fn create_triangle_area_light_with_zero_alpha_texture() -> Arc<Light> {
+    let identity = Transform::identity();
+    let mut shape_params = ParameterDictionary::new();
+    shape_params.add_ints("indices", &[0, 1, 2]);
+    shape_params.add_point("P", &[1.0, -1.0, 2.0, 2.0, 1.0, 2.0, 3.0, -1.0, 2.0]);
+    shape_params.add_strings("alpha", &["mask"]);
+    let float_textures = HashMap::from([(
+        "mask".to_string(),
+        Arc::new(FloatTexture::Constant(ConstantTexture::new(&0.0))),
+    )]);
+    let shape = Shape::create(
+        "trianglemesh",
+        &identity,
+        &identity,
+        false,
+        &shape_params,
+        &float_textures,
     )
     .expect("triangle area-light shape")
     .remove(0);
