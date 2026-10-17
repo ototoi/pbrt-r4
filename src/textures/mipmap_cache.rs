@@ -103,6 +103,13 @@ pub fn remove_mipmap_cache(dir: &str) -> Result<bool, PbrtError> {
     Ok(true)
 }
 
+fn cache_io_error(operation: &str, path: &Path, error: std::io::Error) -> PbrtError {
+    PbrtError::error(&format!(
+        "Cannot {operation} MIPMap cache path {}: {error}",
+        path.display()
+    ))
+}
+
 fn layout(channels: usize) -> Result<&'static str, PbrtError> {
     match channels {
         1 => Ok("Y"),
@@ -214,23 +221,34 @@ fn write_cache<T>(
         if target.join("COMPLETE").exists() {
             return Ok(());
         }
-        fs::remove_dir_all(target)?;
+        fs::remove_dir_all(target)
+            .map_err(|e| cache_io_error("remove incomplete", target, e))?;
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)
+            .map_err(|e| cache_io_error("create parent directory for", parent, e))?;
     }
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| PbrtError::error("Invalid system clock for cache write."))?
         .as_nanos();
     let temporary = target.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
-    fs::create_dir_all(&temporary)?;
+    fs::create_dir_all(&temporary)
+        .map_err(|e| cache_io_error("create temporary directory for", &temporary, e))?;
     let result = (|| {
         let mut levels = Vec::with_capacity(mipmap.storage.pyramid.len());
         for (index, image) in mipmap.storage.pyramid.iter().enumerate() {
-            let mut file = File::create(temporary.join(format!("level-{index:03}.bin")))?;
-            let (byte_length, checksum) = write_level(&mut file, image)?;
-            file.sync_all()?;
+            let level_path = temporary.join(format!("level-{index:03}.bin"));
+            let mut file = File::create(&level_path)
+                .map_err(|e| cache_io_error("create cache level", &level_path, e))?;
+            let (byte_length, checksum) = write_level(&mut file, image).map_err(|e| {
+                PbrtError::error(&format!(
+                    "Cannot write MIPMap cache level {}: {e}",
+                    level_path.display()
+                ))
+            })?;
+            file.sync_all()
+                .map_err(|e| cache_io_error("sync cache level", &level_path, e))?;
             levels.push(CacheLevelInfo {
                 width: image.resolution.0,
                 height: image.resolution.1,
@@ -251,12 +269,26 @@ fn write_cache<T>(
             levels,
         };
         let metadata_path = temporary.join("metadata.json");
-        let mut file = File::create(metadata_path)?;
+        let mut file = File::create(&metadata_path)
+            .map_err(|e| cache_io_error("create metadata file for", &metadata_path, e))?;
         serde_json::to_writer_pretty(&mut file, &metadata)
             .map_err(|e| PbrtError::error(&format!("Cannot write MIPMap cache metadata: {e}")))?;
-        file.sync_all()?;
-        File::create(temporary.join("COMPLETE"))?.sync_all()?;
-        fs::rename(&temporary, target)?;
+        file.sync_all()
+            .map_err(|e| cache_io_error("sync metadata file", &metadata_path, e))?;
+        // Windows cannot rename a directory while a file inside it is still open.
+        drop(file);
+        let complete_path = temporary.join("COMPLETE");
+        File::create(&complete_path)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| cache_io_error("create completion marker", &complete_path, e))?;
+        if let Err(e) = fs::rename(&temporary, target) {
+            // Another renderer may have atomically installed the same cache.
+            // On Windows, rename over an existing directory can report access denied.
+            if target.join("COMPLETE").is_file() {
+                return Ok(());
+            }
+            return Err(cache_io_error("install completed cache at", target, e));
+        }
         Ok(())
     })();
     if result.is_err() {
