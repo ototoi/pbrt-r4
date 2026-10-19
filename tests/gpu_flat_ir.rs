@@ -3426,3 +3426,44 @@ fn flatten_filter_component_reaches_film_with_default_gaussian() {
         }
     }
 }
+
+#[test]
+fn flatten_node_uses_volpath_for_other_integrators() {
+    use pbrt_r4::gpu::flat::IntegratorKind;
+
+    for name in [
+        "bdpt",
+        "mlt",
+        "sppm",
+        "ao",
+        "randomwalk",
+        "simplepath",
+        "simplevolpath",
+        "lightpath",
+        "unknown",
+        "path",
+        "volpath",
+    ] {
+        let mut root = Node::new("root");
+        add_camera_and_film(&mut root, Default::default());
+        let mut params = ParameterDictionary::default();
+        params.add_int("integer maxdepth", 3);
+        params.add_string("string lightsampler", "uniform");
+        root.add_component(Component::Integrator(IntegratorComponent {
+            integrator: NodeIntegrator {
+                name: name.to_string(),
+                params,
+            },
+        }));
+        let scene =
+            flatten_node(Arc::new(RwLock::new(root))).unwrap_or_else(|err| panic!("{name}: {err}"));
+        let expected = if name == "path" {
+            IntegratorKind::Path
+        } else {
+            IntegratorKind::VolPath
+        };
+        assert_eq!(scene.render_settings.integrator_kind, expected, "{name}");
+        assert_eq!(scene.render_settings.max_depth, 3, "{name}");
+        assert_eq!(scene.render_settings.light_sampler, "uniform", "{name}");
+    }
+}

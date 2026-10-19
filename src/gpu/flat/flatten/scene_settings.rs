@@ -37,9 +37,12 @@ pub fn render_settings(
         None | Some("volpath") => IntegratorKind::VolPath,
         Some("path") => IntegratorKind::Path,
         Some(name) => {
-            return Err(PbrtError::error(&format!(
-                "GPU integrator '{name}' is not implemented."
-            )))
+            // pbrt-v4: WavefrontPathIntegrator ignores other integrator names.
+            log::warn!(
+                "Ignoring specified integrator \"{}\": the GPU wavefront integrator uses a \"volpath\" integrator.",
+                name
+            );
+            IntegratorKind::VolPath
         }
     };
     let sampler_kind = match sampler.map(|sampler| sampler.name.as_str()) {
@@ -63,14 +66,6 @@ pub fn render_settings(
         }
         _ => SamplerRandomization::None,
     };
-    if let Some(integrator) = integrator {
-        if integrator.name != "path" && integrator.name != "volpath" {
-            return Err(PbrtError::error(&format!(
-                "Unsupported GPU integrator: {}.",
-                integrator.name
-            )));
-        }
-    }
     let default_samples_per_pixel = match sampler_kind {
         SamplerKind::Independent => 4,
         SamplerKind::Halton
