@@ -269,9 +269,9 @@ fn required_limits_are_derived_from_each_composed_stage() {
     let bindings = canonical_wavefront_bindings();
     let limits = required_limits_for_sources(&bindings, &[GENERATE_CAMERA_RAYS_SHADER]).unwrap();
 
-    assert_eq!(limits.storage_buffers_per_shader_stage, 10);
+    assert_eq!(limits.storage_buffers_per_shader_stage, 8);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 4);
-    assert_eq!(limits.bind_groups, 1);
+    assert_eq!(limits.bind_groups, 2);
 }
 
 #[test]
