@@ -5,7 +5,7 @@ use pbrt_r4::gpu::webgpu::bssrdf::probe_shader_source;
 use pbrt_r4::gpu::webgpu::context::validate_binding_limits;
 use pbrt_r4::gpu::webgpu::shader::{
     compose_source_with_features, required_limits_for_sources_with_nanovdb,
-    resolve_resource_bindings, specialize_source,
+    resolve_resource_bindings, specialize_geometry_page_bindings, specialize_source,
 };
 use pbrt_r4::gpu::webgpu::stage::{ComputeStageId, ComputeStageSpec, COMPUTE_STAGES};
 use pbrt_r4::gpu::webgpu::stages::{
@@ -55,6 +55,10 @@ fn reports_match_pipeline_declarations_for_all_feature_combinations() {
                 assert_eq!(pairs, naga_bindings(&source), "{}", stage.entry_point);
                 let specialized = specialize_source(source, 3, 2, 17);
                 assert_eq!(pairs, naga_bindings(&specialized));
+                let single_page = specialize_geometry_page_bindings(specialized.clone(), 1);
+                naga_bindings(&single_page);
+                assert!(!single_page.contains("binding_array<VertexPage"));
+                assert!(!single_page.contains("binding_array<IndexPage"));
                 assert_eq!(
                     entry.bindings,
                     resolve_resource_bindings(&registry, stage.entry_point, &specialized).unwrap()
@@ -149,6 +153,33 @@ fn reports_match_pipeline_declarations_for_all_feature_combinations() {
             }
         }
     }
+}
+
+#[test]
+fn sampler_array_elements_use_their_separate_limit() {
+    let report =
+        BindingReport::for_stages(&canonical_wavefront_bindings(), COMPUTE_STAGES, true, true)
+            .unwrap();
+    let (elements, samplers, _) = report.binding_array_usage(3, 5, 4, false).unwrap();
+    assert_eq!(elements, 11);
+    assert_eq!(samplers, 4);
+}
+
+#[test]
+fn single_geometry_page_counts_vertex_and_index_as_storage_buffers() {
+    let report =
+        BindingReport::for_stages(&canonical_wavefront_bindings(), COMPUTE_STAGES, true, true)
+            .unwrap();
+    let paged = report.device_required_for_geometry_pages(2);
+    let single_page = report.device_required_for_geometry_pages(1);
+    assert_eq!(
+        single_page.storage_buffers_per_shader_stage,
+        paged.storage_buffers_per_shader_stage + 2
+    );
+    assert_eq!(
+        single_page.buffers_and_acceleration_structures_per_shader_stage,
+        paged.buffers_and_acceleration_structures_per_shader_stage + 2
+    );
 }
 
 #[test]

@@ -269,6 +269,14 @@ impl super::WavefrontPathIntegrator {
                     ResourceId::TextureSamplerArray => {
                         Some(wgpu::BindingResource::SamplerArray(&texture_samplers))
                     }
+                    ResourceId::Vertex if scene.geometry_page_count == 1 => scene
+                        .vertex_buffers
+                        .first()
+                        .map(wgpu::Buffer::as_entire_binding),
+                    ResourceId::Index if scene.geometry_page_count == 1 => scene
+                        .index_buffers
+                        .first()
+                        .map(wgpu::Buffer::as_entire_binding),
                     ResourceId::Vertex => Some(wgpu::BindingResource::BufferArray(&vertex_buffers)),
                     ResourceId::Index => Some(wgpu::BindingResource::BufferArray(&index_buffers)),
                     ResourceId::BSSRDFWork => Some(bssrdf_work.as_entire_binding()),

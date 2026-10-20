@@ -40,7 +40,7 @@ fn two_geometry_page_pipeline_compiles() {
         required_limits_for_sources_with_nanovdb(&canonical_bindings, &stage_sources, false)
             .unwrap();
     required.bind_groups = required.bind_groups.max(2);
-    let context = Context::new(required, 1, 1).unwrap();
+    let context = Context::new_with_geometry_page_count(required, 1, 1, 2).unwrap();
     Pipeline::new_with_geometry_page_count(&context.device, 1, 1, 1, false, false, 2).unwrap();
 }
 

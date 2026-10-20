@@ -72,14 +72,17 @@ impl BindingReport {
             let mut arrays = 0u32;
             for binding in &stage.bindings {
                 let count = match binding.resource {
-                    ResourceId::Vertex | ResourceId::Index => geometry_page_count,
-                    ResourceId::TextureImageArray => texture_image_count,
+                    ResourceId::Vertex | ResourceId::Index if geometry_page_count > 1 => {
+                        Some(geometry_page_count)
+                    }
+                    ResourceId::TextureImageArray => Some(texture_image_count),
                     ResourceId::TextureSamplerArray => {
                         samplers = texture_sampler_count;
-                        texture_sampler_count
+                        Some(0)
                     }
-                    _ => continue,
+                    _ => None,
                 };
+                let Some(count) = count else { continue };
                 elements = elements.checked_add(count).ok_or_else(|| {
                     PbrtError::error("WebGPU binding array element count overflowed.")
                 })?;
@@ -93,6 +96,17 @@ impl BindingReport {
                 stage
                     .required
                     .buffers_and_acceleration_structures_per_shader_stage
+                    .saturating_add(if geometry_page_count == 1 {
+                        stage
+                            .bindings
+                            .iter()
+                            .filter(|binding| {
+                                matches!(binding.resource, ResourceId::Vertex | ResourceId::Index)
+                            })
+                            .count() as u32
+                    } else {
+                        0
+                    })
                     .checked_add(arrays)
                     .ok_or_else(|| {
                         PbrtError::error("WebGPU Metal buffer slot count overflowed.")
@@ -100,9 +114,13 @@ impl BindingReport {
             );
         }
         if subsurface_enabled {
-            let probe_elements = geometry_page_count.checked_mul(2).ok_or_else(|| {
-                PbrtError::error("WebGPU BSSRDF probe binding array element count overflowed.")
-            })?;
+            let probe_elements = if geometry_page_count > 1 {
+                geometry_page_count.checked_mul(2).ok_or_else(|| {
+                    PbrtError::error("WebGPU BSSRDF probe binding array element count overflowed.")
+                })?
+            } else {
+                0
+            };
             max_elements = max_elements.max(probe_elements);
             max_metal_slots = max_metal_slots.max(10);
         }
@@ -152,6 +170,39 @@ impl BindingReport {
         RequiredLimits {
             bind_groups: self.required.bind_groups.max(WAVEFRONT_BIND_GROUP_COUNT),
             ..self.required
+        }
+    }
+
+    pub fn device_required_for_geometry_pages(&self, geometry_page_count: u32) -> RequiredLimits {
+        if geometry_page_count != 1 {
+            return self.device_required();
+        }
+        let required = self
+            .stages
+            .iter()
+            .fold(RequiredLimits::default(), |max, stage| {
+                let scalar_geometry_buffers = stage
+                    .bindings
+                    .iter()
+                    .filter(|binding| {
+                        matches!(binding.resource, ResourceId::Vertex | ResourceId::Index)
+                    })
+                    .count() as u32;
+                max.maximum(RequiredLimits {
+                    storage_buffers_per_shader_stage: stage
+                        .required
+                        .storage_buffers_per_shader_stage
+                        .saturating_add(scalar_geometry_buffers),
+                    buffers_and_acceleration_structures_per_shader_stage: stage
+                        .required
+                        .buffers_and_acceleration_structures_per_shader_stage
+                        .saturating_add(scalar_geometry_buffers),
+                    ..stage.required
+                })
+            });
+        RequiredLimits {
+            bind_groups: required.bind_groups.max(WAVEFRONT_BIND_GROUP_COUNT),
+            ..required
         }
     }
 

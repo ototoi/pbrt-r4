@@ -22,7 +22,28 @@ impl Context {
         texture_image_count: u32,
         texture_sampler_count: u32,
     ) -> Result<Self, PbrtError> {
-        Self::create(required, texture_image_count, texture_sampler_count, None)
+        Self::create(
+            required,
+            texture_image_count,
+            texture_sampler_count,
+            1,
+            None,
+        )
+    }
+
+    pub fn new_with_geometry_page_count(
+        required: RequiredLimits,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        geometry_page_count: u32,
+    ) -> Result<Self, PbrtError> {
+        Self::create(
+            required,
+            texture_image_count,
+            texture_sampler_count,
+            geometry_page_count,
+            None,
+        )
     }
 
     pub fn with_binding_report(
@@ -31,9 +52,25 @@ impl Context {
         texture_sampler_count: u32,
     ) -> Result<Self, PbrtError> {
         Self::create(
-            report.device_required(),
+            report.device_required_for_geometry_pages(1),
             texture_image_count,
             texture_sampler_count,
+            1,
+            Some(report),
+        )
+    }
+
+    pub fn with_binding_report_and_geometry_page_count(
+        report: &BindingReport,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        geometry_page_count: u32,
+    ) -> Result<Self, PbrtError> {
+        Self::create(
+            report.device_required_for_geometry_pages(geometry_page_count),
+            texture_image_count,
+            texture_sampler_count,
+            geometry_page_count,
             Some(report),
         )
     }
@@ -70,19 +107,31 @@ impl Context {
 
     pub fn from_adapter(
         adapter: AdapterContext,
-        required: RequiredLimits,
+        mut required: RequiredLimits,
         texture_image_count: u32,
         texture_sampler_count: u32,
         geometry_page_count: u32,
         subsurface_enabled: bool,
         report: Option<&BindingReport>,
     ) -> Result<Self, PbrtError> {
-        let required_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
-            | wgpu::Features::BUFFER_BINDING_ARRAY
+        let mut required_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
             | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
             | wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
             | wgpu::Features::FLOAT32_FILTERABLE;
+        if geometry_page_count > 1 {
+            required_features |= wgpu::Features::BUFFER_BINDING_ARRAY;
+        } else if let Some(report) = report {
+            required = required.maximum(report.device_required_for_geometry_pages(1));
+        } else {
+            // The one-page shader variant binds vertices and indices as
+            // ordinary storage buffers, so count them against buffer limits.
+            required.storage_buffers_per_shader_stage =
+                required.storage_buffers_per_shader_stage.saturating_add(2);
+            required.buffers_and_acceleration_structures_per_shader_stage = required
+                .buffers_and_acceleration_structures_per_shader_stage
+                .saturating_add(2);
+        }
         let missing_features = required_features - adapter.features;
         if !missing_features.is_empty() {
             return Err(PbrtError::error(&format!(
@@ -101,13 +150,15 @@ impl Context {
             })
             .transpose()?
             .unwrap_or((
-                texture_image_count
-                    .saturating_add(texture_sampler_count)
-                    .saturating_add(geometry_page_count.saturating_mul(2)),
+                texture_image_count.saturating_add(if geometry_page_count > 1 {
+                    geometry_page_count.saturating_mul(2)
+                } else {
+                    0
+                }),
                 texture_sampler_count,
                 required
                     .buffers_and_acceleration_structures_per_shader_stage
-                    .saturating_add(4),
+                    .saturating_add(if geometry_page_count == 1 { 2 } else { 4 }),
             ));
         let array_limit = u64::from(adapter.limits.max_binding_array_elements_per_shader_stage);
         let sampler_limit = adapter
@@ -183,6 +234,7 @@ impl Context {
         required: RequiredLimits,
         texture_image_count: u32,
         texture_sampler_count: u32,
+        geometry_page_count: u32,
         report: Option<&BindingReport>,
     ) -> Result<Self, PbrtError> {
         let adapter = Self::request_adapter(report)?;
@@ -191,7 +243,7 @@ impl Context {
             required,
             texture_image_count,
             texture_sampler_count,
-            1,
+            geometry_page_count,
             false,
             report,
         )

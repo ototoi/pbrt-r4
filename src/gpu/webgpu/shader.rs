@@ -158,6 +158,34 @@ pub fn specialize_source(
         )
 }
 
+/// Use scalar storage bindings when geometry fits in one page. Buffer binding
+/// arrays are not available on every native backend, while ordinary storage
+/// buffers are.
+pub fn specialize_geometry_page_bindings(source: String, geometry_page_count: u32) -> String {
+    if geometry_page_count != 1 {
+        return source
+            .replace(
+                "binding_array<VertexPage>",
+                &format!("binding_array<VertexPage, {geometry_page_count}u>"),
+            )
+            .replace(
+                "binding_array<IndexPage>",
+                &format!("binding_array<IndexPage, {geometry_page_count}u>"),
+            );
+    }
+    source
+        .replace(
+            "var<storage, read> vertices: binding_array<VertexPage>;",
+            "var<storage, read> vertices: VertexPage;",
+        )
+        .replace(
+            "var<storage, read> indices: binding_array<IndexPage>;",
+            "var<storage, read> indices: IndexPage;",
+        )
+        .replace("vertices[geometry.page].values", "vertices.values")
+        .replace("indices[geometry.page].values", "indices.values")
+}
+
 /// Concatenates [`COMMON_LIBRARY`]; without noise support the texture noise
 /// branch is removed so stages do not require the noise tables.
 pub fn common_library_source(noise_enabled: bool) -> String {
@@ -459,5 +487,20 @@ mod tests {
         assert!(with_noise.contains(TEXTURE_NOISE_BRANCH_BEGIN));
         assert!(!without_noise.contains(TEXTURE_NOISE_BRANCH_BEGIN));
         assert!(!without_noise.contains(TEXTURE_NOISE_BRANCH_END));
+    }
+
+    #[test]
+    fn geometry_pages_use_scalar_bindings_for_one_page() {
+        let source = "var<storage, read> vertices: binding_array<VertexPage>;\nvar<storage, read> indices: binding_array<IndexPage>;\nlet v = vertices[geometry.page].values[i];\nlet x = arrayLength(&indices[geometry.page].values);".to_string();
+        let scalar = specialize_geometry_page_bindings(source.clone(), 1);
+        assert!(scalar.contains("var<storage, read> vertices: VertexPage;"));
+        assert!(scalar.contains("var<storage, read> indices: IndexPage;"));
+        assert!(scalar.contains("vertices.values[i]"));
+        assert!(scalar.contains("arrayLength(&indices.values)"));
+        assert!(!scalar.contains("binding_array<VertexPage"));
+
+        let paged = specialize_geometry_page_bindings(source, 3);
+        assert!(paged.contains("binding_array<VertexPage, 3u>"));
+        assert!(paged.contains("binding_array<IndexPage, 3u>"));
     }
 }

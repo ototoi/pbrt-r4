@@ -268,6 +268,7 @@ pub fn validate_geometry_page_plan(
             "WebGPU geometry page plan does not match the scene or its capacities.",
         ));
     }
+    validate_geometry_page_coverage(&plan.pages, flat.geometry.geometries.len())?;
     for (page_index, page) in plan.pages.iter().enumerate() {
         let end = page
             .first_geometry
@@ -357,4 +358,58 @@ pub fn validate_geometry_page_plan(
         }
     }
     Ok(())
+}
+
+fn validate_geometry_page_coverage(
+    pages: &[GeometryPageRange],
+    geometry_count: usize,
+) -> Result<(), PbrtError> {
+    let mut next_geometry = 0usize;
+    for (page_index, page) in pages.iter().enumerate() {
+        if page.first_geometry != next_geometry || page.geometry_count == 0 {
+            return Err(PbrtError::error(&format!(
+                "WebGPU geometry page {page_index} does not continue the preceding geometry range."
+            )));
+        }
+        next_geometry = page
+            .first_geometry
+            .checked_add(page.geometry_count)
+            .ok_or_else(|| PbrtError::error("WebGPU page geometry range overflowed."))?;
+        if next_geometry > geometry_count {
+            return Err(PbrtError::error(&format!(
+                "WebGPU geometry page {page_index} references geometry {next_geometry} beyond the scene."
+            )));
+        }
+    }
+    if next_geometry != geometry_count {
+        return Err(PbrtError::error(&format!(
+            "WebGPU geometry page plan covers {next_geometry} of {geometry_count} geometries."
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_coverage_rejects_gaps_and_trailing_omissions() {
+        let ranges = [
+            GeometryPageRange {
+                first_geometry: 0,
+                geometry_count: 1,
+                vertex_count: 1,
+                index_count: 3,
+            },
+            GeometryPageRange {
+                first_geometry: 2,
+                geometry_count: 1,
+                vertex_count: 1,
+                index_count: 3,
+            },
+        ];
+        assert!(validate_geometry_page_coverage(&ranges, 3).is_err());
+        assert!(validate_geometry_page_coverage(&ranges[..1], 3).is_err());
+    }
 }

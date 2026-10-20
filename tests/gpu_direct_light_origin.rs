@@ -139,7 +139,8 @@ impl GpuFixture {
     fn new() -> Self {
         let registry = canonical_wavefront_bindings();
         let report = BindingReport::for_stages(&registry, COMPUTE_STAGES, false, false).unwrap();
-        let context = Context::with_binding_report(&report, 1, 1).unwrap();
+        let context =
+            Context::with_binding_report_and_geometry_page_count(&report, 1, 1, 2).unwrap();
         let device = &context.device;
         let pipeline =
             Pipeline::new_with_geometry_page_count(device, 1, 1, 1, false, false, 2).unwrap();

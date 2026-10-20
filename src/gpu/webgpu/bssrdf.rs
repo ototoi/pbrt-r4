@@ -177,16 +177,11 @@ impl BSSRDFProbePipeline {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("BSSRDF probe"),
             source: wgpu::ShaderSource::Wgsl(
-                probe_shader_source()
-                    .replace(
-                        "binding_array<VertexPage>",
-                        &format!("binding_array<VertexPage, {geometry_page_count}u>"),
-                    )
-                    .replace(
-                        "binding_array<IndexPage>",
-                        &format!("binding_array<IndexPage, {geometry_page_count}u>"),
-                    )
-                    .into(),
+                super::shader::specialize_geometry_page_bindings(
+                    probe_shader_source(),
+                    geometry_page_count,
+                )
+                .into(),
             ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -250,20 +245,33 @@ impl BSSRDFProbePipeline {
             results,
             error,
         ];
-        let mut entries = vec![
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::BufferArray(&vertex_buffers),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::BufferArray(&index_buffers),
-            },
-        ];
+        let mut entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas),
+        }];
+        if scene.geometry_page_count == 1 {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: scene.vertex_buffers[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: scene.index_buffers[0].as_entire_binding(),
+                },
+            ]);
+        } else {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::BufferArray(&vertex_buffers),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::BufferArray(&index_buffers),
+                },
+            ]);
+        }
         entries.extend(
             buffers
                 .iter()

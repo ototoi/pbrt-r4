@@ -63,23 +63,18 @@ impl Pipeline {
             .iter()
             .map(|stage| {
                 log::info!("GPU pipeline: creating {}", stage.label);
-                let source = shader::specialize_source(
-                    shader::compose_source_with_features(
-                        stage.source,
-                        texture_noise_enabled,
-                        nanovdb_enabled,
+                let source = shader::specialize_geometry_page_bindings(
+                    shader::specialize_source(
+                        shader::compose_source_with_features(
+                            stage.source,
+                            texture_noise_enabled,
+                            nanovdb_enabled,
+                        ),
+                        texture_image_count,
+                        texture_sampler_count,
+                        texture_program_capacity,
                     ),
-                    texture_image_count,
-                    texture_sampler_count,
-                    texture_program_capacity,
-                )
-                .replace(
-                    "binding_array<VertexPage>",
-                    &format!("binding_array<VertexPage, {geometry_page_count}u>"),
-                )
-                .replace(
-                    "binding_array<IndexPage>",
-                    &format!("binding_array<IndexPage, {geometry_page_count}u>"),
+                    geometry_page_count,
                 )
                 .replace(
                     "binding_array<texture_2d<f32>>",
@@ -213,11 +208,10 @@ fn layout_entry(
         ty,
         count: if matches!(
             binding.resource,
-            ResourceId::TextureImageArray
-                | ResourceId::TextureSamplerArray
-                | ResourceId::Vertex
-                | ResourceId::Index
-        ) {
+            ResourceId::TextureImageArray | ResourceId::TextureSamplerArray
+        ) || (geometry_page_count > 1
+            && matches!(binding.resource, ResourceId::Vertex | ResourceId::Index))
+        {
             let count = match binding.resource {
                 ResourceId::TextureImageArray => texture_image_count,
                 ResourceId::TextureSamplerArray => texture_sampler_count,
