@@ -297,7 +297,7 @@ struct Geometry {
     index_offset: u32,
     index_count: u32,
     intersection_normal_kind: u32,
-    padding0: u32,
+    page: u32,
     padding1: u32,
     padding2: u32,
 };
@@ -640,3 +640,6 @@ struct BSSRDFProbeResult {
 struct BSSRDFProbeQueue { state: QueueState, items: array<BSSRDFProbeWorkItem>, }
 
 struct BSSRDFMaterialRecord { scale: f32, eta: f32, table_index: u32, coefficient_kind: u32, }
+
+struct VertexPage { values: array<Vertex>, };
+struct IndexPage { values: array<u32>, };

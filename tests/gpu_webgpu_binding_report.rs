@@ -176,54 +176,54 @@ fn over_budget_stages_are_explained_without_a_gpu() {
         .iter()
         .find(|stage| stage.stage_id == ComputeStageId::SampleOtherLight)
         .unwrap();
-    assert_eq!(medium.required.storage_buffers_per_shader_stage, 14);
+    assert_eq!(medium.required.storage_buffers_per_shader_stage, 12);
     assert_eq!(medium.required.uniform_buffers_per_shader_stage, 3);
     assert_eq!(
         medium
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        17
+        15
     );
     assert_eq!(
         area.required
             .buffers_and_acceleration_structures_per_shader_stage,
-        20
+        18
     );
     assert_eq!(
         image
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        22
+        20
     );
     assert_eq!(
         other
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        17
+        15
     );
     assert_eq!(
         image
             .required
             .buffers_and_acceleration_structures_per_shader_stage,
-        22
+        20
     );
     assert_eq!(
         BindingHeadroom::new(image.required, &mac_limits()).combined,
-        7
+        9
     );
     let tight_limits = wgpu::Limits {
-        max_storage_buffers_per_shader_stage: 20,
+        max_storage_buffers_per_shader_stage: 18,
         max_uniform_buffers_per_shader_stage: 2,
         max_buffers_and_acceleration_structures_per_shader_stage: 20,
         ..wgpu::Limits::default()
     };
     let text = report.format(Some(&tight_limits), true);
     assert!(text.contains("scope=wavefront, noise=true, nanovdb=false"));
-    assert!(text.contains("stage=scatter_medium storage=14 uniform=3 as=0 combined=17"));
+    assert!(text.contains("stage=scatter_medium storage=12 uniform=3 as=0 combined=15"));
     assert!(
-        text.contains("stage=sample_image_infinite_light storage=22 uniform=0 as=0 combined=22")
+        text.contains("stage=sample_image_infinite_light storage=20 uniform=0 as=0 combined=20")
     );
-    assert!(text.contains("headroom: storage=-2 uniform=2 combined=-2"));
+    assert!(text.contains("headroom: storage=-2 uniform=2 combined=0"));
     assert!(text.contains("resource=TextureImageArray class=SampledTexture"));
     assert!(!text.contains("stage=prepare_sample "));
 }
@@ -257,9 +257,9 @@ fn maxima_are_independent_and_layout_groups_are_not_shader_resources() {
         false,
     )
     .unwrap();
-    assert_eq!(report.required.bind_groups, 1);
+    assert_eq!(report.required.bind_groups, 2);
     assert_eq!(report.device_required().bind_groups, 2);
-    assert!(report.stages[0].bindings.iter().all(|b| b.group == 0));
+    assert!(report.stages[0].bindings.iter().any(|b| b.group == 1));
     let limits = wgpu::Limits {
         max_bind_groups: 1,
         ..mac_limits()
@@ -273,7 +273,7 @@ fn maxima_are_independent_and_layout_groups_are_not_shader_resources() {
 #[test]
 fn acceleration_structures_count_toward_combined_but_textures_do_not() {
     let bindings = [
-        (BindingClass::Storage, ResourceId::Vertex),
+        (BindingClass::Storage, ResourceId::Geometry),
         (BindingClass::Uniform, ResourceId::CameraParams),
         (BindingClass::AccelerationStructure, ResourceId::Tlas),
         (BindingClass::SampledTexture, ResourceId::TextureImageArray),
@@ -438,12 +438,12 @@ fn limit_failure_explains_all_over_budget_stages_without_debug_logging() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("requested storage=23, uniform=4, buffers_and_acceleration_structures=25")
+        error.contains("requested storage=21, uniform=4, buffers_and_acceleration_structures=23")
     );
     assert!(error.contains("stage=sample_image_infinite_light"));
     assert!(error.contains("stage=scatter_dielectric"));
     assert!(error.contains("resource=Instance"));
-    assert!(error.contains("combined=-5"));
+    assert!(error.contains("combined=-3"), "{error}");
     assert!(!error.contains("stage=prepare_sample "));
 }
 

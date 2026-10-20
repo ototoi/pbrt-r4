@@ -72,14 +72,14 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
             let report =
                 BindingReport::for_stages(&registry, COMPUTE_STAGES, noise, nanovdb).unwrap();
             for (id, storage, uniform) in [
-                (ComputeStageId::SelectSurfaceLight, 16, 1),
-                (ComputeStageId::SelectMediumLight, 15, 1),
-                (ComputeStageId::SampleAreaLight, 20, 0),
-                (ComputeStageId::SampleImageInfiniteLight, 22, 0),
-                (ComputeStageId::SampleOtherLight, 17, 0),
-                (ComputeStageId::ClassifySurfaceScatter, 19, 3),
-                (ComputeStageId::PrepareSubsurfaceExit, 14, 1),
-                (ComputeStageId::ScatterMedium, 14, 3),
+                (ComputeStageId::SelectSurfaceLight, 14, 1),
+                (ComputeStageId::SelectMediumLight, 13, 1),
+                (ComputeStageId::SampleAreaLight, 18, 0),
+                (ComputeStageId::SampleImageInfiniteLight, 20, 0),
+                (ComputeStageId::SampleOtherLight, 15, 0),
+                (ComputeStageId::ClassifySurfaceScatter, 17, 3),
+                (ComputeStageId::PrepareSubsurfaceExit, 12, 1),
+                (ComputeStageId::ScatterMedium, 12, 3),
             ] {
                 let stage = report
                     .stages
@@ -141,7 +141,8 @@ impl GpuFixture {
         let report = BindingReport::for_stages(&registry, COMPUTE_STAGES, false, false).unwrap();
         let context = Context::with_binding_report(&report, 1, 1).unwrap();
         let device = &context.device;
-        let pipeline = Pipeline::new(device, 1, 1, 1, false, false).unwrap();
+        let pipeline =
+            Pipeline::new_with_geometry_page_count(device, 1, 1, 1, false, false, 2).unwrap();
         let buffers = registry
             .iter()
             .filter_map(|b| {
@@ -272,6 +273,30 @@ impl GpuFixture {
         let stage = self.pipeline.stage(id);
         let views = [&self.image];
         let samplers = [&self.sampler];
+        let vertex_buffers = [
+            wgpu::BufferBinding {
+                buffer: &self.buffers[&ResourceId::Vertex],
+                offset: 0,
+                size: None,
+            },
+            wgpu::BufferBinding {
+                buffer: &self.buffers[&ResourceId::Vertex],
+                offset: 0,
+                size: None,
+            },
+        ];
+        let index_buffers = [
+            wgpu::BufferBinding {
+                buffer: &self.buffers[&ResourceId::Index],
+                offset: 0,
+                size: None,
+            },
+            wgpu::BufferBinding {
+                buffer: &self.buffers[&ResourceId::Index],
+                offset: 0,
+                size: None,
+            },
+        ];
         let registry = canonical_wavefront_bindings();
         let bind_groups = stage
             .bind_group_layouts
@@ -293,6 +318,10 @@ impl GpuFixture {
                             ResourceId::TextureSamplerArray => {
                                 wgpu::BindingResource::SamplerArray(&samplers)
                             }
+                            ResourceId::Vertex => {
+                                wgpu::BindingResource::BufferArray(&vertex_buffers)
+                            }
+                            ResourceId::Index => wgpu::BindingResource::BufferArray(&index_buffers),
                             ResourceId::NoiseTable => {
                                 wgpu::BindingResource::TextureView(&self.noise)
                             }
@@ -851,6 +880,7 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
         &[Geometry {
             vertex_count: 3,
             index_count: 3,
+            page: 1,
             ..Zeroable::zeroed()
         }],
     );

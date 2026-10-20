@@ -20,7 +20,8 @@ pub struct Geometry {
     pub index_offset: u32,
     pub index_count: u32,
     pub intersection_normal_kind: u32,
-    pub padding: [u32; 3],
+    pub page: u32,
+    pub padding: [u32; 2],
 }
 
 #[repr(C)]

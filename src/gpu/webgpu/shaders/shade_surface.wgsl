@@ -83,33 +83,33 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let instance = instances[surface.instance_custom_data];
     let geometry = geometries[instance.geometry];
     let first_index = geometry.index_offset + surface.primitive_index * 3u;
-    let i0 = geometry.vertex_offset + indices[first_index];
-    let i1 = geometry.vertex_offset + indices[first_index + 1u];
-    let i2 = geometry.vertex_offset + indices[first_index + 2u];
-    let object_p0 = vertices[i0].position.xyz;
-    let object_p1 = vertices[i1].position.xyz;
-    let object_p2 = vertices[i2].position.xyz;
-    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
-    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
-    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
+    let i0 = geometry.vertex_offset + indices[geometry.page].values[first_index];
+    let i1 = geometry.vertex_offset + indices[geometry.page].values[first_index + 1u];
+    let i2 = geometry.vertex_offset + indices[geometry.page].values[first_index + 2u];
+    let object_p0 = vertices[geometry.page].values[i0].position.xyz;
+    let object_p1 = vertices[geometry.page].values[i1].position.xyz;
+    let object_p2 = vertices[geometry.page].values[i2].position.xyz;
+    let p0 = (instance.world_from_object * vertices[geometry.page].values[i0].position).xyz;
+    let p1 = (instance.world_from_object * vertices[geometry.page].values[i1].position).xyz;
+    let p2 = (instance.world_from_object * vertices[geometry.page].values[i2].position).xyz;
     let b1 = surface.barycentric.x;
     let b2 = surface.barycentric.y;
     let b0 = 1.0 - b1 - b2;
     let position = p0 * b0 + p1 * b1 + p2 * b2;
     let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0)
         + hardware_intersection_error(p0, p1, p2);
-    let uv0 = vertices[i0].uv;
-    let uv1 = vertices[i1].uv;
-    let uv2 = vertices[i2].uv;
+    let uv0 = vertices[geometry.page].values[i0].uv;
+    let uv1 = vertices[geometry.page].values[i1].uv;
+    let uv2 = vertices[geometry.page].values[i2].uv;
     let uv = uv0 * b0 + uv1 * b1 + uv2 * b2;
     surfaces[pixel_index].position_error = vec4<f32>(position_error, 0.0);
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
     }
-    let object_normal = vertices[i0].normal.xyz * b0
-        + vertices[i1].normal.xyz * b1
-        + vertices[i2].normal.xyz * b2;
+    let object_normal = vertices[geometry.page].values[i0].normal.xyz * b0
+        + vertices[geometry.page].values[i1].normal.xyz * b1
+        + vertices[geometry.page].values[i2].normal.xyz * b2;
     var normal = triangle_shading_normal(instance, geometry, object_normal, geometric_normal);
     let duv02 = uv0 - uv2;
     let duv12 = uv1 - uv2;
@@ -132,11 +132,11 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var object_dndu = vec3<f32>(0.0);
     var object_dndv = vec3<f32>(0.0);
     if (dot(object_normal, object_normal) > 0.0) {
-        let dn1 = vertices[i0].normal.xyz - vertices[i2].normal.xyz;
-        let dn2 = vertices[i1].normal.xyz - vertices[i2].normal.xyz;
+        let dn1 = vertices[geometry.page].values[i0].normal.xyz - vertices[geometry.page].values[i2].normal.xyz;
+        let dn2 = vertices[geometry.page].values[i1].normal.xyz - vertices[geometry.page].values[i2].normal.xyz;
         if (abs(determinant) < 1e-9) {
-            let dn = cross(vertices[i2].normal.xyz - vertices[i0].normal.xyz,
-                vertices[i1].normal.xyz - vertices[i0].normal.xyz);
+            let dn = cross(vertices[geometry.page].values[i2].normal.xyz - vertices[geometry.page].values[i0].normal.xyz,
+                vertices[geometry.page].values[i1].normal.xyz - vertices[geometry.page].values[i0].normal.xyz);
             if (dot(dn, dn) > 0.0) {
                 object_dndu = coordinate_system_x(dn);
                 object_dndv = coordinate_system_y(dn);
@@ -160,9 +160,9 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let dp_dxy = camera_approximate_dp_dxy(position, geometric_normal);
     let uv_differentials = surface_uv_differentials(dpdu, dpdv, dp_dxy[0], dp_dxy[1]);
-    let object_tangent = vertices[i0].tangent.xyz * b0
-        + vertices[i1].tangent.xyz * b1
-        + vertices[i2].tangent.xyz * b2;
+    let object_tangent = vertices[geometry.page].values[i0].tangent.xyz * b0
+        + vertices[geometry.page].values[i1].tangent.xyz * b1
+        + vertices[geometry.page].values[i2].tangent.xyz * b2;
     var tangent_source = object_dpdu;
     if (dot(object_tangent, object_tangent) > 0.0) {
         tangent_source = object_tangent;
@@ -223,7 +223,7 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
         store_sample_radiance(pixel_index, vec4<f32>(geometric_normal * 0.5 + vec3<f32>(0.5), 1.0));
         surfaces[pixel_index].flags = 1u;
     } else if (material_kind == MATERIAL_KIND_UV) {
-        let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
+        let uv = vertices[geometry.page].values[i0].uv * b0 + vertices[geometry.page].values[i1].uv * b1 + vertices[geometry.page].values[i2].uv * b2;
         store_sample_radiance(pixel_index, vec4<f32>(uv.x, uv.y, 0.0, 1.0));
         surfaces[pixel_index].flags = 1u;
     }

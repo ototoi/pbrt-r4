@@ -95,16 +95,29 @@ impl super::WavefrontPathIntegrator {
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );
-        let context = Context::with_binding_report(
-            &binding_report,
+        let adapter = Context::request_adapter(Some(&binding_report))?;
+        let geometry_page_plan = Scene::geometry_page_plan(&flat_scene, &adapter.limits, None)?;
+        let geometry_page_count = u32::try_from(geometry_page_plan.pages.len())
+            .map_err(|_| PbrtError::error("WebGPU geometry page count exceeds u32."))?;
+        let context = Context::from_adapter(
+            adapter,
+            binding_report.device_required(),
             texture_image_count.max(1),
             texture_sampler_count.max(1),
+            geometry_page_count,
+            !flat_scene.materials.bssrdfs.is_empty(),
+            Some(&binding_report),
         )?;
         log::info!("GPU create: WebGPU context ready");
         let device = &context.device;
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
-        let mut scene = Scene::from_flat(device, queue, flat_scene)?;
+        let mut scene = Scene::from_flat_with_geometry_page_plan(
+            device,
+            queue,
+            flat_scene,
+            geometry_page_plan,
+        )?;
         scene.viewport.medium_scattering_enabled = u32::from(medium_scattering_enabled);
         log::info!("GPU create: WebGPU scene resources ready");
         if let Some(kind) = debug_material {
@@ -180,7 +193,10 @@ impl super::WavefrontPathIntegrator {
             mapped_at_creation: false,
         });
         let bssrdf_probe = if scene.material_table.have_subsurface != 0 {
-            let pipeline = BSSRDFProbePipeline::new(device)?;
+            let pipeline = BSSRDFProbePipeline::new_with_geometry_page_count(
+                device,
+                scene.geometry_page_count,
+            )?;
             let bindings = pipeline.bind_group(
                 device,
                 &scene,
@@ -204,18 +220,37 @@ impl super::WavefrontPathIntegrator {
             scene.film_scale,
             scene.film.mode != 0,
         )?;
-        let pipeline = Pipeline::new(
+        let pipeline = Pipeline::new_with_geometry_page_count(
             device,
             scene.texture_images.len() as u32,
             scene.texture_samplers.len() as u32,
             texture_program_capacity,
             texture_noise_enabled,
             nanovdb_enabled,
+            scene.geometry_page_count,
         )?;
         log::info!("GPU create: compute pipelines ready");
         let texture_image_views: Vec<&wgpu::TextureView> =
             scene.texture_image_views.iter().collect();
         let texture_samplers: Vec<&wgpu::Sampler> = scene.texture_samplers.iter().collect();
+        let vertex_buffers: Vec<wgpu::BufferBinding<'_>> = scene
+            .vertex_buffers
+            .iter()
+            .map(|buffer| wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: None,
+            })
+            .collect();
+        let index_buffers: Vec<wgpu::BufferBinding<'_>> = scene
+            .index_buffers
+            .iter()
+            .map(|buffer| wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: None,
+            })
+            .collect();
         let make_entry = |binding: BindingSpec| -> Result<wgpu::BindGroupEntry<'_>, PbrtError> {
             let resource = scene
                 .binding_resource(binding.resource)
@@ -234,6 +269,8 @@ impl super::WavefrontPathIntegrator {
                     ResourceId::TextureSamplerArray => {
                         Some(wgpu::BindingResource::SamplerArray(&texture_samplers))
                     }
+                    ResourceId::Vertex => Some(wgpu::BindingResource::BufferArray(&vertex_buffers)),
+                    ResourceId::Index => Some(wgpu::BindingResource::BufferArray(&index_buffers)),
                     ResourceId::BSSRDFWork => Some(bssrdf_work.as_entire_binding()),
                     ResourceId::BSSRDFResults => Some(bssrdf_results.as_entire_binding()),
                     _ => None,

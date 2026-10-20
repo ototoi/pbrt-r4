@@ -11,8 +11,8 @@ pub struct Acceleration {
 pub fn build(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    vertex_buffer: &wgpu::Buffer,
-    index_buffer: &wgpu::Buffer,
+    vertex_buffers: &[wgpu::Buffer],
+    index_buffers: &[wgpu::Buffer],
     geometries: &[Geometry],
     instances: &[Instance],
     flat_instances: &[flat::Instance],
@@ -112,20 +112,36 @@ pub fn build(
         .iter()
         .zip(sizes.iter())
         .zip(blases.iter())
-        .map(|((geometry, size), blas)| wgpu::BlasBuildEntry {
-            blas,
-            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
-                size,
-                vertex_buffer,
-                first_vertex: geometry.vertex_offset,
-                vertex_stride: std::mem::size_of::<Vertex>() as u64,
-                index_buffer: Some(index_buffer),
-                first_index: Some(geometry.index_offset),
-                transform_buffer: None,
-                transform_buffer_offset: None,
-            }]),
+        .map(|((geometry, size), blas)| {
+            let vertex_buffer = vertex_buffers.get(geometry.page as usize).ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "WebGPU geometry references missing vertex page {}.",
+                    geometry.page
+                ))
+            })?;
+            let index_buffer = index_buffers.get(geometry.page as usize).ok_or_else(|| {
+                PbrtError::error(&format!(
+                    "WebGPU geometry references missing index page {}.",
+                    geometry.page
+                ))
+            })?;
+            Ok(wgpu::BlasBuildEntry {
+                blas,
+                geometry: wgpu::BlasGeometries::TriangleGeometries(vec![
+                    wgpu::BlasTriangleGeometry {
+                        size,
+                        vertex_buffer,
+                        first_vertex: geometry.vertex_offset,
+                        vertex_stride: std::mem::size_of::<Vertex>() as u64,
+                        index_buffer: Some(index_buffer),
+                        first_index: Some(geometry.index_offset),
+                        transform_buffer: None,
+                        transform_buffer_offset: None,
+                    },
+                ]),
+            })
         })
-        .collect();
+        .collect::<Result<_, PbrtError>>()?;
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("pbrt-r4 acceleration structure encoder"),
     });

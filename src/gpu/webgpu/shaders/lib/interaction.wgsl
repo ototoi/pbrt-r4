@@ -49,27 +49,27 @@ fn reconstruct_triangle_surface(
     }
     let geometry = geometries[instance.geometry];
     let first_index = geometry.index_offset + primitive * 3u;
-    if (first_index + 2u >= arrayLength(&indices)) {
+    if (first_index + 2u >= arrayLength(&indices[geometry.page].values)) {
         set_render_error();
         return invalid_surface;
     }
-    let i0 = geometry.vertex_offset + indices[first_index];
-    let i1 = geometry.vertex_offset + indices[first_index + 1u];
-    let i2 = geometry.vertex_offset + indices[first_index + 2u];
-    if (i0 >= arrayLength(&vertices) || i1 >= arrayLength(&vertices) || i2 >= arrayLength(&vertices)) {
+    let i0 = geometry.vertex_offset + indices[geometry.page].values[first_index];
+    let i1 = geometry.vertex_offset + indices[geometry.page].values[first_index + 1u];
+    let i2 = geometry.vertex_offset + indices[geometry.page].values[first_index + 2u];
+    if (i0 >= arrayLength(&vertices[geometry.page].values) || i1 >= arrayLength(&vertices[geometry.page].values) || i2 >= arrayLength(&vertices[geometry.page].values)) {
         set_render_error();
         return invalid_surface;
     }
-    let p0 = (instance.world_from_object * vertices[i0].position).xyz;
-    let p1 = (instance.world_from_object * vertices[i1].position).xyz;
-    let p2 = (instance.world_from_object * vertices[i2].position).xyz;
+    let p0 = (instance.world_from_object * vertices[geometry.page].values[i0].position).xyz;
+    let p1 = (instance.world_from_object * vertices[geometry.page].values[i1].position).xyz;
+    let p2 = (instance.world_from_object * vertices[geometry.page].values[i2].position).xyz;
     let b0 = barycentrics.x;
     let b1 = barycentrics.y;
     let b2 = barycentrics.z;
     let position = p0 * b0 + p1 * b1 + p2 * b2;
     let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0)
         + hardware_intersection_error(p0, p1, p2);
-    let uv = vertices[i0].uv * b0 + vertices[i1].uv * b1 + vertices[i2].uv * b2;
+    let uv = vertices[geometry.page].values[i0].uv * b0 + vertices[geometry.page].values[i1].uv * b1 + vertices[geometry.page].values[i2].uv * b2;
     var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
     if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
         geometric_normal = -geometric_normal;
@@ -109,9 +109,9 @@ fn reconstruct_triangle_shading_frame(instance_index: u32, primitive: u32, bary:
     let instance = instances[instance_index];
     let geometry = geometries[instance.geometry];
     let first = geometry.index_offset + primitive * 3u;
-    let v0 = vertices[geometry.vertex_offset + indices[first]];
-    let v1 = vertices[geometry.vertex_offset + indices[first + 1u]];
-    let v2 = vertices[geometry.vertex_offset + indices[first + 2u]];
+    let v0 = vertices[geometry.page].values[geometry.vertex_offset + indices[geometry.page].values[first]];
+    let v1 = vertices[geometry.page].values[geometry.vertex_offset + indices[geometry.page].values[first + 1u]];
+    let v2 = vertices[geometry.page].values[geometry.vertex_offset + indices[geometry.page].values[first + 2u]];
     let object_normal = v0.normal.xyz*bary.x + v1.normal.xyz*bary.y + v2.normal.xyz*bary.z;
     let normal = triangle_shading_normal(instance, geometry, object_normal, geometric_normal);
     var source = v0.tangent.xyz*bary.x + v1.tangent.xyz*bary.y + v2.tangent.xyz*bary.z;

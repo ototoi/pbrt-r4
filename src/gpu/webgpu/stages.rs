@@ -227,12 +227,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::AccelerationStructure,
         Access::Read,
     );
-    for (binding, resource) in [
-        (3, ResourceId::Vertex),
-        (4, ResourceId::Index),
-        (5, ResourceId::Geometry),
-        (6, ResourceId::Instance),
-    ] {
+    for (binding, resource) in [(5, ResourceId::Geometry), (6, ResourceId::Instance)] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }
     push(
@@ -377,6 +372,8 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     ] {
         push(binding, resource, BindingClass::Storage, Access::Read);
     }
+    push(3, ResourceId::Vertex, BindingClass::Storage, Access::Read);
+    push(4, ResourceId::Index, BindingClass::Storage, Access::Read);
     push(
         0,
         ResourceId::TextureImageArray,
@@ -392,7 +389,10 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     for binding in bindings.iter_mut() {
         if matches!(
             binding.resource,
-            ResourceId::TextureImageArray | ResourceId::TextureSamplerArray
+            ResourceId::TextureImageArray
+                | ResourceId::TextureSamplerArray
+                | ResourceId::Vertex
+                | ResourceId::Index
         ) {
             binding.group = 1;
         }
@@ -429,18 +429,32 @@ impl RequiredLimits {
                 }
             }
             required.bind_groups = required.bind_groups.max(left.group + 1);
+            let is_binding_array = matches!(
+                left.resource,
+                ResourceId::Vertex
+                    | ResourceId::Index
+                    | ResourceId::TextureImageArray
+                    | ResourceId::TextureSamplerArray
+            );
             match left.class {
-                BindingClass::Storage => required.storage_buffers_per_shader_stage += 1,
+                BindingClass::Storage if !is_binding_array => {
+                    required.storage_buffers_per_shader_stage += 1
+                }
+                BindingClass::Storage => {}
                 BindingClass::Uniform => required.uniform_buffers_per_shader_stage += 1,
                 BindingClass::AccelerationStructure => {}
                 BindingClass::SampledTexture
                 | BindingClass::IntegerTexture
                 | BindingClass::Sampler => {}
             }
-            if matches!(
-                left.class,
-                BindingClass::Storage | BindingClass::Uniform | BindingClass::AccelerationStructure
-            ) {
+            if !is_binding_array
+                && matches!(
+                    left.class,
+                    BindingClass::Storage
+                        | BindingClass::Uniform
+                        | BindingClass::AccelerationStructure
+                )
+            {
                 required.buffers_and_acceleration_structures_per_shader_stage += 1;
             }
         }

@@ -1,13 +1,13 @@
 //! Binding budgets derived from the same composed WGSL and registry as pipelines.
 //!
-//! This report covers `COMPUTE_STAGES`, not separately constructed pipelines
-//! such as the BSSRDF probe. It can be built and compared with limits without a GPU.
+//! This report covers `COMPUTE_STAGES`. The separately constructed BSSRDF probe
+//! budget is included when the scene uses subsurface materials.
 
 use crate::util::error::PbrtError;
 
 use super::shader::{compose_source_with_features, resolve_resource_bindings};
 use super::stage::{ComputeStageId, ComputeStageSpec, WAVEFRONT_BIND_GROUP_COUNT};
-use super::stages::{BindingClass, BindingSpec, RequiredLimits};
+use super::stages::{BindingClass, BindingSpec, RequiredLimits, ResourceId};
 
 #[derive(Debug)]
 pub struct StageBindingReport {
@@ -56,6 +56,59 @@ impl BindingHeadroom {
 }
 
 impl BindingReport {
+    pub fn binding_array_usage(
+        &self,
+        geometry_page_count: u32,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        subsurface_enabled: bool,
+    ) -> Result<(u32, u32, u32), PbrtError> {
+        let mut max_elements = 0u32;
+        let mut max_samplers = 0u32;
+        let mut max_metal_slots = 0u32;
+        for stage in &self.stages {
+            let mut elements = 0u32;
+            let mut samplers = 0u32;
+            let mut arrays = 0u32;
+            for binding in &stage.bindings {
+                let count = match binding.resource {
+                    ResourceId::Vertex | ResourceId::Index => geometry_page_count,
+                    ResourceId::TextureImageArray => texture_image_count,
+                    ResourceId::TextureSamplerArray => {
+                        samplers = texture_sampler_count;
+                        texture_sampler_count
+                    }
+                    _ => continue,
+                };
+                elements = elements.checked_add(count).ok_or_else(|| {
+                    PbrtError::error("WebGPU binding array element count overflowed.")
+                })?;
+                arrays = arrays
+                    .checked_add(1)
+                    .ok_or_else(|| PbrtError::error("WebGPU binding array count overflowed."))?;
+            }
+            max_elements = max_elements.max(elements);
+            max_samplers = max_samplers.max(samplers);
+            max_metal_slots = max_metal_slots.max(
+                stage
+                    .required
+                    .buffers_and_acceleration_structures_per_shader_stage
+                    .checked_add(arrays)
+                    .ok_or_else(|| {
+                        PbrtError::error("WebGPU Metal buffer slot count overflowed.")
+                    })?,
+            );
+        }
+        if subsurface_enabled {
+            let probe_elements = geometry_page_count.checked_mul(2).ok_or_else(|| {
+                PbrtError::error("WebGPU BSSRDF probe binding array element count overflowed.")
+            })?;
+            max_elements = max_elements.max(probe_elements);
+            max_metal_slots = max_metal_slots.max(10);
+        }
+        Ok((max_elements, max_samplers, max_metal_slots))
+    }
+
     pub fn for_stages(
         canonical_bindings: &[BindingSpec],
         stages: &[ComputeStageSpec],

@@ -8,6 +8,14 @@ pub struct Context {
     pub queue: wgpu::Queue,
 }
 
+pub struct AdapterContext {
+    pub _instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
+    pub info: wgpu::AdapterInfo,
+    pub limits: wgpu::Limits,
+    pub features: wgpu::Features,
+}
+
 impl Context {
     pub fn new(
         required: RequiredLimits,
@@ -30,12 +38,7 @@ impl Context {
         )
     }
 
-    fn create(
-        required: RequiredLimits,
-        texture_image_count: u32,
-        texture_sampler_count: u32,
-        report: Option<&BindingReport>,
-    ) -> Result<Self, PbrtError> {
+    pub fn request_adapter(report: Option<&BindingReport>) -> Result<AdapterContext, PbrtError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -47,60 +50,103 @@ impl Context {
                         .unwrap_or_default()
                 ))
             })?;
-        let adapter_info = adapter.get_info();
-        log::info!("GPU context: adapter selected: {adapter_info:?}");
-        let adapter_limits = adapter.limits();
+        let info = adapter.get_info();
+        log::info!("GPU context: adapter selected: {info:?}");
+        let limits = adapter.limits();
+        let features = adapter.features();
         if log::log_enabled!(log::Level::Debug) {
             if let Some(report) = report {
-                log::debug!(
-                    "adapter: {adapter_info:?}\n{}",
-                    report.format(Some(&adapter_limits), false)
-                );
+                log::debug!("adapter: {info:?}\n{}", report.format(Some(&limits), false));
             }
         }
+        Ok(AdapterContext {
+            _instance: instance,
+            adapter,
+            info,
+            limits,
+            features,
+        })
+    }
 
+    pub fn from_adapter(
+        adapter: AdapterContext,
+        required: RequiredLimits,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        geometry_page_count: u32,
+        subsurface_enabled: bool,
+        report: Option<&BindingReport>,
+    ) -> Result<Self, PbrtError> {
         let required_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
+            | wgpu::Features::BUFFER_BINDING_ARRAY
+            | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
             | wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
             | wgpu::Features::FLOAT32_FILTERABLE;
-        let missing_features = required_features - adapter.features();
+        let missing_features = required_features - adapter.features;
         if !missing_features.is_empty() {
             return Err(PbrtError::error(&format!(
-                "The selected WebGPU adapter is missing required features: {missing_features:?}.",
+                "The selected WebGPU adapter {:?} is missing required features: {missing_features:?}.",
+                adapter.info
             )));
         }
-
-        validate_binding_limits(required, &adapter_limits, report)
-            .map_err(|error| PbrtError::error(&format!("{error}\nadapter: {adapter_info:?}")))?;
-        if texture_image_count > adapter_limits.max_binding_array_elements_per_shader_stage
-            || texture_sampler_count
-                > adapter_limits.max_binding_array_sampler_elements_per_shader_stage
-        {
-            return Err(PbrtError::error(
-                &format!(
-                    "WebGPU adapter supports texture/sampler binding arrays of {}/{} elements, but the scene requires {}/{}.",
-                    adapter_limits.max_binding_array_elements_per_shader_stage,
-                    adapter_limits.max_binding_array_sampler_elements_per_shader_stage,
+        let (array_elements, sampler_elements, metal_slots) = report
+            .map(|report| {
+                report.binding_array_usage(
+                    geometry_page_count,
                     texture_image_count,
                     texture_sampler_count,
-                ),
+                    subsurface_enabled,
+                )
+            })
+            .transpose()?
+            .unwrap_or((
+                texture_image_count
+                    .saturating_add(texture_sampler_count)
+                    .saturating_add(geometry_page_count.saturating_mul(2)),
+                texture_sampler_count,
+                required
+                    .buffers_and_acceleration_structures_per_shader_stage
+                    .saturating_add(4),
             ));
+        let array_limit = u64::from(adapter.limits.max_binding_array_elements_per_shader_stage);
+        let sampler_limit = adapter
+            .limits
+            .max_binding_array_sampler_elements_per_shader_stage;
+        if u64::from(array_elements) > array_limit || sampler_elements > sampler_limit {
+            return Err(PbrtError::error(&format!(
+                "WebGPU adapter {:?} binding arrays exceed limits: geometry pages={geometry_page_count} (2 arrays), texture images={texture_image_count}, texture samplers={texture_sampler_count}; total elements {array_elements}/{array_limit}, sampler elements {sampler_elements}/{sampler_limit}.",
+                adapter.info
+            )));
         }
+        if adapter.info.backend == wgpu::Backend::Metal
+            && metal_slots
+                > adapter
+                    .limits
+                    .max_buffers_and_acceleration_structures_per_shader_stage
+        {
+            return Err(PbrtError::error(&format!(
+                "WebGPU Metal adapter {:?} requires {metal_slots} buffer argument slots per stage, exceeding the limit {}.",
+                adapter.info,
+                adapter.limits.max_buffers_and_acceleration_structures_per_shader_stage,
+            )));
+        }
+        validate_binding_limits(required, &adapter.limits, report)
+            .map_err(|error| PbrtError::error(&format!("{error}\nadapter: {:?}", adapter.info)))?;
         let mut required_limits =
             wgpu::Limits::default().using_minimum_supported_acceleration_structure_values();
-        // Keep the default limits for portability, but do not unnecessarily cap
-        // large scene buffers at wgpu's conservative default binding size.
-        required_limits.max_buffer_size = adapter_limits.max_buffer_size;
+        required_limits.max_buffer_size = adapter.limits.max_buffer_size;
         required_limits.max_storage_buffer_binding_size =
-            adapter_limits.max_storage_buffer_binding_size;
+            adapter.limits.max_storage_buffer_binding_size;
         required_limits.max_sampled_textures_per_shader_stage =
-            adapter_limits.max_sampled_textures_per_shader_stage;
+            adapter.limits.max_sampled_textures_per_shader_stage;
         required_limits.max_samplers_per_shader_stage =
-            adapter_limits.max_samplers_per_shader_stage;
+            adapter.limits.max_samplers_per_shader_stage;
         required_limits.max_binding_array_elements_per_shader_stage =
-            adapter_limits.max_binding_array_elements_per_shader_stage;
-        required_limits.max_binding_array_sampler_elements_per_shader_stage =
-            adapter_limits.max_binding_array_sampler_elements_per_shader_stage;
+            adapter.limits.max_binding_array_elements_per_shader_stage;
+        required_limits.max_binding_array_sampler_elements_per_shader_stage = adapter
+            .limits
+            .max_binding_array_sampler_elements_per_shader_stage;
         required_limits.max_storage_buffers_per_shader_stage =
             required.storage_buffers_per_shader_stage;
         required_limits.max_uniform_buffers_per_shader_stage =
@@ -116,20 +162,39 @@ impl Context {
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
         };
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&descriptor)).map_err(|error| {
+        let (device, queue) = pollster::block_on(adapter.adapter.request_device(&descriptor))
+            .map_err(|error| {
                 PbrtError::error(&format!(
                     "Could not request a WebGPU device: {error}{}",
                     report
                         .map(|report| format!(
-                            "\nadapter: {adapter_info:?}\n{}",
-                            report.format(Some(&adapter_limits), false)
+                            "\nadapter: {:?}\n{}",
+                            adapter.info,
+                            report.format(Some(&adapter.limits), false)
                         ))
                         .unwrap_or_default()
                 ))
             })?;
         log::info!("GPU context: device created");
         Ok(Self { device, queue })
+    }
+
+    fn create(
+        required: RequiredLimits,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        report: Option<&BindingReport>,
+    ) -> Result<Self, PbrtError> {
+        let adapter = Self::request_adapter(report)?;
+        Self::from_adapter(
+            adapter,
+            required,
+            texture_image_count,
+            texture_sampler_count,
+            1,
+            false,
+            report,
+        )
     }
 
     pub fn wait(&self) -> Result<(), PbrtError> {
