@@ -1,0 +1,13 @@
+# CPU MLT diagnostic: constant environment, no visible geometry or indirect paths.
+# The offscreen primitive satisfies the current nonempty-accelerator requirement.
+Film "rgb" "integer xresolution" [8] "integer yresolution" [8]
+Sampler "independent" "integer pixelsamples" [16]
+Integrator "mlt" "integer maxdepth" [0] "integer mutationsperpixel" [16] "integer bootstrapsamples" [1024] "integer chains" [8]
+PixelFilter "box"
+Camera "perspective"
+WorldBegin
+LightSource "infinite" "rgb L" [0.3 0.3 0.3]
+AttributeBegin
+Translate 100 0 0
+Shape "sphere"
+AttributeEnd

@@ -113,3 +113,23 @@ fn signed_filter_sampling_preserves_negative_lobes() {
         "sinc filter samples should keep signed weights"
     );
 }
+
+#[test]
+fn box_filter_evaluation_matches_v4_support_including_boundary() {
+    let filter = Filter::create("box", &make_radius_params(0.5, 0.75)).unwrap();
+    for p in [
+        Point2f::new(0.0, 0.0),
+        Point2f::new(0.5, -0.75),
+        Point2f::new(-0.5, 0.75),
+    ] {
+        assert_eq!(filter.evaluate(&p), 1.0);
+    }
+    for p in [
+        Point2f::new(0.5001, 0.0),
+        Point2f::new(-0.5001, 0.0),
+        Point2f::new(0.0, 0.7501),
+        Point2f::new(0.0, -0.7501),
+    ] {
+        assert_eq!(filter.evaluate(&p), 0.0, "outside box support: {p:?}");
+    }
+}
