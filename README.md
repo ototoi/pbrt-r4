@@ -311,4 +311,6 @@ corresponding implementation and tests.
 - Port pbrt-v4 comment text to the corresponding pbrt-r4 functions to honour the original implementation.
 
 ## Acknowledgments
-Thanks to Matt Pharr, Wenzel Jakob, and Greg Humphreys — the authors of pbrt-v3 and pbrt-v4 — for releasing their reference implementations. Thanks also to the Rust community and the maintainers of the crates listed above.
+Thanks to Matt Pharr, Wenzel Jakob, and Greg Humphreys — the authors of pbrt-v3 and pbrt-v4 — for releasing their reference implementations.
+
+Thanks also to the Rust community and the maintainers of the crates listed above.
