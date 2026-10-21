@@ -15,6 +15,8 @@ use crate::util::sampling::*;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
 
+use log::warn;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -48,16 +50,11 @@ impl GoniometricLight {
         }
     }
 
+    /// pbrt-v4 `GoniometricLight::I` (lights.h:393-396). `w` is in light
+    /// space and the image holds the luminance channel `Y`.
     fn i(&self, w: Vector3f, lambda: &SampledWavelengths) -> SampledSpectrum {
-        let wp = self.base.world_to_light().transform_vector(&w);
-        let uv = equal_area_sphere_to_square(&wp.normalize());
-        let rgb = self.image.lookup_nearest(&uv);
-        self.scale
-            * self.intensity.sample(lambda)
-            * self
-                .image
-                .color_space()
-                .illuminant_to_sampled_spectrum(rgb.to_rgb(), lambda)
+        let uv = equal_area_sphere_to_square(&w.normalize());
+        self.scale * self.intensity.sample(lambda) * self.image.lookup_nearest(&uv).to_rgb()[0]
     }
 }
 
@@ -66,24 +63,10 @@ impl GoniometricLight {
         LightType::DeltaPosition
     }
 
+    // v4 lights.cpp:572-579.
     pub fn phi(&self, lambda: &SampledWavelengths) -> SampledSpectrum {
-        let mut sum = SampledSpectrum::zero();
         let res = self.image.resolution();
-        for y in 0..res.y {
-            for x in 0..res.x {
-                let uv = Point2f::new(
-                    (x as Float + 0.5) / res.x as Float,
-                    (y as Float + 0.5) / res.y as Float,
-                );
-                let rgb = self.image.lookup_nearest(&uv).to_rgb();
-                let y = rgb[0].max(rgb[1]).max(rgb[2]);
-                sum += self
-                    .image
-                    .color_space()
-                    .illuminant_to_sampled_spectrum([y, y, y], lambda);
-            }
-        }
-        self.scale * self.intensity.sample(lambda) * 4.0 * PI * sum
+        self.scale * self.intensity.sample(lambda) * 4.0 * PI * sum_y(&self.image)
             / (res.x as Float * res.y as Float)
     }
 
@@ -99,7 +82,8 @@ impl GoniometricLight {
             .render_from_light
             .transform_point(&Point3f::zero());
         let wi = (p - ctx.p).normalize();
-        let l = self.i(-wi, lambda) / Point3f::distance_squared(&p, &ctx.p);
+        let wl = self.base.world_to_light().transform_vector(&-wi);
+        let l = self.i(wl, lambda) / Point3f::distance_squared(&p, &ctx.p);
         Some(LightLiSample::new(
             l,
             wi,
@@ -160,7 +144,10 @@ impl GoniometricLight {
             .base
             .render_from_light
             .transform_point(&Point3f::zero());
-        let phi = self.intensity.max_value() * self.scale * 4.0 * PI;
+        // v4 lights.cpp:581-593: bound it as an isotropic point light.
+        let res = self.image.resolution();
+        let phi = self.scale * self.intensity.max_value() * 4.0 * PI * sum_y(&self.image)
+            / (res.x as Float * res.y as Float);
         Some(LightBounds::new(
             Bounds3f::new(&p, &p),
             Vector3f::new(0.0, 0.0, 1.0),
@@ -179,21 +166,53 @@ impl GoniometricLight {
 unsafe impl Sync for GoniometricLight {}
 unsafe impl Send for GoniometricLight {}
 
+/// Loads the goniometric diagram as a luminance image. Like pbrt-v4
+/// (lights.cpp:625-640), RGB images are reduced to the average of their
+/// channels; every channel of the returned texels holds that value.
 fn make_image(path: &str) -> Result<Image, PbrtError> {
-    if !path.is_empty() {
-        let (mut texels, resolution) = read_image(path)?;
-        if resolution.x != resolution.y {
-            return Err(PbrtError::error("goniometric light image must be square"));
-        }
-        let total = (resolution.x * resolution.y) as usize;
-        for i in 0..total {
-            let cc = texels[i].to_rgb();
-            let cc = cc.iter().map(|x| x.max(0.0)).collect::<Vec<Float>>();
-            texels[i] = RGBSpectrum::from(cc);
-        }
-        return Ok(Image::new(resolution, texels));
+    if path.is_empty() {
+        warn!("No \"filename\" parameter provided for goniometric light.");
+        return Ok(Image::new(Point2i::new(1, 1), vec![RGBSpectrum::one()]));
     }
-    Ok(Image::new(Point2i::new(1, 1), vec![RGBSpectrum::one()]))
+    // pbrt-v4 `Image::Read` decodes 8- and 16-bit images as sRGB; float
+    // formats ignore the encoding.
+    let (texels, resolution) = if path.ends_with(".exr") || path.ends_with(".EXR") {
+        let (texels, resolution, _) = read_image_exr_with_metadata(Path::new(path))?;
+        (texels, resolution)
+    } else {
+        read_image_with_encoding(path, ColorEncoding::SRgb)?
+    };
+    if resolution.x != resolution.y {
+        return Err(PbrtError::error(&format!(
+            "{}: image resolution ({}, {}) is non-square. It's unlikely this is an equal-area environment map.",
+            path, resolution.x, resolution.y
+        )));
+    }
+    let texels = texels
+        .iter()
+        .map(|texel| {
+            let rgb = texel.to_rgb();
+            let y = (rgb[0] + rgb[1] + rgb[2]) / 3.0;
+            RGBSpectrum::from(vec![y, y, y])
+        })
+        .collect();
+    Ok(Image::new(resolution, texels))
+}
+
+/// Sum of the luminance channel over all pixels.
+fn sum_y(image: &Image) -> Float {
+    let res = image.resolution();
+    let mut sum = 0.0;
+    for y in 0..res.y {
+        for x in 0..res.x {
+            let uv = Point2f::new(
+                (x as Float + 0.5) / res.x as Float,
+                (y as Float + 0.5) / res.y as Float,
+            );
+            sum += image.lookup_nearest(&uv).to_rgb()[0];
+        }
+    }
+    sum
 }
 
 fn make_distribution(image: &Image) -> PiecewiseConstant2D {
@@ -205,8 +224,7 @@ fn make_distribution(image: &Image) -> PiecewiseConstant2D {
                 (x as Float + 0.5) / res.x as Float,
                 (y as Float + 0.5) / res.y as Float,
             );
-            let rgb = image.lookup_nearest(&uv).to_rgb();
-            data[(y * res.x + x) as usize] = rgb[0].max(rgb[1]).max(rgb[2]).max(0.0);
+            data[(y * res.x + x) as usize] = image.lookup_nearest(&uv).to_rgb()[0];
         }
     }
     PiecewiseConstant2D::new(&data, res.x as usize, res.y as usize)
@@ -218,16 +236,38 @@ impl GoniometricLight {
         medium: &Option<Arc<Medium>>,
         params: &ParameterDictionary,
     ) -> Result<Self, PbrtError> {
+        // v4 lights.cpp `GoniometricLight::Create`. The legacy pbrt-v3
+        // "mapname" is accepted when "filename" is absent.
         let white = Spectrum::from(params.color_space().illuminant.to_dense());
-        let intensity = params.get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
-        let photometric = spectrum_to_photometric(&intensity);
-        let scale =
-            params.get_one_float("scale", 1.0) / if photometric > 0.0 { photometric } else { 1.0 };
-        let texmap = params.get_one_filename("mapname", "");
-        let mi = MediumInterface::from(medium);
+        let intensity = params.get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
+        let mut scale = params.get_one_float("scale", 1.0);
+        let texmap = {
+            let filename = params.get_one_filename("filename", "");
+            if !filename.is_empty() {
+                filename
+            } else {
+                params.get_one_filename("mapname", "")
+            }
+        };
         let image = make_image(&texmap)?;
+
+        scale /= spectrum_to_photometric(&intensity);
+        let phi_v = params.get_one_float("power", -1.0);
+        if phi_v > 0.0 {
+            let res = image.resolution();
+            let k_e = 4.0 * PI * sum_y(&image) / (res.x as Float * res.y as Float);
+            scale *= phi_v / k_e;
+        }
+
+        // v4 swaps the light-space y and z axes so that +y is "up" in the
+        // goniometric diagram.
+        let swap_yz = Transform::from([
+            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]);
+        let render_from_light = light2world.clone() * swap_yz;
+        let mi = MediumInterface::from(medium);
         Ok(GoniometricLight::new(
-            light2world,
+            &render_from_light,
             &mi,
             intensity,
             scale,
