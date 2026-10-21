@@ -227,9 +227,9 @@ include partial GPU feature support, PTex, and photometric film calibration.
 | `volpath`        | `VolPathIntegrator`        | Volumetric path tracer with `r_u`/`r_l` rescaled-density MIS and the pbrt-v4 BSSRDF probe/reservoir path. |
 | `simplevolpath`  | `SimpleVolPathIntegrator`  | Delta-tracking volume path tracer, no surface scattering. |
 | `lightpath`      | `LightPathIntegrator`      | Light tracing with `Camera::SampleWi` splat. |
-| `sppm`           | `SPPMIntegrator`           | Stochastic Progressive Photon Mapping. |
+| `sppm`           | `SPPMIntegrator`           | Stochastic Progressive Photon Mapping with parallel camera, photon, and pixel-update passes. |
 | `bdpt`           | `BDPTIntegrator`           | Bidirectional path tracing with surface and medium vertices. |
-| `mlt`            | `MLTIntegrator`            | Primary-sample-space MLT on top of BDPT (single-threaded). |
+| `mlt`            | `MLTIntegrator`            | Primary-sample-space MLT on top of BDPT with parallel bootstrap sampling and Markov chains. |
 | `randomwalk`     | `RandomWalkIntegrator`     | Minimal uniform-sphere random walk (no MIS / RR / direct lighting). |
 | `ambientocclusion` | `AmbientOcclusionIntegrator` | Single AO sample per path. |
 | `function`       | `FunctionIntegrator`       | r4 extension (formerly `aov`) — surface attribute outputs: position, normal, uv, depth, etc. |
@@ -267,7 +267,7 @@ pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rew
 - **Parser**: pbrt-v4's hand-written recursive-descent parser becomes the [`nom`](https://crates.io/crates/nom) crate.
 - **Progress / CLI / logging**: [`indicatif`](https://crates.io/crates/indicatif), [`clap`](https://crates.io/crates/clap), [`log`](https://crates.io/crates/log) + [`env_logger`](https://crates.io/crates/env_logger).
 - **Other crates**: `image` (EXR/PNG/etc.), `ply-rs` (PLY mesh I/O), `rust-crypto` (hashing), `serde` + `serde_json` (scene JSON), `flate2` (`.ply.gz` decompression).
-- **AtomicDouble → Mutex/tile aggregation**: pbrt-v4's `AtomicDouble` splat accumulators are replaced by a per-tile `SplatTile` that merges into the per-pixel splat buffer at the end of rendering. The same pattern is used for the photon-pass accumulators in SPPM.
+- **Splat accumulation**: `RGBFilm`, `GBufferFilm`, and `SpectralFilm` use per-pixel `AtomicDouble` splat buffers, corresponding to pbrt-v4's film splat accumulators. The Rust implementation stores `f64` bits in an `AtomicU64` and adds contributions with a compare-and-exchange loop. SPPM photon contributions currently use Mutex-protected accumulators.
 
 ### Additional features
 - **Tev display**: real-time progressive display through the [tev](https://github.com/Tom94/tev) viewer.
@@ -301,7 +301,6 @@ corresponding implementation and tests.
 ## Future plans
 
 **Near term**
-- Parallelize `mlt` chains and `sppm` photon pass via `rayon`.
 - Continue to harden pbrt-v4-scenes rendering and investigate high memory usage on large `.ply` scenes.
 
 **Mid term**
