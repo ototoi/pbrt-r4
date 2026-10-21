@@ -34,6 +34,11 @@ cargo test
 
 ## Installation
 
+Prebuilt binaries for Windows x86_64, macOS Apple Silicon, and macOS Intel are
+available from [GitHub Releases](https://github.com/ototoi/pbrt-r4/releases/latest),
+along with `SHA256SUMS` for verifying the downloads. Each archive contains the
+renderer and the five command-line utilities listed below.
+
 Install the published crate from crates.io with:
 
 ```sh
@@ -45,6 +50,9 @@ To install all command-line utilities in addition to the renderer, use:
 ```sh
 cargo install pbrt-r4 --bins
 ```
+
+WebGPU support is enabled by default. For a CPU-only installation, use
+`cargo install pbrt-r4 --no-default-features`.
 
 ## How to use
 
@@ -102,15 +110,48 @@ cargo build --release
 ```
 
 `--wavefront` also selects the GPU renderer. The GPU path currently supports
-the `path` and `volpath` scene integrators; other integrators are not
-implemented for GPU rendering. `--gpu-tile-size` controls the square tile size
-and defaults to 512 pixels.
+the `path` and `volpath` scene integrators. If a scene specifies another
+integrator, such as `bdpt`, `mlt`, or `sppm`, the GPU renderer warns and uses
+`volpath`, retaining the scene's `maxdepth` and `lightsampler` settings. This
+matches pbrt-v4's GPU integrator selection behavior.
+
+`--gpu-tile-size` controls the square tile size and defaults to 512 pixels.
+Reduce it to limit memory used by per-pixel rendering buffers. Scene geometry,
+textures, and acceleration structures must still fit in available GPU memory.
 
 The WebGPU backend requires an adapter that provides experimental ray-query
 support and the resource limits required by the scene. Cargo enables Vulkan on
 Linux, Direct3D 12 or Vulkan on Windows, and Metal on macOS. Project CI currently
-runs on Linux only. WebGPU has also been manually verified on Windows; macOS
-builds and GPU devices have not been verified by CI.
+runs build and test checks on Linux and release builds on Windows x86_64,
+macOS Apple Silicon, and macOS Intel. GPU runtime checks have been performed
+on Linux/Vulkan and Windows; CI builds do not validate rendering on GPU devices.
+
+### Large scenes
+
+Since v4.5.0, the WebGPU backend splits scene geometry into pages sized to
+the adapter's buffer limits. This allows total geometry to exceed the limit
+of a single buffer. Each geometry must fit within one page; an oversized
+geometry produces an error.
+
+Single-page scenes use ordinary vertex/index storage bindings. Multi-page
+scenes require the adapter's `BUFFER_BINDING_ARRAY` feature, and the maximum
+page count depends on the adapter's binding limits and the scene's other
+resources. Adapters without the required features or limits report an error.
+Paging does not reduce the total GPU memory required by the scene.
+
+Kroken `camera-1.pbrt` from the official pbrt-v4 scenes was rendered at its
+full 1500×1500 resolution and 256 samples per pixel on an NVIDIA RTX 3060
+(12 GiB) using Linux/Vulkan. Its geometry occupied three pages. The render
+used 128-pixel tiles:
+
+```sh
+./target/release/pbrt-r4 \
+  --gpu --spp 256 --gpu-tile-size 128 --nthreads 4 \
+  --outfile /tmp/kroken.exr \
+  path/to/pbrt-v4-scenes/kroken/camera-1.pbrt
+```
+
+### Resource diagnostics
 
 To inspect per-stage buffer requirements and adapter headroom, enable the
 WebGPU debug log:
@@ -235,11 +276,10 @@ pbrt-r4 began as a Rust port of pbrt-v3 (pbrt-r3) and has been progressively rew
 
 ### Out of scope
 
-The following areas are not included in the default CPU build or remain
-unimplemented:
+The following features and tools remain unimplemented or are not shipped:
 
 - **PTex textures**: not implemented.
-- **GPU-only command-line utilities**: `pspec_gpu` and `denoise-optix` require GPU backends and are not included in the CPU release.
+- **GPU-only command-line utilities**: `pspec_gpu` and `denoise-optix` are not included in the release.
 - **Build and test utilities**: `soac`, `rgb2spec_opt`, and `pbrt_test` are handled by build generation or Rust's test infrastructure rather than shipped as user-facing binaries.
 
 ### r4-specific fixes
