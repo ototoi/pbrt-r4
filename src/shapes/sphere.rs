@@ -33,8 +33,10 @@ impl Sphere {
         z_max: Float,
         phi_max: Float,
     ) -> Self {
-        let z_min = Float::clamp(Float::min(z_min, z_max), -radius, radius);
-        let z_max = Float::clamp(Float::max(z_min, z_max), -radius, radius);
+        let (z_min, z_max) = (
+            Float::clamp(Float::min(z_min, z_max), -radius, radius),
+            Float::clamp(Float::max(z_min, z_max), -radius, radius),
+        );
         let theta_min = Float::acos(Float::clamp(z_min / radius, -1.0, 1.0));
         let theta_max = Float::acos(Float::clamp(z_max / radius, -1.0, 1.0));
         let phi_max = radians(Float::clamp(phi_max, 0.0, 360.0));
@@ -154,7 +156,7 @@ impl Sphere {
             }
             phi = Float::atan2(p_hit.y, p_hit.x);
             if phi < 0.0 {
-                phi += PI;
+                phi += 2.0 * PI;
             }
             if (self.z_min > -self.radius && p_hit.z < self.z_min)
                 || (self.z_max < self.radius && p_hit.z > self.z_max)

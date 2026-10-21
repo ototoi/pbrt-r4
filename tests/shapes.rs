@@ -567,6 +567,31 @@ fn partial_sphere_reintersect() {
 }
 
 #[test]
+fn partial_sphere_rejects_far_hit_outside_phi_max() {
+    // The near hit (phi = 210 deg) and the far hit (phi = 330 deg) are both
+    // outside phi_max = 180 deg, so the ray must miss.
+    let identity = Transform::identity();
+    let sphere = Shape::Sphere(Box::new(Sphere::new(
+        &identity, &identity, false, 1.0, -1.0, 1.0, 180.0,
+    )));
+    let ray = Ray::new(
+        &Point3f::new(-2.0, -0.5, 0.0),
+        &Vector3f::new(1.0, 0.0, 0.0),
+        Float::INFINITY,
+        0.0,
+    );
+    assert!(sphere.intersect(&ray, Float::INFINITY).is_none());
+    assert!(!sphere.intersect_p(&ray, Float::INFINITY));
+}
+
+#[test]
+fn sphere_orders_swapped_z_range() {
+    let identity = Transform::identity();
+    let sphere = Sphere::new(&identity, &identity, false, 1.0, 0.4, -0.2, 360.0);
+    assert_eq!((sphere.z_min, sphere.z_max), (-0.2, 0.4));
+}
+
+#[test]
 fn cylinder_reintersect() {
     for i in 0..100 {
         let mut rng = RNG::new_sequence(i);
