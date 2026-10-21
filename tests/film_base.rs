@@ -1,4 +1,4 @@
-use pbrt_r4::base::filter::{Filter, GaussianFilter, TriangleFilter};
+use pbrt_r4::base::filter::{BoxFilter, Filter, GaussianFilter, TriangleFilter};
 use pbrt_r4::film::film_base::{
     add_splat_packet_into_pixels, normalize_pixel, FilmBase, FilmBaseParameters,
 };
@@ -80,9 +80,7 @@ fn add_splat_packet_filters_footprint_and_clamps_sensor_rgb() {
 fn box_splat_does_not_deposit_into_conservative_bounds_neighbors() {
     let bounds = Bounds2i::new(&Point2i::new(0, 0), &Point2i::new(4, 4));
     let sensor = PixelSensor::create("cie1931", 100.0, 0.0).unwrap();
-    let filter = Filter::Box(pbrt_r4::base::filter::BoxFilter::new(&Vector2f::new(
-        0.5, 0.5,
-    )));
+    let filter = Filter::Box(BoxFilter::new(&Vector2f::new(0.5, 0.5)));
     let lambda = SampledWavelengths::sample_visible(0.37);
     let spectrum = SampledSpectrum::new(1.0);
     let expected = sensor.to_output_rgb_from_packet(&spectrum, &lambda);
