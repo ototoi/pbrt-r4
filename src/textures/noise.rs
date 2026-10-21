@@ -156,10 +156,13 @@ pub fn turbulence(
         lambda *= 1.99;
         o *= omega;
     }
+    // Account for contributions of clamped octaves in turbulence
+    // (pbrt-v4 util/noise.cpp:147-153).
     let n_partial = n - n_int as Float;
     let lp = lambda * *p;
-    sum += o * smooth_step(0.3, 0.7, n_partial) * noise(lp.x, lp.y, lp.z);
-    for _ in 0..n_int {
+    let s = smooth_step(0.3, 0.7, n_partial);
+    sum += o * ((1.0 - s) * 0.2 + s * Float::abs(noise(lp.x, lp.y, lp.z)));
+    for _ in n_int..max_octaves as usize {
         sum += o * 0.2;
         o *= omega;
     }

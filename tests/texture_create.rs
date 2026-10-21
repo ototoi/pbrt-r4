@@ -411,3 +411,79 @@ fn texture_parameter_dictionary_named_rgb_textures_are_type_partitioned() {
     assert!(reflectance.evaluate(&ctx, &lambda).max_component_value() <= 1.0 + 1e-6);
     assert!(eta.evaluate(&ctx, &lambda).max_component_value() > 1.0);
 }
+
+fn texture_params(params: &ParameterDictionary) -> TextureParameterDictionary<'_> {
+    static F_TEX: std::sync::OnceLock<HashMap<String, Arc<FloatTexture>>> =
+        std::sync::OnceLock::new();
+    static S_TEX: std::sync::OnceLock<HashMap<String, Arc<SpectrumTexture>>> =
+        std::sync::OnceLock::new();
+    TextureParameterDictionary::new(
+        params,
+        F_TEX.get_or_init(HashMap::new),
+        S_TEX.get_or_init(HashMap::new),
+    )
+}
+
+#[test]
+fn float_dots_texture_reads_inside_outside_with_v4_ordering() {
+    // pbrt-v4 passes "inside" as the texture used outside the dots, so the
+    // background (the majority of the area) takes the "inside" value.
+    let mut params = ParameterDictionary::new();
+    params.add_float("inside", 0.25);
+    params.add_float("outside", 0.75);
+    params.add_float("uscale", 8.0);
+    params.add_float("vscale", 8.0);
+    let tex =
+        FloatTexture::create("dots", &Transform::identity(), &texture_params(&params)).unwrap();
+
+    let (mut background, mut dots) = (0, 0);
+    for j in 0..64 {
+        for i in 0..64 {
+            let mut ctx = TextureEvalContext::default();
+            ctx.uv = Point2f::new((i as Float + 0.5) / 64.0, (j as Float + 0.5) / 64.0);
+            let v = tex.evaluate(&ctx);
+            if (v - 0.25).abs() < 1e-6 {
+                background += 1;
+            } else {
+                assert!((v - 0.75).abs() < 1e-6, "unexpected dots value {v}");
+                dots += 1;
+            }
+        }
+    }
+    assert!(
+        dots > 0 && background > dots,
+        "background={background} dots={dots}"
+    );
+}
+
+#[test]
+fn marble_texture_reaches_the_last_spline_segment() {
+    // With variation 0, t = 0.5 + 0.5 * sin(p.y). t = 0.95 lies in the last
+    // spline segment (colors[5..9]), which holds the dark vein color.
+    let mut params = ParameterDictionary::new();
+    params.add_float("variation", 0.0);
+    let tex = SpectrumTexture::create(
+        "marble",
+        &Transform::identity(),
+        &texture_params(&params),
+        SpectrumType::Albedo,
+    )
+    .unwrap();
+    let mut ctx = TextureEvalContext::default();
+    ctx.p = Point3f::new(0.0, Float::asin(2.0 * 0.95 - 1.0), 0.0);
+
+    // Cubic Bezier at local t = 0.7 over (c, c, dark, c), scaled by 1.5.
+    let (b0, b1, b2, b3) = (0.027, 0.189, 0.441, 0.343);
+    let c = [0.58, 0.58, 0.6];
+    let dark = [0.2, 0.2, 0.33];
+    let rgb: Vec<Float> = (0..3)
+        .map(|k| 1.5 * ((b0 + b1 + b3) * c[k] + b2 * dark[k]))
+        .collect();
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let expected = Spectrum::from_rgb_albedo(&[rgb[0], rgb[1], rgb[2]]).sample(&lambda);
+    assert!(SampledSpectrum::near_equal(
+        &tex.evaluate(&ctx, &lambda),
+        &expected,
+        1e-4
+    ));
+}
