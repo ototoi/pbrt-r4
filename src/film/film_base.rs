@@ -317,14 +317,17 @@ pub fn add_splat_packet_into_pixels(
 }
 
 /// Combine a Pixel's running RGB sum with its splat contribution and an
-/// output scale, mirroring v4's `GetPixelRGB` body (film.h:268). v4 does
-/// **not** clamp negative output components — bright out-of-gamut samples
-/// can drive `outputRGBFromSensorRGB * sensorRGB` to small negatives in
-/// individual channels and pbrt-v4 stores those untouched in the EXR.
+/// output scale, mirroring v4's `GetPixelRGB` body (film.h:268). As in v4,
+/// `splat_scale` only applies to the splat contribution; the filtered RGB sum
+/// is not affected by it. v4 does **not** clamp negative output components —
+/// bright out-of-gamut samples can drive `outputRGBFromSensorRGB * sensorRGB`
+/// to small negatives in individual channels and pbrt-v4 stores those
+/// untouched in the EXR.
 pub fn normalize_pixel(
     rgb_sum: [Float; 3],
     filter_weight_sum: Float,
     splat_pixel: &[Float; 3],
+    splat_scale: Float,
     scale: Float,
 ) -> [Float; 3] {
     let mut c = rgb_sum;
@@ -334,8 +337,8 @@ pub fn normalize_pixel(
         c[1] *= inv_wt;
         c[2] *= inv_wt;
     }
-    c[0] = (c[0] + splat_pixel[0]) * scale;
-    c[1] = (c[1] + splat_pixel[1]) * scale;
-    c[2] = (c[2] + splat_pixel[2]) * scale;
+    c[0] = (c[0] + splat_scale * splat_pixel[0]) * scale;
+    c[1] = (c[1] + splat_scale * splat_pixel[1]) * scale;
+    c[2] = (c[2] + splat_scale * splat_pixel[2]) * scale;
     c
 }

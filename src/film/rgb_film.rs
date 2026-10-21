@@ -213,7 +213,8 @@ impl RGBFilm {
                     pixels[src_index].rgb_sum,
                     pixels[src_index].filter_weight_sum,
                     &load_atomic_rgb(&self.splat_pixels[src_index]),
-                    scale * splat_scale,
+                    splat_scale,
+                    scale,
                 );
                 let by = y - ty0;
                 let bx = x - tx0;
@@ -274,7 +275,8 @@ impl RGBFilm {
                 pixels[offset].rgb_sum,
                 pixels[offset].filter_weight_sum,
                 &load_atomic_rgb(&self.splat_pixels[offset]),
-                self.scale * splat_scale,
+                splat_scale,
+                self.scale,
             );
             rgb[3 * offset] = c[0];
             rgb[3 * offset + 1] = c[1];

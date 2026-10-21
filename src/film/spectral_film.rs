@@ -292,7 +292,8 @@ impl SpectralFilm {
                     pixels[src_index].rgb_sum,
                     pixels[src_index].filter_weight_sum,
                     &load_atomic_rgb(&self.splat_pixels[src_index]),
-                    scale * splat_scale,
+                    splat_scale,
+                    scale,
                 );
                 let by = y - ty0;
                 let bx = x - tx0;
@@ -332,7 +333,8 @@ impl SpectralFilm {
                 pixels[offset].rgb_sum,
                 pixels[offset].filter_weight_sum,
                 &load_atomic_rgb(&self.splat_pixels[offset]),
-                self.scale * splat_scale,
+                splat_scale,
+                self.scale,
             );
             r[offset] = c[0] as f32;
             g[offset] = c[1] as f32;
@@ -400,7 +402,8 @@ impl SpectralFilm {
                 pixels[i].rgb_sum,
                 pixels[i].filter_weight_sum,
                 &load_atomic_rgb(&self.splat_pixels[i]),
-                self.scale * splat_scale,
+                splat_scale,
+                self.scale,
             );
             texels.push(RGBSpectrum::new(rgb[0], rgb[1], rgb[2]));
         }
