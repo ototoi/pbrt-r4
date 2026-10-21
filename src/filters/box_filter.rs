@@ -22,8 +22,14 @@ impl BoxFilter {
         Ok(BoxFilter::new(&Vector2f::new(xw, yw)))
     }
 
-    pub fn evaluate(&self, _p: &Point2f) -> Float {
-        1.0
+    pub fn evaluate(&self, p: &Point2f) -> Float {
+        // pbrt-v4 BoxFilter::Evaluate (filters.h): splat bounds are
+        // conservative, so reject pixel centers outside the filter support.
+        if p.x.abs() <= self.base.radius.x && p.y.abs() <= self.base.radius.y {
+            1.0
+        } else {
+            0.0
+        }
     }
 
     pub fn integral(&self) -> Float {
