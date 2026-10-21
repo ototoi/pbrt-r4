@@ -146,7 +146,7 @@ pub struct BSSRDFProbePipeline {
 
 pub fn probe_shader_source() -> String {
     [
-        "enable wgpu_ray_query;\n",
+        "enable wgpu_ray_query;\nenable wgpu_binding_array;\n",
         include_str!("shaders/types.wgsl"),
         include_str!("shaders/bssrdf_probe_bindings.wgsl"),
         include_str!("shaders/lib/float.wgsl"),
@@ -161,10 +161,28 @@ pub fn probe_shader_source() -> String {
 
 impl BSSRDFProbePipeline {
     pub fn new(device: &wgpu::Device) -> Result<Self, PbrtError> {
+        Self::new_with_geometry_page_count(device, 1)
+    }
+
+    pub fn new_with_geometry_page_count(
+        device: &wgpu::Device,
+        geometry_page_count: u32,
+    ) -> Result<Self, PbrtError> {
+        if geometry_page_count == 0 {
+            return Err(PbrtError::error(
+                "BSSRDF probe requires at least one geometry page.",
+            ));
+        }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("BSSRDF probe"),
-            source: wgpu::ShaderSource::Wgsl(probe_shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(
+                super::shader::specialize_geometry_page_bindings(
+                    probe_shader_source(),
+                    geometry_page_count,
+                )
+                .into(),
+            ),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("BSSRDF probe"),
@@ -200,9 +218,25 @@ impl BSSRDFProbePipeline {
                 "Subsurface probe alpha-mask traversal is not implemented yet.",
             ));
         }
+        let vertex_buffers: Vec<wgpu::BufferBinding<'_>> = scene
+            .vertex_buffers
+            .iter()
+            .map(|buffer| wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: None,
+            })
+            .collect();
+        let index_buffers: Vec<wgpu::BufferBinding<'_>> = scene
+            .index_buffers
+            .iter()
+            .map(|buffer| wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: None,
+            })
+            .collect();
         let buffers = [
-            &scene.vertex_buffer,
-            &scene.index_buffer,
             &scene.geometry_buffer,
             &scene.instance_buffer,
             &tables.records,
@@ -211,18 +245,42 @@ impl BSSRDFProbePipeline {
             results,
             error,
         ];
-        let mut entries = buffers
-            .iter()
-            .enumerate()
-            .map(|(i, buffer)| wgpu::BindGroupEntry {
-                binding: i as u32 + 1,
-                resource: buffer.as_entire_binding(),
-            })
-            .collect::<Vec<_>>();
-        entries.push(wgpu::BindGroupEntry {
+        let mut entries = vec![wgpu::BindGroupEntry {
             binding: 0,
             resource: wgpu::BindingResource::AccelerationStructure(&scene.acceleration.tlas),
-        });
+        }];
+        if scene.geometry_page_count == 1 {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: scene.vertex_buffers[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: scene.index_buffers[0].as_entire_binding(),
+                },
+            ]);
+        } else {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::BufferArray(&vertex_buffers),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::BufferArray(&index_buffers),
+                },
+            ]);
+        }
+        entries.extend(
+            buffers
+                .iter()
+                .enumerate()
+                .map(|(index, buffer)| wgpu::BindGroupEntry {
+                    binding: index as u32 + 3,
+                    resource: buffer.as_entire_binding(),
+                }),
+        );
         Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("BSSRDF probe"),
             layout: &self.pipeline.get_bind_group_layout(0),

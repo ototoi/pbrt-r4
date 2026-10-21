@@ -23,7 +23,7 @@ use super::render_settings::RenderSettings;
 use super::sampler::SamplerResources;
 use super::stages::ResourceId;
 
-mod geometry;
+pub mod geometry;
 pub mod instance;
 pub mod light;
 pub mod medium;
@@ -36,7 +36,7 @@ pub use texture::{
     texture_binding_counts,
 };
 
-use geometry::convert_geometry;
+use geometry::{convert_geometry_page, validate_geometry_page_plan, GeometryPagePlan};
 use instance::convert_instances;
 use light::{convert_lights, LightSamplingData};
 use medium::{convert_media, validate_storage_array_size};
@@ -58,8 +58,9 @@ pub struct Scene {
     pub light_table: LightTableUniform,
     pub sampler: SamplerResources,
     pub output: Output,
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    pub vertex_buffers: Vec<wgpu::Buffer>,
+    pub index_buffers: Vec<wgpu::Buffer>,
+    pub geometry_page_count: u32,
     pub geometry_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub medium_buffer: wgpu::Buffer,
@@ -107,17 +108,85 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn geometry_page_plan(
+        flat: &flat::Scene,
+        limits: &wgpu::Limits,
+        page_byte_limit: Option<u64>,
+    ) -> Result<GeometryPagePlan, PbrtError> {
+        let device_limit = limits
+            .max_buffer_size
+            .min(u64::from(limits.max_storage_buffer_binding_size));
+        let byte_limit = page_byte_limit.map_or(device_limit, |limit| device_limit.min(limit));
+        let vertex_capacity = u32::try_from(
+            (byte_limit / std::mem::size_of::<super::abi::Vertex>() as u64)
+                .min(u64::from(u32::MAX)),
+        )
+        .map_err(|_| PbrtError::error("WebGPU vertex page capacity exceeds u32."))?;
+        let index_capacity = u32::try_from(
+            (byte_limit / std::mem::size_of::<u32>() as u64).min(u64::from(u32::MAX)),
+        )
+        .map_err(|_| PbrtError::error("WebGPU index page capacity exceeds u32."))?;
+        GeometryPagePlan::new(&flat.geometry.geometries, vertex_capacity, index_capacity)
+    }
+
     pub fn from_flat(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         flat: flat::Scene,
+    ) -> Result<Self, PbrtError> {
+        let geometry_page_plan = Self::geometry_page_plan(&flat, &device.limits(), None)?;
+        Self::from_flat_with_geometry_page_plan(device, queue, flat, geometry_page_plan)
+    }
+
+    pub fn from_flat_with_geometry_page_plan(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        flat: flat::Scene,
+        geometry_page_plan: GeometryPagePlan,
     ) -> Result<Self, PbrtError> {
         if flat.output.filename.is_empty() {
             return Err(PbrtError::error(
                 "WebGPU output filename must not be empty.",
             ));
         }
-        let (vertices, geometries, indices) = convert_geometry(&flat)?;
+        let limits = device.limits();
+        let page_byte_limit = limits
+            .max_buffer_size
+            .min(u64::from(limits.max_storage_buffer_binding_size));
+        let max_vertex_capacity = u32::try_from(
+            (page_byte_limit / std::mem::size_of::<super::abi::Vertex>() as u64)
+                .min(u64::from(u32::MAX)),
+        )
+        .unwrap_or(u32::MAX);
+        let max_index_capacity =
+            u32::try_from((page_byte_limit / 4).min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
+        if geometry_page_plan.vertex_capacity > max_vertex_capacity
+            || geometry_page_plan.index_capacity > max_index_capacity
+        {
+            return Err(PbrtError::error(
+                "WebGPU geometry page plan exceeds the device buffer limits.",
+            ));
+        }
+        validate_geometry_page_plan(&flat, &geometry_page_plan)?;
+        let geometries = geometry_page_plan
+            .placements
+            .iter()
+            .zip(flat.geometry.geometries.iter())
+            .map(|(placement, source)| Geometry {
+                vertex_offset: placement.vertex_offset,
+                vertex_count: source.vertex_count,
+                index_offset: placement.index_offset,
+                index_count: source.index_count,
+                intersection_normal_kind: match source.source_shape {
+                    crate::gpu::flat::SourceShape::Disk | crate::gpu::flat::SourceShape::Sphere => {
+                        super::abi::INTERSECTION_NORMAL_KIND_QUADRIC
+                    }
+                    _ => super::abi::INTERSECTION_NORMAL_KIND_TRIANGLE,
+                },
+                page: placement.page,
+                padding: [0; 2],
+            })
+            .collect::<Vec<_>>();
         if flat.camera.medium != INVALID_INDEX && flat.camera.medium as usize >= flat.media.len() {
             return Err(PbrtError::error(
                 "Flat camera references an invalid medium.",
@@ -125,7 +194,6 @@ impl Scene {
         }
         let instances = convert_instances(&flat, geometries.len())?;
         let converted_media = convert_media(&flat.media, flat.attributes.spectra.len())?;
-        let limits = device.limits();
         validate_storage_array_size::<super::abi::VolumeMediumRecord>(
             &limits,
             converted_media.volumes.len(),
@@ -192,22 +260,45 @@ impl Scene {
         let filter = FilterResources::new(device, &flat.film.filter)?;
         let film_output_matrix = flat.film.output_rgb_from_sensor_rgb;
         let film_scale = flat.film.scale;
-        if vertices.is_empty() || indices.is_empty() || instances.is_empty() {
+        if geometry_page_plan.pages.is_empty() || instances.is_empty() {
             return Err(PbrtError::error(
                 "WebGPU primary-ray rendering requires non-empty geometry and instances.",
             ));
         }
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 vertex SBO"),
-            contents: buffer_contents(&vertices),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pbrt-r4 local index SBO"),
-            contents: buffer_contents(&indices),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
-        });
+        let mut vertex_buffers = Vec::with_capacity(geometry_page_plan.pages.len());
+        let mut index_buffers = Vec::with_capacity(geometry_page_plan.pages.len());
+        for page_index in 0..geometry_page_plan.pages.len() {
+            let (vertices, indices, _) =
+                convert_geometry_page(&flat, &geometry_page_plan, page_index)?;
+            let vertex_bytes = std::mem::size_of_val(vertices.as_slice()) as u64;
+            let index_bytes = std::mem::size_of_val(indices.as_slice()) as u64;
+            if vertex_bytes > page_byte_limit || index_bytes > page_byte_limit {
+                return Err(PbrtError::error(&format!(
+                    "WebGPU geometry page {page_index} requires vertex/index buffers of {vertex_bytes}/{index_bytes} bytes, exceeding the device limit {page_byte_limit}."
+                )));
+            }
+            vertex_buffers.push(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("pbrt-r4 vertex page SBO"),
+                    contents: buffer_contents(&vertices),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
+                }),
+            );
+            index_buffers.push(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("pbrt-r4 index page SBO"),
+                    contents: buffer_contents(&indices),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::BLAS_INPUT,
+                }),
+            );
+        }
+        log::info!(
+            "GPU geometry pages: count={} vertex_bytes={} index_bytes={} page_byte_limit={page_byte_limit}",
+            geometry_page_plan.pages.len(),
+            geometry_page_plan.pages.iter().map(|page| u64::from(page.vertex_count) * std::mem::size_of::<super::abi::Vertex>() as u64).sum::<u64>(),
+            geometry_page_plan.pages.iter().map(|page| u64::from(page.index_count) * 4).sum::<u64>(),
+        );
         let geometry_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbrt-r4 geometry SBO"),
             contents: buffer_contents(&geometries),
@@ -506,8 +597,8 @@ impl Scene {
         let acceleration = acceleration::build(
             device,
             queue,
-            &vertex_buffer,
-            &index_buffer,
+            &vertex_buffers,
+            &index_buffers,
             &geometries,
             &instances,
             &flat.instances,
@@ -525,8 +616,10 @@ impl Scene {
             light_table,
             sampler,
             output: Output::from_flat(flat.output),
-            vertex_buffer,
-            index_buffer,
+            vertex_buffers,
+            index_buffers,
+            geometry_page_count: u32::try_from(geometry_page_plan.pages.len())
+                .map_err(|_| PbrtError::error("WebGPU geometry page count exceeds u32."))?,
             geometry_buffer,
             instance_buffer,
             medium_buffer,
@@ -580,8 +673,7 @@ impl Scene {
                 &self.acceleration.tlas,
             )),
             ResourceId::Filter => Some(self.filter.buffer.as_entire_binding()),
-            ResourceId::Vertex => Some(self.vertex_buffer.as_entire_binding()),
-            ResourceId::Index => Some(self.index_buffer.as_entire_binding()),
+            ResourceId::Vertex | ResourceId::Index => None,
             ResourceId::Geometry => Some(self.geometry_buffer.as_entire_binding()),
             ResourceId::Instance => Some(self.instance_buffer.as_entire_binding()),
             ResourceId::Medium => Some(self.medium_buffer.as_entire_binding()),

@@ -9,13 +9,13 @@ fn load_area_triangle(area_index: u32, primitive: u32) -> TriangleVertices {
     let instance = instances[load_area_instance(area_index)];
     let geometry = geometries[instance.geometry];
     let first_index = geometry.index_offset + primitive * 3u;
-    let i0 = geometry.vertex_offset + indices[first_index];
-    let i1 = geometry.vertex_offset + indices[first_index + 1u];
-    let i2 = geometry.vertex_offset + indices[first_index + 2u];
+    let i0 = geometry.vertex_offset + indices[geometry.page].values[first_index];
+    let i1 = geometry.vertex_offset + indices[geometry.page].values[first_index + 1u];
+    let i2 = geometry.vertex_offset + indices[geometry.page].values[first_index + 2u];
     return TriangleVertices(
-        instance.world_from_object * vertices[i0].position,
-        instance.world_from_object * vertices[i1].position,
-        instance.world_from_object * vertices[i2].position,
+        instance.world_from_object * vertices[geometry.page].values[i0].position,
+        instance.world_from_object * vertices[geometry.page].values[i1].position,
+        instance.world_from_object * vertices[geometry.page].values[i2].position,
         instance.orientation_flags,
     );
 }

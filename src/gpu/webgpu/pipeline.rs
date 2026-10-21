@@ -32,21 +32,57 @@ impl Pipeline {
         texture_noise_enabled: bool,
         nanovdb_enabled: bool,
     ) -> Result<Self, PbrtError> {
+        Self::new_with_geometry_page_count(
+            device,
+            texture_image_count,
+            texture_sampler_count,
+            texture_program_capacity,
+            texture_noise_enabled,
+            nanovdb_enabled,
+            1,
+        )
+    }
+
+    pub fn new_with_geometry_page_count(
+        device: &wgpu::Device,
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        texture_program_capacity: u32,
+        texture_noise_enabled: bool,
+        nanovdb_enabled: bool,
+        geometry_page_count: u32,
+    ) -> Result<Self, PbrtError> {
+        if geometry_page_count == 0 {
+            return Err(PbrtError::error(
+                "WebGPU pipeline requires at least one geometry page.",
+            ));
+        }
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let canonical_bindings = canonical_wavefront_bindings();
         let stages: Result<HashMap<ComputeStageId, StagePipeline>, PbrtError> = COMPUTE_STAGES
             .iter()
             .map(|stage| {
                 log::info!("GPU pipeline: creating {}", stage.label);
-                let source = shader::specialize_source(
-                    shader::compose_source_with_features(
-                        stage.source,
-                        texture_noise_enabled,
-                        nanovdb_enabled,
+                let source = shader::specialize_geometry_page_bindings(
+                    shader::specialize_source(
+                        shader::compose_source_with_features(
+                            stage.source,
+                            texture_noise_enabled,
+                            nanovdb_enabled,
+                        ),
+                        texture_image_count,
+                        texture_sampler_count,
+                        texture_program_capacity,
                     ),
-                    texture_image_count,
-                    texture_sampler_count,
-                    texture_program_capacity,
+                    geometry_page_count,
+                )
+                .replace(
+                    "binding_array<texture_2d<f32>>",
+                    &format!("binding_array<texture_2d<f32>, {texture_image_count}u>"),
+                )
+                .replace(
+                    "binding_array<sampler>",
+                    &format!("binding_array<sampler, {texture_sampler_count}u>"),
                 );
                 log::info!(
                     "GPU pipeline: {} source composed ({} bytes)",
@@ -68,7 +104,12 @@ impl Pipeline {
                             .iter()
                             .filter(|binding| binding.group == group)
                             .map(|binding| {
-                                layout_entry(binding, texture_image_count, texture_sampler_count)
+                                layout_entry(
+                                    binding,
+                                    texture_image_count,
+                                    texture_sampler_count,
+                                    geometry_page_count,
+                                )
                             })
                             .collect::<Vec<_>>();
                         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -131,6 +172,7 @@ fn layout_entry(
     binding: &BindingSpec,
     texture_image_count: u32,
     texture_sampler_count: u32,
+    geometry_page_count: u32,
 ) -> wgpu::BindGroupLayoutEntry {
     let ty = match binding.class {
         BindingClass::Uniform => wgpu::BindingType::Buffer {
@@ -167,11 +209,14 @@ fn layout_entry(
         count: if matches!(
             binding.resource,
             ResourceId::TextureImageArray | ResourceId::TextureSamplerArray
-        ) {
+        ) || (geometry_page_count > 1
+            && matches!(binding.resource, ResourceId::Vertex | ResourceId::Index))
+        {
             let count = match binding.resource {
                 ResourceId::TextureImageArray => texture_image_count,
                 ResourceId::TextureSamplerArray => texture_sampler_count,
-                _ => unreachable!("only texture arrays have a binding count"),
+                ResourceId::Vertex | ResourceId::Index => geometry_page_count,
+                _ => unreachable!("only binding arrays have a binding count"),
             };
             std::num::NonZeroU32::new(count.max(1))
         } else {

@@ -29,6 +29,23 @@ fn texture_material_pipeline_compiles() {
 
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn two_geometry_page_pipeline_compiles() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let canonical_bindings = canonical_wavefront_bindings();
+    let stage_sources = COMPUTE_STAGES
+        .iter()
+        .map(|stage| stage.source)
+        .collect::<Vec<_>>();
+    let mut required =
+        required_limits_for_sources_with_nanovdb(&canonical_bindings, &stage_sources, false)
+            .unwrap();
+    required.bind_groups = required.bind_groups.max(2);
+    let context = Context::new_with_geometry_page_count(required, 1, 1, 2).unwrap();
+    Pipeline::new_with_geometry_page_count(&context.device, 1, 1, 1, false, false, 2).unwrap();
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn dynamic_and_constant_scale_shader_paths_match_the_cpu_reference() {
     let directory = tempfile::tempdir().unwrap();
     let dynamic_scene = directory.path().join("dynamic-scale.pbrt");

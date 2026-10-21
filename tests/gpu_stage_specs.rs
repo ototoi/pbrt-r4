@@ -96,11 +96,11 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
 #[test]
 fn canonical_layout_drives_required_limits() {
     let limits = RequiredLimits::from_bindings(&canonical_wavefront_bindings()).unwrap();
-    assert_eq!(limits.storage_buffers_per_shader_stage, 67);
+    assert_eq!(limits.storage_buffers_per_shader_stage, 65);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 6);
     assert_eq!(
         limits.buffers_and_acceleration_structures_per_shader_stage,
-        74
+        72
     );
     assert_eq!(limits.bind_groups, 2);
 }
