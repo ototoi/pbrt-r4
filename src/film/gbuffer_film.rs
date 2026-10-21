@@ -242,7 +242,8 @@ impl GBufferFilm {
                     pixels[src_index].rgb_sum,
                     pixels[src_index].filter_weight_sum,
                     &load_atomic_rgb(&self.splat_pixels[src_index]),
-                    scale * splat_scale,
+                    splat_scale,
+                    scale,
                 );
                 let by = y - ty0;
                 let bx = x - tx0;
@@ -301,7 +302,8 @@ impl GBufferFilm {
                 pixels[i].rgb_sum,
                 pixels[i].filter_weight_sum,
                 &load_atomic_rgb(&self.splat_pixels[i]),
-                self.scale * splat_scale,
+                splat_scale,
+                self.scale,
             );
             r[i] = rgb[0] as f32;
             g[i] = rgb[1] as f32;
@@ -383,7 +385,8 @@ impl GBufferFilm {
                 pixels[i].rgb_sum,
                 pixels[i].filter_weight_sum,
                 &load_atomic_rgb(&self.splat_pixels[i]),
-                self.scale * splat_scale,
+                splat_scale,
+                self.scale,
             );
             texels.push(RGBSpectrum::new(rgb[0], rgb[1], rgb[2]));
         }

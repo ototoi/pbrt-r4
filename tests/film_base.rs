@@ -33,7 +33,7 @@ fn sample_bounds_match_v4_filter_center_bounds() {
 fn normalize_pixel_preserves_negative_weighted_rgb() {
     let splat_pixel = [0.0, 0.0, 0.0];
 
-    let c = normalize_pixel([-4.0, 6.0, -2.0], 2.0, &splat_pixel, 1.0);
+    let c = normalize_pixel([-4.0, 6.0, -2.0], 2.0, &splat_pixel, 1.0, 1.0);
 
     assert_eq!(c, [-2.0, 3.0, -1.0]);
 }
@@ -42,9 +42,18 @@ fn normalize_pixel_preserves_negative_weighted_rgb() {
 fn normalize_pixel_preserves_negative_splats_after_scaling() {
     let splat_pixel = [-0.25, 0.5, -1.0];
 
-    let c = normalize_pixel([1.0, -1.0, 0.0], 1.0, &splat_pixel, 2.0);
+    let c = normalize_pixel([1.0, -1.0, 0.0], 1.0, &splat_pixel, 1.0, 2.0);
 
     assert_eq!(c, [1.5, -1.0, -2.0]);
+}
+
+#[test]
+fn normalize_pixel_applies_splat_scale_only_to_splats() {
+    let splat_pixel = [8.0, 4.0, -2.0];
+
+    let c = normalize_pixel([2.0, 4.0, 6.0], 2.0, &splat_pixel, 0.25, 2.0);
+
+    assert_eq!(c, [6.0, 6.0, 5.0]);
 }
 
 #[test]
