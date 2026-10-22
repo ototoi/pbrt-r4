@@ -312,7 +312,8 @@ impl SpotLight {
         let from = params.get_one_point3f("from", &Point3f::new(0.0, 0.0, 0.0));
         let to = params.get_one_point3f("to", &Point3f::new(0.0, 0.0, 1.0));
         let dir = (to - from).normalize();
-        let (dir, du, dv) = Vector3f::coordinate_system(&dir);
+        // pbrt-v4 `Frame::FromZ(Normalize(to - from))`.
+        let (du, dv) = coordinate_system(&dir);
         let dir_to_z = Transform::from(Matrix4x4::new(
             du.x, du.y, du.z, 0.0, dv.x, dv.y, dv.z, 0., dir.x, dir.y, dir.z, 0.0, 0.0, 0.0, 0.0,
             1.0,

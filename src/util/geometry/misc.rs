@@ -60,16 +60,7 @@ pub fn max_component(v: &Vector3f) -> Float {
     return Float::max(v.x, Float::max(v.y, v.z));
 }
 
-#[inline]
-pub fn coordinate_system(v1: &Vector3f) -> (Vector3f, Vector3f) {
-    let v2 = if Float::abs(v1.x) > Float::abs(v1.y) {
-        Vector3f::new(-v1.z, 0.0, v1.x) / Float::sqrt(v1.x * v1.x + v1.z * v1.z)
-    } else {
-        Vector3f::new(0.0, v1.z, -v1.y) / Float::sqrt(v1.y * v1.y + v1.z * v1.z)
-    };
-    let v3 = Vector3f::cross(v1, &v2).normalize();
-    return (v2, v3);
-}
+pub use crate::util::vecmath::coordinate_system;
 
 #[inline]
 pub fn spherical_direction(sin_theta: Float, cos_theta: Float, phi: Float) -> Vector3f {

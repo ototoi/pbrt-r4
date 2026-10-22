@@ -57,35 +57,6 @@ impl<
 impl<
         T: Copy
             + PartialEq
-            + PartialOrd
-            + FloatType
-            + NumberType
-            + Default
-            + std::ops::Neg<Output = T>
-            + std::ops::Add<Output = T>
-            + std::ops::Sub<Output = T>
-            + std::ops::Mul<Output = T>
-            + std::ops::Div<Output = T>
-            + std::ops::MulAssign<T>,
-    > Vector3<T>
-{
-    pub fn coordinate_system(d1: &Self) -> (Self, Self, Self) {
-        let v1 = d1.normalize();
-        if T::abs(v1.x) > T::abs(v1.y) {
-            let v2 = Self::new(-v1.z, T::default(), v1.x).normalize();
-            let v3 = Self::cross(&v1, &v2).normalize();
-            return (v1, v2, v3);
-        } else {
-            let v2 = Self::new(T::default(), v1.z, -v1.y).normalize();
-            let v3 = Self::cross(&v1, &v2).normalize();
-            return (v1, v2, v3);
-        }
-    }
-}
-
-impl<
-        T: Copy
-            + PartialEq
             + FloatType
             + std::ops::Add<Output = T>
             + std::ops::Sub<Output = T>
