@@ -457,6 +457,18 @@ fn float_dots_texture_reads_inside_outside_with_v4_ordering() {
 }
 
 #[test]
+fn wrinkled_texture_treats_negative_octaves_as_zero() {
+    // pbrt-v4 loops over no octaves when maxOctaves < 0 and Turbulence
+    // returns only the 0.2 partial-octave term.
+    let mut params = ParameterDictionary::new();
+    params.add_int("octaves", -1);
+    let tex =
+        FloatTexture::create("wrinkled", &Transform::identity(), &texture_params(&params)).unwrap();
+    let v = tex.evaluate(&TextureEvalContext::default());
+    assert!((v - 0.2).abs() < 1e-6, "unexpected wrinkled value {v}");
+}
+
+#[test]
 fn marble_texture_reaches_the_last_spline_segment() {
     // With variation 0, t = 0.5 + 0.5 * sin(p.y). t = 0.95 lies in the last
     // spline segment (colors[5..9]), which holds the dark vein color.

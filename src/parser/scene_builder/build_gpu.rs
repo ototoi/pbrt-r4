@@ -883,7 +883,7 @@ fn materialize_texture_node(
         "scale" => &["tex", "scale"],
         "mix" => &["tex1", "tex2", "amount"],
         "directionmix" => &["tex1", "tex2"],
-        "dots" => &["outside", "inside"],
+        "dots" => &["inside", "outside"],
         "bilerp" => &["v00", "v01", "v10", "v11"],
         name if name.contains("checkerboard") => &["tex1", "tex2"],
         _ => &[],
@@ -936,7 +936,10 @@ fn materialize_texture_node(
         || operation_name.contains("checkerboard")
     {
         let slots: &[(&str, f32)] = if operation_name == "dots" {
-            &[("outside", 0.0_f32), ("inside", 1.0_f32)]
+            // The shader evaluates the first child outside the dots. pbrt-v4
+            // textures.cpp:305-334 passes "inside" as the constructor's
+            // outsideDot, so keep that ordering to match the CPU path.
+            &[("inside", 1.0_f32), ("outside", 0.0_f32)]
         } else if operation_name == "bilerp" {
             &[
                 ("v00", 0.0_f32),

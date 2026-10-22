@@ -79,7 +79,7 @@ impl MarbleTexture {
         _spectrum_type: SpectrumType,
     ) -> Result<Self, PbrtError> {
         let map = TextureMapping3D::create(parameters.parameter_dictionary(), render_from_texture);
-        let octaves = parameters.get_one_int("octaves", 8) as u32;
+        let octaves = parameters.get_one_int("octaves", 8).max(0) as u32;
         let roughness = parameters.get_one_float("roughness", 0.5);
         let scale = parameters.get_one_float("scale", 1.0);
         let variation = parameters.get_one_float("variation", 0.2);
