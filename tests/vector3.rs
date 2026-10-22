@@ -37,3 +37,25 @@ fn vector3_from_conversions_work() {
     assert_eq!(v1, Vector3f::from((1.0, 2.0, 3.0)));
     assert_eq!(v1, Vector3f::from([1.0, 2.0, 3.0]));
 }
+
+#[test]
+fn coordinate_system_matches_pbrt_v4_basis() {
+    use pbrt_r4::util::geometry::coordinate_system;
+    // pbrt-v4 CoordinateSystem (Duff et al. 2017): +z -> (+x, +y), -z -> (+x, -y).
+    let (v2, v3) = coordinate_system(&Vector3f::new(0.0, 0.0, 1.0));
+    assert_eq!(v2, Vector3f::new(1.0, 0.0, 0.0));
+    assert_eq!(v3, Vector3f::new(0.0, 1.0, 0.0));
+    let (v2, v3) = coordinate_system(&Vector3f::new(0.0, 0.0, -1.0));
+    assert_eq!(v2, Vector3f::new(1.0, 0.0, 0.0));
+    assert_eq!(v3, Vector3f::new(0.0, -1.0, 0.0));
+
+    let v1 = Vector3f::new(0.3, -0.5, 0.8).normalize();
+    let (v2, v3) = coordinate_system(&v1);
+    for (a, b) in [(v1, v2), (v1, v3), (v2, v3)] {
+        assert!(Vector3f::dot(&a, &b).abs() < 1e-6);
+    }
+    assert!((v2.length() - 1.0).abs() < 1e-6);
+    assert!((v3.length() - 1.0).abs() < 1e-6);
+    // Right-handed: v1 x v2 == v3.
+    assert!((Vector3f::cross(&v1, &v2) - v3).length() < 1e-6);
+}
