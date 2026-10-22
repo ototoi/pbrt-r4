@@ -31,7 +31,7 @@
 
 use super::scene_entity::{
     InstanceDefinitionSceneEntity, InstanceSceneEntity, MediumInterfaceNames, RenderFromObject,
-    ShapeSceneEntity,
+    SceneEntity, ShapeSceneEntity,
 };
 use super::{SceneBuilder, CURVES_SHAPE_NAME};
 use crate::base::camera::Camera;
@@ -198,14 +198,76 @@ impl SceneBuilder {
         if lights.is_empty() {
             warn!("No light sources defined in scene; rendering a black image.");
         }
-        create_integrator(
+        let integrator = create_integrator(
             &self.integrator_name,
             &self.integrator_params,
             &sampler,
             &camera,
             scene.as_ref(),
         )
-        .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))
+        .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))?;
+        self.report_unused_parameters();
+        Ok(integrator)
+    }
+
+    /// pbrt-v4 calls `ParameterDictionary::ReportUnused` after each object
+    /// is created. r4 reports once every entity has been realised; lookups
+    /// on cloned dictionaries are shared with the entity's dictionary.
+    fn report_unused_parameters(&self) {
+        fn report(kind: &str, entity: &SceneEntity) {
+            let loc = &entity.loc;
+            let context = if loc.filename.is_empty() {
+                format!("{} \"{}\"", kind, entity.name)
+            } else {
+                format!(
+                    "{}:{}:{}: {} \"{}\"",
+                    loc.filename, loc.line, loc.column, kind, entity.name
+                )
+            };
+            entity.params.report_unused(&context);
+        }
+        for tex in self.float_textures.iter().chain(&self.spectrum_textures) {
+            report("Texture", &tex.base);
+        }
+        for medium in self.media.values() {
+            report("MakeNamedMedium", &medium.base);
+        }
+        for material in &self.materials {
+            report("Material", &material.base);
+        }
+        let instance_shapes = self
+            .instance_definitions
+            .values()
+            .flat_map(|def| def.shapes.iter().chain(&def.animated_shapes));
+        for shape in self
+            .shapes
+            .iter()
+            .chain(&self.animated_shapes)
+            .chain(instance_shapes)
+        {
+            report("Shape", &shape.base);
+        }
+        for light in &self.area_lights {
+            report("AreaLightSource", &light.base);
+        }
+        for light in &self.lights {
+            report("LightSource", &light.base.base);
+        }
+        let options = [
+            ("Camera", &self.camera_name, &self.camera_params),
+            ("Film", &self.film_name, &self.film_params),
+            ("PixelFilter", &self.filter_name, &self.filter_params),
+            ("Sampler", &self.sampler_name, &self.sampler_params),
+            (
+                "Accelerator",
+                &self.accelerator_name,
+                &self.accelerator_params,
+            ),
+            ("Integrator", &self.integrator_name, &self.integrator_params),
+        ];
+        for (kind, name, params) in options {
+            params.report_unused(&format!("{} \"{}\"", kind, name));
+        }
     }
 
     // ===== Phase helpers ====================================================

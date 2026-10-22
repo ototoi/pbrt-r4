@@ -57,3 +57,37 @@ fn spectrum_values_support_float_and_rgb_inputs() {
     params.add_rgb("rgb sig", &[1.0, 2.0, 3.0, 0.25, 0.5, 0.75]);
     assert_eq!(params.get_spectrum_array("sig").len(), 2);
 }
+
+#[test]
+fn unused_parameters_lists_names_not_looked_up() {
+    let mut params = ParameterDictionary::new();
+    params.add_float("float radius", 2.0);
+    params.add_float("float radiuss", 3.0);
+    params.add_string("string filename", "a.exr");
+
+    assert_eq!(params.get_one_float("radius", 1.0), 2.0);
+    assert_eq!(params.get_one_string("filename", ""), "a.exr");
+    assert_eq!(params.unused_parameters(), vec![String::from("radiuss")]);
+}
+
+#[test]
+fn unused_parameters_shares_lookups_with_clones() {
+    let mut params = ParameterDictionary::new();
+    params.add_float("float scale", 2.0);
+    let cloned = params.clone();
+
+    assert_eq!(cloned.get_one_float("scale", 1.0), 2.0);
+    assert!(params.unused_parameters().is_empty());
+}
+
+#[test]
+fn unused_parameters_skips_attribute_parameters() {
+    let mut attributes = ParameterDictionary::new();
+    attributes.add_float("float alpha", 0.5);
+    let mut params = ParameterDictionary::new();
+    params.add_float("float radius", 2.0);
+    params.merge_missing(&attributes);
+
+    assert_eq!(params.get_one_float("radius", 1.0), 2.0);
+    assert!(params.unused_parameters().is_empty());
+}

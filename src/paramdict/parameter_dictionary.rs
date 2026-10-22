@@ -2,9 +2,9 @@ use super::wellknown_params;
 use crate::util::base::*;
 use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, SRGB};
 use crate::util::spectrum::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SampledSpectrumParam {
@@ -48,6 +48,12 @@ pub struct ParameterDictionary {
     points: HashMap<String, SharedValues<Float>>,
     keys: Vec<String>,
     color_space: &'static RGBColorSpace,
+    // Names read through a getter. Shared between clones so a lookup on a
+    // derived dictionary counts for the original, like pbrt-v4's per
+    // `ParsedParameter::lookedUp` flag.
+    looked_up: Arc<Mutex<HashSet<String>>>,
+    // Names inherited from `Attribute` (pbrt-v4 `mayBeUnused`).
+    may_be_unused: HashSet<String>,
 }
 
 fn get_key_type(key: &str) -> String {
@@ -236,6 +242,8 @@ impl ParameterDictionary {
             points: HashMap::new(),
             keys: Vec::<String>::new(),
             color_space: &SRGB,
+            looked_up: Arc::new(Mutex::new(HashSet::new())),
+            may_be_unused: HashSet::new(),
         }
     }
 
@@ -515,55 +523,68 @@ impl ParameterDictionary {
     //--------------------
 
     pub fn get_bools(&self, key: &str) -> Vec<bool> {
+        self.mark_looked_up(key);
         return get_values(&self.bools, key);
     }
 
     pub fn get_ints(&self, key: &str) -> Vec<i32> {
+        self.mark_looked_up(key);
         return get_values(&self.ints, key);
     }
 
     pub fn get_floats(&self, key: &str) -> Vec<Float> {
+        self.mark_looked_up(key);
         return get_values(&self.floats, key);
     }
 
     pub fn get_strings(&self, key: &str) -> Vec<String> {
+        self.mark_looked_up(key);
         return get_values(&self.strings, key);
     }
 
     pub fn get_spectrums(&self, key: &str) -> Vec<Spectrum> {
+        self.mark_looked_up(key);
         return get_values(&self.spectrums, key);
     }
 
     pub fn get_sampled_spectra(&self, key: &str) -> Vec<SampledSpectrumParam> {
+        self.mark_looked_up(key);
         return get_values(&self.sampled_spectra, key);
     }
 
     pub fn get_points(&self, key: &str) -> Vec<Float> {
+        self.mark_looked_up(key);
         return get_values(&self.points, key);
     }
 
     //--------------------
     pub fn get_bools_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, bool>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.bools, key);
     }
 
     pub fn get_ints_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, i32>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.ints, key);
     }
 
     pub fn get_floats_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, Float>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.floats, key);
     }
 
     pub fn get_strings_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, String>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.strings, key);
     }
 
     pub fn get_textures_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, String>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.strings, key);
     }
 
     pub fn get_spectrums_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, Spectrum>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.spectrums, key);
     }
 
@@ -571,24 +592,29 @@ impl ParameterDictionary {
         &self,
         key: &str,
     ) -> Option<ParameterReadGuard<'_, SampledSpectrumParam>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.sampled_spectra, key);
     }
 
     pub fn get_points_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, Float>> {
+        self.mark_looked_up(key);
         return get_values_ref(&self.points, key);
     }
 
     //--------------------
 
     pub fn get_bools_mut(&self, key: &str) -> Option<ParameterWriteGuard<'_, bool>> {
+        self.mark_looked_up(key);
         return get_values_mut(&self.bools, key);
     }
 
     pub fn get_ints_mut(&self, key: &str) -> Option<ParameterWriteGuard<'_, i32>> {
+        self.mark_looked_up(key);
         return get_values_mut(&self.ints, key);
     }
 
     pub fn get_strings_mut(&self, key: &str) -> Option<ParameterWriteGuard<'_, String>> {
+        self.mark_looked_up(key);
         return get_values_mut(&self.strings, key);
     }
 
@@ -777,6 +803,45 @@ impl ParameterDictionary {
     }
 
     //--------------------
+    fn mark_looked_up(&self, key: &str) {
+        let mut looked_up = self
+            .looked_up
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        looked_up.insert(get_key_name(key));
+    }
+
+    /// Returns the declared parameter names that no getter has read, in
+    /// declaration order. Names inherited through `merge_missing` are
+    /// excluded, as pbrt-v4 marks `Attribute` parameters `mayBeUnused`.
+    pub fn unused_parameters(&self) -> Vec<String> {
+        let looked_up = self
+            .looked_up
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut unused: Vec<String> = Vec::new();
+        for key in self.keys.iter() {
+            let name = get_key_name(key);
+            if looked_up.contains(&name)
+                || self.may_be_unused.contains(&name)
+                || unused.contains(&name)
+            {
+                continue;
+            }
+            unused.push(name);
+        }
+        unused
+    }
+
+    /// pbrt-v4 `ParameterDictionary::ReportUnused`. v4 aborts on the first
+    /// unused parameter; r4 only warns so scenes using parameters that r4
+    /// does not implement yet still render.
+    pub fn report_unused(&self, context: &str) {
+        for name in self.unused_parameters() {
+            log::warn!("{}: \"{}\": unused parameter.", context, name);
+        }
+    }
+
     pub fn set(&mut self, other: &ParameterDictionary) {
         self.bools = clone_values_map(&other.bools);
         self.ints = clone_values_map(&other.ints);
@@ -786,6 +851,8 @@ impl ParameterDictionary {
         self.sampled_spectra = clone_values_map(&other.sampled_spectra);
         self.points = clone_values_map(&other.points);
         self.keys = other.keys.clone();
+        self.looked_up = other.looked_up.clone();
+        self.may_be_unused = other.may_be_unused.clone();
     }
 
     /// Returns `true` if a parameter with the given (type-stripped) name
@@ -834,6 +901,7 @@ impl ParameterDictionary {
             } else {
                 continue;
             }
+            self.may_be_unused.insert(name);
             self.keys.push(key.clone());
         }
     }
@@ -1096,6 +1164,8 @@ impl Clone for ParameterDictionary {
             points: clone_values_map(&self.points),
             keys: self.keys.clone(),
             color_space: self.color_space,
+            looked_up: self.looked_up.clone(),
+            may_be_unused: self.may_be_unused.clone(),
         }
     }
 }
