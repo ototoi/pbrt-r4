@@ -290,9 +290,8 @@ fn write_cache<T>(
         }
         Ok(())
     })();
-    if result.is_err() {
-        let _ = fs::remove_dir_all(&temporary);
-    }
+    // A competing writer may have installed the cache first, leaving our staging directory behind.
+    let _ = fs::remove_dir_all(&temporary);
     result
 }
 
