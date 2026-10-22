@@ -31,13 +31,15 @@ impl DotsTexture<Float> {
 
     pub fn evaluate(&self, ctx: &TextureEvalContext) -> Float {
         let (st, _dstdx, _dstdy) = self.mapping.map(ctx);
+        // pbrt-v4 `InsidePolkaDot` (textures.cpp:288-303) calls the 2D
+        // `Noise(x, y)`, whose z defaults to 0.5 (util/noise.h).
         let s_cell = Float::floor(st[0] + 0.5);
         let t_cell = Float::floor(st[1] + 0.5);
-        if noise(s_cell + 0.5, t_cell + 0.5, 0.0) > 0.0 {
+        if noise(s_cell + 0.5, t_cell + 0.5, 0.5) > 0.0 {
             let radius = 0.35;
             let max_shift = 0.5 - radius;
-            let s_center = s_cell + max_shift * noise(s_cell + 1.5, t_cell + 2.8, 0.0);
-            let t_center = t_cell + max_shift * noise(s_cell + 4.5, t_cell + 9.8, 0.0);
+            let s_center = s_cell + max_shift * noise(s_cell + 1.5, t_cell + 2.8, 0.5);
+            let t_center = t_cell + max_shift * noise(s_cell + 4.5, t_cell + 9.8, 0.5);
             let dst = st - Point2f::new(s_center, t_center);
             if dst.length_squared() < radius * radius {
                 return self.inside_dot.evaluate(ctx);
@@ -51,10 +53,13 @@ impl DotsTexture<Float> {
         parameters: &TextureParameterDictionary,
     ) -> Result<FloatTexture, PbrtError> {
         let map = TextureMapping2D::create(render_from_texture, parameters.parameter_dictionary())?;
-        let tex1 = parameters.get_float_texture("tex1", 1.0)?;
-        let tex2 = parameters.get_float_texture("tex2", 0.0)?;
+        // pbrt-v4 textures.cpp:305-315 passes "inside" as the constructor's
+        // outsideDot and "outside" as insideDot; keep that ordering so the
+        // rendered pattern matches v4.
+        let inside = parameters.get_float_texture("inside", 1.0)?;
+        let outside = parameters.get_float_texture("outside", 0.0)?;
         Ok(FloatTexture::Dots(DotsTexture::<Float>::new(
-            map, &tex1, &tex2,
+            map, &inside, &outside,
         )))
     }
 }
@@ -94,11 +99,11 @@ impl DotsSpectrumTexture {
         let (st, _dstdx, _dstdy) = self.mapping.map(ctx);
         let s_cell = Float::floor(st[0] + 0.5);
         let t_cell = Float::floor(st[1] + 0.5);
-        if noise(s_cell + 0.5, t_cell + 0.5, 0.0) > 0.0 {
+        if noise(s_cell + 0.5, t_cell + 0.5, 0.5) > 0.0 {
             let radius = 0.35;
             let max_shift = 0.5 - radius;
-            let s_center = s_cell + max_shift * noise(s_cell + 1.5, t_cell + 2.8, 0.0);
-            let t_center = t_cell + max_shift * noise(s_cell + 4.5, t_cell + 9.8, 0.0);
+            let s_center = s_cell + max_shift * noise(s_cell + 1.5, t_cell + 2.8, 0.5);
+            let t_center = t_cell + max_shift * noise(s_cell + 4.5, t_cell + 9.8, 0.5);
             let dst = st - Point2f::new(s_center, t_center);
             return dst.length_squared() < radius * radius;
         }
@@ -111,10 +116,16 @@ impl DotsSpectrumTexture {
         spectrum_type: SpectrumType,
     ) -> Result<Self, PbrtError> {
         let map = TextureMapping2D::create(render_from_texture, parameters.parameter_dictionary())?;
-        let tex1 =
-            parameters.get_spectrum_texture_typed("tex1", &Spectrum::from(1.0), spectrum_type)?;
-        let tex2 =
-            parameters.get_spectrum_texture_typed("tex2", &Spectrum::from(0.0), spectrum_type)?;
-        Ok(DotsSpectrumTexture::new(map, &tex1, &tex2))
+        // pbrt-v4 textures.cpp:322-334 passes "inside" as the constructor's
+        // outsideDot and "outside" as insideDot; keep that ordering so the
+        // rendered pattern matches v4.
+        let inside =
+            parameters.get_spectrum_texture_typed("inside", &Spectrum::from(1.0), spectrum_type)?;
+        let outside = parameters.get_spectrum_texture_typed(
+            "outside",
+            &Spectrum::from(0.0),
+            spectrum_type,
+        )?;
+        Ok(DotsSpectrumTexture::new(map, &inside, &outside))
     }
 }

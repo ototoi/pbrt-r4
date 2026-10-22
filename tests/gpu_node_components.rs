@@ -601,7 +601,7 @@ Texture "marble" "spectrum" "marble"
 }
 
 #[test]
-fn gpu_texture_dots_materializes_outside_and_inside_operands() {
+fn gpu_texture_dots_materializes_operands_in_v4_order() {
     let mut builder = SceneBuilder::new();
     parse_string(
         r#"
@@ -627,10 +627,19 @@ Texture "polka" "float" "dots"
         .and_then(|scene| scene.texture_nodes.first())
         .expect("texture node should be present");
     assert_eq!(texture.children.len(), 2);
-    assert!(texture.children.iter().all(|child| matches!(
-        child.components.first(),
-        Some(TextureComponent::Texture(Texture { name, .. })) if name == "constant"
-    )));
+    // The shader uses the first child outside the dots; pbrt-v4 fills that
+    // slot with "inside".
+    let values: Vec<f32> = texture
+        .children
+        .iter()
+        .map(|child| match child.components.first() {
+            Some(TextureComponent::Texture(Texture { name, params, .. })) if name == "constant" => {
+                params.get_one_float("value", -1.0) as f32
+            }
+            _ => panic!("dots operand should be a constant texture"),
+        })
+        .collect();
+    assert_eq!(values, vec![0.9, 0.1]);
 }
 
 #[test]

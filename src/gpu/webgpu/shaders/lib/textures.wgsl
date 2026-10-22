@@ -65,12 +65,11 @@ fn texture_fbm(p: vec3<f32>, omega: f32, octaves: f32, absolute_value: bool) -> 
         frequency *= 1.99;
         weight *= omega;
     }
+    // Without ray differentials pbrt-v4's octave count n equals maxOctaves,
+    // so the partial octave weight is zero: FBm adds nothing and Turbulence
+    // adds a single 0.2 term (util/noise.cpp:147-153).
     if (absolute_value) {
-        var tail_weight = weight;
-        for (var tail = 0u; tail < count; tail++) {
-            sum += tail_weight * 0.2;
-            tail_weight *= omega;
-        }
+        sum += weight * 0.2;
     }
     return sum;
 }
@@ -387,10 +386,11 @@ fn sample_texture_program(root: TextureRootRecord, uv: vec2<f32>) -> vec3<f32> {
                 let st = mapped_texture_uv(node, uv);
                 let cell = floor(st + vec2<f32>(0.5));
                 var is_inside = false;
-                if (noise(vec3<f32>(cell + vec2<f32>(0.5), 0.0)) > 0.0) {
+                // pbrt-v4 evaluates the 2D noise with its default z = 0.5.
+                if (noise(vec3<f32>(cell + vec2<f32>(0.5), 0.5)) > 0.0) {
                     let center = cell + 0.15 * vec2<f32>(
-                        noise(vec3<f32>(cell.x + 1.5, cell.y + 2.8, 0.0)),
-                        noise(vec3<f32>(cell.x + 4.5, cell.y + 9.8, 0.0)),
+                        noise(vec3<f32>(cell.x + 1.5, cell.y + 2.8, 0.5)),
+                        noise(vec3<f32>(cell.x + 4.5, cell.y + 9.8, 0.5)),
                     );
                     let delta = st - center;
                     is_inside = dot(delta, delta) < 0.35 * 0.35;
