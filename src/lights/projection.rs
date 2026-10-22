@@ -54,23 +54,11 @@ impl ProjectionLight {
             render_from_light,
             medium_interface,
         );
-        let resolution = image.resolution();
-        let aspect = resolution.x as Float / resolution.y as Float;
-        let screen_bounds = if aspect > 1.0 {
-            Bounds2f::new(&Point2f::new(-aspect, -1.0), &Point2f::new(aspect, 1.0))
-        } else {
-            Bounds2f::new(
-                &Point2f::new(-1.0, -1.0 / aspect),
-                &Point2f::new(1.0, 1.0 / aspect),
-            )
-        };
         let hither = 1e-3;
         let yon = 1e30;
-        let screen_from_light = Transform::perspective(fov, hither, yon);
-        let light_from_screen = screen_from_light.inverse();
-        let opposite = (0.5 * fov.to_radians()).tan();
-        let a = 4.0 * opposite * opposite * aspect.max(1.0 / aspect);
-        let distribution = make_distribution(&image);
+        let (screen_bounds, screen_from_light, light_from_screen, a) =
+            projection_frame(image.resolution(), fov, hither, yon);
+        let distribution = make_distribution(&image, &light_from_screen, &screen_bounds);
         ProjectionLight {
             base,
             image,
@@ -83,15 +71,6 @@ impl ProjectionLight {
             a,
             distribution,
         }
-    }
-
-    fn render_from_image(&self, uv: &Point2f) -> Vector3f {
-        let alpha = -std::f64::consts::FRAC_PI_2 as Float + uv.x * PI;
-        let beta = -std::f64::consts::FRAC_PI_2 as Float + uv.y * PI;
-        let x = alpha.tan();
-        let y = beta.tan();
-        let w = Vector3f::new(x, y, 1.0).normalize();
-        self.base.render_from_light.transform_vector(&w)
     }
 
     // pbrt-v4 `SampledSpectrum I(Vector3f w, lambda)` (lights.cpp:343-360):
@@ -173,8 +152,8 @@ impl ProjectionLight {
                     (x as Float + 0.5) / res.x as Float,
                     (y as Float + 0.5) / res.y as Float,
                 );
-                let w = self.render_from_image(&uv);
-                let dwd_a = w.z * w.z * w.z;
+                let ps = self.screen_bounds.lerp(&uv);
+                let dwd_a = screen_dwd_a(&self.light_from_screen, &ps);
                 let rgb = self.image.lookup_nearest(&uv);
                 let modulation = self
                     .image
@@ -211,7 +190,8 @@ impl ProjectionLight {
             .base
             .render_from_light
             .transform_point(&Point3f::zero());
-        let ray = Ray::from((&p, &w.normalize(), Float::INFINITY, time, &medium));
+        let d = self.base.render_from_light.transform_vector(&w.normalize());
+        let ray = Ray::from((&p, &d, Float::INFINITY, time, &medium));
         let uv = self.screen_bounds.offset(&Point2f::new(ps.x, ps.y));
         let rgb = self.image.lookup_nearest(&uv);
         let l = self.scale
@@ -267,12 +247,20 @@ impl ProjectionLight {
             }
         }
         let phi = self.scale * sum / (res.x as Float * res.y as Float);
+        let w_corner = self.light_from_screen.transform_point(&Point3f::new(
+            self.screen_bounds.max.x,
+            self.screen_bounds.max.y,
+            0.0,
+        ));
+        let cos_total_width = Vector3f::new(w_corner.x, w_corner.y, w_corner.z)
+            .normalize()
+            .z;
         Some(LightBounds::new(
             Bounds3f::new(&p, &p),
             w,
             phi,
             Float::cos(0.0),
-            self.a,
+            cos_total_width,
             false,
         ))
     }
@@ -301,7 +289,9 @@ fn make_image(path: &str) -> Result<Image, PbrtError> {
                 color_space,
             )?);
         }
-        let (mut texels, resolution) = read_image(path)?;
+        // pbrt-v4 `Image::Read` decodes 8- and 16-bit images as sRGB; float
+        // formats ignore the encoding.
+        let (mut texels, resolution) = read_image_with_encoding(path, ColorEncoding::SRgb)?;
         let total = (resolution.x * resolution.y) as usize;
         for i in 0..total {
             let cc = texels[i].to_rgb();
@@ -309,13 +299,50 @@ fn make_image(path: &str) -> Result<Image, PbrtError> {
             texels[i] = RGBSpectrum::from(cc);
         }
         return Ok(Image::new(resolution, texels));
-    } else {
-        let c = RGBSpectrum::one();
-        return Ok(Image::new(Point2i::new(1, 1), vec![c]));
     }
+    Err(PbrtError::error(
+        "Must provide \"filename\" to \"projection\" light source",
+    ))
 }
 
-fn make_distribution(image: &Image) -> PiecewiseConstant2D {
+/// pbrt-v4 `ProjectionLight` projection setup (lights.cpp:291-303): screen
+/// bounds from the image aspect ratio, the perspective projection, and the
+/// projected image area `A`.
+fn projection_frame(
+    resolution: Point2i,
+    fov: Float,
+    hither: Float,
+    yon: Float,
+) -> (Bounds2f, Transform, Transform, Float) {
+    let aspect = resolution.x as Float / resolution.y as Float;
+    let screen_bounds = if aspect > 1.0 {
+        Bounds2f::new(&Point2f::new(-aspect, -1.0), &Point2f::new(aspect, 1.0))
+    } else {
+        Bounds2f::new(
+            &Point2f::new(-1.0, -1.0 / aspect),
+            &Point2f::new(1.0, 1.0 / aspect),
+        )
+    };
+    let screen_from_light = Transform::perspective(fov, hither, yon);
+    let light_from_screen = screen_from_light.inverse();
+    let opposite = (0.5 * fov.to_radians()).tan();
+    let a = 4.0 * opposite * opposite * if aspect > 1.0 { aspect } else { 1.0 / aspect };
+    (screen_bounds, screen_from_light, light_from_screen, a)
+}
+
+/// Cosine-cubed change of variables from screen area to solid angle for a
+/// screen-space point (v4 `dwdA` in lights.cpp:311-314).
+fn screen_dwd_a(light_from_screen: &Transform, ps: &Point2f) -> Float {
+    let p = light_from_screen.transform_point(&Point3f::new(ps.x, ps.y, 0.0));
+    let w = Vector3f::new(p.x, p.y, p.z).normalize();
+    w.z * w.z * w.z
+}
+
+fn make_distribution(
+    image: &Image,
+    light_from_screen: &Transform,
+    screen_bounds: &Bounds2f,
+) -> PiecewiseConstant2D {
     let width = image.width() as usize;
     let height = image.height() as usize;
     let mut data = vec![0.0; width * height];
@@ -326,10 +353,12 @@ fn make_distribution(image: &Image) -> PiecewiseConstant2D {
                 (y as Float + 0.5) / height as Float,
             );
             let rgb = image.lookup_nearest(&uv).to_rgb();
-            data[y * width + x] = ((rgb[0] + rgb[1] + rgb[2]) / 3.0).max(0.0);
+            let ps = screen_bounds.lerp(&uv);
+            data[y * width + x] =
+                (rgb[0] + rgb[1] + rgb[2]) / 3.0 * screen_dwd_a(light_from_screen, &ps);
         }
     }
-    PiecewiseConstant2D::new(&data, width, height)
+    PiecewiseConstant2D::new_with_domain(&data, width, height, *screen_bounds)
 }
 
 impl ProjectionLight {
@@ -338,17 +367,53 @@ impl ProjectionLight {
         medium_interface: &MediumInterface,
         params: &ParameterDictionary,
     ) -> Result<Self, PbrtError> {
-        // v4 lights.cpp `ProjectionLight::Create`. "scale" is a Float; v4
-        // normalizes via `sc /= SpectrumToPhotometric(I)`.
-        let intensity =
-            params.get_one_spectrum_typed("I", &Spectrum::from(1.0), SpectrumType::Illuminant);
-        let photometric = spectrum_to_photometric(&intensity);
-        let sc =
-            params.get_one_float("scale", 1.0) / if photometric > 0.0 { photometric } else { 1.0 };
-        let fov = params.get_one_float("fov", 45.0);
-        let texname = params.get_one_filename("mapname", "");
+        // v4 lights.cpp `ProjectionLight::Create`. The legacy pbrt-v3
+        // "mapname" is accepted when "filename" is absent.
+        let mut scale = params.get_one_float("scale", 1.0);
+        let power = params.get_one_float("power", -1.0);
+        let fov = params.get_one_float("fov", 90.0);
+        let texname = {
+            let filename = params.get_one_filename("filename", "");
+            if !filename.is_empty() {
+                filename
+            } else {
+                params.get_one_filename("mapname", "")
+            }
+        };
         let image = make_image(&texname)?;
-        let light = ProjectionLight::new(render_from_light, medium_interface, image, sc, fov);
+
+        let color_space = image.color_space();
+        scale /= spectrum_to_photometric(&Spectrum::from(color_space.illuminant.to_dense()));
+        if power > 0.0 {
+            let res = image.resolution();
+            let (screen_bounds, _, light_from_screen, a) = projection_frame(res, fov, 1e-3, 1e30);
+            let luminance = color_space.luminance_vector();
+            let mut sum = 0.0;
+            for y in 0..res.y {
+                for x in 0..res.x {
+                    let uv = Point2f::new(
+                        (x as Float + 0.5) / res.x as Float,
+                        (y as Float + 0.5) / res.y as Float,
+                    );
+                    let ps = screen_bounds.lerp(&uv);
+                    let dwd_a = screen_dwd_a(&light_from_screen, &ps);
+                    let rgb = image.lookup_nearest(&uv).to_rgb();
+                    for c in 0..3 {
+                        sum += rgb[c] * luminance[c] * dwd_a;
+                    }
+                }
+            }
+            scale *= power / (a * sum / (res.x as Float * res.y as Float));
+        }
+
+        let render_from_light_flip_y = render_from_light.clone() * Transform::scale(1.0, -1.0, 1.0);
+        let light = ProjectionLight::new(
+            &render_from_light_flip_y,
+            medium_interface,
+            image,
+            scale,
+            fov,
+        );
         Ok(light)
     }
 }

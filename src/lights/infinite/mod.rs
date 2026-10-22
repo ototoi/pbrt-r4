@@ -235,20 +235,19 @@ fn make_mipmap_with_colorspace(
         return Ok((mm, &SRGB));
     }
 
-    // pbrt-v4 reads chromaticities only for EXR. PNG input defaults to
+    // pbrt-v4 reads chromaticities only for EXR. Other formats default to
     // sRGB in `Image::Read`; the generic r4 image reader defaults to linear,
-    // so preserve v4's PNG decoding here.
+    // so preserve v4's decoding here.
     let extension = Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase);
     let (mut texels, resolution, cs) = if extension.as_deref() == Some("exr") {
         read_image_exr_with_metadata(Path::new(path))?
-    } else if extension.as_deref() == Some("png") {
-        let (texels, resolution) = read_image_with_encoding(path, ColorEncoding::SRgb)?;
-        (texels, resolution, &SRGB)
     } else {
-        let (texels, resolution) = read_image(path)?;
+        // pbrt-v4 `Image::Read` decodes 8- and 16-bit images as sRGB; float
+        // formats ignore the encoding.
+        let (texels, resolution) = read_image_with_encoding(path, ColorEncoding::SRgb)?;
         (texels, resolution, &SRGB)
     };
     let total = (resolution.x * resolution.y) as usize;
