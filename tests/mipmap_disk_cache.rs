@@ -309,3 +309,40 @@ fn mipmap_cache_rejects_a_changed_metadata_encoding() {
 
     assert!(load_float_mipmap_cache(cache_dir.to_str().unwrap(), "hash", &info).is_err());
 }
+
+#[test]
+fn concurrent_mipmap_cache_writers_leave_no_staging_directories() {
+    let size = 64;
+    let mipmap = MIPMap::<Float>::new_with_raw_channels_and_storage(
+        &Point2i::new(size, size),
+        &vec![0.5; (size * size) as usize],
+        1,
+        ImageFilter::Bilinear,
+        8.0,
+        ImageWrap::Clamp,
+        ImageWrap::Clamp,
+        MIPMapStorageKind::F32,
+    );
+    let info = texinfo();
+    for round in 0..16 {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache");
+        let cache_dir = cache_dir.to_str().unwrap();
+        let writers = 8;
+        let barrier = std::sync::Barrier::new(writers);
+        std::thread::scope(|scope| {
+            for _ in 0..writers {
+                scope.spawn(|| {
+                    barrier.wait();
+                    save_float_mipmap_cache(cache_dir, &info, "hash", &mipmap).unwrap();
+                });
+            }
+        });
+        let entries: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(entries, ["cache"], "round {round}");
+        load_float_mipmap_cache(cache_dir, "hash", &info).unwrap();
+    }
+}
