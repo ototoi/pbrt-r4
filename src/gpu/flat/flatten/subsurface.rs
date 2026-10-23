@@ -1,8 +1,10 @@
 use super::material::texture_attribute_ref_with_spectrum_type;
 use super::{push_spectrum_attribute, FlatBuilder};
+use crate::bssrdf::{compute_beam_diffusion_bssrdf, BSSRDFTable};
 use crate::gpu::flat::{AttributeRef, BSSRDFCoefficientKind, TabulatedBSSRDFTable, BSSRDF};
 use crate::gpu::node::Material as NodeMaterial;
 use crate::media::get_medium_scattering_properties;
+use crate::util::base::Float;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{Spectrum, SpectrumType};
 
@@ -123,7 +125,7 @@ pub fn register_subsurface(
     } else {
         let index = u32::try_from(builder.materials.bssrdf_tables.len())
             .map_err(|_| PbrtError::error("Flat BSSRDF table count exceeds u32."))?;
-        let table = TabulatedBSSRDFTable::new(g, eta);
+        let table = tabulate_bssrdf(g, eta);
         if table
             .profile
             .iter()
@@ -194,4 +196,19 @@ fn coefficient(
         .params
         .get_one_spectrum_typed(key, default, spectrum_type);
     push_spectrum_attribute(builder, key, &value)
+}
+
+pub fn tabulate_bssrdf(g: f32, eta: f32) -> TabulatedBSSRDFTable {
+    let mut table = BSSRDFTable::new(100, 64);
+    compute_beam_diffusion_bssrdf(g as Float, eta as Float, &mut table);
+    let convert = |values: Vec<Float>| values.into_iter().map(|v| v as f32).collect();
+    TabulatedBSSRDFTable {
+        g,
+        eta,
+        rho_samples: convert(table.rho_samples),
+        radius_samples: convert(table.radius_samples),
+        profile: convert(table.profile),
+        rho_eff: convert(table.rho_eff),
+        profile_cdf: convert(table.profile_cdf),
+    }
 }

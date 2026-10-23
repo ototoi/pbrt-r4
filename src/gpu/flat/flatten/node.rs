@@ -1,5 +1,5 @@
-use super::super::filter::Filter as FlatFilter;
 use super::alpha::flatten_alpha;
+use super::filter::flatten_filter;
 use super::{
     append_area_light, flatten_light, geometry_index, identity_transform, multiply_transform,
     region_bounds, register_material_source, register_medium, register_root_component,
@@ -326,8 +326,8 @@ pub fn flatten_node_ref(
             *id = builder.spectrum_table_builder.intern_dense(response, 0)?;
         }
         let filter = match &builder.filter {
-            Some(filter) => FlatFilter::create(&filter.name, &filter.params)?,
-            None => FlatFilter::create("gaussian", &Default::default())?,
+            Some(filter) => flatten_filter(&filter.name, &filter.params)?,
+            None => flatten_filter("gaussian", &Default::default())?,
         };
         builder.film = Some(Film {
             filter,
