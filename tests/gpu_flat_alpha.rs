@@ -62,7 +62,7 @@ NamedMaterial "shared"
     assert_eq!(scene.instances[2].alpha, AlphaMask::Opaque);
     assert_eq!(scene.materials.roots.len(), 1);
     assert_eq!(scene.materials.nodes.len(), 1);
-    assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+    assert_eq!(scene.materials.nodes[0].kind, flat::MaterialKind::Diffuse);
     assert!(scene
         .instances
         .iter()
@@ -140,7 +140,7 @@ Material "diffuse"
         let flags = scene.lights.sampling_models[0].flags;
         assert_eq!(flat::area_light_is_zero_alpha_sample_only(flags), zero);
         assert_eq!(scene.materials.nodes.len(), 1);
-        assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+        assert_eq!(scene.materials.nodes[0].kind, flat::MaterialKind::Diffuse);
     }
 }
 

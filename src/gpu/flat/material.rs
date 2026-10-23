@@ -10,9 +10,59 @@ pub struct MaterialRoot {
     pub node_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterialKind {
+    Diffuse,
+    Dielectric,
+    ThinDielectric,
+    DiffuseTransmission,
+    ConductorEtaK,
+    ConductorReflectance,
+    Mix,
+    CoatedDiffuse,
+    CoatedConductor,
+    Measured,
+    Subsurface,
+}
+
+impl MaterialKind {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "diffuse" => Some(Self::Diffuse),
+            "dielectric" => Some(Self::Dielectric),
+            "thindielectric" => Some(Self::ThinDielectric),
+            "diffusetransmission" => Some(Self::DiffuseTransmission),
+            "conductor_eta_k" => Some(Self::ConductorEtaK),
+            "conductor_reflectance" => Some(Self::ConductorReflectance),
+            "mix" => Some(Self::Mix),
+            "coateddiffuse" => Some(Self::CoatedDiffuse),
+            "coatedconductor" => Some(Self::CoatedConductor),
+            "measured" => Some(Self::Measured),
+            "subsurface" => Some(Self::Subsurface),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Diffuse => "diffuse",
+            Self::Dielectric => "dielectric",
+            Self::ThinDielectric => "thindielectric",
+            Self::DiffuseTransmission => "diffusetransmission",
+            Self::ConductorEtaK => "conductor_eta_k",
+            Self::ConductorReflectance => "conductor_reflectance",
+            Self::Mix => "mix",
+            Self::CoatedDiffuse => "coateddiffuse",
+            Self::CoatedConductor => "coatedconductor",
+            Self::Measured => "measured",
+            Self::Subsurface => "subsurface",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialNode {
-    pub kind: String,
+    pub kind: MaterialKind,
     pub source_kind: String,
     pub attributes: Vec<AttributeRef>,
     pub parent: u32,

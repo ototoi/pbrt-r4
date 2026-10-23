@@ -4,11 +4,12 @@ use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
-    AttributeResources, Camera, DenseSpectrumBuilder, Film, Geometry, GeometryResources,
-    ImageInfiniteSamplingRecord, InfiniteLightResources, Instance, Light, LightBoundInput,
-    LightGeometryKind, LightKind, LightResources, LightSamplingModel, MaterialResources, Medium,
-    Output, PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform,
-    TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    AttributeResources, Camera, CameraKind, DenseSpectrumBuilder, Film, Geometry,
+    GeometryResources, ImageInfiniteSamplingRecord, InfiniteLightResources, Instance, Light,
+    LightBoundInput, LightGeometryKind, LightKind, LightResources, LightSamplingModel,
+    MaterialKind, MaterialResources, Medium, Output, PrimitiveDistributionMap, Scene,
+    TabulatedBSSRDFTable, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex,
+    Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
     Component, Integrator as NodeIntegrator, Material as NodeMaterial, Medium as NodeMedium,
@@ -63,7 +64,7 @@ pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
 
 pub fn flatten_node_with_material_override(
     root: NodeRef,
-    material_kind: Option<&str>,
+    material_kind: Option<MaterialKind>,
 ) -> Result<Scene, PbrtError> {
     let mut builder = FlatBuilder::default();
     let mut stack = Vec::new();

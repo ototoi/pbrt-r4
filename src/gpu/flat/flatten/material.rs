@@ -2,7 +2,7 @@ use super::material_attributes::build_material_attributes;
 use super::{
     push_spectrum_attribute, AttributeKind, AttributeRef, FlatBuilder, UnsupportedTexturePolicy,
 };
-use crate::gpu::flat::{MaterialNode, MaterialRoot, INVALID_INDEX};
+use crate::gpu::flat::{MaterialKind, MaterialNode, MaterialRoot, INVALID_INDEX};
 use crate::gpu::node::{Material as NodeMaterial, TextureComponent, TextureKind, TextureNode};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{Spectrum, SpectrumType};
@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct MaterialSourceNode {
-    pub kind: String,
+    pub kind: MaterialKind,
     pub source_kind: String,
     pub attributes: Vec<AttributeRef>,
     pub children: Vec<u32>,
@@ -43,7 +43,7 @@ pub fn build_material_roots(
         let node_index = u32::try_from(nodes.len())
             .map_err(|_| PbrtError::error("Flat material tree exceeds u32."))?;
         nodes.push(MaterialNode {
-            kind: source.kind.clone(),
+            kind: source.kind,
             source_kind: source.source_kind.clone(),
             attributes: source.attributes.clone(),
             parent,
@@ -131,7 +131,7 @@ pub fn build_material_roots(
 pub fn register_material_source(
     source_material: &Arc<NodeMaterial>,
     builder: &mut FlatBuilder,
-    material_kind: Option<&str>,
+    material_kind: Option<MaterialKind>,
 ) -> Result<u32, PbrtError> {
     if let Some(index) = builder
         .materials
@@ -146,25 +146,13 @@ pub fn register_material_source(
         });
     }
     let source_kind = source_material.kind.as_str();
-    let requested_kind = material_kind.unwrap_or(source_kind);
-    let supported = matches!(
-        requested_kind,
-        "diffuse"
-            | "dielectric"
-            | "thindielectric"
-            | "conductor_eta_k"
-            | "conductor_reflectance"
-            | "diffusetransmission"
-            | "mix"
-            | "coateddiffuse"
-            | "coatedconductor"
-            | "measured"
-            | "subsurface"
-    );
-    let texture_fallback = if requested_kind != "diffusetransmission"
-        && requested_kind != "subsurface"
-        && supported
-        && has_texture_attribute(source_material)
+    let requested_kind = material_kind.or_else(|| MaterialKind::from_name(source_kind));
+    let texture_fallback = if requested_kind.is_some_and(|kind| {
+        !matches!(
+            kind,
+            MaterialKind::DiffuseTransmission | MaterialKind::Subsurface
+        )
+    }) && has_texture_attribute(source_material)
     {
         match UnsupportedTexturePolicy::from_environment()? {
             UnsupportedTexturePolicy::Error => false,
@@ -182,16 +170,11 @@ pub fn register_material_source(
     let (kind, mut attributes) = if texture_fallback {
         let magenta = Spectrum::from_rgb(&[1.0, 0.0, 1.0], SpectrumType::Albedo);
         (
-            "diffuse",
+            MaterialKind::Diffuse,
             vec![push_spectrum_attribute(builder, "reflectance", &magenta)?],
         )
-    } else if !supported {
-        return Err(PbrtError::error(&format!(
-            "GPU material \"{}\" of kind \"{}\" is unsupported.",
-            source_material.name, requested_kind
-        )));
-    } else {
-        if requested_kind == "measured" {
+    } else if let Some(requested_kind) = requested_kind {
+        if requested_kind == MaterialKind::Measured {
             let filename = source_material.params.get_one_string("filename", "");
             if filename.is_empty() {
                 return Err(PbrtError::error(&format!(
@@ -223,8 +206,13 @@ pub fn register_material_source(
                 build_material_attributes(source_material, requested_kind, builder)?,
             )
         }
+    } else {
+        return Err(PbrtError::error(&format!(
+            "GPU material \"{}\" of kind \"{}\" is unsupported.",
+            source_material.name, source_kind
+        )));
     };
-    let bssrdf_index = if kind == "subsurface" {
+    let bssrdf_index = if kind == MaterialKind::Subsurface {
         let index = super::subsurface::register_subsurface(source_material, builder)?;
         attributes.extend(
             builder.materials.bssrdfs[index as usize]
@@ -267,13 +255,13 @@ pub fn register_material_source(
     };
     for (name, texture_node) in &source_material.texture_attributes {
         if name == "displacement"
-            || kind == "subsurface"
-            || (kind == "dielectric"
+            || kind == MaterialKind::Subsurface
+            || (kind == MaterialKind::Dielectric
                 && matches!(name.as_str(), "roughness" | "uroughness" | "vroughness"))
         {
             continue;
         }
-        if kind == "diffusetransmission" {
+        if kind == MaterialKind::DiffuseTransmission {
             if matches!(name.as_str(), "reflectance" | "Kd" | "transmittance" | "Kt") {
                 continue;
             }
@@ -299,8 +287,11 @@ pub fn register_material_source(
         }
     }
     let mut material_children = Vec::new();
-    if matches!(kind, "coateddiffuse" | "coatedconductor") {
-        let child_kinds: &[&str] = if kind == "coateddiffuse" {
+    if matches!(
+        kind,
+        MaterialKind::CoatedDiffuse | MaterialKind::CoatedConductor
+    ) {
+        let child_kinds: &[&str] = if kind == MaterialKind::CoatedDiffuse {
             &["dielectric", "diffuse"]
         } else {
             &["dielectric", "conductor"]
@@ -343,7 +334,7 @@ pub fn register_material_source(
             });
             material_children.push(register_material_source(&child, builder, None)?);
         }
-    } else if kind == "mix" {
+    } else if kind == MaterialKind::Mix {
         for (_, child) in &source_material.material_attributes {
             material_children.push(register_material_source(child, builder, None)?);
         }
@@ -358,7 +349,7 @@ pub fn register_material_source(
         PbrtError::error("The flattened material source-node table exceeds the u32 index range.")
     })?;
     builder.materials.source_nodes.push(MaterialSourceNode {
-        kind: kind.to_string(),
+        kind,
         source_kind: source_kind.to_string(),
         attributes: attributes.clone(),
         children: material_children,

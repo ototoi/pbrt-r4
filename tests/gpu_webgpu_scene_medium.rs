@@ -10,7 +10,6 @@ use pbrt_r4::gpu::webgpu::scene::medium::{convert_media, validate_storage_array_
 fn homogeneous_medium() -> Medium {
     Medium {
         name: "fog".to_owned(),
-        kind: "homogeneous".to_owned(),
         sigma_a: 0,
         sigma_s: 1,
         le: 2,
@@ -25,7 +24,6 @@ fn homogeneous_medium() -> Medium {
 fn nanovdb_medium() -> Medium {
     let mut medium = homogeneous_medium();
     medium.name = "sparse fog".to_owned();
-    medium.kind = "nanovdb".to_owned();
     medium.data = MediumData::NanoVDB(NanoVDBMedium {
         temperature: None,
         temperature_offset: 0.0,
@@ -104,17 +102,8 @@ fn validates_storage_buffer_device_limits_and_boundaries() {
 }
 
 #[test]
-fn rejects_unsupported_medium_kinds() {
-    let mut medium = homogeneous_medium();
-    medium.kind = "heterogeneous".to_owned();
-
-    assert!(convert_media(&[medium], 3).is_err());
-}
-
-#[test]
 fn packs_uniformgrid_data_and_assigns_checked_ranges() {
     let mut medium = homogeneous_medium();
-    medium.kind = "uniformgrid".to_owned();
     medium.transform = [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ];
@@ -144,7 +133,6 @@ fn packs_uniformgrid_data_and_assigns_checked_ranges() {
 #[test]
 fn rejects_invalid_uniformgrid_emission_scale_payload() {
     let mut medium = homogeneous_medium();
-    medium.kind = "uniformgrid".to_owned();
     medium.data = MediumData::UniformGrid(UniformGridMedium {
         bounds_min: [0.0; 3],
         bounds_max: [1.0; 3],
@@ -163,7 +151,6 @@ fn rejects_invalid_uniformgrid_emission_scale_payload() {
 #[test]
 fn packs_cloud_parameters_and_unit_majorant() {
     let mut medium = homogeneous_medium();
-    medium.kind = "cloud".to_owned();
     medium.transform = [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ];
@@ -192,7 +179,6 @@ fn packs_cloud_parameters_and_unit_majorant() {
 #[test]
 fn packs_rgbgrid_coefficients_scale_color_space_and_majorants() {
     let mut medium = homogeneous_medium();
-    medium.kind = "rgbgrid".to_owned();
     medium.transform = [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ];
@@ -232,7 +218,6 @@ fn packs_rgbgrid_coefficients_scale_color_space_and_majorants() {
 #[test]
 fn packs_missing_rgbgrid_coefficient_as_invalid_range() {
     let mut medium = homogeneous_medium();
-    medium.kind = "rgbgrid".to_owned();
     medium.transform = [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ];
@@ -281,7 +266,6 @@ fn accepts_rotated_reflected_nonuniform_nanovdb_medium_transform() {
 fn rejects_malformed_rgbgrid_upload_payloads() {
     let rgb_grid_medium = || {
         let mut medium = homogeneous_medium();
-        medium.kind = "rgbgrid".to_owned();
         medium.transform = [
             1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ];

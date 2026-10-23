@@ -67,7 +67,6 @@ fn preserves_instance_order_matrices_indices_and_orientation_bits() {
     scene.media = (0..2)
         .map(|_| flat::Medium {
             name: String::new(),
-            kind: "homogeneous".to_owned(),
             data: flat::MediumData::Homogeneous,
             sigma_a: 0,
             sigma_s: 0,
