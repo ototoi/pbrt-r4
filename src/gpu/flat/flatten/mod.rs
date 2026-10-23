@@ -26,12 +26,17 @@ use super::geometry::{
 };
 
 mod alpha;
+mod filter;
+pub use filter::flatten_filter;
 mod material;
 use material::{build_material_roots, register_material_source, MaterialSourceNode};
 mod material_attributes;
+mod measured;
+pub use measured::MeasuredBsdfLibrary;
 mod medium;
 pub mod nanovdb;
 mod subsurface;
+pub use subsurface::tabulate_bssrdf;
 mod texture;
 use medium::{register_medium, resolve_medium_reference};
 mod node;
@@ -318,7 +323,7 @@ struct MaterialBuilder {
     source_nodes: Vec<MaterialSourceNode>,
     bssrdfs: Vec<BSSRDF>,
     bssrdf_tables: Vec<TabulatedBSSRDFTable>,
-    measured_bsdf_library: super::MeasuredBsdfLibrary,
+    measured_bsdf_library: MeasuredBsdfLibrary,
 }
 
 #[derive(Default)]

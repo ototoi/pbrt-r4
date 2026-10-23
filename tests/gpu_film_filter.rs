@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 
 use pbrt_r4::base::filter::Filter as CpuFilter;
 use pbrt_r4::displays::{Display, DisplayTile};
-use pbrt_r4::gpu::flat::{Filter, FilterKind};
+use pbrt_r4::gpu::flat::{flatten_filter, FilterKind};
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::film::Film;
 use pbrt_r4::gpu::webgpu::filter::{filter_buffer_data, FilterResources};
@@ -19,7 +19,7 @@ use wgpu::util::DeviceExt;
 fn filter_tables_preserve_cpu_cells_and_signed_lobes() {
     for name in ["box", "triangle", "gaussian", "mitchell", "sinc"] {
         let params = ParameterDictionary::default();
-        let flat = Filter::create(name, &params).unwrap();
+        let flat = flatten_filter(name, &params).unwrap();
         let cpu = CpuFilter::create(name, &params).unwrap();
         assert_eq!(flat.radius, [cpu.radius().x, cpu.radius().y]);
         let words = filter_buffer_data(&flat).unwrap();
@@ -62,11 +62,11 @@ fn invalid_filters_and_corrupt_layouts_are_errors() {
         let mut params = ParameterDictionary::default();
         params.add_float(key, value);
         assert!(
-            Filter::create(name, &params).is_err(),
+            flatten_filter(name, &params).is_err(),
             "{name} {key} {value}"
         );
     }
-    let mut filter = Filter::create("gaussian", &Default::default()).unwrap();
+    let mut filter = flatten_filter("gaussian", &Default::default()).unwrap();
     filter.distribution.as_mut().unwrap().conditional_cdf.pop();
     assert!(filter_buffer_data(&filter).is_err());
 }
@@ -136,7 +136,7 @@ fn test_filter(@builtin(global_invocation_id) id: vec3<u32>) {
             if narrow && name != "gaussian" {
                 continue;
             }
-            let filter = Filter::create(name, &params).unwrap();
+            let filter = flatten_filter(name, &params).unwrap();
             let cpu = CpuFilter::create(name, &params).unwrap();
             let mut inputs = vec![
                 [0.0, 0.0],
