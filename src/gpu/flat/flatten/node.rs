@@ -1,11 +1,11 @@
-use super::super::filter::Filter as FlatFilter;
 use super::alpha::flatten_alpha;
+use super::filter::flatten_filter;
 use super::{
     append_area_light, flatten_light, geometry_index, identity_transform, multiply_transform,
     region_bounds, register_material_source, register_medium, register_root_component,
     resolve_medium_reference, screen_window, transform_swaps_handedness, viewport_resolution,
-    Camera, Component, Film, FlatBuilder, Instance, NodeRef, Output, Shape, Transform, Viewport,
-    INVALID_INDEX,
+    Camera, CameraKind, Component, Film, FlatBuilder, Instance, MaterialKind, NodeRef, Output,
+    Shape, Transform, Viewport, INVALID_INDEX,
 };
 use crate::film::PixelSensor;
 use crate::util::error::PbrtError;
@@ -17,7 +17,7 @@ pub fn flatten_node_ref(
     shape_parent_transform: &Transform,
     builder: &mut FlatBuilder,
     stack: &mut Vec<usize>,
-    material_kind: Option<&str>,
+    material_kind: Option<MaterialKind>,
 ) -> Result<(), PbrtError> {
     let node_key = Arc::as_ptr(node_ref) as usize;
     if stack.contains(&node_key) {
@@ -326,8 +326,8 @@ pub fn flatten_node_ref(
             *id = builder.spectrum_table_builder.intern_dense(response, 0)?;
         }
         let filter = match &builder.filter {
-            Some(filter) => FlatFilter::create(&filter.name, &filter.params)?,
-            None => FlatFilter::create("gaussian", &Default::default())?,
+            Some(filter) => flatten_filter(&filter.name, &filter.params)?,
+            None => flatten_filter("gaussian", &Default::default())?,
         };
         builder.film = Some(Film {
             filter,
@@ -341,12 +341,14 @@ pub fn flatten_node_ref(
         });
     }
     if let Some(camera) = camera {
-        if camera.kind != "perspective" {
-            return Err(PbrtError::error(&format!(
-                "WebGPU camera kind \"{}\" is unsupported; expected perspective.",
-                camera.kind
-            )));
-        }
+        let kind = match camera.kind.as_str() {
+            "perspective" => CameraKind::Perspective,
+            other => {
+                return Err(PbrtError::error(&format!(
+                    "WebGPU camera kind \"{other}\" is unsupported; expected perspective."
+                )))
+            }
+        };
         let lens_radius = camera.params.get_one_float("lensradius", 0.0);
         let focal_distance = camera.params.get_one_float("focaldistance", 1.0e6);
         let mut fov = camera.params.get_one_float("fov", 90.0);
@@ -366,7 +368,7 @@ pub fn flatten_node_ref(
         let medium = resolve_medium_reference(&camera.medium, builder)?;
         builder.camera = Some(Camera {
             camera_to_world: world_transform,
-            kind: camera.kind.clone(),
+            kind,
             fov,
             lens_radius,
             focal_distance,

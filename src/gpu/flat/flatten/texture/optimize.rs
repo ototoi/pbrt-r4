@@ -3,11 +3,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::mapping::TextureMapping;
+use crate::gpu::flat::texture::{
+    ImageView, Mipmap, TextureInstruction as Instruction, TextureMapping,
+    TextureValueType as ValueType, TypedTextureProgram,
+};
 use crate::util::error::PbrtError;
 
-use super::image::{ImageView, Mipmap};
-use super::program::{Instruction, ProgramCompilation, TypedTextureProgram, ValueType};
+use super::program::ProgramCompilation;
 
 pub fn optimize_texture_program(
     instructions: Vec<Instruction>,

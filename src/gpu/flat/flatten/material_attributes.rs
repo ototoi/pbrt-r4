@@ -6,29 +6,34 @@ use super::{
     push_scalar_attribute, push_spectrum_attribute, validate_layer_limits, AttributeRef,
     FlatBuilder,
 };
+use crate::gpu::flat::MaterialKind;
 use crate::gpu::node::Material as NodeMaterial;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::{lookup_named_spectrum, Spectrum, SpectrumType};
 
 pub fn build_material_attributes(
     source_material: &NodeMaterial,
-    kind: &str,
+    kind: MaterialKind,
     builder: &mut FlatBuilder,
 ) -> Result<Vec<AttributeRef>, PbrtError> {
     match kind {
-        "mix" => mix_attributes(source_material, builder),
-        "coateddiffuse" => coated_diffuse_attributes(source_material, builder),
-        "coatedconductor" => coated_conductor_attributes(source_material, builder),
-        "diffuse" => diffuse_attributes(source_material, builder),
-        "dielectric" | "thindielectric" | "subsurface" => {
+        MaterialKind::Mix => mix_attributes(source_material, builder),
+        MaterialKind::CoatedDiffuse => coated_diffuse_attributes(source_material, builder),
+        MaterialKind::CoatedConductor => coated_conductor_attributes(source_material, builder),
+        MaterialKind::Diffuse => diffuse_attributes(source_material, builder),
+        MaterialKind::Dielectric | MaterialKind::ThinDielectric | MaterialKind::Subsurface => {
             dielectric_attributes(source_material, kind, builder)
         }
-        "conductor_eta_k" => conductor_eta_k_attributes(source_material, builder),
-        "conductor_reflectance" => conductor_reflectance_attributes(source_material, builder),
-        "diffusetransmission" => diffuse_transmission_attributes(source_material, builder),
-        _ => Err(PbrtError::error(&format!(
-            "unsupported GPU material kind: {kind}"
-        ))),
+        MaterialKind::ConductorEtaK => conductor_eta_k_attributes(source_material, builder),
+        MaterialKind::ConductorReflectance => {
+            conductor_reflectance_attributes(source_material, builder)
+        }
+        MaterialKind::DiffuseTransmission => {
+            diffuse_transmission_attributes(source_material, builder)
+        }
+        MaterialKind::Measured => Err(PbrtError::error(
+            "Measured material attributes are built from the BSDF library.",
+        )),
     }
 }
 
@@ -304,10 +309,10 @@ fn diffuse_attributes(
 
 fn dielectric_attributes(
     source_material: &NodeMaterial,
-    kind: &str,
+    kind: MaterialKind,
     builder: &mut FlatBuilder,
 ) -> Result<Vec<AttributeRef>, PbrtError> {
-    let eta_attribute = if kind == "subsurface" {
+    let eta_attribute = if kind == MaterialKind::Subsurface {
         let eta = source_material.params.get_one_float("eta", 1.33);
         push_spectrum_attribute(builder, "eta", &Spectrum::from(eta))?
     } else if let Some(attribute) =
@@ -332,7 +337,7 @@ fn dielectric_attributes(
         }
         push_spectrum_attribute(builder, "eta", &eta)?
     };
-    if kind == "thindielectric" {
+    if kind == MaterialKind::ThinDielectric {
         return Ok(vec![eta_attribute]);
     }
     let u_roughness_attribute =

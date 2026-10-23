@@ -63,9 +63,9 @@ pub fn convert_media(
                 "Flat medium {index} references an invalid spectrum."
             )));
         }
-        let (kind, volume_index) = match (&medium.kind[..], &medium.data) {
-            ("homogeneous", flat::MediumData::Homogeneous) => (0, INVALID_INDEX),
-            ("uniformgrid", flat::MediumData::UniformGrid(grid)) => {
+        let (kind, volume_index) = match &medium.data {
+            flat::MediumData::Homogeneous => (0, INVALID_INDEX),
+            flat::MediumData::UniformGrid(grid) => {
                 let expected_emission_scale_count = grid
                     .emission_scale_resolution
                     .iter()
@@ -151,7 +151,7 @@ pub fn convert_media(
                 });
                 (1, volume_index)
             }
-            ("cloud", flat::MediumData::Cloud(cloud)) => {
+            flat::MediumData::Cloud(cloud) => {
                 let volume_index = u32::try_from(result.volumes.len())
                     .map_err(|_| PbrtError::error("Volume medium record count exceeds u32."))?;
                 let majorant_offset = checked_volume_offset(result.volume_data.len())?;
@@ -188,7 +188,7 @@ pub fn convert_media(
                 });
                 (2, volume_index)
             }
-            ("rgbgrid", flat::MediumData::RgbGrid(grid)) => {
+            flat::MediumData::RgbGrid(grid) => {
                 let volume_index = u32::try_from(result.volumes.len())
                     .map_err(|_| PbrtError::error("Volume medium record count exceeds u32."))?;
                 if grid.resolution.contains(&0)
@@ -296,18 +296,12 @@ pub fn convert_media(
                 });
                 (3, volume_index)
             }
-            ("nanovdb", flat::MediumData::NanoVDB(grid)) => {
+            flat::MediumData::NanoVDB(grid) => {
                 let volume_index = u32::try_from(result.volumes.len())
                     .map_err(|_| PbrtError::error("Volume medium record count exceeds u32."))?;
                 let volume = append_sparse_grid(&mut result, grid, medium.transform)?;
                 result.volumes.push(volume);
                 (4, volume_index)
-            }
-            (kind, _) => {
-                return Err(PbrtError::error(&format!(
-                    "Flat medium \"{}\" has inconsistent or unsupported type/data \"{kind}\".",
-                    medium.name
-                )));
             }
         };
         result.records.push(MediumRecord {

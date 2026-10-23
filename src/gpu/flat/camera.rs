@@ -1,9 +1,14 @@
 use super::Transform;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraKind {
+    Perspective,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Camera {
     pub camera_to_world: Transform,
-    pub kind: String,
+    pub kind: CameraKind,
     pub fov: f32,
     pub lens_radius: f32,
     pub focal_distance: f32,

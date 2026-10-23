@@ -9,8 +9,8 @@ use pbrt_r4::gpu::flat::portal::prepare_portal_image;
 use pbrt_r4::gpu::flat::texture::{build_linear_rgb_mipmap, ColorSpace, MipmapLevelData};
 use pbrt_r4::gpu::flat::{
     area_light_flags, area_light_is_two_sided, area_light_is_zero_alpha_sample_only,
-    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, MediumData,
-    SamplerKind, SamplerRandomization, Scene as FlatScene, INVALID_INDEX,
+    evaluate_dense_spectrum, flatten_node, validate_dense_spectra, AttributeKind, MaterialKind,
+    MediumData, SamplerKind, SamplerRandomization, Scene as FlatScene, INVALID_INDEX,
 };
 use pbrt_r4::gpu::node::{
     complete_triangle_attributes, prepare_triangle_meshes, tessellate_shapes,
@@ -234,8 +234,8 @@ fn flatten_node_packs_mesh_ranges_and_instances() {
     assert_eq!(scene.instances[0].transform[11], 3.0);
     assert_eq!(scene.instances[1].geometry, 1);
     assert_eq!(scene.instances[1].material_root, 1);
-    assert_eq!(scene.materials.nodes[0].kind, "diffuse");
-    assert_eq!(scene.materials.nodes[1].kind, "dielectric");
+    assert_eq!(scene.materials.nodes[0].kind, MaterialKind::Diffuse);
+    assert_eq!(scene.materials.nodes[1].kind, MaterialKind::Dielectric);
     assert_eq!(scene.camera.fov, 60.0);
     assert_eq!(scene.camera.screen_window, [-2.0, 2.0, -1.0, 1.0]);
     assert_eq!(scene.viewport.resolution, [64, 32]);
@@ -322,7 +322,7 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
     assert_eq!(scene.media.len(), 2);
     assert_eq!(scene.media[0].name, "blue");
     assert_eq!(scene.media[1].name, "amber");
-    assert_eq!(scene.media[0].kind, "homogeneous");
+    assert_eq!(scene.media[0].data, MediumData::Homogeneous);
     assert_eq!(scene.media[0].transform[3], 7.0);
     assert_eq!(scene.instances.len(), 1);
     assert_eq!(scene.instances[0].inside_medium, 0);
@@ -510,7 +510,6 @@ fn flatten_node_preserves_cloud_parameters_and_bounds() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let medium = &scene.media[0];
-    assert_eq!(medium.kind, "cloud");
     assert_eq!(
         medium.data,
         pbrt_r4::gpu::flat::MediumData::Cloud(pbrt_r4::gpu::flat::CloudMedium {
@@ -2129,7 +2128,7 @@ fn flatten_node_extracts_explicit_diffuse_reflectance() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root)))
         .expect("diffuse reflectance should be normalized into Flat IR");
-    assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+    assert_eq!(scene.materials.nodes[0].kind, MaterialKind::Diffuse);
     assert_eq!(scene.materials.nodes[0].attributes.len(), 1);
     assert_eq!(
         scene.materials.nodes[0].attributes[0].kind,
@@ -2179,7 +2178,7 @@ fn flatten_node_extracts_diffuse_transmission_attributes() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let material = &scene.materials.nodes[0];
-    assert_eq!(material.kind, "diffusetransmission");
+    assert_eq!(material.kind, MaterialKind::DiffuseTransmission);
     assert_eq!(material.attributes.len(), 3);
     assert_eq!(material.attributes[0].name, "reflectance");
     assert_eq!(material.attributes[1].name, "transmittance");
@@ -2298,7 +2297,7 @@ fn flatten_node_expands_coateddiffuse_children() {
     let layout = scene.materials.roots[scene.instances[0].material_root as usize];
     let material = &scene.materials.nodes[layout.node_offset as usize];
     assert_eq!(material.source_kind, "coateddiffuse");
-    assert_eq!(material.kind, "coateddiffuse");
+    assert_eq!(material.kind, MaterialKind::CoatedDiffuse);
     assert_eq!(material.attributes.len(), 10);
     assert_eq!(material.attributes[0].name, "thickness");
     assert_eq!(material.attributes[1].name, "reflectance");
@@ -2343,7 +2342,7 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let layout = scene.materials.roots[scene.instances[0].material_root as usize];
     let material = &scene.materials.nodes[layout.node_offset as usize];
-    assert_eq!(material.kind, "coatedconductor");
+    assert_eq!(material.kind, MaterialKind::CoatedConductor);
     assert_eq!(material.attributes.len(), 15);
     assert_eq!(material.attributes[5].name, "interface.eta");
     assert_eq!(material.attributes[8].name, "conductor.eta");
@@ -2356,7 +2355,7 @@ fn flatten_node_preserves_coatedconductor_layer_parameters() {
     );
     assert_eq!(
         scene.materials.nodes[material.child1 as usize].kind,
-        "conductor_reflectance"
+        MaterialKind::ConductorReflectance
     );
     assert_eq!(
         scene.materials.nodes[material.child1 as usize]
@@ -2396,7 +2395,7 @@ fn flatten_coated_materials_keep_nonconstant_interface_eta_flags() {
         let layout = scene.materials.roots[scene.instances[0].material_root as usize];
         let material = &scene.materials.nodes[layout.node_offset as usize];
         let eta = &material.attributes[ordinal];
-        assert_eq!(material.kind, kind);
+        assert_eq!(material.kind.name(), kind);
         assert_eq!(eta.name, name);
         assert_eq!(
             scene.attributes.spectra[eta.index as usize].flags
@@ -2508,7 +2507,7 @@ fn flatten_node_extracts_conductor_attributes() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.materials.nodes[0].kind, "conductor_eta_k");
+    assert_eq!(scene.materials.nodes[0].kind, MaterialKind::ConductorEtaK);
     assert_eq!(scene.materials.nodes[0].attributes.len(), 4);
     let remap = &scene.materials.nodes[0].attributes[3];
     assert_eq!(remap.name, "remaproughness");
@@ -2547,7 +2546,10 @@ fn flatten_node_keeps_conductor_reflectance_layout_separate() {
     root.add_child(shape);
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
-    assert_eq!(scene.materials.nodes[0].kind, "conductor_reflectance");
+    assert_eq!(
+        scene.materials.nodes[0].kind,
+        MaterialKind::ConductorReflectance
+    );
     assert_eq!(scene.materials.nodes[0].attributes.len(), 3);
     let remap = &scene.materials.nodes[0].attributes[2];
     assert_eq!(remap.name, "remaproughness");
@@ -2777,7 +2779,7 @@ fn flatten_subsurface_preserves_all_coefficient_variants() {
         assert_eq!(bssrdf.table_index, 0);
         assert_eq!(bssrdf.eta, 1.33);
         let node = &scene.materials.nodes[index];
-        assert_eq!(node.kind, "subsurface");
+        assert_eq!(node.kind, MaterialKind::Subsurface);
         assert_eq!(node.source_kind, "subsurface");
         assert_eq!(node.bssrdf_index, index as u32);
         assert_eq!(&node.attributes[4..], &bssrdf.coefficients);
@@ -3112,7 +3114,6 @@ fn flatten_node_preserves_uniformgrid_density_and_majorants() {
 
     let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
     let medium = &scene.media[0];
-    assert_eq!(medium.kind, "uniformgrid");
     let pbrt_r4::gpu::flat::MediumData::UniformGrid(grid) = &medium.data else {
         panic!("expected uniformgrid payload");
     };

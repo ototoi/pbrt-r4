@@ -20,7 +20,6 @@ use wgpu::util::DeviceExt;
 fn converts_multiple_sparse_grids_with_global_offsets() {
     let make_medium = |name: &str, density: f32| Medium {
         name: name.to_owned(),
-        kind: "nanovdb".to_owned(),
         sigma_a: 0,
         sigma_s: 0,
         le: 0,
@@ -627,7 +626,6 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
     let nanovdb = create_nanovdb(&params).unwrap();
     let medium = Medium {
         name: "NanoVDB GPU probe".to_owned(),
-        kind: "nanovdb".to_owned(),
         sigma_a: 0,
         sigma_s: 0,
         le: 0,
@@ -990,7 +988,6 @@ fn temperature_lookup_blackbody_and_emission_match_v4() {
     payload.majorant = vec![4.0; 64usize.pow(3)];
     let medium = Medium {
         name: "temperature probe".into(),
-        kind: "nanovdb".into(),
         sigma_a: 0,
         sigma_s: 0,
         le: 0,

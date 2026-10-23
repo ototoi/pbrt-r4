@@ -5,7 +5,7 @@ use std::mem::{offset_of, size_of};
 use std::sync::mpsc;
 
 use bytemuck::{cast_slice, Pod, Zeroable};
-use pbrt_r4::gpu::flat::TabulatedBSSRDFTable;
+use pbrt_r4::gpu::flat::tabulate_bssrdf;
 use pbrt_r4::gpu::webgpu::abi::*;
 use pbrt_r4::gpu::webgpu::binding_report::BindingReport;
 use pbrt_r4::gpu::webgpu::bssrdf::BSSRDFTableData;
@@ -859,7 +859,7 @@ fn surface_producers_prepare_origins_for_the_real_light_sampler() {
 
     // A real BSSRDF exit replaces a different entry surface and deliberately
     // invalid/stale material-work-item index. The consumer must not resolve it.
-    let data = BSSRDFTableData::from_flat(&[TabulatedBSSRDFTable::new(0.0, 1.33)]).unwrap();
+    let data = BSSRDFTableData::from_flat(&[tabulate_bssrdf(0.0, 1.33)]).unwrap();
     gpu.write(ResourceId::BSSRDFTable, &data.records);
     gpu.write(ResourceId::BSSRDFValues, &data.values);
     let identity = [

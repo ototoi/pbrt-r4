@@ -62,7 +62,7 @@ NamedMaterial "shared"
     assert_eq!(scene.instances[2].alpha, AlphaMask::Opaque);
     assert_eq!(scene.materials.roots.len(), 1);
     assert_eq!(scene.materials.nodes.len(), 1);
-    assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+    assert_eq!(scene.materials.nodes[0].kind, flat::MaterialKind::Diffuse);
     assert!(scene
         .instances
         .iter()
@@ -140,7 +140,7 @@ Material "diffuse"
         let flags = scene.lights.sampling_models[0].flags;
         assert_eq!(flat::area_light_is_zero_alpha_sample_only(flags), zero);
         assert_eq!(scene.materials.nodes.len(), 1);
-        assert_eq!(scene.materials.nodes[0].kind, "diffuse");
+        assert_eq!(scene.materials.nodes[0].kind, flat::MaterialKind::Diffuse);
     }
 }
 
@@ -257,4 +257,29 @@ fn material_root_validation_stays_on_the_material_path() {
         .expect("invalid material root must be rejected")
         .to_string();
     assert!(error.contains("Flat material root node is missing."));
+}
+
+#[test]
+fn flat_material_validation_rejects_attribute_layout_mismatch() {
+    let mut scene = flatten(node_scene(TRIANGLE));
+    assert!(scene.materials.validate().is_ok());
+    scene.materials.nodes[0].attributes.clear();
+    let error = scene
+        .materials
+        .validate()
+        .expect_err("missing material attributes must be rejected")
+        .to_string();
+    assert!(error.contains("has invalid attributes"));
+}
+
+#[test]
+fn flat_material_validation_rejects_bssrdf_on_non_subsurface_material() {
+    let mut scene = flatten(node_scene(TRIANGLE));
+    scene.materials.nodes[0].bssrdf_index = 0;
+    let error = scene
+        .materials
+        .validate()
+        .expect_err("non-subsurface BSSRDF reference must be rejected")
+        .to_string();
+    assert!(error.contains("Only subsurface materials may reference a BSSRDF."));
 }

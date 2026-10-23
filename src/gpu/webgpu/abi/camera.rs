@@ -11,12 +11,7 @@ pub fn camera_uniform(
     camera: &flat::Camera,
     viewport: &flat::Viewport,
 ) -> Result<CameraUniform, PbrtError> {
-    if camera.kind != "perspective" {
-        return Err(PbrtError::error(&format!(
-            "WebGPU camera kind \"{}\" is unsupported; expected perspective.",
-            camera.kind
-        )));
-    }
+    let flat::CameraKind::Perspective = camera.kind;
     let [width, height] = viewport.resolution;
     if width == 0 || height == 0 {
         return Err(PbrtError::error(

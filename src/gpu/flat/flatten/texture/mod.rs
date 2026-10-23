@@ -1,9 +1,14 @@
-use super::super::texture::TextureRootSpec;
 use super::TextureBuilder;
 use crate::gpu::node::{TextureComponent, TextureKind, TextureNode};
 use crate::util::error::PbrtError;
 use crate::util::spectrum::SpectrumType;
 use std::sync::Arc;
+
+mod library;
+mod optimize;
+mod program;
+
+pub use library::{compile_texture_library, TextureRootSpec};
 
 impl TextureBuilder {
     pub fn intern_root(
