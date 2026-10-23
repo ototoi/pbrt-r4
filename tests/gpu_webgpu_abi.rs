@@ -276,7 +276,7 @@ fn perspective_camera_upload_includes_finite_minimum_ray_differentials() {
         camera_to_world: [
             1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ],
-        kind: "perspective".to_string(),
+        kind: flat::CameraKind::Perspective,
         fov: 45.0,
         lens_radius: 0.0,
         focal_distance: 1.0e6,

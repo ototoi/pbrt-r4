@@ -61,7 +61,10 @@ impl super::WavefrontPathIntegrator {
             .max(1);
         let texture_program_capacity = u32::try_from(texture_program_capacity)
             .map_err(|_| PbrtError::error("Texture program capacity exceeds u32."))?;
-        let texture_noise_enabled = flat_scene.media.iter().any(|medium| medium.kind == "cloud")
+        let texture_noise_enabled = flat_scene
+            .media
+            .iter()
+            .any(|medium| matches!(medium.data, flat::MediumData::Cloud(_)))
             || flat_scene.texture_library.programs.iter().any(|program| {
                 program.instructions.iter().any(|instruction| {
                     matches!(

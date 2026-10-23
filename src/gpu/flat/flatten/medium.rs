@@ -147,7 +147,6 @@ pub fn register_medium(
         .map_err(|_| PbrtError::error("Flat medium table exceeds u32."))?;
     builder.medium.media.push(Medium {
         name: medium.name.clone(),
-        kind: medium.kind.clone(),
         sigma_a: sigma_a_index,
         sigma_s: sigma_s_index,
         le: le_index,
