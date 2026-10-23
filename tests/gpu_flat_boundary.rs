@@ -31,38 +31,110 @@ fn strip_line_comments(source: &str) -> String {
         .join("\n")
 }
 
-fn path_segments_after(source: &str, index: usize) -> Vec<&str> {
-    source[index..]
-        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':' || c == '{'))
-        .next()
-        .unwrap()
-        .split("::")
+fn split_use_statements(source: &str) -> (Vec<&str>, String) {
+    let mut trees = Vec::new();
+    let mut rest = String::new();
+    let mut cursor = 0;
+    while let Some(offset) = source[cursor..].find("use ") {
+        let start = cursor + offset;
+        let at_word_start = source[..start]
+            .chars()
+            .last()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        if !at_word_start {
+            rest.push_str(&source[cursor..start + 4]);
+            cursor = start + 4;
+            continue;
+        }
+        let end = source[start..]
+            .find(';')
+            .map_or(source.len(), |offset| start + offset);
+        rest.push_str(&source[cursor..start]);
+        trees.push(&source[start + 4..end]);
+        cursor = (end + 1).min(source.len());
+    }
+    rest.push_str(&source[cursor..]);
+    (trees, rest)
+}
+
+fn split_top_level_commas(items: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (index, c) in items.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&items[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&items[start..]);
+    parts
+}
+
+fn expand_use_tree(tree: &str) -> Vec<String> {
+    let tree = tree.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(open) = tree.find('{') else {
+        return vec![tree.split(" as ").next().unwrap().replace(' ', "")];
+    };
+    let prefix = tree[..open].replace(' ', "");
+    let close = tree.rfind('}').unwrap();
+    split_top_level_commas(&tree[open + 1..close])
+        .into_iter()
+        .filter(|item| !item.trim().is_empty())
+        .flat_map(expand_use_tree)
+        .map(|path| format!("{prefix}{path}"))
         .collect()
 }
 
+fn leaves_boundary(path: &str, depth: usize) -> bool {
+    let path = path.strip_suffix("::self").unwrap_or(path);
+    let segments = path.split("::").collect::<Vec<_>>();
+    match segments[0] {
+        "crate" => {
+            let allowed = segments.get(1) == Some(&"util")
+                || (segments.get(1) == Some(&"gpu")
+                    && segments.get(2) == Some(&"flat")
+                    && segments.get(3) != Some(&"flatten"));
+            !allowed
+        }
+        "super" => {
+            let supers = segments.iter().take_while(|s| **s == "super").count();
+            let next = segments.get(supers).copied().unwrap_or_default();
+            supers > depth || (supers == depth && next == "flatten")
+        }
+        _ => false,
+    }
+}
+
+fn inline_path(source: &str, index: usize) -> &str {
+    source[index..]
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .next()
+        .unwrap()
+}
+
 fn violations(source: &str, depth: usize) -> Vec<String> {
-    let mut found = Vec::new();
-    for (index, _) in source.match_indices("crate::") {
-        let segments = path_segments_after(source, index);
-        let allowed = matches!(segments.get(1), Some(&"util"))
-            || (segments.get(1) == Some(&"gpu") && segments.get(2) == Some(&"flat"));
-        if !allowed {
-            found.push(segments.join("::"));
+    let (trees, rest) = split_use_statements(source);
+    let mut found = trees
+        .into_iter()
+        .flat_map(expand_use_tree)
+        .filter(|path| leaves_boundary(path, depth))
+        .collect::<Vec<_>>();
+    for prefix in ["crate::", "super::"] {
+        for (index, _) in rest.match_indices(prefix) {
+            if rest[..index].ends_with("super::") {
+                continue;
+            }
+            let path = inline_path(&rest, index);
+            if leaves_boundary(path, depth) {
+                found.push(path.to_string());
+            }
         }
-    }
-    for (index, _) in source.match_indices("super::") {
-        if source[..index].ends_with("super::") {
-            continue;
-        }
-        let segments = path_segments_after(source, index);
-        let supers = segments.iter().take_while(|s| **s == "super").count();
-        let next = segments.get(supers).copied().unwrap_or_default();
-        if supers > depth || (supers == depth && next == "flatten") {
-            found.push(segments.join("::"));
-        }
-    }
-    for (index, _) in source.match_indices("flat::flatten") {
-        found.push(path_segments_after(source, index).join("::"));
     }
     found
 }
@@ -92,33 +164,67 @@ fn flat_data_modules_depend_only_on_flat_and_util() {
 
 #[test]
 fn boundary_scan_rejects_outside_dependencies() {
-    assert_eq!(
-        violations("use crate::paramdict::ParameterDictionary;", 1),
-        ["crate::paramdict::ParameterDictionary"]
-    );
-    assert_eq!(
-        violations("use crate::gpu::node::Texture;", 1),
-        ["crate::gpu::node::Texture"]
-    );
-    assert_eq!(violations("use crate::{util, gpu};", 1), ["crate::{util"]);
-    assert_eq!(
-        violations("use super::super::node::Texture;", 1),
-        ["super::super::node::Texture"]
-    );
-    assert_eq!(
-        violations("use super::flatten::flatten_filter;", 1),
-        ["super::flatten::flatten_filter"]
-    );
-    assert_eq!(
-        violations("use super::super::flatten::X;", 2),
-        ["super::super::flatten::X"]
-    );
-    assert_eq!(
-        violations("use crate::gpu::flat::flatten::X;", 1),
-        ["flat::flatten::X"]
-    );
-    assert!(violations("use crate::util::error::PbrtError;", 1).is_empty());
-    assert!(violations("use crate::gpu::flat::INVALID_INDEX;", 2).is_empty());
-    assert!(violations("use super::super::texture::Mipmap;", 2).is_empty());
-    assert!(violations("values.iter().flatten()", 1).is_empty());
+    let cases: &[(&str, usize, &[&str])] = &[
+        (
+            "use crate::paramdict::ParameterDictionary;",
+            1,
+            &["crate::paramdict::ParameterDictionary"],
+        ),
+        ("use crate::gpu::node::Texture;", 1, &["crate::gpu::node::Texture"]),
+        ("use crate::{util, gpu};", 1, &["crate::gpu"]),
+        (
+            "use crate::gpu::{\n    flat::{self, INVALID_INDEX},\n    node::Texture as NodeTexture,\n};",
+            1,
+            &["crate::gpu::node::Texture"],
+        ),
+        (
+            "use super::super::node::Texture;",
+            1,
+            &["super::super::node::Texture"],
+        ),
+        (
+            "use super::{super::node::Texture};",
+            1,
+            &["super::super::node::Texture"],
+        ),
+        (
+            "use super::flatten::flatten_filter;",
+            1,
+            &["super::flatten::flatten_filter"],
+        ),
+        (
+            "use super::{flatten::flatten_filter};",
+            1,
+            &["super::flatten::flatten_filter"],
+        ),
+        (
+            "use super::super::flatten::X;",
+            2,
+            &["super::super::flatten::X"],
+        ),
+        (
+            "use crate::gpu::flat::flatten::X;",
+            1,
+            &["crate::gpu::flat::flatten::X"],
+        ),
+        (
+            "use crate::gpu::flat::{flatten::X};",
+            1,
+            &["crate::gpu::flat::flatten::X"],
+        ),
+        (
+            "let p = crate::paramdict::ParameterDictionary::default();",
+            1,
+            &["crate::paramdict::ParameterDictionary::default"],
+        ),
+        ("use crate::util::error::PbrtError;", 1, &[]),
+        ("use crate::gpu::flat::{self, texture::Mipmap};", 1, &[]),
+        ("use crate::gpu::flat::INVALID_INDEX;", 2, &[]),
+        ("use super::super::texture::Mipmap;", 2, &[]),
+        ("pub use library::{TextureLibrary, TextureRoot};", 1, &[]),
+        ("values.iter().flatten()", 1, &[]),
+    ];
+    for (source, depth, expected) in cases {
+        assert_eq!(violations(source, *depth), *expected, "{source}");
+    }
 }
