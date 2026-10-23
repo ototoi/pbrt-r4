@@ -173,6 +173,7 @@ pub fn flatten_node_with_material_override(
         },
         texture_library,
     };
+    scene.materials.validate()?;
     scene.lights.validate_consistency(&scene.texture_library)?;
     Ok(scene)
 }
