@@ -1,6 +1,5 @@
 use super::image_infinite::ImageInfiniteDistributionTexel;
 use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
-use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
@@ -27,32 +26,32 @@ use super::geometry::{
 
 mod alpha;
 mod filter;
-pub use filter::flatten_filter;
-mod material;
-use material::{build_material_roots, register_material_source, MaterialSourceNode};
-mod material_attributes;
-mod measured;
-pub use measured::MeasuredBsdfLibrary;
-mod medium;
-pub mod nanovdb;
-mod subsurface;
-pub use subsurface::tabulate_bssrdf;
-mod texture;
-use medium::{register_medium, resolve_medium_reference};
-mod node;
-use node::flatten_node_ref;
-
-mod shape;
-use shape::geometry_index;
-
 mod infinite_light;
 mod lights;
-use lights::{append_area_light, flatten_light};
-
+mod material;
+mod material_attributes;
+mod measured;
+mod medium;
+pub mod nanovdb;
+mod node;
 mod scene_settings;
+mod shape;
+mod subsurface;
+mod texture;
+
+pub use filter::flatten_filter;
+pub use measured::MeasuredBsdfLibrary;
+pub use subsurface::tabulate_bssrdf;
+pub use texture::{compile_texture_library, TextureRootSpec};
+
+use lights::{append_area_light, flatten_light};
+use material::{build_material_roots, register_material_source, MaterialSourceNode};
+use medium::{register_medium, resolve_medium_reference};
+use node::flatten_node_ref;
 use scene_settings::{
     region_bounds, register_root_component, render_settings, screen_window, viewport_resolution,
 };
+use shape::geometry_index;
 
 const MAX_LAYER_DEPTH: i32 = 32;
 const MAX_LAYER_SAMPLES: i32 = 32;

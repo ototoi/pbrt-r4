@@ -8,7 +8,7 @@ use super::{
 use crate::util::base::inverse_gamma_correct;
 use crate::util::error::PbrtError;
 
-use super::compile::{TextureLibrary, TextureRoot};
+use super::library::{TextureLibrary, TextureRoot};
 use super::program::{Instruction, TypedTextureProgram};
 use super::ProceduralOperation;
 
