@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use image::{ImageBuffer, Luma};
 use pbrt_r4::gpu::flat::texture::{
-    compile_texture_library, evaluate_texture_root, evaluate_texture_root_at,
-    evaluate_texture_root_with_context, ColorSpace, ImageCompiler, ImageDecoder, ImageFilterMode,
-    ImageOptimizationPolicy, ImageValueType, ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel,
-    MipmapLevelData, TextureEvaluationContext, TextureInstruction,
-    TextureMapping as FlatTextureMapping, TextureRoot, TextureRootSpec, TextureValue,
-    TextureValueType, UvMapping as FlatUvMapping,
+    evaluate_texture_root, evaluate_texture_root_at, evaluate_texture_root_with_context,
+    ColorSpace, ImageCompiler, ImageDecoder, ImageFilterMode, ImageOptimizationPolicy,
+    ImageValueType, ImageWrapMode, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData,
+    TextureEvaluationContext, TextureInstruction, TextureMapping as FlatTextureMapping,
+    TextureRoot, TextureValue, TextureValueType, UvMapping as FlatUvMapping,
 };
+use pbrt_r4::gpu::flat::{compile_texture_library, TextureRootSpec};
 use pbrt_r4::gpu::node::TextureNode;
 use pbrt_r4::gpu::node::{
     Texture, TextureComponent, TextureKind, TextureMapping, Transform, UvMapping,

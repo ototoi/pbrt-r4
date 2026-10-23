@@ -510,7 +510,7 @@ pub fn spectrum_attribute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu::flat::texture::TextureRootSpec;
+    use crate::gpu::flat::TextureRootSpec;
     use crate::paramdict::ParameterDictionary;
 
     #[test]
