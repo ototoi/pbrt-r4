@@ -101,7 +101,9 @@ impl SceneBuilder {
                 if matches!(light.as_ref(), CpuLight::DiffuseArea(_)) {
                     continue;
                 }
-                let weight = safe_div(light.phi(&lambda), lambda.pdf_spectrum()).average() as f32;
+                let weight = safe_div(light.phi(&lambda), lambda.pdf_spectrum())
+                    .average()
+                    .max(0.0) as f32;
                 if light.bounds().is_some() {
                     finite.push(weight);
                 } else {

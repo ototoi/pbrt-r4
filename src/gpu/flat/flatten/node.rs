@@ -434,6 +434,7 @@ pub fn flatten_node_ref(
                 instance_index,
                 alpha,
                 reverse_orientation,
+                transform_swaps_handedness(shape_transform),
                 builder,
             )?
         } else {

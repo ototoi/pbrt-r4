@@ -72,8 +72,8 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
             let report =
                 BindingReport::for_stages(&registry, COMPUTE_STAGES, noise, nanovdb).unwrap();
             for (id, storage, uniform) in [
-                (ComputeStageId::SelectSurfaceLight, 14, 1),
-                (ComputeStageId::SelectMediumLight, 13, 1),
+                (ComputeStageId::SelectSurfaceLight, 15, 1),
+                (ComputeStageId::SelectMediumLight, 14, 1),
                 (ComputeStageId::SampleAreaLight, 18, 0),
                 (ComputeStageId::SampleImageInfiniteLight, 20, 0),
                 (ComputeStageId::SampleOtherLight, 15, 0),
