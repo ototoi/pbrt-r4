@@ -236,15 +236,6 @@ fn exhaustive_light_bound(index: u32) -> DecodedLightBVHNode {
     );
 }
 
-fn exhaustive_importance_sum(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    let bounded_count = light_sampler_data[light_table.light_sampler_data_offset];
-    var total = 0.0;
-    for (var index = 0u; index < bounded_count; index++) {
-        total += compact_light_bounds_importance(exhaustive_light_bound(index), p, n);
-    }
-    return total;
-}
-
 fn exhaustive_light_sampler_pmf(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
     if (light_handle >= light_table.light_count) {
         return 0.0;
@@ -265,16 +256,17 @@ fn exhaustive_light_sampler_pmf(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -
     if (bounded_count == 0u) {
         return 0.0;
     }
-    var importance = 0.0;
+    var importance_sum = 0.0;
+    var light_importance = 0.0;
     for (var index = 0u; index < bounded_count; index++) {
         let bound = exhaustive_light_bound(index);
+        let importance = compact_light_bounds_importance(bound, p, n);
+        importance_sum += importance;
         if (bound.payload == light_handle) {
-            importance = compact_light_bounds_importance(bound, p, n);
-            break;
+            light_importance = importance;
         }
     }
-    let sum = exhaustive_importance_sum(p, n);
-    return (1.0 - p_infinite) * importance / sum;
+    return light_importance / importance_sum * (1.0 - p_infinite);
 }
 
 fn exhaustive_light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
@@ -301,24 +293,30 @@ fn exhaustive_light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) ->
         return LightSelection(0xffffffffu, 0.0);
     }
     let bounded_selector = min((u - p_infinite) / (1.0 - p_infinite), 0.99999994);
-    let sum = exhaustive_importance_sum(p, n);
-    if (sum <= 0.0) {
-        return LightSelection(0xffffffffu, 0.0);
-    }
-    let target_weight = bounded_selector * sum;
-    var cumulative = 0.0;
+    // v4 WeightedReservoirSampler seeded with MixBits(FloatToBits(u)).
+    let sequence = mix_bits(vec2<u32>(bitcast<u32>(bounded_selector), 0u));
+    let increment = u64_add(u64_shl(sequence, 1u), vec2<u32>(1u, 0u));
+    var state = pcg_step(vec2<u32>(0u), increment).xy;
+    state = u64_add(state, mix_bits(sequence));
+    state = pcg_step(state, increment).xy;
+    var weight_sum = 0.0;
+    var selected = 0xffffffffu;
+    var selected_weight = 0.0;
     for (var index = 0u; index < bounded_count; index++) {
         let bound = exhaustive_light_bound(index);
         let importance = compact_light_bounds_importance(bound, p, n);
-        cumulative += importance;
-        if (target_weight < cumulative || index + 1u == bounded_count) {
-            return LightSelection(
-                bound.payload,
-                (1.0 - p_infinite) * importance / sum,
-            );
+        weight_sum += importance;
+        let step = pcg_step(state, increment);
+        state = step.xy;
+        if (min(f32(step.z) * 2.3283064365386963e-10, 0.99999994) < importance / weight_sum) {
+            selected = bound.payload;
+            selected_weight = importance;
         }
     }
-    return LightSelection(0xffffffffu, 0.0);
+    if (!(weight_sum > 0.0)) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    return LightSelection(selected, (1.0 - p_infinite) * (selected_weight / weight_sum));
 }
 
 fn power_light_sampler_pmf(light_handle: u32) -> f32 {

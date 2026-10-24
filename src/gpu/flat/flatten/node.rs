@@ -30,7 +30,6 @@ pub fn flatten_node_ref(
     let (
         name,
         local_transform,
-        power_weights,
         camera,
         film,
         filter,
@@ -243,7 +242,6 @@ pub fn flatten_node_ref(
         (
             node.name.clone(),
             node.transform.matrix,
-            node.power_weights.clone(),
             camera,
             film,
             filter,
@@ -257,19 +255,6 @@ pub fn flatten_node_ref(
             node.children.clone(),
         )
     };
-
-    if let Some(power_weights) = power_weights {
-        if stack.len() != 1
-            || builder
-                .non_area_power_weights
-                .replace(power_weights)
-                .is_some()
-        {
-            return Err(PbrtError::error(
-                "Power sampler weights must be attached to the GPU root node exactly once.",
-            ));
-        }
-    }
 
     let world_transform = multiply_transform(parent_transform, &local_transform);
     let shape_transform = multiply_transform(shape_parent_transform, &local_transform);
@@ -442,6 +427,9 @@ pub fn flatten_node_ref(
         };
         let inside_medium = resolve_medium_reference(&medium_interface.inside, builder)?;
         let outside_medium = resolve_medium_reference(&medium_interface.outside, builder)?;
+        builder
+            .instance_in_object
+            .push(builder.object_instance_depth > 0);
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
@@ -458,6 +446,7 @@ pub fn flatten_node_ref(
         let target_parent = multiply_transform(&world_transform, &instance_transform.matrix);
         // v4 TransformedPrimitive transforms the interaction without applying
         // the shape's orientation rule again.
+        builder.object_instance_depth += 1;
         flatten_node_ref(
             &target,
             &target_parent,
@@ -466,6 +455,7 @@ pub fn flatten_node_ref(
             stack,
             material_kind,
         )?;
+        builder.object_instance_depth -= 1;
     }
     for child in children {
         flatten_node_ref(

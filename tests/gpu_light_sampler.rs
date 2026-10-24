@@ -137,10 +137,17 @@ fn power_scene_uses_concrete_cpu_phi_weights_in_flat_handle_order() {
 fn power_scene_orders_finite_and_infinite_weights_as_uploaded_handles() {
     let scene_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scenes/gpu-spot-distant-smoke.pbrt");
-    let source = std::fs::read_to_string(scene_path).unwrap().replace(
-        "Integrator \"path\"",
-        "Integrator \"path\" \"string lightsampler\" [ \"power\" ]",
-    );
+    // r4 CPU pads sphere bounds, which v4 and the GPU scene radius do not.
+    let source = std::fs::read_to_string(scene_path)
+        .unwrap()
+        .replace(
+            "Integrator \"path\"",
+            "Integrator \"path\" \"string lightsampler\" [ \"power\" ]",
+        )
+        .replace(
+            "Shape \"sphere\" \"float radius\" [ 1 ]",
+            "Shape \"trianglemesh\" \"point3 P\" [-1 -1 -1 1 1 1 1 -1 1] \"integer indices\" [0 1 2]",
+        );
     let mut builder = SceneBuilder::new();
     parse_string(&source, &mut builder).unwrap();
     let root = builder.build_gpu_ir_node().unwrap();
@@ -253,6 +260,13 @@ fn power_weights_match_cpu_phi_for_all_supported_light_kinds_and_spectral_inputs
         .unwrap()
         .save(&image_path)
         .unwrap();
+    // r4 CPU rectifies portal images with a MIPMap lookup instead of v4's octahedral
+    // bilerp, so the portal comparison uses a constant image.
+    let portal_image_path = directory.path().join("portal.png");
+    ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, [200, 120, 40].repeat(4))
+        .unwrap()
+        .save(&portal_image_path)
+        .unwrap();
     let source = format!(
         r#"{PREFIX}
 LightSource "infinite" "rgb L" [0.3 0.7 0.2]
@@ -263,11 +277,12 @@ Rotate 31 1 1 0
 LightSource "spot" "spectrum I" [400 1 500 2 600 0.5 700 0.1] "point from" [1 2 3] "point to" [0 0 0]
 AttributeEnd
 LightSource "infinite" "string filename" ["{image}"] "float scale" [2]
-LightSource "infinite" "string filename" ["{image}"] "point portal" [0 0 0 1 0 0 1 1 0 0 1 0]
+LightSource "infinite" "string filename" ["{portal_image}"] "point portal" [0 0 0 1 0 0 1 1 0 0 1 0]
 AreaLightSource "diffuse" "spectrum L" [400 1 500 0.5 600 2 700 0.1] "bool twosided" [true]
 {TRIANGLE}
 "#,
-        image = image_path.display()
+        image = image_path.display(),
+        portal_image = portal_image_path.display()
     );
     let (flat, cpu) = flatten_source(&source);
     assert_eq!(flat.lights.lights.len(), 3);
@@ -358,4 +373,34 @@ AreaLightSource "diffuse"
             }
         }
     }
+}
+
+#[test]
+fn power_scene_radius_uses_v4_analytic_quadric_bounds() {
+    let distant_weight = |shape: &str| {
+        let source = format!(
+            r#"{PREFIX}
+LightSource "point" "rgb I" [1 1 1]
+LightSource "distant" "rgb L" [1 1 1]
+Translate 3 0 0
+{shape}
+"#
+        );
+        let (flat, _) = flatten_source(&source);
+        flat.lights.power_weights.unwrap()[1]
+    };
+    let box_diagonal = distant_weight(
+        r#"Shape "trianglemesh" "point3 P" [-2 -2 -1 2 2 1 2 -2 1] "integer indices" [0 1 2]"#,
+    );
+    assert_close(
+        distant_weight(r#"Shape "sphere" "float radius" [2] "float zmin" [-1] "float zmax" [1]"#),
+        box_diagonal,
+    );
+    assert_close(
+        distant_weight(
+            r#"Shape "disk" "float radius" [2] "float height" [1] "integer udiv" [7]
+Shape "trianglemesh" "point3 P" [0 0 -1 0.1 0 -1 0 0.1 -1] "integer indices" [0 1 2]"#,
+        ),
+        box_diagonal,
+    );
 }

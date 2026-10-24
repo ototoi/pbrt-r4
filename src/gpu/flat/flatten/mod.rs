@@ -42,6 +42,8 @@ use shape::geometry_index;
 mod infinite_light;
 mod lights;
 use lights::{append_area_light, flatten_light};
+mod power;
+use power::{scene_radius_squared, PowerInput};
 
 mod scene_settings;
 use scene_settings::{
@@ -129,24 +131,33 @@ pub fn flatten_node_with_material_override(
         &builder.instances,
         &builder.geometry.geometries,
     )?;
-    let expected_power_weight_count =
-        builder.lights.records.len() + builder.lights.infinite_records.len();
-    let power_weights = if let Some((finite, infinite)) = builder.non_area_power_weights {
-        if builder.finite_power_cursor != finite.len()
-            || builder.infinite_power_cursor != infinite.len()
+    let power_weights = if render_settings.light_sampler == "power" {
+        let inputs = builder
+            .lights
+            .power_inputs
+            .iter()
+            .chain(&builder.lights.infinite_power_inputs);
+        if builder.lights.power_inputs.len() != builder.lights.records.len()
+            || builder.lights.infinite_power_inputs.len() != builder.lights.infinite_records.len()
         {
-            return Err(PbrtError::error(
-                "Power sampler concrete Phi weights do not match flattened non-area light handles.",
-            ));
-        }
-        let mut weights = builder.lights.power_weights;
-        weights.extend(builder.lights.infinite_power_weights);
-        if weights.len() != expected_power_weight_count {
             return Err(PbrtError::error(
                 "Power sampler weights do not match flattened global light handles.",
             ));
         }
-        Some(weights)
+        let scene_radius_squared = if inputs.clone().any(|input| input.scales_with_scene_disk()) {
+            scene_radius_squared(
+                &builder.instances,
+                &builder.instance_in_object,
+                &builder.geometry,
+            )
+        } else {
+            0.0
+        };
+        Some(
+            inputs
+                .map(|input| input.weight(scene_radius_squared))
+                .collect(),
+        )
     } else {
         None
     };
@@ -322,26 +333,15 @@ struct FlatBuilder {
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     lights: LightBuilder,
-    non_area_power_weights: Option<(Vec<f32>, Vec<f32>)>,
-    finite_power_cursor: usize,
-    infinite_power_cursor: usize,
+    instance_in_object: Vec<bool>,
+    object_instance_depth: usize,
 }
 
 impl FlatBuilder {
-    fn next_non_area_power_weight(&mut self, infinite: bool) -> Result<Option<f32>, PbrtError> {
-        let Some((finite, infinite_weights)) = &self.non_area_power_weights else {
-            return Ok(None);
-        };
-        let (weights, cursor) = if infinite {
-            (infinite_weights, &mut self.infinite_power_cursor)
-        } else {
-            (finite, &mut self.finite_power_cursor)
-        };
-        let weight = *weights.get(*cursor).ok_or_else(|| {
-            PbrtError::error("Power sampler concrete Phi weights ran out of light handles.")
-        })?;
-        *cursor += 1;
-        Ok(Some(weight))
+    fn power_sampler_requested(&self) -> bool {
+        self.integrator.as_ref().is_some_and(|integrator| {
+            integrator.params.get_one_string("lightsampler", "bvh") == "power"
+        })
     }
 }
 
@@ -350,6 +350,7 @@ struct GeometryBuilder {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     geometries: Vec<Geometry>,
+    object_bounds: Vec<Option<[[f32; 3]; 2]>>,
     geometries_by_shape: HashMap<(usize, usize), u32>,
 }
 
@@ -370,8 +371,8 @@ struct LightBuilder {
     records: Vec<Light>,
     infinite_records: Vec<Light>,
     bound_inputs: Vec<LightBoundInput>,
-    power_weights: Vec<f32>,
-    infinite_power_weights: Vec<f32>,
+    power_inputs: Vec<PowerInput>,
+    infinite_power_inputs: Vec<PowerInput>,
     infinite_resources: InfiniteLightBuilder,
 }
 

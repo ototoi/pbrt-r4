@@ -1,6 +1,5 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
-use crate::base::light::Light as CpuLight;
 use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
     loop_subdiv_mesh_from_params, prepare_triangle_meshes, tessellate_shapes,
@@ -19,7 +18,7 @@ use crate::gpu::node::{
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
-use crate::util::spectrum::{safe_div, SampledWavelengths, Spectrum};
+use crate::util::spectrum::Spectrum;
 use crate::util::transform::Transform as CpuTransform;
 
 use super::SceneBuilder;
@@ -89,31 +88,6 @@ impl SceneBuilder {
         let render_from_world = camera_transform.render_from_world();
         let texture_nodes = self.build_texture_resources(&render_from_world)?;
         let texture_lookup = texture_node_lookup(&texture_nodes);
-        let power_weights = if self.integrator_params.get_one_string("lightsampler", "bvh")
-            == "power"
-            && self.lights.len() + self.area_lights.len() > 1
-        {
-            let scene = self.build_scene()?;
-            let lambda = SampledWavelengths::sample_visible(0.5);
-            let mut finite = Vec::new();
-            let mut infinite = Vec::new();
-            for light in &scene.lights {
-                if matches!(light.as_ref(), CpuLight::DiffuseArea(_)) {
-                    continue;
-                }
-                let weight = safe_div(light.phi(&lambda), lambda.pdf_spectrum())
-                    .average()
-                    .max(0.0) as f32;
-                if light.bounds().is_some() {
-                    finite.push(weight);
-                } else {
-                    infinite.push(weight);
-                }
-            }
-            Some((finite, infinite))
-        } else {
-            None
-        };
         let mut named_media = HashMap::new();
         let mut media = Vec::with_capacity(self.media.len());
         let mut sorted_media: Vec<_> = self.media.iter().collect();
@@ -131,7 +105,6 @@ impl SceneBuilder {
         }
         let mut root_node = Node::new("root");
         root_node.transform = node_transform(&render_from_world);
-        root_node.power_weights = power_weights;
         root_node.add_component(Component::Scene(SceneComponent {
             scene: Scene {
                 texture_nodes,

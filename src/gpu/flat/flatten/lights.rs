@@ -15,14 +15,15 @@ use crate::util::base::{Point2f, Vector3f};
 use crate::util::error::PbrtError;
 use crate::util::geometry::equal_area_square_to_sphere;
 use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, ACES2065_1, DCI_P3, REC2020, SRGB};
-use crate::util::spectrum::{
-    safe_div, spectrum_to_photometric, SampledWavelengths, Spectrum, SpectrumType,
-};
+use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
 use crate::util::vecmath::Frame;
 
 use super::super::image_infinite::ImageInfiniteDistribution;
 use super::super::portal::prepare_portal_image;
 use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, Mipmap, MipmapLevelData};
+use super::power::{
+    area_power, distant_power, point_power, spot_power, uniform_infinite_power, ImagePowerSum,
+};
 
 fn rgb_color_space(color_space: ColorSpace) -> &'static RGBColorSpace {
     match color_space {
@@ -425,8 +426,11 @@ pub fn flatten_light(
             sampling_model,
             image_index: INVALID_INDEX,
         });
-        if let Some(weight) = builder.next_non_area_power_weight(true)? {
-            builder.lights.infinite_power_weights.push(weight);
+        if builder.power_sampler_requested() {
+            builder
+                .lights
+                .infinite_power_inputs
+                .push(distant_power(&intensity, scale));
         }
     } else if light.name == "infinite" {
         let (kind, intensity, base_scale, illuminance) = infinite_light(&light, &name)?;
@@ -437,7 +441,14 @@ pub fn flatten_light(
                 name, message
             ))
         })?;
-        let (image_index, image_illuminant, map_illuminance, geometry_kind, geometry_index) = if matches!(
+        let (
+            image_index,
+            image_illuminant,
+            map_illuminance,
+            geometry_kind,
+            geometry_index,
+            image_power,
+        ) = if matches!(
             kind,
             LightKind::ImageInfinite | LightKind::PortalImageInfinite
         ) {
@@ -496,7 +507,9 @@ pub fn flatten_light(
             } else {
                 None
             };
-            let (mipmap, geometry_kind, geometry_index) = if kind == LightKind::PortalImageInfinite
+            let power_requested = builder.power_sampler_requested();
+            let (mipmap, geometry_kind, geometry_index, image_power) = if kind
+                == LightKind::PortalImageInfinite
             {
                 let points = light.params.get_points("portal");
                 if points.len() != 12 {
@@ -515,16 +528,43 @@ pub fn flatten_light(
                 });
                 let prepared = prepare_portal_image(&mipmap, portal, world_to_light)?;
                 let geometry_index = builder.lights.infinite_resources.append_portal(&prepared)?;
-                (prepared.mipmap, LightGeometryKind::Portal, geometry_index)
+                let image_power = if power_requested {
+                    Some(ImagePowerSum::portal(
+                        &prepared.mipmap,
+                        rgb_color_space(prepared.mipmap.color_space),
+                        &prepared.portal,
+                    )?)
+                } else {
+                    None
+                };
+                (
+                    prepared.mipmap,
+                    LightGeometryKind::Portal,
+                    geometry_index,
+                    image_power,
+                )
             } else if kind == LightKind::ImageInfinite {
                 let distribution = ImageInfiniteDistribution::from_mipmap(&mipmap)?;
                 let geometry_index = builder
                     .lights
                     .infinite_resources
                     .append_image_distribution(&distribution, &light_transform)?;
-                (mipmap, LightGeometryKind::ImageInfinite, geometry_index)
+                let image_power = if power_requested {
+                    Some(ImagePowerSum::image(
+                        &mipmap,
+                        rgb_color_space(mipmap.color_space),
+                    )?)
+                } else {
+                    None
+                };
+                (
+                    mipmap,
+                    LightGeometryKind::ImageInfinite,
+                    geometry_index,
+                    image_power,
+                )
             } else {
-                (mipmap, LightGeometryKind::Direction, INVALID_INDEX)
+                (mipmap, LightGeometryKind::Direction, INVALID_INDEX, None)
             };
             let index = builder.lights.infinite_resources.append_mipmap(mipmap)?;
             (
@@ -533,6 +573,7 @@ pub fn flatten_light(
                 map_illuminance,
                 geometry_kind,
                 geometry_index,
+                image_power,
             )
         } else {
             (
@@ -541,6 +582,7 @@ pub fn flatten_light(
                 None,
                 LightGeometryKind::Direction,
                 INVALID_INDEX,
+                None,
             )
         };
         let sampling_model = u32::try_from(builder.lights.sampling_models.len()).map_err(|_| {
@@ -599,8 +641,14 @@ pub fn flatten_light(
             sampling_model,
             image_index,
         });
-        if let Some(weight) = builder.next_non_area_power_weight(true)? {
-            builder.lights.infinite_power_weights.push(weight);
+        if builder.power_sampler_requested() {
+            builder
+                .lights
+                .infinite_power_inputs
+                .push(match image_power {
+                    Some(image_power) => image_power.power(scale),
+                    None => uniform_infinite_power(&intensity, scale),
+                });
         }
     } else {
         let (
@@ -697,15 +745,22 @@ pub fn flatten_light(
             )?);
             attributes.push(push_scalar_attribute(builder, "cos_falloff_end", cos_end)?);
         }
+        if builder.power_sampler_requested() {
+            builder
+                .lights
+                .power_inputs
+                .push(if kind == LightKind::Spot {
+                    spot_power(&intensity, scale, cos_start, cos_end)
+                } else {
+                    point_power(&intensity, scale)
+                });
+        }
         builder.lights.records.push(Light {
             kind,
             attributes,
             sampling_model,
             image_index: INVALID_INDEX,
         });
-        if let Some(weight) = builder.next_non_area_power_weight(false)? {
-            builder.lights.power_weights.push(weight);
-        }
     }
     Ok(())
 }
@@ -849,12 +904,11 @@ pub fn append_area_light(
         sampling_model,
         image_index: INVALID_INDEX,
     });
-    if builder.non_area_power_weights.is_some() {
-        let lambda = SampledWavelengths::sample_visible(0.5);
-        let phi = emission.sample(&lambda)
-            * (scale * total_area * std::f32::consts::PI * if two_sided { 2.0 } else { 1.0 });
-        let weight = safe_div(phi, lambda.pdf_spectrum()).average().max(0.0);
-        builder.lights.power_weights.push(weight);
+    if builder.power_sampler_requested() {
+        builder
+            .lights
+            .power_inputs
+            .push(area_power(&emission, scale, total_area, two_sided));
     }
     builder
         .lights

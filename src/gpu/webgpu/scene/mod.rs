@@ -544,9 +544,13 @@ impl Scene {
                 contents: buffer_contents(&flat.lights.infinite_sampling.image_row_cdf),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let packed_light_bvh = pack_light_bvh(&flat.lights.bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
+        let packed_light_bvh = if light_sampler_kind == LightSamplerKind::Bvh {
+            pack_light_bvh(&flat.lights.bvh)?
+        } else {
+            None
+        };
         let table_data = BSSRDFTableData::from_flat(&flat.materials.bssrdf_tables)?;
         let bssrdf_tables = table_data.upload(device)?;
         let bssrdf_materials =

@@ -10,6 +10,8 @@ use crate::util::transform::Transform as CpuTransform;
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMeshShape {
     pub source_shape: String,
+    /// Analytic object-space bounds of the source quadric, matching v4 `Shape::Bounds`.
+    pub object_bounds: Option<[[f32; 3]; 2]>,
     pub positions: Vec<Vec3f>,
     pub indices: Vec<u32>,
     /// Object-space normals before ReverseOrientation.
@@ -115,6 +117,7 @@ pub fn triangle_mesh_from_params(
 
     Ok(Some(TriangleMeshShape {
         source_shape: "trianglemesh".to_string(),
+        object_bounds: None,
         positions,
         indices,
         normals: node_vec3_attribute(params, "N", vertex_count)?,
@@ -171,6 +174,7 @@ pub fn loop_subdiv_mesh_from_params(
     });
     Ok(Some(TriangleMeshShape {
         source_shape: "loopsubdiv".to_string(),
+        object_bounds: None,
         positions,
         indices: mesh.vertex_indices.clone(),
         normals,
@@ -293,6 +297,7 @@ pub fn complete_triangle_attributes(
     });
     Ok(TriangleMeshShape {
         source_shape: shape.source_shape,
+        object_bounds: shape.object_bounds,
         positions: shape.positions,
         indices: shape.indices,
         normals: shape.normals,
@@ -555,6 +560,7 @@ fn tri_quad_mesh_to_node_mesh(mesh: &TriQuadMesh) -> Option<TriangleMeshShape> {
     };
     Some(TriangleMeshShape {
         source_shape: "plymesh".to_string(),
+        object_bounds: None,
         positions,
         indices: mesh.tri_indices.clone(),
         normals,

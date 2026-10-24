@@ -51,6 +51,7 @@ fn triangle_node(name: &str, material: &str, offset: [f32; 3]) -> Arc<RwLock<Nod
     node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
             source_shape: "trianglemesh".to_string(),
+            object_bounds: None,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -287,6 +288,7 @@ fn flatten_node_resolves_medium_interface_and_camera_medium() {
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
             source_shape: "trianglemesh".to_string(),
+            object_bounds: None,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -652,6 +654,7 @@ fn flatten_node_allows_a_medium_interface_shape_with_no_material() {
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
             source_shape: "trianglemesh".to_string(),
+            object_bounds: None,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -694,6 +697,7 @@ fn flatten_node_rejects_an_area_light_on_a_shape_with_no_material() {
     shape_node.add_component(Component::Shape(ShapeComponent {
         shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
             source_shape: "trianglemesh".to_string(),
+            object_bounds: None,
             positions: vec![
                 Vec3f([0.0, 0.0, 0.0]),
                 Vec3f([1.0, 0.0, 0.0]),
@@ -2593,6 +2597,7 @@ fn node_ir_preparation_completes_missing_mesh_uvs_before_flattening() {
 fn missing_normals_are_left_for_shade_surface_to_recompute() {
     let mesh = TriangleMeshShape {
         source_shape: "trianglemesh".to_string(),
+        object_bounds: None,
         positions: vec![
             Vec3f([0.0, 0.0, 0.0]),
             Vec3f([1.0, 0.0, 0.0]),

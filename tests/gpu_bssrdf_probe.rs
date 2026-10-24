@@ -98,6 +98,7 @@ fn plane_scene(context: &Context) -> Scene {
         plane.add_component(Component::Shape(ShapeComponent {
             shape: Shape::TriangleMesh(Box::new(TriangleMeshShape {
                 source_shape: "trianglemesh".into(),
+                object_bounds: None,
                 positions: vec![
                     Vec3f([-100.0, -100.0, z]),
                     Vec3f([100.0, -100.0, z]),

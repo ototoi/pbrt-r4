@@ -8,8 +8,9 @@ use pbrt_r4::gpu::webgpu::abi::{
 };
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::light_sampler::{pack_exhaustive_bounds, pack_power_weights};
-use pbrt_r4::util::base::{Normal3f, Point3f, Vector3f};
+use pbrt_r4::util::base::{Normal3f, Point3f, Vector3f, FLOAT_ONE_MINUS_EPSILON};
 use pbrt_r4::util::geometry::Bounds3f;
+use pbrt_r4::util::rng::{mix_bits, RNG};
 use wgpu::util::DeviceExt;
 
 const DRAWS: usize = 4096;
@@ -42,12 +43,24 @@ struct Probe {
 
 impl Probe {
     fn new() -> Self {
-        let source = [
-            include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
-            include_str!("../src/gpu/webgpu/shaders/lib/light_samplers.wgsl"),
-            PROBE,
-        ]
-        .join("\n");
+        let sampler = include_str!("../src/gpu/webgpu/shaders/sampler.wgsl");
+        let mut source = include_str!("../src/gpu/webgpu/shaders/types.wgsl").to_owned();
+        for name in [
+            "u64_add",
+            "u32_mul_wide",
+            "u64_mul",
+            "u64_shr",
+            "u64_shl",
+            "mix_bits",
+            "pcg_step",
+        ] {
+            source.push_str(shader_definition(sampler, &format!("fn {name}(")));
+            source.push('\n');
+        }
+        source.push_str(include_str!(
+            "../src/gpu/webgpu/shaders/lib/light_samplers.wgsl"
+        ));
+        source.push_str(PROBE);
         Self::with_source(source)
     }
 
@@ -222,6 +235,55 @@ fn check_draws(draws: &[[u32; 4]], expected: &[f32]) {
     }
 }
 
+/// v4 `ExhaustiveLightSampler::Sample` for the probe's `u = (i + 0.5) / DRAWS`.
+fn v4_exhaustive_sample(u: f32, weights: &[f32], infinite: u32) -> Option<(u32, f32)> {
+    let groups = infinite + u32::from(!weights.is_empty());
+    if groups == 0 {
+        return None;
+    }
+    let p_infinite = infinite as f32 / groups as f32;
+    if u < p_infinite {
+        let index = ((u / p_infinite * infinite as f32) as u32).min(infinite - 1);
+        return Some((weights.len() as u32 + index, p_infinite / infinite as f32));
+    }
+    let u = ((u - p_infinite) / (1.0 - p_infinite)).min(FLOAT_ONE_MINUS_EPSILON);
+    let mut rng = RNG::new_sequence(mix_bits(u64::from(u.to_bits())));
+    let mut weight_sum = 0.0f32;
+    let mut reservoir = None;
+    for (index, &weight) in weights.iter().enumerate() {
+        weight_sum += weight;
+        if rng.uniform_float32() < weight / weight_sum {
+            reservoir = Some((index as u32, weight));
+        }
+    }
+    if !(weight_sum > 0.0) {
+        return None;
+    }
+    reservoir.map(|(index, weight)| (index, (1.0 - p_infinite) * (weight / weight_sum)))
+}
+
+fn check_exhaustive_draws(draws: &[[u32; 4]], weights: &[f32], infinite: u32, expected: &[f32]) {
+    for (index, draw) in draws.iter().enumerate() {
+        let u = (index as f32 + 0.5) / DRAWS as f32;
+        match v4_exhaustive_sample(u, weights, infinite) {
+            Some((handle, pmf)) => {
+                assert_eq!(draw[0], handle, "u={u}");
+                assert_probability(f32::from_bits(draw[1]), pmf);
+                assert_probability(f32::from_bits(draw[2]), expected[handle as usize]);
+            }
+            None => {
+                assert_eq!(draw[0], u32::MAX, "u={u}");
+                assert_eq!(f32::from_bits(draw[1]), 0.0);
+            }
+        }
+        let handle = index % (expected.len() + 1);
+        assert_probability(
+            f32::from_bits(draw[3]),
+            expected.get(handle).copied().unwrap_or(0.0),
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires a WebGPU adapter; does not require ray-query support"]
 fn wgsl_power_and_exhaustive_samples_and_pmfs_match_v4_distributions() {
@@ -298,7 +360,7 @@ fn wgsl_power_and_exhaustive_samples_and_pmfs_match_v4_distributions() {
                 p,
                 n,
             );
-            check_draws(&draws, &expected);
+            check_exhaustive_draws(&draws, &weights, infinite, &expected);
         }
     }
 }

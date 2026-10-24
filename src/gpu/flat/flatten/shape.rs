@@ -117,6 +117,7 @@ pub fn geometry_index(
         first_index,
         index_count,
     });
+    builder.object_bounds.push(shape.object_bounds);
     builder.geometries_by_shape.insert(key, geometry);
     Ok(geometry)
 }

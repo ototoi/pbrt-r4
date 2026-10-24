@@ -8,7 +8,6 @@ pub type NodeRef = Arc<RwLock<Node>>;
 pub struct Node {
     pub name: String,
     pub transform: Transform,
-    pub power_weights: Option<(Vec<f32>, Vec<f32>)>,
     pub components: Vec<Component>,
     pub children: Vec<NodeRef>,
 }
@@ -18,7 +17,6 @@ impl Node {
         Node {
             name: name.to_string(),
             transform: Transform::default(),
-            power_weights: None,
             components: Vec::new(),
             children: Vec::new(),
         }
