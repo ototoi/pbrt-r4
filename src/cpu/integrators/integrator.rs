@@ -51,6 +51,30 @@ impl IntegratorBase {
         self.aggregate.bounds()
     }
 
+    /// pbrt-v4 power weights for finite non-area lights and infinite lights.
+    /// Area weights are omitted because the WebGPU path combines all
+    /// triangles in one emissive shape into one sampleable light.
+    pub fn light_power_weights(&self) -> (Vec<Float>, Vec<Float>) {
+        let lambda = SampledWavelengths::sample_visible(0.5);
+        let lambda_pdf = lambda.pdf_spectrum();
+        let power = |light: &Arc<Light>| {
+            Float::max(0.0, safe_div(light.phi(&lambda), lambda_pdf).average())
+        };
+        let finite = self
+            .lights
+            .iter()
+            .filter(|light| !light.is_area() && light.bounds().is_some())
+            .map(power)
+            .collect();
+        let infinite = self
+            .lights
+            .iter()
+            .filter(|light| !light.is_area() && light.bounds().is_none())
+            .map(power)
+            .collect();
+        (finite, infinite)
+    }
+
     /// Direct ray intersection -- pbrt-v4 `Integrator::Intersect`.
     pub fn intersect(&self, ray: &Ray, t_max: Float) -> Option<ShapeIntersection> {
         self.aggregate.intersect(ray, t_max)
@@ -148,6 +172,9 @@ unsafe impl Sync for IntegratorBase {}
 pub trait Integrator {
     fn render(&mut self);
     fn get_camera(&self) -> Arc<Camera>;
+    fn light_power_weights(&self) -> Option<(Vec<Float>, Vec<Float>)> {
+        None
+    }
     fn add_display(&self, display: &Arc<RwLock<dyn Display>>) {
         let camera = self.get_camera();
         let film = camera.get_film();

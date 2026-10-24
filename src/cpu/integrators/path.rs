@@ -164,6 +164,10 @@ impl Integrator for PathIntegrator {
     fn get_camera(&self) -> Arc<Camera> {
         self.base.camera.clone()
     }
+
+    fn light_power_weights(&self) -> Option<(Vec<Float>, Vec<Float>)> {
+        Some(self.base.base.base.light_power_weights())
+    }
 }
 
 impl RayIntegrator for PathIntegrator {

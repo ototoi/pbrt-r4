@@ -88,6 +88,26 @@ impl SceneBuilder {
         let render_from_world = camera_transform.render_from_world();
         let texture_nodes = self.build_texture_resources(&render_from_world)?;
         let texture_lookup = texture_node_lookup(&texture_nodes);
+        let power_weights = if self.integrator_params.get_one_string("lightsampler", "bvh")
+            == "power"
+            && self.lights.len() + self.area_lights.len() > 1
+        {
+            let cpu_integrator = self.build()?;
+            let integrator = cpu_integrator
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (finite, infinite) = integrator.light_power_weights().ok_or_else(|| {
+                PbrtError::error(
+                    "Power sampler weights are unavailable for the selected CPU integrator.",
+                )
+            })?;
+            Some((
+                finite.into_iter().map(|weight| weight as f32).collect(),
+                infinite.into_iter().map(|weight| weight as f32).collect(),
+            ))
+        } else {
+            None
+        };
         let mut named_media = HashMap::new();
         let mut media = Vec::with_capacity(self.media.len());
         let mut sorted_media: Vec<_> = self.media.iter().collect();
@@ -105,6 +125,7 @@ impl SceneBuilder {
         }
         let mut root_node = Node::new("root");
         root_node.transform = node_transform(&render_from_world);
+        root_node.power_weights = power_weights;
         root_node.add_component(Component::Scene(SceneComponent {
             scene: Scene {
                 texture_nodes,

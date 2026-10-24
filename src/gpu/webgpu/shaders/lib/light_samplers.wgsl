@@ -209,7 +209,154 @@ fn bvh_light_sampler_pmf_for_handle(light_handle: u32, p: vec3<f32>, n: vec3<f32
     return 0.0;
 }
 
+fn exhaustive_light_bound(index: u32) -> DecodedLightBVHNode {
+    let offset = light_table.light_sampler_data_offset + 1u + index * 14u;
+    return DecodedLightBVHNode(
+        vec3<f32>(
+            bitcast<f32>(light_sampler_data[offset + 1u]),
+            bitcast<f32>(light_sampler_data[offset + 2u]),
+            bitcast<f32>(light_sampler_data[offset + 3u]),
+        ),
+        vec3<f32>(
+            bitcast<f32>(light_sampler_data[offset + 4u]),
+            bitcast<f32>(light_sampler_data[offset + 5u]),
+            bitcast<f32>(light_sampler_data[offset + 6u]),
+        ),
+        vec3<f32>(
+            bitcast<f32>(light_sampler_data[offset + 7u]),
+            bitcast<f32>(light_sampler_data[offset + 8u]),
+            bitcast<f32>(light_sampler_data[offset + 9u]),
+        ),
+        bitcast<f32>(light_sampler_data[offset + 10u]),
+        bitcast<f32>(light_sampler_data[offset + 11u]),
+        bitcast<f32>(light_sampler_data[offset + 12u]),
+        light_sampler_data[offset + 13u] != 0u,
+        light_sampler_data[offset],
+        true,
+    );
+}
+
+fn exhaustive_importance_sum(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    let bounded_count = light_sampler_data[light_table.light_sampler_data_offset];
+    var total = 0.0;
+    for (var index = 0u; index < bounded_count; index++) {
+        total += compact_light_bounds_importance(exhaustive_light_bound(index), p, n);
+    }
+    return total;
+}
+
+fn exhaustive_light_sampler_pmf(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (light_handle >= light_table.light_count) {
+        return 0.0;
+    }
+    let bounded_count = light_sampler_data[light_table.light_sampler_data_offset];
+    let has_bounded = select(0u, 1u, bounded_count > 0u);
+    let group_count = light_table.infinite_light_count + has_bounded;
+    if (group_count == 0u) {
+        return 0.0;
+    }
+    let p_infinite = f32(light_table.infinite_light_count) / f32(group_count);
+    if (light_handle >= light_table.finite_light_count) {
+        if (light_table.infinite_light_count == 0u) {
+            return 0.0;
+        }
+        return p_infinite / f32(light_table.infinite_light_count);
+    }
+    if (bounded_count == 0u) {
+        return 0.0;
+    }
+    var importance = 0.0;
+    for (var index = 0u; index < bounded_count; index++) {
+        let bound = exhaustive_light_bound(index);
+        if (bound.payload == light_handle) {
+            importance = compact_light_bounds_importance(bound, p, n);
+            break;
+        }
+    }
+    let sum = exhaustive_importance_sum(p, n);
+    return (1.0 - p_infinite) * importance / sum;
+}
+
+fn exhaustive_light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
+    let bounded_count = light_sampler_data[light_table.light_sampler_data_offset];
+    let has_bounded = select(0u, 1u, bounded_count > 0u);
+    let group_count = light_table.infinite_light_count + has_bounded;
+    if (group_count == 0u) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    let p_infinite = f32(light_table.infinite_light_count) / f32(group_count);
+    let u = min(selector, 0.99999994);
+    if (u < p_infinite) {
+        let infinite_selector = u / p_infinite;
+        let offset = min(
+            u32(infinite_selector * f32(light_table.infinite_light_count)),
+            light_table.infinite_light_count - 1u,
+        );
+        return LightSelection(
+            light_table.finite_light_count + offset,
+            p_infinite / f32(light_table.infinite_light_count),
+        );
+    }
+    if (bounded_count == 0u) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    let bounded_selector = min((u - p_infinite) / (1.0 - p_infinite), 0.99999994);
+    let sum = exhaustive_importance_sum(p, n);
+    if (sum <= 0.0) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    let target = bounded_selector * sum;
+    var cumulative = 0.0;
+    for (var index = 0u; index < bounded_count; index++) {
+        let bound = exhaustive_light_bound(index);
+        let importance = compact_light_bounds_importance(bound, p, n);
+        cumulative += importance;
+        if (target < cumulative || index + 1u == bounded_count) {
+            return LightSelection(
+                bound.payload,
+                (1.0 - p_infinite) * importance / sum,
+            );
+        }
+    }
+    return LightSelection(0xffffffffu, 0.0);
+}
+
+fn power_light_sampler_pmf(light_handle: u32) -> f32 {
+    let count = light_sampler_data[light_table.light_sampler_data_offset];
+    if (light_handle >= count) {
+        return 0.0;
+    }
+    let offset = light_table.light_sampler_data_offset + 1u + light_handle * 3u;
+    return bitcast<f32>(light_sampler_data[offset + 1u]);
+}
+
+fn power_light_sampler_sample(selector: f32) -> LightSelection {
+    let count = light_sampler_data[light_table.light_sampler_data_offset];
+    if (count == 0u) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    let scaled = min(selector, 0.99999994) * f32(count);
+    let bin = min(u32(scaled), count - 1u);
+    let fraction = min(scaled - f32(bin), 0.99999994);
+    let offset = light_table.light_sampler_data_offset + 1u + bin * 3u;
+    let q = bitcast<f32>(light_sampler_data[offset]);
+    var selected = bin;
+    if (fraction >= q) {
+        selected = light_sampler_data[offset + 2u];
+    }
+    if (selected >= count) {
+        return LightSelection(0xffffffffu, 0.0);
+    }
+    return LightSelection(selected, power_light_sampler_pmf(selected));
+}
+
 fn light_sampler_pmf(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_POWER) {
+        return power_light_sampler_pmf(light_handle);
+    }
+    if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_EXHAUSTIVE) {
+        return exhaustive_light_sampler_pmf(light_handle, p, n);
+    }
     if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         let finite_group_count = select(0u, 1u, light_table.light_bvh_node_count > 0u);
         let group_count = light_table.infinite_light_count + finite_group_count;
@@ -229,6 +376,12 @@ fn light_sampler_pmf(light_handle: u32, p: vec3<f32>, n: vec3<f32>) -> f32 {
 }
 
 fn light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) -> LightSelection {
+    if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_POWER) {
+        return power_light_sampler_sample(selector);
+    }
+    if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_EXHAUSTIVE) {
+        return exhaustive_light_sampler_sample(selector, p, n);
+    }
     if (light_table.light_sampler_kind == LIGHT_SAMPLER_KIND_BVH) {
         let finite_group_count = select(0u, 1u, light_table.light_bvh_node_count > 0u);
         let group_count = light_table.infinite_light_count + finite_group_count;

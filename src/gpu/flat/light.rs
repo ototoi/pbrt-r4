@@ -102,6 +102,7 @@ pub struct InfiniteLightResources {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightResources {
+    pub power_weights: Option<Vec<f32>>,
     pub sampling_models: Vec<LightSamplingModel>,
     pub positions: Vec<[f32; 3]>,
     pub triangle_distributions: Vec<TriangleDistributionEntry>,

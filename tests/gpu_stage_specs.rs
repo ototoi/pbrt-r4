@@ -33,7 +33,7 @@ fn duplicate_bindings_are_rejected_before_device_creation() {
 #[test]
 fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
     let bindings = canonical_wavefront_bindings();
-    assert_eq!(bindings.len(), 78);
+    assert_eq!(bindings.len(), 79);
     for (index, left) in bindings.iter().enumerate() {
         for right in &bindings[index + 1..] {
             assert!(!(left.group == right.group && left.binding == right.binding));
@@ -62,6 +62,10 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
     assert_eq!(
         bindings.iter().find(|b| b.binding == 48).unwrap().resource,
         ResourceId::MeasuredTable
+    );
+    assert_eq!(
+        bindings.iter().find(|b| b.binding == 50).unwrap().resource,
+        ResourceId::LightSamplerData
     );
     assert_eq!(
         bindings.iter().find(|b| b.binding == 10).unwrap().resource,
@@ -96,11 +100,11 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
 #[test]
 fn canonical_layout_drives_required_limits() {
     let limits = RequiredLimits::from_bindings(&canonical_wavefront_bindings()).unwrap();
-    assert_eq!(limits.storage_buffers_per_shader_stage, 65);
+    assert_eq!(limits.storage_buffers_per_shader_stage, 66);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 6);
     assert_eq!(
         limits.buffers_and_acceleration_structures_per_shader_stage,
-        72
+        73
     );
     assert_eq!(limits.bind_groups, 2);
 }

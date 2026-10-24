@@ -15,7 +15,9 @@ use crate::util::base::{Point2f, Vector3f};
 use crate::util::error::PbrtError;
 use crate::util::geometry::equal_area_square_to_sphere;
 use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, ACES2065_1, DCI_P3, REC2020, SRGB};
-use crate::util::spectrum::{spectrum_to_photometric, Spectrum, SpectrumType};
+use crate::util::spectrum::{
+    safe_div, spectrum_to_photometric, SampledWavelengths, Spectrum, SpectrumType,
+};
 use crate::util::vecmath::Frame;
 
 use super::super::image_infinite::ImageInfiniteDistribution;
@@ -150,7 +152,7 @@ pub fn spot_light(
     let length =
         (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
             .sqrt();
-    let direction = if length > 0.0 {
+    let local_direction = if length > 0.0 {
         [
             direction[0] / length,
             direction[1] / length,
@@ -170,7 +172,11 @@ pub fn spot_light(
     })?;
     // SpotLight::Create uses worldToLight = Frame::FromZ(to - from)
     // * inverse(base renderFromLight) for direction conversion.
-    let direction_frame = Frame::from_z(Vector3f::new(direction[0], direction[1], direction[2]));
+    let direction_frame = Frame::from_z(Vector3f::new(
+        local_direction[0],
+        local_direction[1],
+        local_direction[2],
+    ));
     let frame_rows = [
         [
             direction_frame.x.x,
@@ -196,6 +202,15 @@ pub fn spot_light(
                 .sum();
         }
     }
+    let world_direction = transform_vector(&transform, local_direction);
+    let world_direction_length = dot(world_direction, world_direction).sqrt();
+    if !world_direction_length.is_finite() || world_direction_length == 0.0 {
+        return Err(PbrtError::error(&format!(
+            "Spot light on node \"{}\" has an invalid world direction.",
+            node_name
+        )));
+    }
+    let direction = scale3(world_direction, 1.0 / world_direction_length);
     let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let intensity = light
         .params
@@ -410,6 +425,9 @@ pub fn flatten_light(
             sampling_model,
             image_index: INVALID_INDEX,
         });
+        if let Some(weight) = builder.next_cpu_power_weight(true)? {
+            builder.lights.infinite_power_weights.push(weight);
+        }
     } else if light.name == "infinite" {
         let (kind, intensity, base_scale, illuminance) = infinite_light(&light, &name)?;
         let light_transform = multiply_transform(world_transform, &light.transform.matrix);
@@ -581,6 +599,9 @@ pub fn flatten_light(
             sampling_model,
             image_index,
         });
+        if let Some(weight) = builder.next_cpu_power_weight(true)? {
+            builder.lights.infinite_power_weights.push(weight);
+        }
     } else {
         let (
             position,
@@ -645,13 +666,26 @@ pub fn flatten_light(
             flags: 0,
             world_to_light,
         });
-        builder.lights.bound_inputs.push(LightBoundInput::Point {
-            handle: u32::try_from(builder.lights.records.len())
-                .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
-            world_position: position,
-            intensity_max,
-            scale,
-        });
+        let handle = u32::try_from(builder.lights.records.len())
+            .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
+        if kind == LightKind::Spot {
+            builder.lights.bound_inputs.push(LightBoundInput::Spot {
+                handle,
+                world_position: position,
+                direction,
+                intensity_max,
+                scale,
+                cos_theta_o: cos_start,
+                cos_falloff_end: cos_end,
+            });
+        } else {
+            builder.lights.bound_inputs.push(LightBoundInput::Point {
+                handle,
+                world_position: position,
+                intensity_max,
+                scale,
+            });
+        }
         let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
         let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
         let mut attributes = vec![i_attr, scale_attr];
@@ -669,6 +703,9 @@ pub fn flatten_light(
             sampling_model,
             image_index: INVALID_INDEX,
         });
+        if let Some(weight) = builder.next_cpu_power_weight(false)? {
+            builder.lights.power_weights.push(weight);
+        }
     }
     Ok(())
 }
@@ -718,7 +755,16 @@ pub fn append_area_light(
             continue;
         }
         let mut geometric_normal = triangle_geometric_normal(positions)?;
-        if reverse_orientation ^ transform_swaps_handedness(*world_transform) {
+        if let Some(normals) = &shape.normals {
+            let normal_sum = [i0, i1, i2].into_iter().try_fold([0.0; 3], |sum, index| {
+                let normal = crate::gpu::flat::transform_normal(*world_transform, normals[index].0)
+                    .map_err(PbrtError::error)?;
+                Ok::<_, PbrtError>([sum[0] + normal[0], sum[1] + normal[1], sum[2] + normal[2]])
+            })?;
+            if dot(geometric_normal, normal_sum) < 0.0 {
+                geometric_normal = scale3(geometric_normal, -1.0);
+            }
+        } else if reverse_orientation ^ transform_swaps_handedness(*world_transform) {
             geometric_normal = scale3(geometric_normal, -1.0);
         }
         total_area += area;
@@ -781,6 +827,13 @@ pub fn append_area_light(
         sampling_model,
         image_index: INVALID_INDEX,
     });
+    if builder.cpu_power_weights.is_some() {
+        let lambda = SampledWavelengths::sample_visible(0.5);
+        let phi = emission.sample(&lambda)
+            * (scale * total_area * std::f32::consts::PI * if two_sided { 2.0 } else { 1.0 });
+        let weight = safe_div(phi, lambda.pdf_spectrum()).average().max(0.0);
+        builder.lights.power_weights.push(weight);
+    }
     builder
         .lights
         .bound_inputs

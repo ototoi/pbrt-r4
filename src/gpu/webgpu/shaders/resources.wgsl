@@ -116,6 +116,8 @@ var<storage, read> measured_bsdfs: array<MeasuredBsdfRecord>;
 var<storage, read> measured_tables: array<MeasuredTableRecord>;
 @group(0) @binding(49)
 var sampler_table: texture_2d<u32>;
+@group(0) @binding(50)
+var<storage, read> light_sampler_data: array<u32>;
 @group(0) @binding(36)
 var<storage, read> light_positions: array<vec4<f32>>;
 @group(0) @binding(60)

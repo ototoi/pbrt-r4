@@ -129,6 +129,27 @@ pub fn flatten_node_with_material_override(
         &builder.instances,
         &builder.geometry.geometries,
     )?;
+    let expected_power_weight_count =
+        builder.lights.records.len() + builder.lights.infinite_records.len();
+    let power_weights = if let Some((finite, infinite)) = builder.cpu_power_weights {
+        if builder.cpu_finite_power_cursor != finite.len()
+            || builder.cpu_infinite_power_cursor != infinite.len()
+        {
+            return Err(PbrtError::error(
+                "Power sampler concrete Phi weights do not match flattened non-area light handles.",
+            ));
+        }
+        let mut weights = builder.lights.power_weights;
+        weights.extend(builder.lights.infinite_power_weights);
+        if weights.len() != expected_power_weight_count {
+            return Err(PbrtError::error(
+                "Power sampler weights do not match flattened global light handles.",
+            ));
+        }
+        Some(weights)
+    } else {
+        None
+    };
     let scene = Scene {
         camera,
         viewport,
@@ -136,6 +157,7 @@ pub fn flatten_node_with_material_override(
         output,
         render_settings,
         lights: LightResources {
+            power_weights,
             sampling_models: builder.lights.sampling_models,
             positions: builder.lights.positions,
             triangle_distributions: builder.lights.triangle_distributions,
@@ -300,6 +322,27 @@ struct FlatBuilder {
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     lights: LightBuilder,
+    cpu_power_weights: Option<(Vec<f32>, Vec<f32>)>,
+    cpu_finite_power_cursor: usize,
+    cpu_infinite_power_cursor: usize,
+}
+
+impl FlatBuilder {
+    fn next_cpu_power_weight(&mut self, infinite: bool) -> Result<Option<f32>, PbrtError> {
+        let Some((finite, infinite_weights)) = &self.cpu_power_weights else {
+            return Ok(None);
+        };
+        let (weights, cursor) = if infinite {
+            (infinite_weights, &mut self.cpu_infinite_power_cursor)
+        } else {
+            (finite, &mut self.cpu_finite_power_cursor)
+        };
+        let weight = *weights.get(*cursor).ok_or_else(|| {
+            PbrtError::error("Power sampler concrete Phi weights ran out of light handles.")
+        })?;
+        *cursor += 1;
+        Ok(Some(weight))
+    }
 }
 
 #[derive(Default)]
@@ -327,6 +370,8 @@ struct LightBuilder {
     records: Vec<Light>,
     infinite_records: Vec<Light>,
     bound_inputs: Vec<LightBoundInput>,
+    power_weights: Vec<f32>,
+    infinite_power_weights: Vec<f32>,
     infinite_resources: InfiniteLightBuilder,
 }
 

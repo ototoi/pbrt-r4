@@ -31,6 +31,22 @@ fn multiple_area_light_groups_render_through_gpu_uniform_sampler() {
 
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn multiple_area_light_groups_render_through_gpu_exhaustive_sampler() {
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scenes/gpu-wavefront-multiple-area-diffuse.pbrt");
+    render_and_validate_with_sampler(&scene, Some("exhaustive"));
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn multiple_area_light_groups_render_through_gpu_power_sampler() {
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scenes/gpu-wavefront-multiple-area-diffuse.pbrt");
+    render_and_validate_with_sampler(&scene, Some("power"));
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn indirect_area_light_hit_adds_emission_at_maxdepth_two() {
     let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scenes/gpu-wavefront-multiple-area-diffuse.pbrt");

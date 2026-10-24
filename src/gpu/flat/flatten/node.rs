@@ -30,6 +30,7 @@ pub fn flatten_node_ref(
     let (
         name,
         local_transform,
+        power_weights,
         camera,
         film,
         filter,
@@ -242,6 +243,7 @@ pub fn flatten_node_ref(
         (
             node.name.clone(),
             node.transform.matrix,
+            node.power_weights.clone(),
             camera,
             film,
             filter,
@@ -255,6 +257,14 @@ pub fn flatten_node_ref(
             node.children.clone(),
         )
     };
+
+    if let Some(power_weights) = power_weights {
+        if stack.len() != 1 || builder.cpu_power_weights.replace(power_weights).is_some() {
+            return Err(PbrtError::error(
+                "Power sampler weights must be attached to the GPU root node exactly once.",
+            ));
+        }
+    }
 
     let world_transform = multiply_transform(parent_transform, &local_transform);
     let shape_transform = multiply_transform(shape_parent_transform, &local_transform);
