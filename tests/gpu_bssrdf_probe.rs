@@ -4,7 +4,7 @@ use bytemuck::{bytes_of, cast_slice, Zeroable};
 use pbrt_r4::base::bxdf::TransportMode;
 use pbrt_r4::bssrdf::{BSSRDFTable, SubsurfaceInteraction, TabulatedBSSRDF};
 use pbrt_r4::bxdfs::NormalizedFresnelBxDF;
-use pbrt_r4::gpu::flat::{flatten_node, TabulatedBSSRDFTable};
+use pbrt_r4::gpu::flat::{flatten_node, tabulate_bssrdf, TabulatedBSSRDFTable};
 use pbrt_r4::gpu::node::*;
 use pbrt_r4::gpu::webgpu::abi::{
     BSSRDFProbeResult, BSSRDFProbeWorkItem, BSSRDFTableRecord, QueueState,
@@ -27,10 +27,7 @@ fn bssrdf_gpu_table_layout_and_packing() {
     assert_eq!(std::mem::size_of::<BSSRDFTableRecord>(), 32);
     assert_eq!(std::mem::size_of::<BSSRDFProbeWorkItem>(), 96);
     assert_eq!(std::mem::size_of::<BSSRDFProbeResult>(), 128);
-    let tables = [
-        TabulatedBSSRDFTable::new(0.0, 1.33),
-        TabulatedBSSRDFTable::new(0.2, 1.5),
-    ];
+    let tables = [tabulate_bssrdf(0.0, 1.33), tabulate_bssrdf(0.2, 1.5)];
     let data = BSSRDFTableData::from_flat(&tables).unwrap();
     assert_eq!(data.records.len(), 2);
     for (table, record) in tables.iter().zip(&data.records) {
@@ -215,7 +212,7 @@ fn gpu_bssrdf_probe_samples_segments_and_same_material_reservoir() {
     )
     .unwrap();
     let scene = plane_scene(&context);
-    let tables = [TabulatedBSSRDFTable::new(0.0, 1.33)];
+    let tables = [tabulate_bssrdf(0.0, 1.33)];
     let work = BSSRDFProbeWorkItem {
         normal: [0.0, 0.0, 1.0, 0.0],
         sigma_t: [1.0; 4],
@@ -478,10 +475,7 @@ fn gpu_bssrdf_sp_pdf_and_normalized_fresnel_match_cpu() {
                 cache: None,
             }),
     };
-    let tables = [
-        TabulatedBSSRDFTable::new(0.0, 1.33),
-        TabulatedBSSRDFTable::new(0.4, 1.5),
-    ];
+    let tables = [tabulate_bssrdf(0.0, 1.33), tabulate_bssrdf(0.4, 1.5)];
     let mut items = Vec::new();
     for table_index in 0..2 {
         for radius in [0.0f32, 0.001, 0.03, 0.3, 1.0, 10.0] {

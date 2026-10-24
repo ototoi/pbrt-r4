@@ -11,24 +11,13 @@ pub struct MaterialTable {
 
 impl MaterialTable {
     pub fn from_flat(scene: &flat::Scene) -> Result<Self, PbrtError> {
+        scene.materials.validate()?;
         let mut attributes = Vec::new();
         let nodes = scene
             .materials
             .nodes
             .iter()
             .map(|material| {
-                if material.kind == "subsurface" {
-                    if material.bssrdf_index as usize >= scene.materials.bssrdfs.len() {
-                        return Err(PbrtError::error(
-                            "Subsurface material references an invalid BSSRDF.",
-                        ));
-                    }
-                } else if material.bssrdf_index != flat::INVALID_INDEX {
-                    return Err(PbrtError::error(
-                        "Only subsurface materials may reference a BSSRDF.",
-                    ));
-                }
-                validate_material_attributes(material)?;
                 let offset = attributes.len() as u32;
                 for attr in &material.attributes {
                     let kind = match attr.kind {
@@ -42,8 +31,8 @@ impl MaterialTable {
                         index: attr.index,
                     });
                 }
-                Ok(MaterialNode {
-                    kind: MaterialKind::from_flat(&material.kind)?.tag(),
+                MaterialNode {
+                    kind: MaterialKind::from(material.kind).tag(),
                     attribute_offset: offset,
                     attribute_count: material.attributes.len() as u32,
                     parent: material.parent,
@@ -53,141 +42,23 @@ impl MaterialTable {
                     displacement_texture_root: material.displacement_texture_root,
                     bssrdf_index: material.bssrdf_index,
                     padding: [0; 3],
-                })
+                }
             })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
+            .collect();
         let roots = scene
             .materials
             .roots
             .iter()
-            .map(|layout| {
-                if nodes.get(layout.node_offset as usize).is_none() {
-                    return Err(PbrtError::error("Flat material root node is missing."));
-                }
-                Ok(MaterialRoot {
-                    node_offset: layout.node_offset,
-                    node_count: layout.node_count,
-                })
+            .map(|layout| MaterialRoot {
+                node_offset: layout.node_offset,
+                node_count: layout.node_count,
             })
-            .collect::<Result<Vec<_>, PbrtError>>()?;
+            .collect();
         Ok(Self {
             roots,
             nodes,
             attributes,
         })
-    }
-}
-
-fn validate_material_attributes(material: &flat::MaterialNode) -> Result<(), PbrtError> {
-    let expected = match material.kind.as_str() {
-        "diffuse" => &[(0, flat::AttributeKind::Spectrum)][..],
-        "dielectric" => &[
-            (0, flat::AttributeKind::Spectrum),
-            (1, flat::AttributeKind::Scalar),
-            (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
-        ][..],
-        "subsurface" => &[
-            (0, flat::AttributeKind::Spectrum),
-            (1, flat::AttributeKind::Scalar),
-            (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
-            (4, flat::AttributeKind::Spectrum),
-            (5, flat::AttributeKind::Spectrum),
-        ][..],
-        "thindielectric" => &[(0, flat::AttributeKind::Spectrum)][..],
-        "diffusetransmission" => &[
-            (0, flat::AttributeKind::Spectrum),
-            (1, flat::AttributeKind::Spectrum),
-            (2, flat::AttributeKind::Scalar),
-        ][..],
-        "conductor_eta_k" => &[
-            (0, flat::AttributeKind::Spectrum),
-            (1, flat::AttributeKind::Spectrum),
-            (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
-        ][..],
-        "conductor_reflectance" => &[
-            (0, flat::AttributeKind::Spectrum),
-            (1, flat::AttributeKind::Scalar),
-            (2, flat::AttributeKind::Scalar),
-        ][..],
-        "mix" => &[(0, flat::AttributeKind::Scalar)][..],
-        "coateddiffuse" => &[
-            (0, flat::AttributeKind::Scalar),
-            (1, flat::AttributeKind::Spectrum),
-            (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
-            (4, flat::AttributeKind::Scalar),
-            (5, flat::AttributeKind::Spectrum),
-            (6, flat::AttributeKind::Spectrum),
-            (7, flat::AttributeKind::Scalar),
-            (8, flat::AttributeKind::Scalar),
-            (9, flat::AttributeKind::Scalar),
-        ][..],
-        "coatedconductor" => &[
-            (0, flat::AttributeKind::Scalar),
-            (1, flat::AttributeKind::Spectrum),
-            (2, flat::AttributeKind::Scalar),
-            (3, flat::AttributeKind::Scalar),
-            (4, flat::AttributeKind::Scalar),
-            (5, flat::AttributeKind::Spectrum),
-            (6, flat::AttributeKind::Scalar),
-            (7, flat::AttributeKind::Scalar),
-            (8, flat::AttributeKind::Spectrum),
-            (9, flat::AttributeKind::Spectrum),
-            (10, flat::AttributeKind::Scalar),
-            (11, flat::AttributeKind::Scalar),
-            (12, flat::AttributeKind::Scalar),
-            (13, flat::AttributeKind::Spectrum),
-            (14, flat::AttributeKind::Scalar),
-        ][..],
-        "measured" => &[(0, flat::AttributeKind::Measured)][..],
-        other => {
-            return Err(PbrtError::error(&format!(
-                "Unsupported WebGPU material kind in attribute validation: {other}."
-            )))
-        }
-    };
-    if material.attributes.len() != expected.len()
-        || material
-            .attributes
-            .iter()
-            .zip(expected)
-            .any(|(actual, (_, expected_kind))| {
-                actual.kind != *expected_kind
-                    && !(*expected_kind == flat::AttributeKind::Spectrum
-                        && actual.kind == flat::AttributeKind::Texture)
-                    && !(*expected_kind == flat::AttributeKind::Scalar
-                        && actual.kind == flat::AttributeKind::Texture)
-            })
-    {
-        let actual = material
-            .attributes
-            .iter()
-            .map(|attribute| {
-                format!(
-                    "{}:{}",
-                    attribute.name,
-                    format_attribute_kind(attribute.kind)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(PbrtError::error(&format!(
-            "Material \"{}\" kind \"{}\" has invalid GPU attributes: [{actual}].",
-            material.source_kind, material.kind
-        )));
-    }
-    Ok(())
-}
-
-fn format_attribute_kind(kind: flat::AttributeKind) -> &'static str {
-    match kind {
-        flat::AttributeKind::Scalar => "scalar",
-        flat::AttributeKind::Spectrum => "spectrum",
-        flat::AttributeKind::Texture => "texture",
-        flat::AttributeKind::Measured => "measured",
     }
 }
 
@@ -231,28 +102,6 @@ impl MaterialKind {
         }
     }
 
-    pub fn from_flat(kind: &str) -> Result<Self, PbrtError> {
-        match kind {
-            "normal" => Ok(Self::Normal),
-            "uv" => Ok(Self::Uv),
-            "diffuse" => Ok(Self::Diffuse),
-            "lambert" => Ok(Self::Lambert),
-            "dielectric" => Ok(Self::Dielectric),
-            "thindielectric" => Ok(Self::ThinDielectric),
-            "diffusetransmission" => Ok(Self::DiffuseTransmission),
-            "conductor_eta_k" => Ok(Self::ConductorEtaK),
-            "conductor_reflectance" => Ok(Self::ConductorReflectance),
-            "mix" => Ok(Self::Mix),
-            "coateddiffuse" => Ok(Self::CoatedDiffuse),
-            "coatedconductor" => Ok(Self::CoatedConductor),
-            "measured" => Ok(Self::Measured),
-            "subsurface" => Ok(Self::Subsurface),
-            other => Err(PbrtError::error(&format!(
-                "Unsupported initial WebGPU material kind: {other}."
-            ))),
-        }
-    }
-
     pub fn from_debug_environment() -> Result<Option<Self>, PbrtError> {
         match std::env::var("PBRT_R4_GPU_DEBUG_MATERIAL") {
             Ok(kind) => match kind.as_str() {
@@ -267,6 +116,24 @@ impl MaterialKind {
             Err(std::env::VarError::NotUnicode(_)) => Err(PbrtError::error(
                 "PBRT_R4_GPU_DEBUG_MATERIAL must be valid UTF-8.",
             )),
+        }
+    }
+}
+
+impl From<flat::MaterialKind> for MaterialKind {
+    fn from(kind: flat::MaterialKind) -> Self {
+        match kind {
+            flat::MaterialKind::Diffuse => Self::Diffuse,
+            flat::MaterialKind::Dielectric => Self::Dielectric,
+            flat::MaterialKind::ThinDielectric => Self::ThinDielectric,
+            flat::MaterialKind::DiffuseTransmission => Self::DiffuseTransmission,
+            flat::MaterialKind::ConductorEtaK => Self::ConductorEtaK,
+            flat::MaterialKind::ConductorReflectance => Self::ConductorReflectance,
+            flat::MaterialKind::Mix => Self::Mix,
+            flat::MaterialKind::CoatedDiffuse => Self::CoatedDiffuse,
+            flat::MaterialKind::CoatedConductor => Self::CoatedConductor,
+            flat::MaterialKind::Measured => Self::Measured,
+            flat::MaterialKind::Subsurface => Self::Subsurface,
         }
     }
 }

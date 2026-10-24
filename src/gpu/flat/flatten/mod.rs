@@ -1,14 +1,14 @@
 use super::image_infinite::ImageInfiniteDistributionTexel;
 use super::portal::{PortalDistributionTexel, PortalImageInfiniteLight};
-use super::texture::{compile_texture_library, TextureRootSpec};
 use super::{
     build_light_bounds, build_light_bvh, identity_transform, inverse_linear_transform,
     multiply_transform, transform_swaps_handedness, AreaTriangleInput, AttributeKind, AttributeRef,
-    AttributeResources, Camera, DenseSpectrumBuilder, Film, Geometry, GeometryResources,
-    ImageInfiniteSamplingRecord, InfiniteLightResources, Instance, Light, LightBoundInput,
-    LightGeometryKind, LightKind, LightResources, LightSamplingModel, MaterialResources, Medium,
-    Output, PrimitiveDistributionMap, Scene, TabulatedBSSRDFTable, Transform,
-    TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex, Viewport, BSSRDF, INVALID_INDEX,
+    AttributeResources, Camera, CameraKind, DenseSpectrumBuilder, Film, Geometry,
+    GeometryResources, ImageInfiniteSamplingRecord, InfiniteLightResources, Instance, Light,
+    LightBoundInput, LightGeometryKind, LightKind, LightResources, LightSamplingModel,
+    MaterialKind, MaterialResources, Medium, Output, PrimitiveDistributionMap, Scene,
+    TabulatedBSSRDFTable, Transform, TriangleDistributionEntry, UnsupportedTexturePolicy, Vertex,
+    Viewport, BSSRDF, INVALID_INDEX,
 };
 use crate::gpu::node::{
     Component, Integrator as NodeIntegrator, Material as NodeMaterial, Medium as NodeMedium,
@@ -25,30 +25,35 @@ use super::geometry::{
 };
 
 mod alpha;
-mod material;
-use material::{build_material_roots, register_material_source, MaterialSourceNode};
-mod material_attributes;
-mod medium;
-pub mod nanovdb;
-mod subsurface;
-mod texture;
-use medium::{register_medium, resolve_medium_reference};
-mod node;
-use node::flatten_node_ref;
-
-mod shape;
-use shape::geometry_index;
-
+mod filter;
 mod infinite_light;
 mod lights;
-use lights::{append_area_light, flatten_light};
+mod material;
+mod material_attributes;
+mod measured;
+mod medium;
+pub mod nanovdb;
+mod node;
 mod power;
-use power::{scene_radius_squared, PowerInput};
-
 mod scene_settings;
+mod shape;
+mod subsurface;
+mod texture;
+
+pub use filter::flatten_filter;
+pub use measured::MeasuredBsdfLibrary;
+pub use subsurface::tabulate_bssrdf;
+pub use texture::{compile_texture_library, TextureRootSpec};
+
+use lights::{append_area_light, flatten_light};
+use material::{build_material_roots, register_material_source, MaterialSourceNode};
+use medium::{register_medium, resolve_medium_reference};
+use node::flatten_node_ref;
+use power::{scene_radius_squared, PowerInput};
 use scene_settings::{
     region_bounds, register_root_component, render_settings, screen_window, viewport_resolution,
 };
+use shape::geometry_index;
 
 const MAX_LAYER_DEPTH: i32 = 32;
 const MAX_LAYER_SAMPLES: i32 = 32;
@@ -65,7 +70,7 @@ pub fn flatten_node(root: NodeRef) -> Result<Scene, PbrtError> {
 
 pub fn flatten_node_with_material_override(
     root: NodeRef,
-    material_kind: Option<&str>,
+    material_kind: Option<MaterialKind>,
 ) -> Result<Scene, PbrtError> {
     let mut builder = FlatBuilder::default();
     let mut stack = Vec::new();
@@ -205,6 +210,7 @@ pub fn flatten_node_with_material_override(
         },
         texture_library,
     };
+    scene.materials.validate()?;
     scene.lights.validate_consistency(&scene.texture_library)?;
     Ok(scene)
 }
@@ -360,7 +366,7 @@ struct MaterialBuilder {
     source_nodes: Vec<MaterialSourceNode>,
     bssrdfs: Vec<BSSRDF>,
     bssrdf_tables: Vec<TabulatedBSSRDFTable>,
-    measured_bsdf_library: super::MeasuredBsdfLibrary,
+    measured_bsdf_library: MeasuredBsdfLibrary,
 }
 
 #[derive(Default)]
