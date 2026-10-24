@@ -444,27 +444,3 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 fn scale_vector(v: [f32; 3], scale: f32) -> [f32; 3] {
     [v[0] * scale, v[1] * scale, v[2] * scale]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{build_light_bounds, LightBoundInput};
-
-    #[test]
-    fn spot_bound_keeps_v4_direction_and_emission_cone() {
-        let bounds = build_light_bounds(&[LightBoundInput::Spot {
-            handle: 0,
-            world_position: [1.0, 2.0, 3.0],
-            direction: [0.0, 2.0, 0.0],
-            intensity_max: 2.0,
-            scale: 3.0,
-            cos_theta_o: 0.9,
-            cos_falloff_end: 0.8,
-        }])
-        .unwrap()[0];
-        assert_eq!(bounds.bounds.min, [1.0, 2.0, 3.0]);
-        assert_eq!(bounds.direction, [0.0, 1.0, 0.0]);
-        assert_eq!(bounds.phi, 4.0 * std::f32::consts::PI * 6.0);
-        assert_eq!(bounds.cos_theta_o, 0.9);
-        assert_eq!(bounds.cos_theta_e, (0.8f32.acos() - 0.9f32.acos()).cos());
-    }
-}

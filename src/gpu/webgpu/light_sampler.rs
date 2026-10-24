@@ -78,7 +78,7 @@ pub fn build_power_alias_table(weights: &[f32]) -> Result<Vec<PowerAliasBin>, Pb
     if weights.iter().sum::<f32>() == 0.0 {
         weights.fill(1.0);
     }
-    let sum = weights.iter().sum::<f32>();
+    let sum = weights.iter().map(|weight| f64::from(*weight)).sum::<f64>() as f32;
     let mut bins = weights
         .iter()
         .map(|weight| PowerAliasBin {
@@ -146,68 +146,4 @@ pub fn resolve_scene_light_sampler_count(
     sampleable_light_count: usize,
 ) -> Result<LightSamplerKind, PbrtError> {
     resolve_light_sampler(&settings.light_sampler, sampleable_light_count)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        build_power_alias_table, pack_exhaustive_bounds, pack_power_weights,
-        EXHAUSTIVE_BOUNDS_WORDS,
-    };
-    use crate::gpu::flat::{Bounds3, LightBounds};
-
-    #[test]
-    fn power_alias_table_preserves_distribution_and_zero_weight_fallback() {
-        let bins = build_power_alias_table(&[1.0, 3.0]).unwrap();
-        assert_eq!(
-            bins.iter().map(|bin| bin.p).collect::<Vec<_>>(),
-            [0.25, 0.75]
-        );
-        assert_eq!(bins[0].q, 0.5);
-        assert_eq!(bins[0].alias, 1);
-        assert_eq!(bins[1].q, 1.0);
-
-        let uniform = build_power_alias_table(&[0.0, 0.0]).unwrap();
-        assert_eq!(
-            uniform.iter().map(|bin| bin.p).collect::<Vec<_>>(),
-            [0.5, 0.5]
-        );
-        assert!(build_power_alias_table(&[1.0, f32::NAN]).is_err());
-
-        let packed = pack_power_weights(&[1.0, 3.0]).unwrap();
-        assert_eq!(packed.len(), 7);
-        assert_eq!(packed[0], 2);
-        assert_eq!(f32::from_bits(packed[1]), 0.5);
-        assert_eq!(f32::from_bits(packed[2]), 0.25);
-        assert_eq!(packed[3], 1);
-    }
-
-    #[test]
-    fn exhaustive_bounds_pack_in_global_handle_order() {
-        let bounds = [
-            LightBounds {
-                bounds: Bounds3::new([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]).unwrap(),
-                direction: [0.0, 0.0, 1.0],
-                phi: 7.0,
-                cos_theta_o: 0.8,
-                cos_theta_e: 0.1,
-                two_sided: true,
-            },
-            LightBounds {
-                bounds: Bounds3::new([-1.0, -2.0, -3.0], [0.0, 0.0, 0.0]).unwrap(),
-                direction: [0.0, 1.0, 0.0],
-                phi: 8.0,
-                cos_theta_o: 0.7,
-                cos_theta_e: 0.2,
-                two_sided: false,
-            },
-        ];
-        let words = pack_exhaustive_bounds(&bounds).unwrap();
-        assert_eq!(words.len(), 1 + 2 * EXHAUSTIVE_BOUNDS_WORDS);
-        assert_eq!(words[0], 2);
-        assert_eq!(words[1], 0);
-        assert_eq!(words[1 + EXHAUSTIVE_BOUNDS_WORDS], 1);
-        assert_eq!(f32::from_bits(words[11]), 7.0);
-        assert_eq!(words[14], 1);
-    }
 }

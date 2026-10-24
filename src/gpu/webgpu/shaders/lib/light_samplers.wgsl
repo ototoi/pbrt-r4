@@ -305,13 +305,13 @@ fn exhaustive_light_sampler_sample(selector: f32, p: vec3<f32>, n: vec3<f32>) ->
     if (sum <= 0.0) {
         return LightSelection(0xffffffffu, 0.0);
     }
-    let target = bounded_selector * sum;
+    let target_weight = bounded_selector * sum;
     var cumulative = 0.0;
     for (var index = 0u; index < bounded_count; index++) {
         let bound = exhaustive_light_bound(index);
         let importance = compact_light_bounds_importance(bound, p, n);
         cumulative += importance;
-        if (target < cumulative || index + 1u == bounded_count) {
+        if (target_weight < cumulative || index + 1u == bounded_count) {
             return LightSelection(
                 bound.payload,
                 (1.0 - p_infinite) * importance / sum,

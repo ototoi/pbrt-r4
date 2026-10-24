@@ -94,7 +94,7 @@ pub fn point_light(
         &light_transform,
         [from[0] as f32, from[1] as f32, from[2] as f32],
     );
-    let white = Spectrum::from(1.0);
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let intensity = light
         .params
         .get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
@@ -107,7 +107,7 @@ pub fn point_light(
     if power > 0.0 {
         scale *= power / (4.0 * std::f32::consts::PI);
     }
-    let intensity_max = intensity.max_value() as f32;
+    let intensity_max = intensity.to_dense().max_value() as f32;
     if !position.iter().all(|value| value.is_finite()) || !scale.is_finite() {
         return Err(PbrtError::error(&format!(
             "Point light on node \"{}\" contains a non-finite value.",
@@ -362,7 +362,7 @@ pub fn area_light_record(
             node_name
         )));
     }
-    let white = Spectrum::from(1.0);
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let emission_spectrum =
         light
             .params
@@ -732,6 +732,11 @@ pub fn append_area_light(
     let distribution_offset = u32::try_from(builder.lights.triangle_distributions.len())
         .map_err(|_| PbrtError::error("The flattened GPU distribution table exceeds u32."))?;
     let mut total_area = 0.0;
+    let normal_from_object = if shape.normals.is_some() {
+        Some(inverse_linear_transform(world_transform).map_err(PbrtError::error)?)
+    } else {
+        None
+    };
     let mut bound_triangles = Vec::with_capacity(triangle_count);
     let mut entries = Vec::with_capacity(triangle_count);
     for primitive in 0..triangle_count {
@@ -755,12 +760,20 @@ pub fn append_area_light(
             continue;
         }
         let mut geometric_normal = triangle_geometric_normal(positions)?;
-        if let Some(normals) = &shape.normals {
-            let normal_sum = [i0, i1, i2].into_iter().try_fold([0.0; 3], |sum, index| {
-                let normal = crate::gpu::flat::transform_normal(*world_transform, normals[index].0)
-                    .map_err(PbrtError::error)?;
-                Ok::<_, PbrtError>([sum[0] + normal[0], sum[1] + normal[1], sum[2] + normal[2]])
-            })?;
+        if let (Some(normals), Some(inverse)) = (&shape.normals, normal_from_object) {
+            // TriangleMesh transforms normals without normalizing them (pbrt-v4 mesh.cpp).
+            let mut normal_sum = [0.0; 3];
+            for index in [i0, i1, i2] {
+                let normal = normals[index].0;
+                for axis in 0..3 {
+                    normal_sum[axis] += inverse[0][axis] * normal[0]
+                        + inverse[1][axis] * normal[1]
+                        + inverse[2][axis] * normal[2];
+                }
+            }
+            if reverse_orientation {
+                normal_sum = scale3(normal_sum, -1.0);
+            }
             if dot(geometric_normal, normal_sum) < 0.0 {
                 geometric_normal = scale3(geometric_normal, -1.0);
             }
@@ -831,7 +844,7 @@ pub fn append_area_light(
         let lambda = SampledWavelengths::sample_visible(0.5);
         let phi = emission.sample(&lambda)
             * (scale * total_area * std::f32::consts::PI * if two_sided { 2.0 } else { 1.0 });
-        let weight = safe_div(phi, lambda.pdf_spectrum()).average().max(0.0);
+        let weight = safe_div(phi, lambda.pdf_spectrum()).average();
         builder.lights.power_weights.push(weight);
     }
     builder

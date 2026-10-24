@@ -1,5 +1,6 @@
 use super::scene_entity::{InstanceSceneEntity, ShapeSceneEntity};
 
+use crate::base::light::Light as CpuLight;
 use crate::gpu::flat::flatten_node;
 use crate::gpu::node::{
     loop_subdiv_mesh_from_params, prepare_triangle_meshes, tessellate_shapes,
@@ -18,7 +19,7 @@ use crate::gpu::node::{
 use crate::gpu::wavefront::WavefrontPathIntegrator;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
-use crate::util::spectrum::Spectrum;
+use crate::util::spectrum::{safe_div, SampledWavelengths, Spectrum};
 use crate::util::transform::Transform as CpuTransform;
 
 use super::SceneBuilder;
@@ -92,19 +93,22 @@ impl SceneBuilder {
             == "power"
             && self.lights.len() + self.area_lights.len() > 1
         {
-            let cpu_integrator = self.build()?;
-            let integrator = cpu_integrator
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let (finite, infinite) = integrator.light_power_weights().ok_or_else(|| {
-                PbrtError::error(
-                    "Power sampler weights are unavailable for the selected CPU integrator.",
-                )
-            })?;
-            Some((
-                finite.into_iter().map(|weight| weight as f32).collect(),
-                infinite.into_iter().map(|weight| weight as f32).collect(),
-            ))
+            let scene = self.build_scene()?;
+            let lambda = SampledWavelengths::sample_visible(0.5);
+            let mut finite = Vec::new();
+            let mut infinite = Vec::new();
+            for light in &scene.lights {
+                if matches!(light.as_ref(), CpuLight::DiffuseArea(_)) {
+                    continue;
+                }
+                let weight = safe_div(light.phi(&lambda), lambda.pdf_spectrum()).average() as f32;
+                if light.bounds().is_some() {
+                    finite.push(weight);
+                } else {
+                    infinite.push(weight);
+                }
+            }
+            Some((finite, infinite))
         } else {
             None
         };

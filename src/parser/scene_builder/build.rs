@@ -118,6 +118,53 @@ impl SceneBuilder {
         let camera_transform = self.build_camera_transform()?;
         let render_from_world = camera_transform.render_from_world();
 
+        let (scene, named_media) = self.realize_scene(&render_from_world)?;
+        let scene = Arc::new(scene);
+
+        // Phase 9: Camera / Filter / Film / Sampler / Integrator
+        let filter = self.realize_filter()?;
+        let film = self.realize_film(&filter)?;
+        let camera = self.realize_camera(&film, &named_media, &camera_transform)?;
+        let camera = Arc::new(camera);
+        let sampler = self.realize_sampler(&film)?;
+        let have_scattering_media = !named_media.is_empty();
+        if have_scattering_media
+            && self.integrator_name != "volpath"
+            && self.integrator_name != "bdpt"
+            && self.integrator_name != "mlt"
+        {
+            warn!(
+                "Scene has scattering media but \"{}\" integrator doesn't support volume scattering. Use \"volpath\", \"bdpt\" or \"mlt\".",
+                self.integrator_name
+            );
+        }
+        if scene.lights.is_empty() {
+            warn!("No light sources defined in scene; rendering a black image.");
+        }
+        create_integrator(
+            &self.integrator_name,
+            &self.integrator_params,
+            &sampler,
+            &camera,
+            scene.as_ref(),
+        )
+        .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))
+    }
+
+    /// Realizes and preprocesses lights and geometry without creating an integrator.
+    pub fn build_scene(&self) -> Result<Scene, PbrtError> {
+        if let Some(error) = self.import_errors.first().or(self.option_errors.first()) {
+            return Err(PbrtError::error(error));
+        }
+        let camera_transform = self.build_camera_transform()?;
+        self.realize_scene(&camera_transform.render_from_world())
+            .map(|(scene, _)| scene)
+    }
+
+    fn realize_scene(
+        &self,
+        render_from_world: &Transform,
+    ) -> Result<(Scene, MediumMap), PbrtError> {
         // Phase 1: Textures
         let (float_tex, spectrum_tex) = self.realize_textures(&render_from_world)?;
 
@@ -176,36 +223,9 @@ impl SceneBuilder {
         )
         .map_err(|e| PbrtError::error(&format!("create_accelerator failed: {}", e.msg)))?;
         let aggregate = Arc::new(aggregate);
-        let scene = Arc::new(Scene::new(&aggregate, &lights));
+        let scene = Scene::new(&aggregate, &lights);
 
-        // Phase 9: Camera / Filter / Film / Sampler / Integrator
-        let filter = self.realize_filter()?;
-        let film = self.realize_film(&filter)?;
-        let camera = self.realize_camera(&film, &named_media, &camera_transform)?;
-        let camera = Arc::new(camera);
-        let sampler = self.realize_sampler(&film)?;
-        let have_scattering_media = !named_media.is_empty();
-        if have_scattering_media
-            && self.integrator_name != "volpath"
-            && self.integrator_name != "bdpt"
-            && self.integrator_name != "mlt"
-        {
-            warn!(
-                "Scene has scattering media but \"{}\" integrator doesn't support volume scattering. Use \"volpath\", \"bdpt\" or \"mlt\".",
-                self.integrator_name
-            );
-        }
-        if lights.is_empty() {
-            warn!("No light sources defined in scene; rendering a black image.");
-        }
-        create_integrator(
-            &self.integrator_name,
-            &self.integrator_params,
-            &sampler,
-            &camera,
-            scene.as_ref(),
-        )
-        .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))
+        Ok((scene, named_media))
     }
 
     // ===== Phase helpers ====================================================
