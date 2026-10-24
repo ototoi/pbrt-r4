@@ -37,26 +37,15 @@ fn triangle_intersection_geometric_normal(
     object_normal: vec3<f32>,
     winding_normal: vec3<f32>,
 ) -> vec3<f32> {
-    return oriented_triangle_geometric_normal(
-        geometry.intersection_normal_kind,
-        instance.orientation_flags,
-        winding_normal,
-        (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz,
-    );
-}
-
-fn oriented_triangle_geometric_normal(
-    kind: u32,
-    flags: u32,
-    winding_normal: vec3<f32>,
-    shading_normal: vec3<f32>,
-) -> vec3<f32> {
     var normal = winding_normal;
-    if (intersection_flips_geometric_normal(kind, flags)) {
+    if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
         normal = -normal;
     }
-    if (kind == INTERSECTION_NORMAL_KIND_TRIANGLE && dot(normal, shading_normal) < 0.0) {
-        normal = -normal;
+    if (geometry.intersection_normal_kind == INTERSECTION_NORMAL_KIND_TRIANGLE) {
+        let shading_normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
+        if (dot(normal, shading_normal) < 0.0) {
+            normal = -normal;
+        }
     }
     return normal;
 }

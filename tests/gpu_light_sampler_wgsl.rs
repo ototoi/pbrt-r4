@@ -397,7 +397,6 @@ fn wgsl_area_sampling_and_intersection_normals_follow_v4_vertex_orientation() {
         "instance_orientation_flips_geometric_normal",
         "intersection_flips_geometric_normal",
         "triangle_intersection_geometric_normal",
-        "oriented_triangle_geometric_normal",
     ] {
         source.push_str(shader_definition(interaction, &format!("fn {name}(")));
         source.push('\n');
@@ -425,14 +424,14 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(vector_at(25u),0.0), vec4<f32>(0.0,0.0,0.0,1.0));
     let tri = TriangleVertices(vec4<f32>(vector_at(0u),1.0), vec4<f32>(vector_at(3u),1.0), vec4<f32>(vector_at(6u),1.0),
         (transform*vec4<f32>(vector_at(9u),0.0)).xyz, (transform*vec4<f32>(vector_at(12u),0.0)).xyz,
-        (transform*vec4<f32>(vector_at(15u),0.0)).xyz, light_sampler_data[18u], light_sampler_data[28u]);
+        (transform*vec4<f32>(vector_at(15u),0.0)).xyz, light_sampler_data[18u]);
     var normal = triangle_geometric_normal(tri, ctx.p.xyz);
     if (id.x == 1u) {
         var instance: Instance;
         instance.orientation_flags = tri.orientation_flags;
         instance.normal_from_object = transform;
         var geometry: Geometry;
-        geometry.intersection_normal_kind = tri.intersection_normal_kind;
+        geometry.intersection_normal_kind = INTERSECTION_NORMAL_KIND_TRIANGLE;
         let object_normal = vector_at(9u)*ctx.p.x + vector_at(12u)*ctx.p.y + vector_at(15u)*ctx.p.z;
         normal = triangle_intersection_geometric_normal(instance, geometry, object_normal,
             normalize(cross(tri.p1.xyz-tri.p0.xyz, tri.p2.xyz-tri.p0.xyz)));
@@ -444,7 +443,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
     let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let positions = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let bary = [1.0 / 3.0; 3];
-    let triangle_cases = [
+    for (positions, normals, flags, matrix, expected) in [
         (
             positions,
             [[0.0, 0.0, -1.0]; 3],
@@ -484,40 +483,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
             [[1.0 / 3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 0.5]],
             [0.0, 0.0, 1.0],
         ),
-    ];
-    // Tessellated disks and spheres ignore vertex normals and follow the shape-handedness rule.
-    let quadric_cases = [
-        (
-            positions,
-            [[0.0, 0.0, -1.0]; 3],
-            0u32,
-            identity,
-            [0.0, 0.0, 1.0],
-        ),
-        (
-            positions,
-            [[0.0, 0.0, 1.0]; 3],
-            4,
-            identity,
-            [0.0, 0.0, -1.0],
-        ),
-        (
-            positions,
-            [[0.0, 0.0, -1.0]; 3],
-            6,
-            identity,
-            [0.0, 0.0, 1.0],
-        ),
-    ];
-    for (positions, normals, flags, matrix, kind, expected) in triangle_cases
-        .into_iter()
-        .map(|(p, n, f, m, e)| (p, n, f, m, 0u32, e))
-        .chain(
-            quadric_cases
-                .into_iter()
-                .map(|(p, n, f, m, e)| (p, n, f, m, 1u32, e)),
-        )
-    {
+    ] {
         let mut data = positions
             .into_iter()
             .flatten()
@@ -526,7 +492,6 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
             .collect::<Vec<_>>();
         data.push(flags);
         data.extend(matrix.into_iter().flatten().map(f32::to_bits));
-        data.push(kind);
         let output = probe.run(0, 2, 0, &data, bary, expected);
         for row in &output[..2] {
             for (actual, expected) in row[..3].iter().zip(expected) {

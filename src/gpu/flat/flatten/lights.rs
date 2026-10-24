@@ -1,4 +1,4 @@
-use super::super::{area_light_flags, AlphaMask, SourceShape};
+use super::super::{area_light_flags, AlphaMask};
 use super::{
     dot, inverse_linear_transform, multiply_transform, push_scalar_attribute,
     push_spectrum_attribute, scale3, transform_point, transform_swaps_handedness, transform_vector,
@@ -773,7 +773,6 @@ pub fn append_area_light(
     instance_index: u32,
     alpha: AlphaMask,
     reverse_orientation: bool,
-    shape_transform_swaps_handedness: bool,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
     let light_handle = u32::try_from(builder.lights.records.len())
@@ -788,14 +787,7 @@ pub fn append_area_light(
     let distribution_offset = u32::try_from(builder.lights.triangle_distributions.len())
         .map_err(|_| PbrtError::error("The flattened GPU distribution table exceeds u32."))?;
     let mut total_area = 0.0;
-    let quadric = matches!(
-        SourceShape::from_name(&shape.source_shape)?,
-        SourceShape::Disk | SourceShape::Sphere
-    );
-    let flips_winding_normal = reverse_orientation
-        ^ transform_swaps_handedness(*world_transform)
-        ^ (quadric && shape_transform_swaps_handedness);
-    let normal_from_object = if shape.normals.is_some() && !quadric {
+    let normal_from_object = if shape.normals.is_some() {
         Some(inverse_linear_transform(world_transform).map_err(PbrtError::error)?)
     } else {
         None
@@ -823,9 +815,6 @@ pub fn append_area_light(
             continue;
         }
         let mut geometric_normal = triangle_geometric_normal(positions)?;
-        if flips_winding_normal {
-            geometric_normal = scale3(geometric_normal, -1.0);
-        }
         if let (Some(normals), Some(inverse)) = (&shape.normals, normal_from_object) {
             // TriangleMesh transforms normals without normalizing them (pbrt-v4 mesh.cpp).
             let mut normal_sum = [0.0; 3];
@@ -843,6 +832,8 @@ pub fn append_area_light(
             if dot(geometric_normal, normal_sum) < 0.0 {
                 geometric_normal = scale3(geometric_normal, -1.0);
             }
+        } else if reverse_orientation ^ transform_swaps_handedness(*world_transform) {
+            geometric_normal = scale3(geometric_normal, -1.0);
         }
         total_area += area;
         bound_triangles.push(AreaTriangleInput {

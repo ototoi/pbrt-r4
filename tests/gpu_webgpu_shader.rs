@@ -560,8 +560,9 @@ fn area_light_sampling_uses_the_group_cdf_and_area_pmf() {
         "let triangle_selection = select_area_triangle(light_payload, samples.direct.y)"
     ));
     assert!(source.contains("sample_uniform_triangle_for_context"));
-    assert!(source.contains("triangle.intersection_normal_kind,"));
-    assert!(source.contains("fn oriented_triangle_geometric_normal("));
+    assert!(
+        source.contains("instance_orientation_flips_geometric_normal(triangle.orientation_flags)")
+    );
     assert!(source.contains("triangle_selection.pmf * triangle_sample.w"));
     assert!(source.contains("load_area_distribution_count(light_payload)"));
 }
