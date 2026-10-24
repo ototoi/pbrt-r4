@@ -83,7 +83,7 @@ fn sample_area_light_at(work: LightSampleWorkItem, light_sample_origin: vec3<f32
             return invalid_direct_light_sample();
         }
         let b = triangle_sample.xyz;
-        light_normal = triangle_geometric_normal(triangle);
+        light_normal = triangle_geometric_normal(triangle, b);
         light_position = triangle.p0.xyz * b.x + triangle.p1.xyz * b.y + triangle.p2.xyz * b.z;
         if (!alpha_area_sample_accept(
             light_payload, triangle_selection.primitive, b, light_position, light_normal,

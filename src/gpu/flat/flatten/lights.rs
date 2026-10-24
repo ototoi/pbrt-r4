@@ -1,4 +1,4 @@
-use super::super::{area_light_flags, AlphaMask};
+use super::super::{area_light_flags, AlphaMask, SourceShape};
 use super::{
     dot, inverse_linear_transform, multiply_transform, push_scalar_attribute,
     push_spectrum_attribute, scale3, transform_point, transform_swaps_handedness, transform_vector,
@@ -21,6 +21,9 @@ use crate::util::vecmath::Frame;
 use super::super::image_infinite::ImageInfiniteDistribution;
 use super::super::portal::prepare_portal_image;
 use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, Mipmap, MipmapLevelData};
+use super::power::{
+    area_power, distant_power, point_power, spot_power, uniform_infinite_power, ImagePowerSum,
+};
 
 fn rgb_color_space(color_space: ColorSpace) -> &'static RGBColorSpace {
     match color_space {
@@ -92,7 +95,7 @@ pub fn point_light(
         &light_transform,
         [from[0] as f32, from[1] as f32, from[2] as f32],
     );
-    let white = Spectrum::from(1.0);
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let intensity = light
         .params
         .get_one_spectrum_typed("I", &white, SpectrumType::Illuminant);
@@ -105,7 +108,7 @@ pub fn point_light(
     if power > 0.0 {
         scale *= power / (4.0 * std::f32::consts::PI);
     }
-    let intensity_max = intensity.max_value() as f32;
+    let intensity_max = intensity.to_dense().max_value() as f32;
     if !position.iter().all(|value| value.is_finite()) || !scale.is_finite() {
         return Err(PbrtError::error(&format!(
             "Point light on node \"{}\" contains a non-finite value.",
@@ -150,7 +153,7 @@ pub fn spot_light(
     let length =
         (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
             .sqrt();
-    let direction = if length > 0.0 {
+    let local_direction = if length > 0.0 {
         [
             direction[0] / length,
             direction[1] / length,
@@ -170,7 +173,11 @@ pub fn spot_light(
     })?;
     // SpotLight::Create uses worldToLight = Frame::FromZ(to - from)
     // * inverse(base renderFromLight) for direction conversion.
-    let direction_frame = Frame::from_z(Vector3f::new(direction[0], direction[1], direction[2]));
+    let direction_frame = Frame::from_z(Vector3f::new(
+        local_direction[0],
+        local_direction[1],
+        local_direction[2],
+    ));
     let frame_rows = [
         [
             direction_frame.x.x,
@@ -196,6 +203,15 @@ pub fn spot_light(
                 .sum();
         }
     }
+    let world_direction = transform_vector(&transform, local_direction);
+    let world_direction_length = dot(world_direction, world_direction).sqrt();
+    if !world_direction_length.is_finite() || world_direction_length == 0.0 {
+        return Err(PbrtError::error(&format!(
+            "Spot light on node \"{}\" has an invalid world direction.",
+            node_name
+        )));
+    }
+    let direction = scale3(world_direction, 1.0 / world_direction_length);
     let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let intensity = light
         .params
@@ -226,7 +242,7 @@ pub fn spot_light(
             node_name
         )));
     }
-    let intensity_max = intensity.max_value() as f32;
+    let intensity_max = intensity.to_dense().max_value() as f32;
     Ok((
         position,
         direction,
@@ -347,7 +363,7 @@ pub fn area_light_record(
             node_name
         )));
     }
-    let white = Spectrum::from(1.0);
+    let white = Spectrum::from(light.params.color_space().illuminant.to_dense());
     let emission_spectrum =
         light
             .params
@@ -361,7 +377,7 @@ pub fn area_light_record(
             "GPU area light power on node \"{node_name}\" is not implemented."
         )));
     }
-    let emission_max = emission_spectrum.max_value() as f32;
+    let emission_max = emission_spectrum.to_dense().max_value() as f32;
     if !scale.is_finite() {
         return Err(PbrtError::error(&format!(
             "GPU area light on node \"{}\" contains a non-finite emission value.",
@@ -410,6 +426,12 @@ pub fn flatten_light(
             sampling_model,
             image_index: INVALID_INDEX,
         });
+        if builder.power_sampler_requested() {
+            builder
+                .lights
+                .infinite_power_inputs
+                .push(distant_power(&intensity, scale));
+        }
     } else if light.name == "infinite" {
         let (kind, intensity, base_scale, illuminance) = infinite_light(&light, &name)?;
         let light_transform = multiply_transform(world_transform, &light.transform.matrix);
@@ -419,7 +441,14 @@ pub fn flatten_light(
                 name, message
             ))
         })?;
-        let (image_index, image_illuminant, map_illuminance, geometry_kind, geometry_index) = if matches!(
+        let (
+            image_index,
+            image_illuminant,
+            map_illuminance,
+            geometry_kind,
+            geometry_index,
+            image_power,
+        ) = if matches!(
             kind,
             LightKind::ImageInfinite | LightKind::PortalImageInfinite
         ) {
@@ -478,7 +507,9 @@ pub fn flatten_light(
             } else {
                 None
             };
-            let (mipmap, geometry_kind, geometry_index) = if kind == LightKind::PortalImageInfinite
+            let power_requested = builder.power_sampler_requested();
+            let (mipmap, geometry_kind, geometry_index, image_power) = if kind
+                == LightKind::PortalImageInfinite
             {
                 let points = light.params.get_points("portal");
                 if points.len() != 12 {
@@ -497,16 +528,43 @@ pub fn flatten_light(
                 });
                 let prepared = prepare_portal_image(&mipmap, portal, world_to_light)?;
                 let geometry_index = builder.lights.infinite_resources.append_portal(&prepared)?;
-                (prepared.mipmap, LightGeometryKind::Portal, geometry_index)
+                let image_power = if power_requested {
+                    Some(ImagePowerSum::portal(
+                        &prepared.mipmap,
+                        rgb_color_space(prepared.mipmap.color_space),
+                        &prepared.portal,
+                    )?)
+                } else {
+                    None
+                };
+                (
+                    prepared.mipmap,
+                    LightGeometryKind::Portal,
+                    geometry_index,
+                    image_power,
+                )
             } else if kind == LightKind::ImageInfinite {
                 let distribution = ImageInfiniteDistribution::from_mipmap(&mipmap)?;
                 let geometry_index = builder
                     .lights
                     .infinite_resources
                     .append_image_distribution(&distribution, &light_transform)?;
-                (mipmap, LightGeometryKind::ImageInfinite, geometry_index)
+                let image_power = if power_requested {
+                    Some(ImagePowerSum::image(
+                        &mipmap,
+                        rgb_color_space(mipmap.color_space),
+                    )?)
+                } else {
+                    None
+                };
+                (
+                    mipmap,
+                    LightGeometryKind::ImageInfinite,
+                    geometry_index,
+                    image_power,
+                )
             } else {
-                (mipmap, LightGeometryKind::Direction, INVALID_INDEX)
+                (mipmap, LightGeometryKind::Direction, INVALID_INDEX, None)
             };
             let index = builder.lights.infinite_resources.append_mipmap(mipmap)?;
             (
@@ -515,6 +573,7 @@ pub fn flatten_light(
                 map_illuminance,
                 geometry_kind,
                 geometry_index,
+                image_power,
             )
         } else {
             (
@@ -523,6 +582,7 @@ pub fn flatten_light(
                 None,
                 LightGeometryKind::Direction,
                 INVALID_INDEX,
+                None,
             )
         };
         let sampling_model = u32::try_from(builder.lights.sampling_models.len()).map_err(|_| {
@@ -581,6 +641,15 @@ pub fn flatten_light(
             sampling_model,
             image_index,
         });
+        if builder.power_sampler_requested() {
+            builder
+                .lights
+                .infinite_power_inputs
+                .push(match image_power {
+                    Some(image_power) => image_power.power(scale),
+                    None => uniform_infinite_power(&intensity, scale),
+                });
+        }
     } else {
         let (
             position,
@@ -645,13 +714,26 @@ pub fn flatten_light(
             flags: 0,
             world_to_light,
         });
-        builder.lights.bound_inputs.push(LightBoundInput::Point {
-            handle: u32::try_from(builder.lights.records.len())
-                .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?,
-            world_position: position,
-            intensity_max,
-            scale,
-        });
+        let handle = u32::try_from(builder.lights.records.len())
+            .map_err(|_| PbrtError::error("The flattened GPU light table exceeds u32."))?;
+        if kind == LightKind::Spot {
+            builder.lights.bound_inputs.push(LightBoundInput::Spot {
+                handle,
+                world_position: position,
+                direction,
+                intensity_max,
+                scale,
+                cos_theta_o: cos_start,
+                cos_falloff_end: cos_end,
+            });
+        } else {
+            builder.lights.bound_inputs.push(LightBoundInput::Point {
+                handle,
+                world_position: position,
+                intensity_max,
+                scale,
+            });
+        }
         let i_attr = push_spectrum_attribute(builder, "I", &intensity)?;
         let scale_attr = push_scalar_attribute(builder, "scale", scale)?;
         let mut attributes = vec![i_attr, scale_attr];
@@ -662,6 +744,16 @@ pub fn flatten_light(
                 cos_start,
             )?);
             attributes.push(push_scalar_attribute(builder, "cos_falloff_end", cos_end)?);
+        }
+        if builder.power_sampler_requested() {
+            builder
+                .lights
+                .power_inputs
+                .push(if kind == LightKind::Spot {
+                    spot_power(&intensity, scale, cos_start, cos_end)
+                } else {
+                    point_power(&intensity, scale)
+                });
         }
         builder.lights.records.push(Light {
             kind,
@@ -681,6 +773,7 @@ pub fn append_area_light(
     instance_index: u32,
     alpha: AlphaMask,
     reverse_orientation: bool,
+    shape_transform_swaps_handedness: bool,
     builder: &mut FlatBuilder,
 ) -> Result<u32, PbrtError> {
     let light_handle = u32::try_from(builder.lights.records.len())
@@ -695,6 +788,18 @@ pub fn append_area_light(
     let distribution_offset = u32::try_from(builder.lights.triangle_distributions.len())
         .map_err(|_| PbrtError::error("The flattened GPU distribution table exceeds u32."))?;
     let mut total_area = 0.0;
+    let quadric = matches!(
+        SourceShape::from_name(&shape.source_shape)?,
+        SourceShape::Disk | SourceShape::Sphere
+    );
+    let flips_winding_normal = reverse_orientation
+        ^ transform_swaps_handedness(*world_transform)
+        ^ (quadric && shape_transform_swaps_handedness);
+    let normal_from_object = if shape.normals.is_some() && !quadric {
+        Some(inverse_linear_transform(world_transform).map_err(PbrtError::error)?)
+    } else {
+        None
+    };
     let mut bound_triangles = Vec::with_capacity(triangle_count);
     let mut entries = Vec::with_capacity(triangle_count);
     for primitive in 0..triangle_count {
@@ -718,8 +823,26 @@ pub fn append_area_light(
             continue;
         }
         let mut geometric_normal = triangle_geometric_normal(positions)?;
-        if reverse_orientation ^ transform_swaps_handedness(*world_transform) {
+        if flips_winding_normal {
             geometric_normal = scale3(geometric_normal, -1.0);
+        }
+        if let (Some(normals), Some(inverse)) = (&shape.normals, normal_from_object) {
+            // TriangleMesh transforms normals without normalizing them (pbrt-v4 mesh.cpp).
+            let mut normal_sum = [0.0; 3];
+            for index in [i0, i1, i2] {
+                let normal = normals[index].0;
+                for axis in 0..3 {
+                    normal_sum[axis] += inverse[0][axis] * normal[0]
+                        + inverse[1][axis] * normal[1]
+                        + inverse[2][axis] * normal[2];
+                }
+            }
+            if reverse_orientation {
+                normal_sum = scale3(normal_sum, -1.0);
+            }
+            if dot(geometric_normal, normal_sum) < 0.0 {
+                geometric_normal = scale3(geometric_normal, -1.0);
+            }
         }
         total_area += area;
         bound_triangles.push(AreaTriangleInput {
@@ -781,6 +904,12 @@ pub fn append_area_light(
         sampling_model,
         image_index: INVALID_INDEX,
     });
+    if builder.power_sampler_requested() {
+        builder
+            .lights
+            .power_inputs
+            .push(area_power(&emission, scale, total_area, two_sided));
+    }
     builder
         .lights
         .bound_inputs

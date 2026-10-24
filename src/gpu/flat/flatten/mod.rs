@@ -34,6 +34,7 @@ mod measured;
 mod medium;
 pub mod nanovdb;
 mod node;
+mod power;
 mod scene_settings;
 mod shape;
 mod subsurface;
@@ -48,6 +49,7 @@ use lights::{append_area_light, flatten_light};
 use material::{build_material_roots, register_material_source, MaterialSourceNode};
 use medium::{register_medium, resolve_medium_reference};
 use node::flatten_node_ref;
+use power::{scene_radius_squared, PowerInput};
 use scene_settings::{
     region_bounds, register_root_component, render_settings, screen_window, viewport_resolution,
 };
@@ -134,6 +136,36 @@ pub fn flatten_node_with_material_override(
         &builder.instances,
         &builder.geometry.geometries,
     )?;
+    let power_weights = if render_settings.light_sampler == "power" {
+        let inputs = builder
+            .lights
+            .power_inputs
+            .iter()
+            .chain(&builder.lights.infinite_power_inputs);
+        if builder.lights.power_inputs.len() != builder.lights.records.len()
+            || builder.lights.infinite_power_inputs.len() != builder.lights.infinite_records.len()
+        {
+            return Err(PbrtError::error(
+                "Power sampler weights do not match flattened global light handles.",
+            ));
+        }
+        let scene_radius_squared = if inputs.clone().any(|input| input.scales_with_scene_disk()) {
+            scene_radius_squared(
+                &builder.instances,
+                &builder.instance_in_object,
+                &builder.geometry,
+            )
+        } else {
+            0.0
+        };
+        Some(
+            inputs
+                .map(|input| input.weight(scene_radius_squared))
+                .collect(),
+        )
+    } else {
+        None
+    };
     let scene = Scene {
         camera,
         viewport,
@@ -141,6 +173,7 @@ pub fn flatten_node_with_material_override(
         output,
         render_settings,
         lights: LightResources {
+            power_weights,
             sampling_models: builder.lights.sampling_models,
             positions: builder.lights.positions,
             triangle_distributions: builder.lights.triangle_distributions,
@@ -306,6 +339,16 @@ struct FlatBuilder {
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     lights: LightBuilder,
+    instance_in_object: Vec<bool>,
+    object_instance_depth: usize,
+}
+
+impl FlatBuilder {
+    fn power_sampler_requested(&self) -> bool {
+        self.integrator.as_ref().is_some_and(|integrator| {
+            integrator.params.get_one_string("lightsampler", "bvh") == "power"
+        })
+    }
 }
 
 #[derive(Default)]
@@ -313,6 +356,7 @@ struct GeometryBuilder {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     geometries: Vec<Geometry>,
+    object_bounds: Vec<Option<[[f32; 3]; 2]>>,
     geometries_by_shape: HashMap<(usize, usize), u32>,
 }
 
@@ -333,6 +377,8 @@ struct LightBuilder {
     records: Vec<Light>,
     infinite_records: Vec<Light>,
     bound_inputs: Vec<LightBoundInput>,
+    power_inputs: Vec<PowerInput>,
+    infinite_power_inputs: Vec<PowerInput>,
     infinite_resources: InfiniteLightBuilder,
 }
 

@@ -75,6 +75,15 @@ pub enum LightBoundInput {
         intensity_max: f32,
         scale: f32,
     },
+    Spot {
+        handle: u32,
+        world_position: [f32; 3],
+        direction: [f32; 3],
+        intensity_max: f32,
+        scale: f32,
+        cos_theta_o: f32,
+        cos_falloff_end: f32,
+    },
     AreaGroup {
         handle: u32,
         triangles: Vec<AreaTriangleInput>,
@@ -191,9 +200,9 @@ pub fn build_light_bounds(inputs: &[LightBoundInput]) -> Result<Vec<LightBounds>
     let mut handles = HashSet::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
         let handle = match input {
-            LightBoundInput::Point { handle, .. } | LightBoundInput::AreaGroup { handle, .. } => {
-                *handle
-            }
+            LightBoundInput::Point { handle, .. }
+            | LightBoundInput::Spot { handle, .. }
+            | LightBoundInput::AreaGroup { handle, .. } => *handle,
         };
         let expected_handle = u32::try_from(index)
             .map_err(|_| PbrtError::error("Light handle exceeds the u32 range."))?;
@@ -224,7 +233,34 @@ fn light_bounds_for_input(input: &LightBoundInput) -> Result<LightBounds, PbrtEr
                 direction: [0.0, 0.0, 1.0],
                 phi: 4.0 * std::f32::consts::PI * scale * intensity_max,
                 cos_theta_o: -1.0,
-                cos_theta_e: 0.0,
+                cos_theta_e: (std::f32::consts::FRAC_PI_2).cos(),
+                two_sided: false,
+            }
+            .validate()
+        }
+        LightBoundInput::Spot {
+            handle: _,
+            world_position,
+            direction,
+            intensity_max,
+            scale,
+            cos_theta_o,
+            cos_falloff_end,
+        } => {
+            validate_emission(*intensity_max, *scale)?;
+            if !(-1.0..=1.0).contains(cos_theta_o) || !(-1.0..=1.0).contains(cos_falloff_end) {
+                return Err(PbrtError::error("Spot light cone is invalid."));
+            }
+            let mut cos_theta_e = (cos_falloff_end.acos() - cos_theta_o.acos()).cos();
+            if cos_theta_e == 1.0 && cos_theta_o != cos_falloff_end {
+                cos_theta_e = 0.999;
+            }
+            LightBounds {
+                bounds: Bounds3::new(*world_position, *world_position)?,
+                direction: normalize(*direction)?,
+                phi: 4.0 * std::f32::consts::PI * scale * intensity_max,
+                cos_theta_o: *cos_theta_o,
+                cos_theta_e,
                 two_sided: false,
             }
             .validate()
@@ -255,7 +291,7 @@ fn light_bounds_for_input(input: &LightBoundInput) -> Result<LightBounds, PbrtEr
                     direction,
                     phi: emission_max * scale * area * std::f32::consts::PI,
                     cos_theta_o: 1.0,
-                    cos_theta_e: 0.0,
+                    cos_theta_e: (std::f32::consts::FRAC_PI_2).cos(),
                     two_sided: *two_sided,
                 }
                 .validate()?;

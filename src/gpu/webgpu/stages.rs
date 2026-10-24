@@ -36,6 +36,7 @@ pub enum ResourceId {
     LightBvhHeader,
     LightBvhNode,
     LightLeaf,
+    LightSamplerData,
     TriangleDistribution,
     PortalLightCandidate,
     DirectLightSample,
@@ -367,6 +368,7 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (35, ResourceId::TextureNode),
         (38, ResourceId::TextureChild),
         (36, ResourceId::LightPosition),
+        (50, ResourceId::LightSamplerData),
         (41, ResourceId::RgbSpectrumTable),
         (42, ResourceId::TextureRoot),
     ] {

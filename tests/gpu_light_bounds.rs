@@ -17,7 +17,7 @@ fn point_light_bounds_match_v4_shape() {
     assert_eq!(point.direction, [0.0, 0.0, 1.0]);
     assert_eq!(point.phi, 4.0 * std::f32::consts::PI);
     assert_eq!(point.cos_theta_o, -1.0);
-    assert_eq!(point.cos_theta_e, 0.0);
+    assert_eq!(point.cos_theta_e, std::f32::consts::FRAC_PI_2.cos());
 }
 
 #[test]

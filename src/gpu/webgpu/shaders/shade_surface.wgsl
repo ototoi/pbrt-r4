@@ -103,13 +103,12 @@ fn shade_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let uv2 = vertices[geometry.page].values[i2].uv;
     let uv = uv0 * b0 + uv1 * b1 + uv2 * b2;
     surfaces[pixel_index].position_error = vec4<f32>(position_error, 0.0);
-    var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
-    if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
-        geometric_normal = -geometric_normal;
-    }
     let object_normal = vertices[geometry.page].values[i0].normal.xyz * b0
         + vertices[geometry.page].values[i1].normal.xyz * b1
         + vertices[geometry.page].values[i2].normal.xyz * b2;
+    var geometric_normal = triangle_intersection_geometric_normal(
+        instance, geometry, object_normal, normalize(cross(p1 - p0, p2 - p0)),
+    );
     var normal = triangle_shading_normal(instance, geometry, object_normal, geometric_normal);
     let duv02 = uv0 - uv2;
     let duv12 = uv1 - uv2;

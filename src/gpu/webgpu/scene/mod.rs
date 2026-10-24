@@ -14,7 +14,9 @@ use super::acceleration::{self, Acceleration};
 use super::bssrdf::{convert_bssrdf_materials, BSSRDFTableData, BSSRDFTableResources};
 use super::filter::FilterResources;
 use super::light_bvh::{pack_light_bvh, LightBvhUploadData};
-use super::light_sampler::{resolve_scene_light_sampler_count, LightSamplerKind};
+use super::light_sampler::{
+    pack_exhaustive_bounds, pack_power_weights, resolve_scene_light_sampler_count, LightSamplerKind,
+};
 use super::material::MaterialKind;
 use super::material::MaterialTable;
 use super::measured::MeasuredBsdfRecords;
@@ -97,6 +99,7 @@ pub struct Scene {
     pub light_bvh_header_buffer: wgpu::Buffer,
     pub light_bvh_node_buffer: wgpu::Buffer,
     pub light_leaf_buffer: wgpu::Buffer,
+    pub light_sampler_data_buffer: wgpu::Buffer,
     pub geometries: Vec<Geometry>,
     pub instances: Vec<Instance>,
     pub material_nodes: Vec<MaterialNode>,
@@ -541,9 +544,13 @@ impl Scene {
                 contents: buffer_contents(&flat.lights.infinite_sampling.image_row_cdf),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let packed_light_bvh = pack_light_bvh(&flat.lights.bvh)?;
         let light_sampler_kind =
             resolve_scene_light_sampler_count(&flat.render_settings, light_records.len())?;
+        let packed_light_bvh = if light_sampler_kind == LightSamplerKind::Bvh {
+            pack_light_bvh(&flat.lights.bvh)?
+        } else {
+            None
+        };
         let table_data = BSSRDFTableData::from_flat(&flat.materials.bssrdf_tables)?;
         let bssrdf_tables = table_data.upload(device)?;
         let bssrdf_materials =
@@ -577,7 +584,50 @@ impl Scene {
             light_sampler_kind,
             light_table,
         )?;
-        let light_table = light_bvh_data.table;
+        let mut light_table = light_bvh_data.table;
+        let light_sampler_data = match light_sampler_kind {
+            LightSamplerKind::Exhaustive => {
+                if flat.lights.bounds.len() != flat.lights.lights.len() {
+                    return Err(PbrtError::error(
+                        "Exhaustive sampler bounds do not match finite light handles.",
+                    ));
+                }
+                light_table.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_EXHAUSTIVE;
+                light_table.light_sampler_data_offset = 0;
+                pack_exhaustive_bounds(&flat.lights.bounds)?
+            }
+            LightSamplerKind::Power => {
+                let weights = flat.lights.power_weights.as_ref().ok_or_else(|| {
+                    PbrtError::error("WebGPU power light weights are not available.")
+                })?;
+                if weights.len() != light_records.len() {
+                    return Err(PbrtError::error(
+                        "WebGPU power light weights do not match uploaded light handles.",
+                    ));
+                }
+                light_table.light_sampler_kind = super::abi::LIGHT_SAMPLER_KIND_POWER;
+                light_table.light_sampler_data_offset = 0;
+                pack_power_weights(weights)?
+            }
+            LightSamplerKind::Uniform | LightSamplerKind::Bvh => vec![0],
+        };
+        validate_storage_array_size::<u32>(
+            &limits,
+            light_sampler_data.len(),
+            "light sampler data",
+        )?;
+        if !matches!(
+            light_sampler_kind,
+            LightSamplerKind::Exhaustive | LightSamplerKind::Power
+        ) {
+            light_table.light_sampler_data_offset = INVALID_INDEX;
+        }
+        let light_sampler_data_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbrt-r4 light sampler data SBO"),
+                contents: buffer_contents(&light_sampler_data),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let light_bvh_header_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pbrt-r4 light BVH header SBO"),
@@ -656,6 +706,7 @@ impl Scene {
             light_bvh_header_buffer,
             light_bvh_node_buffer,
             light_leaf_buffer,
+            light_sampler_data_buffer,
             geometries,
             instances,
             material_nodes,
@@ -726,6 +777,9 @@ impl Scene {
             ResourceId::LightBvhHeader => Some(self.light_bvh_header_buffer.as_entire_binding()),
             ResourceId::LightBvhNode => Some(self.light_bvh_node_buffer.as_entire_binding()),
             ResourceId::LightLeaf => Some(self.light_leaf_buffer.as_entire_binding()),
+            ResourceId::LightSamplerData => {
+                Some(self.light_sampler_data_buffer.as_entire_binding())
+            }
             _ => None,
         }
     }

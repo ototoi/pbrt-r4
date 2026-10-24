@@ -469,7 +469,7 @@ fn limit_failure_explains_all_over_budget_stages_without_debug_logging() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("requested storage=21, uniform=4, buffers_and_acceleration_structures=23")
+        error.contains("requested storage=22, uniform=4, buffers_and_acceleration_structures=23")
     );
     assert!(error.contains("stage=sample_image_infinite_light"));
     assert!(error.contains("stage=scatter_dielectric"));

@@ -4,6 +4,17 @@ use crate::util::error::PbrtError;
 
 impl LightResources {
     pub fn validate_consistency(&self, texture_library: &TextureLibrary) -> Result<(), PbrtError> {
+        if let Some(weights) = &self.power_weights {
+            if weights.len() != self.lights.len() + self.infinite_lights.len()
+                || weights
+                    .iter()
+                    .any(|weight| !weight.is_finite() || *weight < 0.0)
+            {
+                return Err(PbrtError::error(
+                    "Power sampler weights are invalid or do not match light handles.",
+                ));
+            }
+        }
         let area_count = self
             .lights
             .iter()

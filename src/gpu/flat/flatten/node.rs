@@ -421,6 +421,7 @@ pub fn flatten_node_ref(
                 instance_index,
                 alpha,
                 reverse_orientation,
+                transform_swaps_handedness(shape_transform),
                 builder,
             )?
         } else {
@@ -428,6 +429,9 @@ pub fn flatten_node_ref(
         };
         let inside_medium = resolve_medium_reference(&medium_interface.inside, builder)?;
         let outside_medium = resolve_medium_reference(&medium_interface.outside, builder)?;
+        builder
+            .instance_in_object
+            .push(builder.object_instance_depth > 0);
         builder.instances.push(Instance {
             geometry,
             transform: world_transform,
@@ -444,6 +448,7 @@ pub fn flatten_node_ref(
         let target_parent = multiply_transform(&world_transform, &instance_transform.matrix);
         // v4 TransformedPrimitive transforms the interaction without applying
         // the shape's orientation rule again.
+        builder.object_instance_depth += 1;
         flatten_node_ref(
             &target,
             &target_parent,
@@ -452,6 +457,7 @@ pub fn flatten_node_ref(
             stack,
             material_kind,
         )?;
+        builder.object_instance_depth -= 1;
     }
     for child in children {
         flatten_node_ref(

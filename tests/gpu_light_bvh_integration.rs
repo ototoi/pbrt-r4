@@ -31,6 +31,22 @@ fn multiple_area_light_groups_render_through_gpu_uniform_sampler() {
 
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn multiple_area_light_groups_render_through_gpu_exhaustive_sampler() {
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scenes/gpu-wavefront-multiple-area-diffuse.pbrt");
+    render_and_validate_with_sampler(&scene, Some("exhaustive"));
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn multiple_area_light_groups_render_through_gpu_power_sampler() {
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scenes/gpu-wavefront-multiple-area-diffuse.pbrt");
+    render_and_validate_with_sampler(&scene, Some("power"));
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn indirect_area_light_hit_adds_emission_at_maxdepth_two() {
     let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scenes/gpu-wavefront-multiple-area-diffuse.pbrt");
@@ -219,4 +235,54 @@ fn image_energy(pixels: &[RGBSpectrum]) -> f32 {
         .iter()
         .map(|pixel| pixel.to_rgb().into_iter().sum::<f32>())
         .sum()
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn area_vertex_normals_control_sampled_and_visible_emission() {
+    let directory = tempfile::tempdir().unwrap();
+    let prefix = r#"
+Integrator "volpath" "integer maxdepth" [1] "string lightsampler" ["exhaustive"]
+Sampler "independent" "integer pixelsamples" [1]
+Film "rgb" "integer xresolution" [1] "integer yresolution" [1]
+Camera "perspective" "float fov" [10]
+WorldBegin
+LightSource "point" "rgb I" [0 0 0]
+"#;
+    let visible = r#"
+AreaLightSource "diffuse" "rgb L" [20 20 20]
+Shape "trianglemesh" "point3 P" [-3 -3 2 3 -3 2 0 3 2]
+    "integer indices" [0 1 2] "normal N" [0 0 -1 0 0 -1 0 0 -1]
+"#;
+    let sampled = r#"
+AttributeBegin
+Material "diffuse" "rgb reflectance" [0.7 0.7 0.7]
+Shape "trianglemesh" "point3 P" [-10 -10 2 0 10 2 10 -10 2] "integer indices" [0 1 2]
+AttributeEnd
+AreaLightSource "diffuse" "rgb L" [20 20 20]
+Shape "trianglemesh" "point3 P" [1 0 1 2 0 1 1 1 1]
+    "integer indices" [0 2 1] "normal N" [0 0 1 0 0 1 0 0 1]
+"#;
+    for (name, shapes) in [("visible", visible), ("sampled", sampled)] {
+        let scene = directory.path().join(format!("{name}.pbrt"));
+        let output = directory.path().join(format!("{name}.exr"));
+        std::fs::write(&scene, format!("{prefix}\n{shapes}")).unwrap();
+        let status = Command::new(env!("CARGO_BIN_EXE_pbrt-r4"))
+            .args([
+                "--gpu",
+                "--outfile",
+                output.to_str().unwrap(),
+                scene.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name} area normal render failed");
+        let (pixels, resolution) = read_image(output.to_str().unwrap()).unwrap();
+        assert_eq!([resolution.x, resolution.y], [1, 1]);
+        assert!(pixels.iter().all(RGBSpectrum::is_valid));
+        assert!(
+            pixels.iter().any(|pixel| !pixel.is_black()),
+            "{name} emission was culled despite vertex normals pointing toward the receiver"
+        );
+    }
 }
