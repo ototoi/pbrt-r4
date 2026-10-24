@@ -2,6 +2,9 @@ struct TriangleVertices {
     p0: vec4<f32>,
     p1: vec4<f32>,
     p2: vec4<f32>,
+    n0: vec3<f32>,
+    n1: vec3<f32>,
+    n2: vec3<f32>,
     orientation_flags: u32,
 };
 
@@ -16,16 +19,26 @@ fn load_area_triangle(area_index: u32, primitive: u32) -> TriangleVertices {
         instance.world_from_object * vertices[geometry.page].values[i0].position,
         instance.world_from_object * vertices[geometry.page].values[i1].position,
         instance.world_from_object * vertices[geometry.page].values[i2].position,
+        (instance.normal_from_object * vertices[geometry.page].values[i0].normal).xyz,
+        (instance.normal_from_object * vertices[geometry.page].values[i1].normal).xyz,
+        (instance.normal_from_object * vertices[geometry.page].values[i2].normal).xyz,
         instance.orientation_flags,
     );
 }
 
-fn triangle_geometric_normal(triangle: TriangleVertices) -> vec3<f32> {
+fn triangle_geometric_normal(triangle: TriangleVertices, barycentrics: vec3<f32>) -> vec3<f32> {
     var normal = normalize(cross(
         triangle.p1.xyz - triangle.p0.xyz,
         triangle.p2.xyz - triangle.p0.xyz,
     ));
-    if (instance_orientation_flips_geometric_normal(triangle.orientation_flags)) {
+    if (any(triangle.n0 != vec3<f32>(0.0)) || any(triangle.n1 != vec3<f32>(0.0))
+        || any(triangle.n2 != vec3<f32>(0.0))) {
+        let shading_normal = triangle.n0 * barycentrics.x
+            + triangle.n1 * barycentrics.y + triangle.n2 * barycentrics.z;
+        if (dot(normal, shading_normal) < 0.0) {
+            normal = -normal;
+        }
+    } else if (instance_orientation_flips_geometric_normal(triangle.orientation_flags)) {
         normal = -normal;
     }
     return normal;
@@ -58,7 +71,7 @@ fn sample_uniform_triangle_for_context(
     if (distance_squared == 0.0) {
         return vec4<f32>(0.0);
     }
-    let cosine = abs(dot(triangle_geometric_normal(triangle), -normalize(to_light)));
+    let cosine = abs(dot(triangle_geometric_normal(triangle, b), -normalize(to_light)));
     if (cosine == 0.0 || triangle_area <= 0.0) {
         return vec4<f32>(0.0);
     }

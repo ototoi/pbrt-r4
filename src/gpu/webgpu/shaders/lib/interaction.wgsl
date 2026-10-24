@@ -30,6 +30,26 @@ fn intersection_flips_vertex_normal(kind: u32, flags: u32) -> bool {
         && instance_orientation_shape_swaps_handedness(flags);
 }
 
+// v4 Triangle::InteractionFromIntersection makes vertex shading normals authoritative.
+fn triangle_intersection_geometric_normal(
+    instance: Instance,
+    geometry: Geometry,
+    object_normal: vec3<f32>,
+    winding_normal: vec3<f32>,
+) -> vec3<f32> {
+    var normal = winding_normal;
+    if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
+        normal = -normal;
+    }
+    if (geometry.intersection_normal_kind == INTERSECTION_NORMAL_KIND_TRIANGLE) {
+        let shading_normal = (instance.normal_from_object * vec4<f32>(object_normal, 0.0)).xyz;
+        if (dot(normal, shading_normal) < 0.0) {
+            normal = -normal;
+        }
+    }
+    return normal;
+}
+
 fn reconstruct_triangle_surface(
     instance_index: u32,
     primitive: u32,
@@ -70,10 +90,12 @@ fn reconstruct_triangle_surface(
     let position_error = (abs(p0 * b0) + abs(p1 * b1) + abs(p2 * b2)) * gamma(7.0)
         + hardware_intersection_error(p0, p1, p2);
     let uv = vertices[geometry.page].values[i0].uv * b0 + vertices[geometry.page].values[i1].uv * b1 + vertices[geometry.page].values[i2].uv * b2;
-    var geometric_normal = normalize(cross(p1 - p0, p2 - p0));
-    if (intersection_flips_geometric_normal(geometry.intersection_normal_kind, instance.orientation_flags)) {
-        geometric_normal = -geometric_normal;
-    }
+    let object_normal = vertices[geometry.page].values[i0].normal.xyz * b0
+        + vertices[geometry.page].values[i1].normal.xyz * b1
+        + vertices[geometry.page].values[i2].normal.xyz * b2;
+    let geometric_normal = triangle_intersection_geometric_normal(
+        instance, geometry, object_normal, normalize(cross(p1 - p0, p2 - p0)),
+    );
     return TriangleSurfaceData(position, position_error, uv, geometric_normal, 1u);
 }
 

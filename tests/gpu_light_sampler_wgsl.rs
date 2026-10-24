@@ -42,6 +42,16 @@ struct Probe {
 
 impl Probe {
     fn new() -> Self {
+        let source = [
+            include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
+            include_str!("../src/gpu/webgpu/shaders/lib/light_samplers.wgsl"),
+            PROBE,
+        ]
+        .join("\n");
+        Self::with_source(source)
+    }
+
+    fn with_source(source: String) -> Self {
         let adapter = Context::request_adapter(None).unwrap();
         eprintln!("light sampler numeric probe adapter: {:?}", adapter.info);
         let (device, queue) = pollster::block_on(
@@ -50,12 +60,6 @@ impl Probe {
                 .request_device(&wgpu::DeviceDescriptor::default()),
         )
         .unwrap();
-        let source = [
-            include_str!("../src/gpu/webgpu/shaders/types.wgsl"),
-            include_str!("../src/gpu/webgpu/shaders/lib/light_samplers.wgsl"),
-            PROBE,
-        ]
-        .join("\n");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("light sampler numeric probe"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -295,6 +299,146 @@ fn wgsl_power_and_exhaustive_samples_and_pmfs_match_v4_distributions() {
                 n,
             );
             check_draws(&draws, &expected);
+        }
+    }
+}
+
+fn shader_definition<'a>(source: &'a str, declaration: &str) -> &'a str {
+    let start = source.find(declaration).unwrap();
+    let body = start + source[start..].find('{').unwrap();
+    let mut depth = 0;
+    for (offset, byte) in source.as_bytes()[body..].iter().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[start..=body + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unclosed shader declaration: {declaration}");
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter; does not require ray-query support"]
+fn wgsl_area_sampling_and_intersection_normals_follow_v4_vertex_orientation() {
+    let interaction = include_str!("../src/gpu/webgpu/shaders/lib/interaction.wgsl");
+    let triangles = include_str!("../src/gpu/webgpu/shaders/triangle_sampling.wgsl");
+    let mut source = include_str!("../src/gpu/webgpu/shaders/types.wgsl").to_owned();
+    for name in [
+        "instance_orientation_is_reversed",
+        "instance_orientation_swaps_handedness",
+        "instance_orientation_shape_swaps_handedness",
+        "instance_orientation_flips_geometric_normal",
+        "intersection_flips_geometric_normal",
+        "triangle_intersection_geometric_normal",
+    ] {
+        source.push_str(shader_definition(interaction, &format!("fn {name}(")));
+        source.push('\n');
+    }
+    source.push_str(shader_definition(triangles, "struct TriangleVertices {"));
+    source.push_str(";\n");
+    source.push_str(shader_definition(
+        triangles,
+        "fn triangle_geometric_normal(",
+    ));
+    source.push_str(r#"
+@group(0) @binding(0) var<uniform> light_table: LightTableUniform;
+@group(0) @binding(1) var<storage, read> light_sampler_data: array<u32>;
+struct ProbeContext { p: vec4<f32>, n: vec4<f32> };
+@group(0) @binding(2) var<uniform> ctx: ProbeContext;
+@group(0) @binding(3) var<storage, read_write> results: array<vec4<u32>>;
+fn vector_at(offset: u32) -> vec3<f32> {
+    return vec3<f32>(bitcast<f32>(light_sampler_data[offset]),
+        bitcast<f32>(light_sampler_data[offset+1u]), bitcast<f32>(light_sampler_data[offset+2u]));
+}
+@compute @workgroup_size(64)
+fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= light_table.light_count) { return; }
+    let transform = mat4x4<f32>(vec4<f32>(vector_at(19u),0.0), vec4<f32>(vector_at(22u),0.0),
+        vec4<f32>(vector_at(25u),0.0), vec4<f32>(0.0,0.0,0.0,1.0));
+    let tri = TriangleVertices(vec4<f32>(vector_at(0u),1.0), vec4<f32>(vector_at(3u),1.0), vec4<f32>(vector_at(6u),1.0),
+        (transform*vec4<f32>(vector_at(9u),0.0)).xyz, (transform*vec4<f32>(vector_at(12u),0.0)).xyz,
+        (transform*vec4<f32>(vector_at(15u),0.0)).xyz, light_sampler_data[18u]);
+    var normal = triangle_geometric_normal(tri, ctx.p.xyz);
+    if (id.x == 1u) {
+        var instance: Instance;
+        instance.orientation_flags = tri.orientation_flags;
+        instance.normal_from_object = transform;
+        var geometry: Geometry;
+        geometry.intersection_normal_kind = INTERSECTION_NORMAL_KIND_TRIANGLE;
+        let object_normal = vector_at(9u)*ctx.p.x + vector_at(12u)*ctx.p.y + vector_at(15u)*ctx.p.z;
+        normal = triangle_intersection_geometric_normal(instance, geometry, object_normal,
+            normalize(cross(tri.p1.xyz-tri.p0.xyz, tri.p2.xyz-tri.p0.xyz)));
+    }
+    results[id.x] = vec4<u32>(bitcast<vec3<u32>>(normal), bitcast<u32>(dot(normal,ctx.n.xyz)));
+}
+"#);
+    let probe = Probe::with_source(source);
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let positions = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let bary = [1.0 / 3.0; 3];
+    for (positions, normals, flags, matrix, expected) in [
+        (
+            positions,
+            [[0.0, 0.0, -1.0]; 3],
+            0u32,
+            identity,
+            [0.0, 0.0, -1.0],
+        ),
+        (
+            positions,
+            [[0.0, 0.0, 1.0]; 3],
+            1,
+            identity,
+            [0.0, 0.0, 1.0],
+        ),
+        (positions, [[0.0; 3]; 3], 0, identity, [0.0, 0.0, 1.0]),
+        (positions, [[0.0; 3]; 3], 1, identity, [0.0, 0.0, -1.0]),
+        (positions, [[0.0; 3]; 3], 2, identity, [0.0, 0.0, -1.0]),
+        (positions, [[0.0; 3]; 3], 3, identity, [0.0, 0.0, 1.0]),
+        (
+            [[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[0.0, 0.0, -1.0]; 3],
+            2,
+            identity,
+            [0.0, 0.0, -1.0],
+        ),
+        (
+            [[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+            [[0.0, 0.0, -1.0]; 3],
+            0,
+            [[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+            [-1.0, 0.0, 0.0],
+        ),
+        (
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 0.5, 0.0]],
+            [[1.0, 0.0, 0.1], [1.0, 0.0, 0.1], [0.0, 0.0, -0.15]],
+            0,
+            [[1.0 / 3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 0.5]],
+            [0.0, 0.0, 1.0],
+        ),
+    ] {
+        let mut data = positions
+            .into_iter()
+            .flatten()
+            .chain(normals.into_iter().flatten())
+            .map(f32::to_bits)
+            .collect::<Vec<_>>();
+        data.push(flags);
+        data.extend(matrix.into_iter().flatten().map(f32::to_bits));
+        let output = probe.run(0, 2, 0, &data, bary, expected);
+        for row in &output[..2] {
+            for (actual, expected) in row[..3].iter().zip(expected) {
+                assert!(
+                    (f32::from_bits(*actual) - expected).abs() < 1e-6,
+                    "normal={row:?}, expected={expected}"
+                );
+            }
+            assert!((f32::from_bits(row[3]) - 1.0).abs() < 1e-6);
         }
     }
 }
