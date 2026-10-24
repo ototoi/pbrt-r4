@@ -259,7 +259,12 @@ pub fn flatten_node_ref(
     };
 
     if let Some(power_weights) = power_weights {
-        if stack.len() != 1 || builder.cpu_power_weights.replace(power_weights).is_some() {
+        if stack.len() != 1
+            || builder
+                .non_area_power_weights
+                .replace(power_weights)
+                .is_some()
+        {
             return Err(PbrtError::error(
                 "Power sampler weights must be attached to the GPU root node exactly once.",
             ));

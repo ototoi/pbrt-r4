@@ -425,7 +425,7 @@ pub fn flatten_light(
             sampling_model,
             image_index: INVALID_INDEX,
         });
-        if let Some(weight) = builder.next_cpu_power_weight(true)? {
+        if let Some(weight) = builder.next_non_area_power_weight(true)? {
             builder.lights.infinite_power_weights.push(weight);
         }
     } else if light.name == "infinite" {
@@ -599,7 +599,7 @@ pub fn flatten_light(
             sampling_model,
             image_index,
         });
-        if let Some(weight) = builder.next_cpu_power_weight(true)? {
+        if let Some(weight) = builder.next_non_area_power_weight(true)? {
             builder.lights.infinite_power_weights.push(weight);
         }
     } else {
@@ -703,7 +703,7 @@ pub fn flatten_light(
             sampling_model,
             image_index: INVALID_INDEX,
         });
-        if let Some(weight) = builder.next_cpu_power_weight(false)? {
+        if let Some(weight) = builder.next_non_area_power_weight(false)? {
             builder.lights.power_weights.push(weight);
         }
     }
@@ -840,7 +840,7 @@ pub fn append_area_light(
         sampling_model,
         image_index: INVALID_INDEX,
     });
-    if builder.cpu_power_weights.is_some() {
+    if builder.non_area_power_weights.is_some() {
         let lambda = SampledWavelengths::sample_visible(0.5);
         let phi = emission.sample(&lambda)
             * (scale * total_area * std::f32::consts::PI * if two_sided { 2.0 } else { 1.0 });

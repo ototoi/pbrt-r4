@@ -131,9 +131,9 @@ pub fn flatten_node_with_material_override(
     )?;
     let expected_power_weight_count =
         builder.lights.records.len() + builder.lights.infinite_records.len();
-    let power_weights = if let Some((finite, infinite)) = builder.cpu_power_weights {
-        if builder.cpu_finite_power_cursor != finite.len()
-            || builder.cpu_infinite_power_cursor != infinite.len()
+    let power_weights = if let Some((finite, infinite)) = builder.non_area_power_weights {
+        if builder.finite_power_cursor != finite.len()
+            || builder.infinite_power_cursor != infinite.len()
         {
             return Err(PbrtError::error(
                 "Power sampler concrete Phi weights do not match flattened non-area light handles.",
@@ -322,20 +322,20 @@ struct FlatBuilder {
     sampler: Option<NodeSampler>,
     integrator: Option<NodeIntegrator>,
     lights: LightBuilder,
-    cpu_power_weights: Option<(Vec<f32>, Vec<f32>)>,
-    cpu_finite_power_cursor: usize,
-    cpu_infinite_power_cursor: usize,
+    non_area_power_weights: Option<(Vec<f32>, Vec<f32>)>,
+    finite_power_cursor: usize,
+    infinite_power_cursor: usize,
 }
 
 impl FlatBuilder {
-    fn next_cpu_power_weight(&mut self, infinite: bool) -> Result<Option<f32>, PbrtError> {
-        let Some((finite, infinite_weights)) = &self.cpu_power_weights else {
+    fn next_non_area_power_weight(&mut self, infinite: bool) -> Result<Option<f32>, PbrtError> {
+        let Some((finite, infinite_weights)) = &self.non_area_power_weights else {
             return Ok(None);
         };
         let (weights, cursor) = if infinite {
-            (infinite_weights, &mut self.cpu_infinite_power_cursor)
+            (infinite_weights, &mut self.infinite_power_cursor)
         } else {
-            (finite, &mut self.cpu_finite_power_cursor)
+            (finite, &mut self.finite_power_cursor)
         };
         let weight = *weights.get(*cursor).ok_or_else(|| {
             PbrtError::error("Power sampler concrete Phi weights ran out of light handles.")
