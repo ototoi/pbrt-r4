@@ -1,7 +1,8 @@
 use std::env;
 use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::Path;
+use std::io::{ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::mipmap::{F32MIPMapImage, MIPMap, MIPMapLevelStorage};
@@ -207,6 +208,44 @@ fn validate_pyramid<T>(
     Ok(())
 }
 
+/// Creates the staging directory for a cache write.
+///
+/// The name mixes the process id, a process-wide atomic sequence, and the
+/// system-clock nanosecond count. Two `write_cache` calls that start within
+/// the same nanosecond (the barrier-synchronized writers in the concurrent
+/// test can do this) used to derive the same name when only the clock was
+/// mixed in, which made the writers share one staging directory: whichever
+/// thread installed and removed the directory first left the others
+/// creating their completion marker inside a directory that no longer
+/// existed. The sequence keeps concurrent calls in this process apart, and
+/// the exclusive `create_dir` retries if a still rarer cross-process
+/// collision picks an existing name.
+fn create_staging_directory(target: &Path) -> Result<PathBuf, PbrtError> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| PbrtError::error("Invalid system clock for cache write."))?
+        .as_nanos();
+    let mut sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    loop {
+        let candidate =
+            target.with_extension(format!("tmp.{}.{}.{}", std::process::id(), sequence, nonce));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => {
+                return Err(cache_io_error(
+                    "create temporary directory for",
+                    &candidate,
+                    e,
+                ));
+            }
+        }
+    }
+}
+
 fn write_cache<T>(
     dir: &str,
     texinfo: &TexInfo,
@@ -227,13 +266,7 @@ fn write_cache<T>(
         fs::create_dir_all(parent)
             .map_err(|e| cache_io_error("create parent directory for", parent, e))?;
     }
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| PbrtError::error("Invalid system clock for cache write."))?
-        .as_nanos();
-    let temporary = target.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
-    fs::create_dir_all(&temporary)
-        .map_err(|e| cache_io_error("create temporary directory for", &temporary, e))?;
+    let temporary = create_staging_directory(target)?;
     let result = (|| {
         let mut levels = Vec::with_capacity(mipmap.storage.pyramid.len());
         for (index, image) in mipmap.storage.pyramid.iter().enumerate() {
