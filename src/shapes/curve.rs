@@ -5,6 +5,7 @@ use crate::shapes::*;
 use crate::util::base::*;
 use crate::util::error::*;
 use crate::util::geometry::*;
+use crate::util::vecmath::angle_between;
 // Includes cos_theta, abs_cos_theta, same_hemisphere, etc.
 
 use std::sync::Arc;
@@ -174,7 +175,10 @@ impl CurveCommon {
             Some(n) => {
                 let n0 = n[0].normalize();
                 let n1 = n[1].normalize();
-                let normal_angle = Float::acos(Float::clamp(Normal3f::dot(&n0, &n1), 0.0, 1.0));
+                // pbrt-v4 AngleBetween keeps obtuse endpoint angles up to
+                // 180 degrees; clamping the dot product to [0, 1] would cap
+                // the spherical interpolation at 90 degrees.
+                let normal_angle = angle_between(n0, n1);
                 let inv_sin_normal_angle = 1.0 / Float::sin(normal_angle);
                 Some(CurveNormal {
                     n: [n0, n1],
