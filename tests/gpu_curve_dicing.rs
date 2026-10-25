@@ -397,6 +397,44 @@ fn gpu_builder_reports_curve_validation_errors_at_tessellation() {
 }
 
 #[test]
+fn ribbon_interpolation_keeps_obtuse_endpoint_normal_angles() {
+    // v4's AngleBetween preserves endpoint normal angles above 90 degrees
+    // (dot < 0 takes pi - 2 SafeASin(|n0 + n1| / 2)). Clamping the dot
+    // product caps the spherical interpolation at 90 degrees, so 120
+    // degree endpoints rotate the slice normals ~18.6 degrees at u = 0.2
+    // instead of the 24 degrees v4 produces.
+    let mut params = curve_params("ribbon");
+    params.remove_parameter("N");
+    params.add_point("N", &[0.0, 0.0, 1.0, 0.0, 0.8660254037844386, -0.5]);
+    let mut node = Node::new("obtuse-ribbon-node");
+    node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Curves(Box::new(CurvesShape {
+            params: vec![params],
+        })),
+        reverse_orientation: false,
+    }));
+    tessellate_shapes(&mut node).expect("ribbon dicing should succeed");
+    let Some(Component::Shape(component)) = node.components.first() else {
+        panic!("diced node lost its shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &component.shape else {
+        panic!("curve should be tessellated to a triangle mesh");
+    };
+    let normals = mesh.normals.as_ref().expect("diced ribbon normals");
+    // Slice 1 sits at u = 1/5; both of its vertices share the baked
+    // interpolated normal.
+    let baked = normals[2];
+    let length =
+        (baked.0[0] * baked.0[0] + baked.0[1] * baked.0[1] + baked.0[2] * baked.0[2]).sqrt();
+    let angle = (baked.0[2] / length).acos();
+    let expected = 0.2 * (2.0 * std::f32::consts::PI / 3.0);
+    assert!(
+        (angle - expected).abs() < 1e-3,
+        "slice 1 normal must rotate u * 120 degrees ({expected} rad), got {angle}"
+    );
+}
+
+#[test]
 fn tapered_curve_tips_keep_finite_tube_normals() {
     // A curve tapered to width 0 collapses its last ring onto the
     // centerline. v4 derives tube normals as Normalize(position - center),
