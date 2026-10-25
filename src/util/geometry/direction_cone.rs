@@ -2,6 +2,7 @@ use crate::util::base::{Float, Point3f, Vector3f};
 use crate::util::geometry::Bounds3f;
 use crate::util::sampling::sampling::safe_sqrt;
 use crate::util::transform::Transform;
+use crate::util::vecmath::angle_between;
 
 /// pbrt-v4 `DirectionCone` (util/vecmath.h:1099). A cone of directions
 /// expressed by an axis `w` and `cosTheta` = cosine of the half-angle.
@@ -103,14 +104,4 @@ pub fn bound_subtended_directions(b: &Bounds3f, p: &Point3f) -> DirectionCone {
 
 fn safe_acos(x: Float) -> Float {
     Float::acos(x.clamp(-1.0, 1.0))
-}
-
-fn angle_between(a: Vector3f, b: Vector3f) -> Float {
-    // pbrt-v4 `AngleBetween` (vecmath.h:1023): numerically stable variant
-    // that picks a different branch depending on the sign of `a·b`.
-    if a.dot(&b) < 0.0 {
-        std::f32::consts::PI as Float - 2.0 * Float::asin(((a + b).length() * 0.5).min(1.0))
-    } else {
-        2.0 * Float::asin(((b - a).length() * 0.5).min(1.0))
-    }
 }

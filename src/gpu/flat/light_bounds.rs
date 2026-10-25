@@ -1,4 +1,6 @@
+use crate::util::base::Vector3f;
 use crate::util::error::PbrtError;
+use crate::util::vecmath::angle_between;
 use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -353,7 +355,10 @@ fn bound_subtended_directions(bounds: Bounds3, p: [f32; 3]) -> Result<f32, PbrtE
 fn union_direction_cones(a: [f32; 3], cos_a: f32, b: [f32; 3], cos_b: f32) -> ([f32; 3], f32) {
     let theta_a = cos_a.clamp(-1.0, 1.0).acos();
     let theta_b = cos_b.clamp(-1.0, 1.0).acos();
-    let theta_d = angle_between(a, b);
+    let theta_d = angle_between(
+        Vector3f::new(a[0], a[1], a[2]),
+        Vector3f::new(b[0], b[1], b[2]),
+    );
     if (theta_d + theta_b).min(std::f32::consts::PI) <= theta_a {
         return (a, cos_a);
     }
@@ -371,15 +376,6 @@ fn union_direction_cones(a: [f32; 3], cos_a: f32, b: [f32; 3], cos_b: f32) -> ([
     let axis = normalize(axis).unwrap_or([0.0, 0.0, 1.0]);
     let theta_r = theta_o - theta_a;
     (rotate(a, axis, theta_r), theta_o.cos())
-}
-
-fn angle_between(a: [f32; 3], b: [f32; 3]) -> f32 {
-    let half_chord = |v: [f32; 3]| (dot(v, v).sqrt() * 0.5).min(1.0);
-    if dot(a, b) < 0.0 {
-        std::f32::consts::PI - 2.0 * half_chord(add(a, b)).asin()
-    } else {
-        2.0 * half_chord(sub(b, a)).asin()
-    }
 }
 
 fn rotate(v: [f32; 3], axis: [f32; 3], angle: f32) -> [f32; 3] {
