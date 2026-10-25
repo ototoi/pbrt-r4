@@ -40,6 +40,7 @@ pub struct TypedQueueSizes {
     pub scatter_thin_dielectric_ray_indices: u64,
     pub scatter_measured_ray_indices: u64,
     pub scatter_coated_ray_indices: u64,
+    pub scatter_hair_ray_indices: u64,
     pub active_medium_indices: u64,
     pub next_medium_indices: u64,
     pub active_shadow_indices: u64,
@@ -136,6 +137,7 @@ impl TypedQueueSizes {
                 "scatter measured queue",
             )?,
             scatter_coated_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter coated queue")?,
+            scatter_hair_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter hair queue")?,
             active_medium_indices: bytes(std::mem::size_of::<u32>(), "active medium queue")?,
             next_medium_indices: bytes(std::mem::size_of::<u32>(), "next medium queue")?,
             active_shadow_indices: bytes(std::mem::size_of::<u32>(), "active shadow queue")?,
@@ -168,6 +170,7 @@ pub struct Queues {
     pub scatter_thin_dielectric_ray_indices: wgpu::Buffer,
     pub scatter_measured_ray_indices: wgpu::Buffer,
     pub scatter_coated_ray_indices: wgpu::Buffer,
+    pub scatter_hair_ray_indices: wgpu::Buffer,
     pub active_medium_indices: wgpu::Buffer,
     pub next_medium_indices: wgpu::Buffer,
     pub active_shadow_indices: wgpu::Buffer,
@@ -222,6 +225,7 @@ impl Queues {
             scatter_thin_dielectric: state,
             scatter_measured: state,
             scatter_coated: state,
+            scatter_hair: state,
             medium_continuation: state,
             shadow_continuation: state,
             medium_active: state,
@@ -316,6 +320,10 @@ impl Queues {
             scatter_coated_ray_indices: storage(
                 "pbrt-r4 scatter coated ray index queue",
                 sizes.scatter_coated_ray_indices,
+            ),
+            scatter_hair_ray_indices: storage(
+                "pbrt-r4 scatter hair ray index queue",
+                sizes.scatter_hair_ray_indices,
             ),
             active_medium_indices: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 active medium segment indices"),
@@ -557,6 +565,7 @@ impl Queues {
             ResourceId::ScatterCoatedQueue => {
                 Some(self.scatter_coated_ray_indices.as_entire_binding())
             }
+            ResourceId::ScatterHairQueue => Some(self.scatter_hair_ray_indices.as_entire_binding()),
             ResourceId::ActiveMediumIndices => Some(self.active_medium_indices.as_entire_binding()),
             ResourceId::NextMediumIndices => Some(self.next_medium_indices.as_entire_binding()),
             ResourceId::ActiveShadowIndices => Some(self.active_shadow_indices.as_entire_binding()),

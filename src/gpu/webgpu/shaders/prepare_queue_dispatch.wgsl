@@ -81,6 +81,11 @@ fn prepare_queue_dispatch() {
         queue_counters.scatter_coated.capacity,
     );
     write_dispatch_args(
+        QUEUE_DISPATCH_SLOT_SCATTER_HAIR,
+        scatter_hair_count(),
+        queue_counters.scatter_hair.capacity,
+    );
+    write_dispatch_args(
         QUEUE_DISPATCH_SLOT_CURRENT_RAY, current_ray_count(), queue_counters.current.capacity,
     );
     write_dispatch_args(

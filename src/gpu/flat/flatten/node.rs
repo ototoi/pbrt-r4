@@ -208,6 +208,11 @@ pub fn flatten_node_ref(
                                 "Shape must be tessellated before flattening.",
                             ))
                         }
+                        Shape::Curves(_) => {
+                            return Err(PbrtError::error(
+                                "Shape must be tessellated before flattening.",
+                            ))
+                        }
                     };
                     if shape.indices.is_empty() {
                         continue;

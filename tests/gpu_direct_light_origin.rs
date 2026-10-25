@@ -77,7 +77,7 @@ fn direct_sampling_drops_material_dependencies_without_growing_producers() {
                 (ComputeStageId::SampleAreaLight, 18, 0),
                 (ComputeStageId::SampleImageInfiniteLight, 20, 0),
                 (ComputeStageId::SampleOtherLight, 15, 0),
-                (ComputeStageId::ClassifySurfaceScatter, 17, 3),
+                (ComputeStageId::ClassifySurfaceScatter, 18, 3),
                 (ComputeStageId::PrepareSubsurfaceExit, 12, 1),
                 (ComputeStageId::ScatterMedium, 12, 3),
             ] {

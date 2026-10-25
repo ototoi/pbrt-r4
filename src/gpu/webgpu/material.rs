@@ -80,6 +80,7 @@ pub enum MaterialKind {
     CoatedConductor,
     Measured,
     Subsurface,
+    Hair,
 }
 
 impl MaterialKind {
@@ -99,6 +100,7 @@ impl MaterialKind {
             Self::CoatedConductor => 9,
             Self::Measured => 10,
             Self::Subsurface => 15,
+            Self::Hair => 16,
         }
     }
 
@@ -134,6 +136,7 @@ impl From<flat::MaterialKind> for MaterialKind {
             flat::MaterialKind::CoatedConductor => Self::CoatedConductor,
             flat::MaterialKind::Measured => Self::Measured,
             flat::MaterialKind::Subsurface => Self::Subsurface,
+            flat::MaterialKind::Hair => Self::Hair,
         }
     }
 }

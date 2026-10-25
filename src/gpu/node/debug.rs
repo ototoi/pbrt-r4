@@ -225,6 +225,11 @@ fn shape_to_json(shape: &Shape) -> Value {
         Shape::Nurbs(shape) => {
             json!({ "type": "Shape", "kind": "NURBS", "params": params_to_json(&shape.params) })
         }
+        Shape::Curves(shape) => {
+            // Named "Curves" like the SceneBuilder entity it mirrors; the
+            // entry count preserves the grouping in diagnostics.
+            json!({ "type": "Shape", "kind": "Curves", "curve_count": shape.params.len() })
+        }
         Shape::TriangleMesh(mesh) => json!({
             "source_shape": mesh.source_shape,
             "type": "Shape",

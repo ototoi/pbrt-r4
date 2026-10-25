@@ -15,8 +15,8 @@ use super::super::abi::{
     QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT, QUEUE_DISPATCH_SLOT_SCATTER_COATED,
     QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR, QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
     QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE, QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
-    QUEUE_DISPATCH_SLOT_SCATTER_MEASURED, QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
-    QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
+    QUEUE_DISPATCH_SLOT_SCATTER_HAIR, QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
+    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
 use super::super::material::MaterialKind;
 use super::super::stage::ComputeStageId;
@@ -500,6 +500,13 @@ impl super::WavefrontPathIntegrator {
                 self.bind_groups(ComputeStageId::ScatterCoated),
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_SCATTER_COATED,
+            );
+            dispatch_indirect(
+                &mut encoder,
+                &self.pipeline.stage(ComputeStageId::ScatterHair).pipeline,
+                self.bind_groups(ComputeStageId::ScatterHair),
+                &self.queues.queue_dispatch_args,
+                QUEUE_DISPATCH_SLOT_SCATTER_HAIR,
             );
             // The scatter stages have just finished appending this
             // depth's shadow rays and next-depth bounce rays.

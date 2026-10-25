@@ -20,6 +20,7 @@ const QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC: u32 = 5u;
 const QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC: u32 = 6u;
 const QUEUE_DISPATCH_SLOT_SCATTER_MEASURED: u32 = 7u;
 const QUEUE_DISPATCH_SLOT_SCATTER_COATED: u32 = 8u;
+const QUEUE_DISPATCH_SLOT_SCATTER_HAIR: u32 = 18u;
 const QUEUE_DISPATCH_SLOT_CURRENT_RAY: u32 = 9u;
 const QUEUE_DISPATCH_SLOT_ESCAPED: u32 = 10u;
 const QUEUE_DISPATCH_SLOT_HIT_AREA: u32 = 11u;
@@ -29,7 +30,7 @@ const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u32 = 14u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u32 = 15u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u32 = 16u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u32 = 17u;
-const QUEUE_DISPATCH_SLOT_COUNT: u32 = 18u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 19u;
 const LIGHT_SAMPLE_SOURCE_SURFACE: u32 = 0u;
 const LIGHT_SAMPLE_SOURCE_MEDIUM: u32 = 1u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
@@ -48,6 +49,7 @@ const MATERIAL_KIND_COATED_DIFFUSE: u32 = 8u;
 const MATERIAL_KIND_COATED_CONDUCTOR: u32 = 9u;
 const MATERIAL_KIND_MEASURED: u32 = 10u;
 const MATERIAL_KIND_DIFFUSE_TRANSMISSION: u32 = 13u;
+const MATERIAL_KIND_HAIR: u32 = 16u;
 const ALPHA_MASK_OPAQUE: u32 = 0u;
 const ALPHA_MASK_CONSTANT: u32 = 1u;
 const ALPHA_MASK_TEXTURE: u32 = 2u;
@@ -545,6 +547,7 @@ struct QueueCounters {
     scatter_thin_dielectric: QueueState,
     scatter_measured: QueueState,
     scatter_coated: QueueState,
+    scatter_hair: QueueState,
     medium_continuation: QueueState,
     shadow_continuation: QueueState,
     medium_active: QueueState,

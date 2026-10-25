@@ -1,15 +1,24 @@
 use super::component::Component;
 use super::node::Node;
 use super::shape::{
-    prepare_triangle_mesh, BilinearMeshShape, ConeShape, CylinderShape, DiskShape,
+    prepare_triangle_mesh, BilinearMeshShape, ConeShape, CurvesShape, CylinderShape, DiskShape,
     HeightFieldShape, HyperboloidShape, NurbsShape, ParaboloidShape, Shape, SphereShape,
     TriangleMeshShape,
 };
 use super::types::{Vec2f, Vec3f};
+use crate::paramdict::ParameterDictionary;
+use crate::shapes::curve::{curve_geometry_from_params, eval_bezier, CurveType};
+use crate::util::base::{lerp, Float, Vector3f, PI};
 use crate::util::error::PbrtError;
+use crate::util::vecmath::{angle_between, coordinate_system};
 
 pub const DEFAULT_SPHERE_PHI_SEGMENTS: usize = 32;
 pub const DEFAULT_SPHERE_THETA_SEGMENTS: usize = 16;
+
+/// Curve dicing resolutions, matching the fixed `diceCurveToBLP(shape, 5, 5)`
+/// arguments of pbrt-v4's OptiX aggregate (optix/aggregate.cpp).
+pub const DEFAULT_CURVE_DICE_SLICES: usize = 5;
+pub const DEFAULT_CURVE_DICE_VERTICES: usize = 5;
 
 pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
     for component in &mut node.components {
@@ -32,6 +41,8 @@ pub fn tessellate_shapes(node: &mut Node) -> Result<(), PbrtError> {
                 shape_component.shape = Shape::TriangleMesh(Box::new(hyperboloid_to_mesh(shape)?));
             } else if let Shape::Nurbs(shape) = &shape_component.shape {
                 shape_component.shape = Shape::TriangleMesh(Box::new(nurbs_to_mesh(shape)?));
+            } else if let Shape::Curves(shape) = &shape_component.shape {
+                shape_component.shape = Shape::TriangleMesh(Box::new(curves_to_mesh(shape)?));
             }
         }
     }
@@ -387,6 +398,169 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
         tangents,
         uvs,
     })
+}
+
+/// Dices grouped SceneBuilder "curves" entities into one triangle mesh.
+///
+/// Direct port of pbrt-v4 `OptiXAggregate::diceCurveToBLP`
+/// (gpu/optix/aggregate.cpp) with the fixed (5, 5) dicing resolution:
+/// ribbons become two-vertex strips whose shading normals interpolate the
+/// `N` endpoint normals, and flat/cylinder curves both become
+/// radial-normal tubes, exactly as in pbrt-v4. The only deviation from the
+/// bilinear-patch output is the final quad-to-triangle split and the
+/// ribbons' baked vertex normals, since the triangle pipeline interpolates
+/// vertex normals where a bilinear patch derives its face normal
+/// (docs/webgpu-curve-dicing-design_ja.md §2.2).
+fn curves_to_mesh(curves: &CurvesShape) -> Result<TriangleMeshShape, PbrtError> {
+    let mut positions: Vec<Vec3f> = Vec::new();
+    let mut normals: Vec<Vec3f> = Vec::new();
+    let mut uvs: Vec<Vec2f> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    for params in &curves.params {
+        dice_curve_to_mesh(params, &mut positions, &mut normals, &mut uvs, &mut indices)?;
+    }
+    Ok(TriangleMeshShape {
+        source_shape: "curves".to_string(),
+        object_bounds: None,
+        positions,
+        indices,
+        normals: Some(normals),
+        tangents: None,
+        uvs: Some(uvs),
+    })
+}
+
+fn dice_curve_to_mesh(
+    params: &ParameterDictionary,
+    positions: &mut Vec<Vec3f>,
+    normals: &mut Vec<Vec3f>,
+    uvs: &mut Vec<Vec2f>,
+    indices: &mut Vec<u32>,
+) -> Result<(), PbrtError> {
+    // Shared with the CPU path: parameter validation and the cubic Bezier
+    // control points of every logical segment.
+    let geometry = curve_geometry_from_params(params)?;
+    let n_dice_u = DEFAULT_CURVE_DICE_SLICES;
+    let n_dice_v = DEFAULT_CURVE_DICE_VERTICES;
+    let slice_vertex_count = match geometry.curve_type {
+        CurveType::Ribbon => 2,
+        CurveType::Flat | CurveType::Cylinder => n_dice_v + 1,
+    };
+
+    for slice in 0..=n_dice_u {
+        let u = slice as Float / n_dice_u as Float;
+        let width = lerp(u, geometry.width[0], geometry.width[1]);
+
+        // Map the curve-global u to its logical segment (diceCurveToBLP).
+        let n_segments = geometry.n_segments;
+        let segment_index = ((u * n_segments as Float) as usize).min(n_segments - 1);
+        let u_seg = u * n_segments as Float - segment_index as Float;
+
+        // dpdu falls back to the end-to-end chord for degenerate segments,
+        // as in pbrt-v4.
+        let (p, dpdu) = eval_bezier(&geometry.seg_cp_bezier[segment_index], u_seg);
+
+        let base = positions.len() as u32;
+        match geometry.curve_type {
+            CurveType::Ribbon => {
+                let Some(ribbon_normals) = geometry.normals.as_ref() else {
+                    return Err(PbrtError::error(
+                        "Ribbon curves require endpoint normals; curve validation should have rejected this input.",
+                    ));
+                };
+                // pbrt-v4 diceCurveToBLP normalizes the endpoint normals up
+                // front and spherically interpolates them across the
+                // segment. The angle is v4's AngleBetween via
+                // util::vecmath::angle_between, which keeps obtuse endpoint
+                // angles; clamping the dot product would cap the
+                // interpolation at 90 degrees.
+                let n0 = ribbon_normals[segment_index].normalize();
+                let n1 = ribbon_normals[segment_index + 1].normalize();
+                let normal_angle = angle_between(n0, n1);
+                let nu = if normal_angle == 0.0 {
+                    n0
+                } else {
+                    let inv_sin = 1.0 / Float::sin(normal_angle);
+                    let sin0 = Float::sin((1.0 - u_seg) * normal_angle) * inv_sin;
+                    let sin1 = Float::sin(u_seg * normal_angle) * inv_sin;
+                    sin0 * n0 + sin1 * n1
+                };
+                let dpdv = Vector3f::cross(&nu, &dpdu).normalize() * width;
+
+                // v = 0 at p - dpdv/2 and v = 1 at p + dpdv/2; the per-slice v
+                // feeds the hair model's h = -1 + 2v later on.
+                positions.push(to_vec3f(p - dpdv * 0.5));
+                positions.push(to_vec3f(p + dpdv * 0.5));
+                // pbrt-v4 stores no vertex normals for diced ribbons (the
+                // bilinear patch derives its face normal); the triangle
+                // pipeline instead interpolates vertex normals, so bake the
+                // interpolated ribbon normal here.
+                let baked = to_vec3f(nu.normalize());
+                normals.push(baked);
+                normals.push(baked);
+                uvs.push(Vec2f([u as f32, 0.0]));
+                uvs.push(Vec2f([u as f32, 1.0]));
+
+                if slice > 0 {
+                    // Quad in diceCurveToBLP's order
+                    // [p(v=0, i-1), p(v=1, i-1), p(v=0, i), p(v=1, i)].
+                    // It splits along the p(0, i-1)–p(1, i) diagonal like
+                    // TriQuadMesh::convert_to_only_triangles, but wound so
+                    // that the geometric normal stays on the same side as
+                    // the baked +nu shading normals.
+                    let a = base - slice_vertex_count as u32;
+                    let b = a + 1;
+                    let c = base;
+                    let d = base + 1;
+                    indices.extend_from_slice(&[a, c, d, a, d, b]);
+                }
+            }
+            CurveType::Flat | CurveType::Cylinder => {
+                // pbrt-v4 dices flat and cylinder curves identically: both
+                // become a closed tube around the curve tangent.
+                let (radial0, radial1) = coordinate_system(&dpdu.normalize());
+                let o0 = radial0 * (width * 0.5);
+                let o1 = radial1 * (width * 0.5);
+                for v in 0..=n_dice_v {
+                    let v_fraction = v as Float / n_dice_v as Float;
+                    let angle = v_fraction * 2.0 * PI;
+                    let q = p + o0 * Float::cos(angle) + o1 * Float::sin(angle);
+                    // The first and last tube vertices repeat the same
+                    // position with uv v = 0 and v = 1, as in pbrt-v4.
+                    positions.push(to_vec3f(q));
+                    // v4 stores Normalize(position - center), which goes NaN
+                    // where a tapered curve reaches width 0 because that
+                    // ring collapses onto the centerline. The mesh validator
+                    // rejects any non-finite normal for the whole node, so
+                    // normalize the unscaled radial direction instead: the
+                    // same direction for width > 0, and finite at a width 0
+                    // tip whose vertices only back zero-area triangles that
+                    // no ray hits, as in v4.
+                    let radial = radial0 * Float::cos(angle) + radial1 * Float::sin(angle);
+                    normals.push(to_vec3f(radial.normalize()));
+                    uvs.push(Vec2f([u as f32, v_fraction as f32]));
+                }
+
+                if slice > 0 {
+                    for v in 0..n_dice_v {
+                        let a = base - slice_vertex_count as u32 + v as u32;
+                        let b = a + 1;
+                        let c = base + v as u32;
+                        let d = c + 1;
+                        // TriQuadMesh's quad split (q0, q1, q3), (q0, q3,
+                        // q2); wound outward to match the baked radial
+                        // shading normals.
+                        indices.extend_from_slice(&[a, b, d, a, d, c]);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn to_vec3f(v: Vector3f) -> Vec3f {
+    Vec3f([v.x as f32, v.y as f32, v.z as f32])
 }
 
 fn cylinder_to_mesh(cylinder: &CylinderShape) -> Result<TriangleMeshShape, PbrtError> {

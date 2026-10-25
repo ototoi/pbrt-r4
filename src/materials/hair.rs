@@ -173,7 +173,9 @@ impl HairMaterial {
     }
 }
 
-fn sigma_a_from_concentration_spectrum(eumelanin: Float, pheomelanin: Float) -> Spectrum {
+/// σ_a of one pigment mix as a dense `Spectrum`; shared with the WebGPU
+/// flatten step, which needs the v4/hair default (1.3, 0) spectrum.
+pub fn sigma_a_from_concentration_spectrum(eumelanin: Float, pheomelanin: Float) -> Spectrum {
     let ce = eumelanin.max(0.0);
     let cp = pheomelanin.max(0.0);
     let eumelanin_rgb = [0.419, 0.697, 1.37];

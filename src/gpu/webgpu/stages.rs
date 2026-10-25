@@ -48,6 +48,7 @@ pub enum ResourceId {
     ScatterThinDielectricQueue,
     ScatterMeasuredQueue,
     ScatterCoatedQueue,
+    ScatterHairQueue,
     QueueDispatchArgs,
     Film,
     MaterialTable,
@@ -348,6 +349,9 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         (57, ResourceId::ScatterThinDielectricQueue),
         (58, ResourceId::ScatterMeasuredQueue),
         (59, ResourceId::ScatterCoatedQueue),
+        // 60 is QueueDispatchArgs; the next unpinned free slot extends the
+        // scatter queue family at 81.
+        (81, ResourceId::ScatterHairQueue),
     ] {
         push(binding, resource, BindingClass::Storage, Access::ReadWrite);
     }

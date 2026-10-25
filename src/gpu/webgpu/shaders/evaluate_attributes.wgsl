@@ -31,6 +31,33 @@ fn evaluate_material_attributes(material_node: u32, lambda: vec4<f32>) -> Attrib
         e.values[0].x = load_material_scalar(material_node, 0u); e.values[1] = clamp(load_material_spectrum(material_node, 1u, lambda), vec4<f32>(0.0), vec4<f32>(1.0)); e.values[2].x = clamp(load_material_scalar(material_node, 2u), -1.0, 1.0); e.values[3].x = load_material_scalar(material_node, 3u); e.values[4].x = load_material_scalar(material_node, 4u);
         if (e.bxdf_kind == MATERIAL_KIND_COATED_DIFFUSE) { e.values[5] = clamp(load_material_spectrum(material_node, 5u, lambda), vec4<f32>(0.0), vec4<f32>(1.0)); }
         else { e.values[5].x = load_material_scalar(material_node, 12u); }
+    } else if (e.bxdf_kind == MATERIAL_KIND_HAIR) {
+        // pbrt-v4 HairMaterial::GetBxDF: clamp beta_m/beta_n to [1e-2, 1]
+        // and resolve the sigma_a source into one per-wavelength sigma_a in
+        // values[4]. values[8].x keeps the flatten-time sigma_a mode
+        // (0=sigma_a, 1=reflectance, 2=pigment) for diagnostics;
+        // docs/webgpu-hair-material-design_ja.md §2.2.
+        let beta_m = clamp(load_material_scalar(material_node, 0u), 1e-2, 1.0);
+        let beta_n = clamp(load_material_scalar(material_node, 1u), 1e-2, 1.0);
+        e.values[0].x = beta_m;
+        e.values[1].x = beta_n;
+        e.values[2].x = load_material_scalar(material_node, 2u);
+        e.values[3].x = load_material_scalar(material_node, 3u);
+        let mode = load_material_scalar(material_node, 8u);
+        e.values[8].x = mode;
+        if (mode == 1.0) {
+            // HairBxDF::SigmaAFromReflectance with the clamped beta_n.
+            let color = clamp(load_material_spectrum(material_node, 5u, lambda), vec4<f32>(0.0), vec4<f32>(1.0));
+            e.values[4] = hair_sigma_a_from_reflectance(color, beta_n);
+        } else if (mode == 2.0) {
+            // HairBxDF::SigmaAFromConcentration.
+            let ce = max(load_material_scalar(material_node, 6u), 0.0);
+            let cp = max(load_material_scalar(material_node, 7u), 0.0);
+            e.values[4] = hair_sigma_a_from_pigment(ce, cp, lambda);
+        } else {
+            // sigma_a attribute or the (1.3, 0) default; ClampZero.
+            e.values[4] = max(load_material_spectrum(material_node, 4u, lambda), vec4<f32>(0.0));
+        }
     }
     if (e.bxdf_kind == MATERIAL_KIND_SUBSURFACE) {
         e.values[1].x = clamp(e.values[1].x, 0.0, 1.0);

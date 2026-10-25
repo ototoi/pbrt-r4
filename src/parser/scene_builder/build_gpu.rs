@@ -5,8 +5,8 @@ use crate::gpu::node::{
     loop_subdiv_mesh_from_params, prepare_triangle_meshes, tessellate_shapes,
     triangle_mesh_from_params, Accelerator, AcceleratorComponent, AlphaMask, AlphaMaskComponent,
     AreaLight as NodeAreaLight, AreaLightComponent, BilinearMeshShape, Camera, CameraComponent,
-    Component, ConeShape, CylinderShape, DiskShape, Film, FilmComponent, Filter, FilterComponent,
-    HeightFieldShape, HyperboloidShape, Instance, InstanceComponent, Integrator,
+    Component, ConeShape, CurvesShape, CylinderShape, DiskShape, Film, FilmComponent, Filter,
+    FilterComponent, HeightFieldShape, HyperboloidShape, Instance, InstanceComponent, Integrator,
     IntegratorComponent, Light, LightComponent, Material, MaterialComponent, Medium,
     MediumComponent, MediumInterface, Node, NodeRef, NurbsShape, Output, OutputComponent,
     ParaboloidShape, Sampler, SamplerComponent, Scene, SceneComponent, Shape, ShapeComponent,
@@ -480,6 +480,30 @@ impl SceneBuilder {
             "nurbs" => Shape::Nurbs(Box::new(NurbsShape {
                 params: shape.base.params.clone(),
             })),
+            "curves" => {
+                // SceneBuilder's internal grouping of consecutive
+                // `Shape "curve"` statements. Area lights never group, so an
+                // ungrouped "curve" entity falls to the unsupported-shape
+                // error below.
+                if shape.child_params.is_empty() {
+                    return Err(PbrtError::error(
+                        "Shape \"curves\" is reserved for SceneBuilder's internal representation.",
+                    ));
+                }
+                // curve alpha/shadowalpha are rejected here: the curve dicer
+                // does not implement cutout transparency, and silently
+                // ignoring the parameters would hide that.
+                for params in &shape.child_params {
+                    if params.has_parameter("alpha") || params.has_parameter("shadowalpha") {
+                        return Err(PbrtError::error(
+                            "WebGPU does not support curve \"alpha\"/\"shadowalpha\" parameters.",
+                        ));
+                    }
+                }
+                Shape::Curves(Box::new(CurvesShape {
+                    params: shape.child_params.clone(),
+                }))
+            }
             "trianglemesh" | "plymesh" => {
                 match triangle_mesh_from_params(shape.base.name.as_str(), params)? {
                     Some(mesh) => Shape::TriangleMesh(Box::new(mesh)),
