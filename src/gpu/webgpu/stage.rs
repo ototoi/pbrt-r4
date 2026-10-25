@@ -60,6 +60,7 @@ define_compute_stages! {
     ScatterThinDielectric => ("pbrt-r4 scatter thin dielectric", "scatter_thin_dielectric", include_str!("shaders/scatter_thin_dielectric.wgsl")),
     ScatterMeasured => ("pbrt-r4 scatter measured", "scatter_measured", include_str!("shaders/scatter_measured.wgsl")),
     ScatterCoated => ("pbrt-r4 scatter coated", "scatter_coated", include_str!("shaders/scatter_coated.wgsl")),
+    ScatterHair => ("pbrt-r4 scatter hair", "scatter_hair", include_str!("shaders/scatter_hair.wgsl")),
     IntersectShadow => ("pbrt-r4 intersect shadow", "intersect_shadow", include_str!("shaders/intersect_shadow.wgsl")),
     SwapRayQueues => ("pbrt-r4 swap ray queues", "swap_ray_queues", include_str!("shaders/swap_ray_queues.wgsl")),
     ResetNextRayQueue => ("pbrt-r4 reset next ray queue", "reset_next_ray_queue", include_str!("shaders/reset_next_ray_queue.wgsl")),

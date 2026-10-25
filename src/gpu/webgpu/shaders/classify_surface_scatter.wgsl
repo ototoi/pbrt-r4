@@ -52,6 +52,12 @@ fn classify_surface_scatter(@builtin(global_invocation_id) global_id: vec3<u32>)
             append_scatter_coated(ray_index);
             supports_direct = true;
         }
+        case MATERIAL_KIND_HAIR: {
+            append_scatter_hair(ray_index);
+            // pbrt-v4 HairBxDF::Flags() is always Glossy (never
+            // EffectivelySmooth), so SampleLd always applies.
+            supports_direct = true;
+        }
         default: {
             return;
         }

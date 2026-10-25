@@ -22,6 +22,8 @@ fn reset_classification_queues() {
     atomicStore(&queue_counters.scatter_measured.overflow, 0u);
     atomicStore(&queue_counters.scatter_coated.count, 0u);
     atomicStore(&queue_counters.scatter_coated.overflow, 0u);
+    atomicStore(&queue_counters.scatter_hair.count, 0u);
+    atomicStore(&queue_counters.scatter_hair.overflow, 0u);
     atomicStore(&queue_counters.sample_area_light.count, 0u);
     atomicStore(&queue_counters.sample_area_light.overflow, 0u);
     atomicStore(&queue_counters.sample_image_infinite_light.count, 0u);

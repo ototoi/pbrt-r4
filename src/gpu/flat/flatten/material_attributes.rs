@@ -31,6 +31,7 @@ pub fn build_material_attributes(
         MaterialKind::DiffuseTransmission => {
             diffuse_transmission_attributes(source_material, builder)
         }
+        MaterialKind::Hair => hair_attributes(source_material, builder),
         MaterialKind::Measured => Err(PbrtError::error(
             "Measured material attributes are built from the BSDF library.",
         )),
@@ -551,4 +552,147 @@ fn surface_roughness_attribute(
     }
     let value = material.params.get_one_float(key, 0.0) as f32;
     push_scalar_attribute(builder, axis, value)
+}
+
+fn hair_attribute_is_present(source_material: &NodeMaterial, key: &str) -> bool {
+    source_material
+        .texture_attributes
+        .iter()
+        .any(|(name, _)| name == key)
+        || source_material.params.has_parameter(key)
+}
+
+fn hair_float_attribute(
+    source_material: &NodeMaterial,
+    key: &str,
+    default: crate::util::base::Float,
+    builder: &mut FlatBuilder,
+) -> Result<AttributeRef, PbrtError> {
+    if let Some(attribute) = texture_attribute_ref(source_material, key, builder)? {
+        return Ok(attribute);
+    }
+    push_scalar_attribute(
+        builder,
+        key,
+        source_material.params.get_one_float(key, default) as f32,
+    )
+}
+
+/// The reflectance slot always carries any provided `reflectance`/`color`
+/// (`reflectance` first, matching `HairMaterial::create`) so the hair schema
+/// stays 9 slots wide; the sigma_a mode discriminates which slot the WGSL
+/// evaluator reads.
+fn hair_reflectance_attribute(
+    source_material: &NodeMaterial,
+    builder: &mut FlatBuilder,
+) -> Result<AttributeRef, PbrtError> {
+    if let Some(attribute) = texture_attribute_ref(source_material, "reflectance", builder)? {
+        return Ok(attribute);
+    }
+    if let Some(attribute) = texture_attribute_ref(source_material, "color", builder)? {
+        return Ok(attribute);
+    }
+    let zero = Spectrum::from(0.0);
+    let key = if source_material.params.has_parameter("reflectance") {
+        "reflectance"
+    } else {
+        "color"
+    };
+    let spectrum = spectrum_attribute(source_material, key, &zero, SpectrumType::Albedo)?;
+    push_spectrum_attribute(builder, "reflectance", &spectrum)
+}
+
+/// pbrt-v4 `HairMaterial::Create` sigma_a selection, mirrored from
+/// `materials/hair.rs`: sigma_a > reflectance/color > eumelanin/pheomelanin
+/// > the (1.3, 0) eumelanin default. Slots the selected mode does not read
+/// are still pushed (zero-filled, or with any provided texture consumed) so
+/// every hair node keeps the fixed 9-attribute schema; the flatten step
+/// rejects unconsumed texture attributes.
+fn hair_attributes(
+    source_material: &NodeMaterial,
+    builder: &mut FlatBuilder,
+) -> Result<Vec<AttributeRef>, PbrtError> {
+    const MODE_SIGMA_A: f32 = 0.0;
+    const MODE_REFLECTANCE: f32 = 1.0;
+    const MODE_PIGMENT: f32 = 2.0;
+
+    let has = |key: &str| hair_attribute_is_present(source_material, key);
+
+    let beta_m = hair_float_attribute(source_material, "beta_m", 0.3, builder)?;
+    let beta_n = hair_float_attribute(source_material, "beta_n", 0.3, builder)?;
+    let alpha = hair_float_attribute(source_material, "alpha", 2.0, builder)?;
+    let eta = hair_float_attribute(source_material, "eta", 1.55, builder)?;
+
+    let zero = Spectrum::from(0.0);
+    let (sigma_a, reflectance, mode): (AttributeRef, AttributeRef, f32);
+    if has("sigma_a") {
+        if has("reflectance") || has("color") {
+            log::warn!(
+                "Material \"hair\": ignoring \"reflectance\"/\"color\" because \"sigma_a\" was provided."
+            );
+        }
+        if has("eumelanin") {
+            log::warn!(
+                "Material \"hair\": ignoring \"eumelanin\" because \"sigma_a\" was provided."
+            );
+        }
+        if has("pheomelanin") {
+            log::warn!(
+                "Material \"hair\": ignoring \"pheomelanin\" because \"sigma_a\" was provided."
+            );
+        }
+        sigma_a = if let Some(attribute) =
+            texture_attribute_ref_unbounded(source_material, "sigma_a", builder)?
+        {
+            attribute
+        } else {
+            let spectrum =
+                spectrum_attribute(source_material, "sigma_a", &zero, SpectrumType::Unbounded)?;
+            push_spectrum_attribute(builder, "sigma_a", &spectrum)?
+        };
+        reflectance = hair_reflectance_attribute(source_material, builder)?;
+        mode = MODE_SIGMA_A;
+    } else if has("reflectance") || has("color") {
+        if has("eumelanin") {
+            log::warn!(
+                "Material \"hair\": ignoring \"eumelanin\" because \"reflectance\"/\"color\" was provided."
+            );
+        }
+        if has("pheomelanin") {
+            log::warn!(
+                "Material \"hair\": ignoring \"pheomelanin\" because \"reflectance\"/\"color\" was provided."
+            );
+        }
+        sigma_a = push_spectrum_attribute(builder, "sigma_a", &zero)?;
+        reflectance = hair_reflectance_attribute(source_material, builder)?;
+        mode = MODE_REFLECTANCE;
+    } else if has("eumelanin") || has("pheomelanin") {
+        sigma_a = push_spectrum_attribute(builder, "sigma_a", &zero)?;
+        reflectance = push_spectrum_attribute(builder, "reflectance", &zero)?;
+        mode = MODE_PIGMENT;
+    } else {
+        // materials/hair.rs HairMaterial::create defaults to the σ_a of
+        // (1.3, 0) pigment concentrations.
+        sigma_a = push_spectrum_attribute(
+            builder,
+            "sigma_a",
+            &crate::materials::sigma_a_from_concentration_spectrum(1.3, 0.0),
+        )?;
+        reflectance = push_spectrum_attribute(builder, "reflectance", &zero)?;
+        mode = MODE_SIGMA_A;
+    }
+    let eumelanin = hair_float_attribute(source_material, "eumelanin", 0.0, builder)?;
+    let pheomelanin = hair_float_attribute(source_material, "pheomelanin", 0.0, builder)?;
+    let mode_attribute = push_scalar_attribute(builder, "sigma_a_mode", mode)?;
+    Ok(vec![
+        beta_m,
+        beta_n,
+        alpha,
+        eta,
+        sigma_a,
+        reflectance,
+        eumelanin,
+        pheomelanin,
+        mode_attribute,
+    ])
 }

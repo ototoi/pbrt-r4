@@ -56,6 +56,7 @@ pub const COMMON_LIBRARY: &[(&str, &str)] = &[
         "bxdfs/layered",
         include_str!("shaders/lib/bxdfs/layered.wgsl"),
     ),
+    ("bxdfs/hair", include_str!("shaders/lib/bxdfs/hair.wgsl")),
     ("lights", include_str!("shaders/lib/lights.wgsl")),
     (
         "image_infinite_sampling",

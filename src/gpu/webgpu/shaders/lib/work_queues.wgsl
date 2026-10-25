@@ -324,6 +324,23 @@ fn load_scatter_coated_ray(index: u32) -> u32 {
     return scatter_coated_ray_indices[index];
 }
 
+fn append_scatter_hair(ray_index: u32) {
+    let index = atomicAdd(&queue_counters.scatter_hair.count, 1u);
+    if (index < queue_counters.scatter_hair.capacity) {
+        scatter_hair_ray_indices[index] = ray_index;
+    } else {
+        atomicStore(&queue_counters.scatter_hair.overflow, 1u);
+    }
+}
+
+fn scatter_hair_count() -> u32 {
+    return atomicLoad(&queue_counters.scatter_hair.count);
+}
+
+fn load_scatter_hair_ray(index: u32) -> u32 {
+    return scatter_hair_ray_indices[index];
+}
+
 // Shared tail of every non-specular scatter kind's direct-lighting
 // evaluation: MIS weight against the light sample's own pdf, the direct
 // contribution, and the shadow ray. `f`, `bsdf_pdf`, and `cosine` are the

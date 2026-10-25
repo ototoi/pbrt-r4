@@ -23,6 +23,7 @@ pub enum MaterialKind {
     CoatedConductor,
     Measured,
     Subsurface,
+    Hair,
 }
 
 impl MaterialKind {
@@ -39,6 +40,7 @@ impl MaterialKind {
             "coatedconductor" => Some(Self::CoatedConductor),
             "measured" => Some(Self::Measured),
             "subsurface" => Some(Self::Subsurface),
+            "hair" => Some(Self::Hair),
             _ => None,
         }
     }
@@ -56,6 +58,7 @@ impl MaterialKind {
             Self::CoatedConductor => "coatedconductor",
             Self::Measured => "measured",
             Self::Subsurface => "subsurface",
+            Self::Hair => "hair",
         }
     }
 }
@@ -128,6 +131,12 @@ fn expected_material_attributes(kind: MaterialKind) -> &'static [AttributeKind] 
             Scalar, Scalar, Scalar, Spectrum, Scalar,
         ],
         MaterialKind::Measured => &[Measured],
+        // [beta_m, beta_n, alpha, eta, sigma_a, reflectance, eumelanin,
+        // pheomelanin, sigma_a_mode] in `docs/webgpu-hair-material-design_ja.md`
+        // §2.2; the WGSL evaluator reads the same order.
+        MaterialKind::Hair => &[
+            Scalar, Scalar, Scalar, Scalar, Spectrum, Spectrum, Scalar, Scalar, Scalar,
+        ],
     }
 }
 

@@ -76,6 +76,8 @@ var<storage, read_write> scatter_thin_dielectric_ray_indices: array<u32>;
 var<storage, read_write> scatter_measured_ray_indices: array<u32>;
 @group(0) @binding(59)
 var<storage, read_write> scatter_coated_ray_indices: array<u32>;
+@group(0) @binding(81)
+var<storage, read_write> scatter_hair_ray_indices: array<u32>;
 @group(0) @binding(28)
 var<storage, read> light_records: array<LightRecord>;
 @group(0) @binding(29)
