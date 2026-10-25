@@ -10,8 +10,7 @@ use crate::paramdict::ParameterDictionary;
 use crate::shapes::curve::{curve_geometry_from_params, eval_bezier, CurveType};
 use crate::util::base::{lerp, Float, Vector3f, PI};
 use crate::util::error::PbrtError;
-use crate::util::math::safe_asin;
-use crate::util::vecmath::frame::coordinate_system;
+use crate::util::vecmath::{angle_between, coordinate_system};
 
 pub const DEFAULT_SPHERE_PHI_SEGMENTS: usize = 32;
 pub const DEFAULT_SPHERE_THETA_SEGMENTS: usize = 16;
@@ -471,17 +470,13 @@ fn dice_curve_to_mesh(
                 };
                 // pbrt-v4 diceCurveToBLP normalizes the endpoint normals up
                 // front and spherically interpolates them across the
-                // segment. The angle is v4's AngleBetween, which keeps
-                // obtuse endpoint angles (dot < 0 uses
-                // pi - 2 SafeASin(|n0 + n1| / 2)); clamping the dot product
-                // would cap the interpolation at 90 degrees.
+                // segment. The angle is v4's AngleBetween via
+                // util::vecmath::angle_between, which keeps obtuse endpoint
+                // angles; clamping the dot product would cap the
+                // interpolation at 90 degrees.
                 let n0 = ribbon_normals[segment_index].normalize();
                 let n1 = ribbon_normals[segment_index + 1].normalize();
-                let normal_angle = if Vector3f::dot(&n0, &n1) < 0.0 {
-                    PI - 2.0 * safe_asin((n0 + n1).length() / 2.0)
-                } else {
-                    2.0 * safe_asin((n1 - n0).length() / 2.0)
-                };
+                let normal_angle = angle_between(n0, n1);
                 let nu = if normal_angle == 0.0 {
                     n0
                 } else {
