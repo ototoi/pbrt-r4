@@ -196,3 +196,46 @@ fn splitdepth_preserves_grouped_curve_intersections() {
             .any(|curve| curve.intersect_p(&ray, Float::INFINITY))
     );
 }
+
+#[test]
+fn ribbon_intersection_interpolates_obtuse_endpoint_normal_angles() {
+    // pbrt-v4's AngleBetween (vecmath.h) keeps endpoint normal angles above
+    // 90 degrees via its dot < 0 branch, so a ribbon whose endpoint normals
+    // differ by 120 degrees must rotate the interpolated normal through the
+    // full arc: at u = 0.2 the shading normal is 24 degrees from n0. The
+    // previous acos(clamp(dot, 0, 1)) capped the arc at 90 degrees and
+    // produced 18.6 degrees there.
+    let mut params = intersectable_curve_params("ribbon", 0);
+    params.remove_parameter("N");
+    params.add_point("N", &[0.0, 0.0, 1.0, 0.0, f32::sqrt(3.0) / 2.0, -0.5]);
+    let shapes = create_curve_shape(
+        &Transform::identity(),
+        &Transform::identity(),
+        false,
+        &params,
+    )
+    .unwrap();
+
+    // Shoot along the interpolated u = 0.2 normal (24 degrees from n0)
+    // at the straight-line control polygon, which places u = 0.2 at x = 0.2.
+    let ray = Ray::new(
+        &Point3f::new(0.2, 0.4067366430758002, 0.9135454576426009),
+        &Vector3f::new(0.0, -0.4067366430758002, -0.9135454576426009),
+        Float::INFINITY,
+        0.0,
+    );
+    let hit = shapes[0]
+        .intersect(&ray, Float::INFINITY)
+        .unwrap_or_else(|| panic!("obtuse ribbon should intersect at u = 0.2"));
+
+    // The slerp rotates the endpoint normal linearly in u, so the measured
+    // angle must be u * 120 degrees; the clamped arc would only produce
+    // u * 90 degrees, which fails this check at any u.
+    let angle = Float::acos(Float::clamp(hit.intr.n.z, -1.0, 1.0));
+    let expected = hit.intr.uv.x * (2.0 * std::f32::consts::PI / 3.0);
+    assert!(
+        (angle - expected).abs() < 1e-3,
+        "shading normal must rotate u * 120 degrees (u = {}, expected {expected} rad), got {angle}",
+        hit.intr.uv.x
+    );
+}
