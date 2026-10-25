@@ -37,9 +37,12 @@ fn scatter_hair(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    // Indirect bounce.
+    // Indirect bounce. The hair BSDF sample comes from the `indirect.yz`
+    // dimensions: `indirect.x` is consumed by evaluate_attributes when hair
+    // is a mix child (the lobe selection), so reusing it here would correlate
+    // the two; measured/coated scatter the same way.
     let samples = load_ray_samples(pixel_index);
-    let sampled = hair_bxdf_sample_f(bxdf, wo_local, samples.indirect.xy);
+    let sampled = hair_bxdf_sample_f(bxdf, wo_local, samples.indirect.yz);
     if (sampled.valid == 0u || sampled.pdf <= 0.0 || all(sampled.f == vec4<f32>(0.0))) {
         return;
     }

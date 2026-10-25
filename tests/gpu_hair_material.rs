@@ -177,3 +177,78 @@ fn hair_on_diced_curves_reference_the_curves_geometry() {
         .iter()
         .any(|geometry| { geometry.source_shape == pbrt_r4::gpu::flat::SourceShape::Curves }));
 }
+
+#[test]
+fn hair_constant_sigma_a_keeps_unbounded_magnitudes() {
+    // HairMaterial::create resolves sigma_a with SpectrumType::Unbounded;
+    // an Albedo-typed flattening would clamp "rgb sigma_a" [2 3 4] to
+    // magnitudes of at most one and darken the absorption.
+    let scene = hair_flat_scene("\"rgb sigma_a\" [2 3 4]");
+    let node = &scene.materials.nodes[hair_material_node(&scene)];
+    assert_eq!(scalar(&scene, node.attributes[8].index as usize), 0.0);
+    let sigma_a = &scene.attributes.spectra[node.attributes[4].index as usize];
+    let max_sample = sigma_a
+        .samples
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        max_sample > 1.0,
+        "constant sigma_a must stay unbounded, got max sample {max_sample}"
+    );
+}
+
+#[test]
+fn hair_reflectance_wins_over_a_textured_legacy_color() {
+    // HairMaterial::create resolves the "reflectance" name first by
+    // presence, whether it is a constant or a texture; the legacy "color"
+    // only applies when "reflectance" is absent. A constant reflectance
+    // must therefore beat a textured "color" for the reflectance slot.
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("tint.png");
+    image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
+        2,
+        2,
+        vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
+    )
+    .unwrap()
+    .save(&image_path)
+    .unwrap();
+    let source = {
+        let path_display = image_path.display();
+        format!(
+            r#"
+Integrator "path"
+Sampler "independent" "integer pixelsamples" [1]
+Film "rgb" "integer xresolution" [1] "integer yresolution" [1]
+Camera "perspective"
+WorldBegin
+Texture "tint" "spectrum" "imagemap" "string filename" "{path_display}"
+Material "hair" "rgb reflectance" [0.4 0.5 0.6] "texture color" ["tint"]
+Shape "curve" "string type" "cylinder" "float width" [0.2]
+    "point3 P" [0 0 0 0.3 0 0 0.7 0 0 1 0 0]
+WorldEnd
+"#
+        )
+    };
+    let mut builder = SceneBuilder::new();
+    parse_string(&source, &mut builder).expect("scene should parse");
+    let root = builder.build_gpu_ir_node().expect("GPU IR should build");
+    {
+        let mut node = root.write().expect("node lock");
+        tessellate_shapes(&mut node).expect("curves should dice");
+        prepare_triangle_meshes(&mut node).expect("meshes should prepare");
+    }
+    let flat = flatten_node(root).expect("flat scene should build");
+    let node = &flat.materials.nodes[hair_material_node(&flat)];
+    assert_eq!(
+        scalar(&flat, node.attributes[8].index as usize),
+        1.0,
+        "reflectance mode"
+    );
+    assert_eq!(
+        node.attributes[5].kind,
+        AttributeKind::Spectrum,
+        "constant reflectance must win over the textured legacy color"
+    );
+}

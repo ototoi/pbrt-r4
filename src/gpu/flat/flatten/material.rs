@@ -256,9 +256,16 @@ pub fn register_material_source(
     for (name, texture_node) in &source_material.texture_attributes {
         if name == "displacement"
             || kind == MaterialKind::Subsurface
+            || kind == MaterialKind::Hair
             || (kind == MaterialKind::Dielectric
                 && matches!(name.as_str(), "roughness" | "uroughness" | "vroughness"))
         {
+            // Hair owns its full parameter interface: the selected slots are
+            // consumed by hair_attributes, and the rest are intentionally
+            // ignored like HairMaterial::create does (e.g. a textured
+            // "color" when "reflectance" won, or inputs shadowed by
+            // "sigma_a"), so they must not grow the fixed 9-attribute
+            // schema.
             continue;
         }
         if kind == MaterialKind::DiffuseTransmission {

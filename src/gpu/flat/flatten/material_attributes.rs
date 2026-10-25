@@ -579,25 +579,25 @@ fn hair_float_attribute(
 }
 
 /// The reflectance slot always carries any provided `reflectance`/`color`
-/// (`reflectance` first, matching `HairMaterial::create`) so the hair schema
-/// stays 9 slots wide; the sigma_a mode discriminates which slot the WGSL
-/// evaluator reads.
+/// so the hair schema stays 9 slots wide; the sigma_a mode discriminates
+/// which slot the WGSL evaluator reads. Like `HairMaterial::create`, the
+/// `reflectance` name is resolved first by parameter presence — whether it
+/// is a texture or a constant — and the legacy `color` name is only used
+/// when `reflectance` is absent, so a constant `reflectance` wins over a
+/// textured `color`.
 fn hair_reflectance_attribute(
     source_material: &NodeMaterial,
     builder: &mut FlatBuilder,
 ) -> Result<AttributeRef, PbrtError> {
-    if let Some(attribute) = texture_attribute_ref(source_material, "reflectance", builder)? {
-        return Ok(attribute);
-    }
-    if let Some(attribute) = texture_attribute_ref(source_material, "color", builder)? {
-        return Ok(attribute);
-    }
-    let zero = Spectrum::from(0.0);
-    let key = if source_material.params.has_parameter("reflectance") {
+    let key = if hair_attribute_is_present(source_material, "reflectance") {
         "reflectance"
     } else {
         "color"
     };
+    if let Some(attribute) = texture_attribute_ref(source_material, key, builder)? {
+        return Ok(attribute);
+    }
+    let zero = Spectrum::from(0.0);
     let spectrum = spectrum_attribute(source_material, key, &zero, SpectrumType::Albedo)?;
     push_spectrum_attribute(builder, "reflectance", &spectrum)
 }
@@ -646,8 +646,15 @@ fn hair_attributes(
         {
             attribute
         } else {
-            let spectrum =
-                spectrum_attribute(source_material, "sigma_a", &zero, SpectrumType::Unbounded)?;
+            // `HairMaterial::create` reads sigma_a as an Unbounded
+            // spectrum; `spectrum_attribute` would run the constant through
+            // the Albedo-typed `get_one_spectrum` and silently clamp
+            // absorption coefficients above one.
+            let spectrum = source_material.params.get_one_spectrum_typed(
+                "sigma_a",
+                &zero,
+                SpectrumType::Unbounded,
+            );
             push_spectrum_attribute(builder, "sigma_a", &spectrum)?
         };
         reflectance = hair_reflectance_attribute(source_material, builder)?;
