@@ -3,8 +3,8 @@
 use pbrt_r4::gpu::flat::flatten_node;
 use pbrt_r4::gpu::flat::SourceShape;
 use pbrt_r4::gpu::node::{
-    tessellate_shapes, Component, CurvesShape, Node, Shape, ShapeComponent, TriangleMeshShape,
-    DEFAULT_CURVE_DICE_SLICES, DEFAULT_CURVE_DICE_VERTICES,
+    prepare_triangle_meshes, tessellate_shapes, Component, CurvesShape, Node, Shape,
+    ShapeComponent, TriangleMeshShape, DEFAULT_CURVE_DICE_SLICES, DEFAULT_CURVE_DICE_VERTICES,
 };
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::parser::parse_string;
@@ -394,4 +394,62 @@ fn gpu_builder_reports_curve_validation_errors_at_tessellation() {
     assert!(error
         .to_string()
         .contains("Must provide normals \"N\" at curve endpoints with ribbon curves."));
+}
+
+#[test]
+fn tapered_curve_tips_keep_finite_tube_normals() {
+    // A curve tapered to width 0 collapses its last ring onto the
+    // centerline. v4 derives tube normals as Normalize(position - center),
+    // which is NaN there; v4's degenerate quads are never hit by rays, but
+    // the r4 mesh validator rejects any non-finite normal for the whole
+    // node, so the dicer normalizes the unscaled radial direction instead.
+    let mut params = curve_params("cylinder");
+    params.add_float("width0", 0.2);
+    params.add_float("width1", 0.0);
+    let mut node = Node::new("tapered-curve-node");
+    node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Curves(Box::new(CurvesShape {
+            params: vec![params],
+        })),
+        reverse_orientation: false,
+    }));
+    tessellate_shapes(&mut node).expect("tapered curve dicing should succeed");
+    prepare_triangle_meshes(&mut node).expect("tapered curve mesh should validate");
+    let Some(Component::Shape(component)) = node.components.first() else {
+        panic!("diced node lost its shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &component.shape else {
+        panic!("curve should be tessellated to a triangle mesh");
+    };
+    let normals = mesh.normals.as_ref().expect("diced tube normals");
+    assert!(normals
+        .iter()
+        .all(|normal| normal.0.iter().all(|value| value.is_finite())));
+}
+
+#[test]
+fn tapered_flat_curve_tips_keep_finite_tube_normals_too() {
+    // The flat type dices through the same tube code path.
+    let mut params = curve_params("flat");
+    params.add_float("width0", 0.2);
+    params.add_float("width1", 0.0);
+    let mut node = Node::new("tapered-flat-curve-node");
+    node.add_component(Component::Shape(ShapeComponent {
+        shape: Shape::Curves(Box::new(CurvesShape {
+            params: vec![params],
+        })),
+        reverse_orientation: false,
+    }));
+    tessellate_shapes(&mut node).expect("tapered flat dicing should succeed");
+    prepare_triangle_meshes(&mut node).expect("tapered flat mesh should validate");
+    let Some(Component::Shape(component)) = node.components.first() else {
+        panic!("diced node lost its shape component");
+    };
+    let Shape::TriangleMesh(mesh) = &component.shape else {
+        panic!("curve should be tessellated to a triangle mesh");
+    };
+    let normals = mesh.normals.as_ref().expect("diced tube normals");
+    assert!(normals
+        .iter()
+        .all(|normal| normal.0.iter().all(|value| value.is_finite())));
 }

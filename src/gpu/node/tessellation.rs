@@ -515,9 +515,9 @@ fn dice_curve_to_mesh(
             CurveType::Flat | CurveType::Cylinder => {
                 // pbrt-v4 dices flat and cylinder curves identically: both
                 // become a closed tube around the curve tangent.
-                let (o0, o1) = coordinate_system(&dpdu.normalize());
-                let o0 = o0 * (width * 0.5);
-                let o1 = o1 * (width * 0.5);
+                let (radial0, radial1) = coordinate_system(&dpdu.normalize());
+                let o0 = radial0 * (width * 0.5);
+                let o1 = radial1 * (width * 0.5);
                 for v in 0..=n_dice_v {
                     let v_fraction = v as Float / n_dice_v as Float;
                     let angle = v_fraction * 2.0 * PI;
@@ -525,7 +525,16 @@ fn dice_curve_to_mesh(
                     // The first and last tube vertices repeat the same
                     // position with uv v = 0 and v = 1, as in pbrt-v4.
                     positions.push(to_vec3f(q));
-                    normals.push(to_vec3f((q - p).normalize()));
+                    // v4 stores Normalize(position - center), which goes NaN
+                    // where a tapered curve reaches width 0 because that
+                    // ring collapses onto the centerline. The mesh validator
+                    // rejects any non-finite normal for the whole node, so
+                    // normalize the unscaled radial direction instead: the
+                    // same direction for width > 0, and finite at a width 0
+                    // tip whose vertices only back zero-area triangles that
+                    // no ray hits, as in v4.
+                    let radial = radial0 * Float::cos(angle) + radial1 * Float::sin(angle);
+                    normals.push(to_vec3f(radial.normalize()));
                     uvs.push(Vec2f([u as f32, v_fraction as f32]));
                 }
 
