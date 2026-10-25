@@ -99,8 +99,11 @@ fn subdivide_bezier(cp: &[Point3f]) -> [Point3f; 7] {
     return cp_split;
 }
 
+/// Evaluates one cubic Bezier segment and its derivative; the derivative
+/// falls back to the end-to-end chord when the de Casteljau difference is
+/// zero (as in pbrt-v4). Public for the GPU curve dicer.
 #[inline]
-fn eval_bezier(cp: &[Point3f], u: Float) -> (Point3f, Vector3f) {
+pub fn eval_bezier(cp: &[Point3f], u: Float) -> (Point3f, Vector3f) {
     let cp1 = [
         lerp3(u, &cp[0], &cp[1]),
         lerp3(u, &cp[1], &cp[2]),
@@ -847,13 +850,31 @@ pub fn create_curves_shape(
     Ok(curve_sets)
 }
 
-fn create_curve_shape_impl<F>(
+/// Parsed and validated parameters of one logical curve, shared by CPU shape
+/// creation (`create_curve_shape_impl`) and the GPU curve dicer.
+///
+/// This is the Rust counterpart of the parameter handling in pbrt-v4
+/// `Curve::Create` (shapes.cpp) that `OptiXAggregate::diceCurveToBLP`
+/// duplicates ("unfortunately, copied from Curve::Create").
+#[derive(Debug, Clone)]
+pub struct CurveGeometry {
+    pub curve_type: CurveType,
+    /// `width0`, `width1` (the `width` shorthand has already been folded in).
+    pub width: [Float; 2],
+    /// Cubic Bezier control points of each logical segment (quadratic curves
+    /// are elevated, b-splines converted to Bezier form).
+    pub seg_cp_bezier: Vec<[Point3f; 4]>,
+    /// Ribbon endpoint normals (`N`), stored as parsed; `None` for
+    /// non-ribbon curves (pbrt-v4 drops them there).
+    pub normals: Option<Vec<Normal3f>>,
+    pub n_segments: usize,
+}
+
+/// Validates one logical curve's parameters and returns its cubic Bezier
+/// segments. Error messages and their order follow pbrt-v4 `Curve::Create`.
+pub fn curve_geometry_from_params(
     params: &ParameterDictionary,
-    make_common: F,
-) -> Result<Vec<Curve>, PbrtError>
-where
-    F: FnOnce(CurveType) -> Result<Arc<CurvesCommon>, PbrtError>,
-{
+) -> Result<CurveGeometry, PbrtError> {
     let width = params.get_one_float("width", 1.0);
     let width0 = params.get_one_float("width0", width);
     let width1 = params.get_one_float("width1", width);
@@ -899,6 +920,7 @@ where
                 );
                 return Err(PbrtError::error(&msg));
             }
+            // The ncp < degree + 1 case was rejected above.
             (ncp - 1) / degree
         }
         "bspline" => {
@@ -921,38 +943,57 @@ where
     };
 
     let curve_type = CurveType::parse(&params.get_one_string("type", "flat"))?;
-    let curves_common = make_common(curve_type)?;
 
     let n = params.get_points_ref("N");
-    let mut n = n.as_ref().map(|nn| convert_to_point(nn));
-    if let Some(nn) = n.as_ref() {
-        let nnorm = nn.len();
-        if curve_type != CurveType::Ribbon {
-            //Warning("Curve normals are only used with \"ribbon\" type curves.");
-            n = None;
-        } else if nnorm != (n_segments + 1) {
-            let msg = format!("Invalid number of normals {}: must provide {} normals for ribbon curves with {} segments.", nnorm, n_segments + 1, n_segments);
-            return Err(PbrtError::error(&msg));
+    let normals = n.as_ref().map(|nn| convert_to_point(nn));
+    let normals = match normals {
+        Some(normals) => {
+            if curve_type != CurveType::Ribbon {
+                //Warning("Curve normals are only used with \"ribbon\" type curves.");
+                None
+            } else {
+                let nnorm = normals.len();
+                if nnorm != (n_segments + 1) {
+                    let msg = format!("Invalid number of normals {}: must provide {} normals for ribbon curves with {} segments.", nnorm, n_segments + 1, n_segments);
+                    return Err(PbrtError::error(&msg));
+                }
+                // pbrt-v4 diceCurveToBLP normalizes the endpoint normals up
+                // front; the CPU path normalizes them inside CurveCommon.
+                // Store them as parsed here so both paths apply their own
+                // normalization like pbrt-v4 does.
+                Some(normals)
+            }
         }
-    } else {
-        if curve_type == CurveType::Ribbon {
-            return Err(PbrtError::error(
-                "Must provide normals \"N\" at curve endpoints with ribbon curves.",
-            ));
+        None => {
+            if curve_type == CurveType::Ribbon {
+                return Err(PbrtError::error(
+                    "Must provide normals \"N\" at curve endpoints with ribbon curves.",
+                ));
+            }
+            None
         }
-    }
-    let sd = params.get_one_float("splitdepth", 3.0) as i32;
-    let sd = params.get_one_int("splitdepth", sd);
+    };
 
-    let mut curves: Vec<Curve> = Vec::new();
+    let mut seg_cp_bezier: Vec<[Point3f; 4]> = Vec::with_capacity(n_segments);
     for seg in 0..n_segments {
         // First, compute the cubic Bezier control points for the current
-        // segment and store them in segCpBezier. (It is admittedly
+        // segment and store them in seg_cp_bezier. (It is admittedly
         // wasteful storage-wise to turn b-splines into Bezier segments and
         // wasteful computationally to turn quadratic curves into cubics,
         // but yolo.)
-        let cp_base = &cp[(seg * degree)..];
-        let mut seg_cp_bezier = vec![
+        let cp_base = if basis == "bezier" {
+            // Bezier segments reuse the last control point of the previous
+            // segment and then consume degree more.
+            &cp[(seg * degree)..]
+        } else {
+            // Uniform b-spline segments advance one control point at a
+            // time (pbrt-v4 Curve::Create / diceCurveToBLP use
+            // cpOffset = segmentIndex for the b-spline basis). The former
+            // `seg * degree` stride over-indexed multi-segment b-splines
+            // and panicked.
+            &cp[seg..]
+        };
+        let mut seg_cp = [
             Point3f::zero(),
             Point3f::zero(),
             Point3f::zero(),
@@ -961,14 +1002,12 @@ where
         if basis == "bezier" {
             if degree == 2 {
                 // Elevate to degree 3.
-                seg_cp_bezier[0] = cp_base[0];
-                seg_cp_bezier[1] = lerp3(2.0 / 3.0, &cp_base[0], &cp_base[1]);
-                seg_cp_bezier[2] = lerp3(1.0 / 3.0, &cp_base[1], &cp_base[2]);
-                seg_cp_bezier[3] = cp_base[2];
+                seg_cp[0] = cp_base[0];
+                seg_cp[1] = lerp3(2.0 / 3.0, &cp_base[0], &cp_base[1]);
+                seg_cp[2] = lerp3(1.0 / 3.0, &cp_base[1], &cp_base[2]);
+                seg_cp[3] = cp_base[2];
             } else {
-                //for i in 0..4 {
-                //    seg_cp_bezier[i] = cp_base[i];
-                seg_cp_bezier.copy_from_slice(&cp_base[..4]);
+                seg_cp.copy_from_slice(&cp_base[..4]);
             }
         } else {
             // Uniform b-spline.
@@ -987,10 +1026,10 @@ where
                 let p22 = lerp3(0.5, &p12, &p23);
 
                 // Now elevate to degree 3.
-                seg_cp_bezier[0] = p11;
-                seg_cp_bezier[1] = lerp3(2.0 / 3.0, &p11, &p12);
-                seg_cp_bezier[2] = lerp3(1.0 / 3.0, &p12, &p22);
-                seg_cp_bezier[3] = p22;
+                seg_cp[0] = p11;
+                seg_cp[1] = lerp3(2.0 / 3.0, &p11, &p12);
+                seg_cp[2] = lerp3(1.0 / 3.0, &p12, &p22);
+                seg_cp[3] = p22;
             } else {
                 // Otherwise we will blossom from p012, p123, p234, and p345
                 // to the Bezier control points p222, p223, p233, and p333.
@@ -1008,15 +1047,61 @@ where
                 let p222 = lerp3(0.5, &p122, &p223);
                 let p333 = lerp3(0.5, &p233, &p334);
 
-                seg_cp_bezier[0] = p222;
-                seg_cp_bezier[1] = p223;
-                seg_cp_bezier[2] = p233;
-                seg_cp_bezier[3] = p333;
+                seg_cp[0] = p222;
+                seg_cp[1] = p223;
+                seg_cp[2] = p233;
+                seg_cp[3] = p333;
             }
         }
-        let w0 = lerp((seg as Float) / (n_segments as Float), width0, width1);
-        let w1 = lerp(((seg + 1) as Float) / (n_segments as Float), width0, width1);
-        let mut c = create_curve(&curves_common, &seg_cp_bezier, w0, w1, &n, sd)?;
+        seg_cp_bezier.push(seg_cp);
+    }
+
+    Ok(CurveGeometry {
+        curve_type,
+        width: [width0, width1],
+        seg_cp_bezier,
+        normals,
+        n_segments,
+    })
+}
+
+fn create_curve_shape_impl<F>(
+    params: &ParameterDictionary,
+    make_common: F,
+) -> Result<Vec<Curve>, PbrtError>
+where
+    F: FnOnce(CurveType) -> Result<Arc<CurvesCommon>, PbrtError>,
+{
+    let geometry = curve_geometry_from_params(params)?;
+    // The make_common callback runs after the shared validation, whereas the
+    // pre-refactor code called it between the curve-type and normal checks.
+    // The only failure it can report ("Curve types in one curves shape must
+    // match.") is unreachable through grouped "curves" entities, whose
+    // members always share the type string.
+    let curves_common = make_common(geometry.curve_type)?;
+    let sd = params.get_one_float("splitdepth", 3.0) as i32;
+    let sd = params.get_one_int("splitdepth", sd);
+
+    let mut curves: Vec<Curve> = Vec::new();
+    for seg in 0..geometry.n_segments {
+        let w0 = lerp(
+            (seg as Float) / (geometry.n_segments as Float),
+            geometry.width[0],
+            geometry.width[1],
+        );
+        let w1 = lerp(
+            ((seg + 1) as Float) / (geometry.n_segments as Float),
+            geometry.width[0],
+            geometry.width[1],
+        );
+        let mut c = create_curve(
+            &curves_common,
+            &geometry.seg_cp_bezier[seg],
+            w0,
+            w1,
+            &geometry.normals,
+            sd,
+        )?;
         curves.append(&mut c);
     }
 

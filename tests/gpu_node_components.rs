@@ -756,7 +756,16 @@ Shape "sphere"
 #[test]
 fn gpu_node_builder_rejects_unsupported_shapes_instead_of_dropping_them() {
     let mut builder = SceneBuilder::new();
-    parse_string("Shape \"curve\"", &mut builder).expect("curve directive should parse");
+    // A plain `Shape "curve"` is grouped into the supported "curves"
+    // entity now; attaching an area light keeps it an individual "curve"
+    // entity, which remains unsupported on WebGPU (curves are never area
+    // lights; docs/webgpu-curve-dicing-design_ja.md D3).
+    parse_string(
+        r#"AreaLightSource "diffuse"
+Shape "curve""#,
+        &mut builder,
+    )
+    .expect("curve directive should parse");
 
     let error = match builder.build_gpu_ir_node() {
         Ok(_) => panic!("unsupported geometry must not be silently omitted"),

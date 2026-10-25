@@ -16,6 +16,7 @@ pub enum SourceShape {
     BilinearMesh,
     Hyperboloid,
     Nurbs,
+    Curves,
 }
 impl SourceShape {
     pub fn from_name(name: &str) -> Result<Self, PbrtError> {
@@ -32,6 +33,7 @@ impl SourceShape {
             "bilinearmesh" => Ok(Self::BilinearMesh),
             "hyperboloid" => Ok(Self::Hyperboloid),
             "nurbs" => Ok(Self::Nurbs),
+            "curves" => Ok(Self::Curves),
             _ => Err(PbrtError::error(&format!(
                 "Unknown GPU source shape \"{name}\"."
             ))),

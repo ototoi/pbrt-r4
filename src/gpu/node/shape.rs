@@ -59,6 +59,13 @@ pub struct HyperboloidShape {
 pub struct NurbsShape {
     pub params: ParameterDictionary,
 }
+#[derive(Clone)]
+pub struct CurvesShape {
+    /// Parameter dictionaries of the logical curves grouped into one
+    /// SceneBuilder "curves" entity. Grouping guarantees identical
+    /// transform, orientation, material, and medium state across entries.
+    pub params: Vec<ParameterDictionary>,
+}
 
 #[derive(Clone)]
 pub enum Shape {
@@ -72,6 +79,7 @@ pub enum Shape {
     BilinearMesh(Box<BilinearMeshShape>),
     Hyperboloid(Box<HyperboloidShape>),
     Nurbs(Box<NurbsShape>),
+    Curves(Box<CurvesShape>),
 }
 
 pub fn triangle_mesh_from_params(
