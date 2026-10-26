@@ -15,8 +15,13 @@ use crate::util::vecmath::{angle_between, coordinate_system};
 pub const DEFAULT_SPHERE_PHI_SEGMENTS: usize = 32;
 pub const DEFAULT_SPHERE_THETA_SEGMENTS: usize = 16;
 
-/// Curve dicing resolutions, matching the fixed `diceCurveToBLP(shape, 5, 5)`
-/// arguments of pbrt-v4's OptiX aggregate (optix/aggregate.cpp).
+/// Default WebGPU curve dicing resolution per logical curve segment.
+pub const DEFAULT_CURVE_DICE_NU: usize = 1;
+/// Default WebGPU curve dicing resolution around a tube's circumference.
+pub const DEFAULT_CURVE_DICE_NV: usize = 4;
+/// Default WebGPU curve dicing resolution across a ribbon's width.
+pub const DEFAULT_RIBBON_DICE_NV: usize = 1;
+/// pbrt-v4 OptiX dicing reference resolution along and around a curve.
 pub const DEFAULT_CURVE_DICE_SLICES: usize = 5;
 pub const DEFAULT_CURVE_DICE_VERTICES: usize = 5;
 
@@ -403,14 +408,14 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
 /// Dices grouped SceneBuilder "curves" entities into one triangle mesh.
 ///
 /// Direct port of pbrt-v4 `OptiXAggregate::diceCurveToBLP`
-/// (gpu/optix/aggregate.cpp) with the fixed (5, 5) dicing resolution:
-/// ribbons become two-vertex strips whose shading normals interpolate the
-/// `N` endpoint normals, and flat/cylinder curves both become
-/// radial-normal tubes, exactly as in pbrt-v4. The only deviation from the
-/// bilinear-patch output is the final quad-to-triangle split and the
-/// ribbons' baked vertex normals, since the triangle pipeline interpolates
-/// vertex normals where a bilinear patch derives its face normal
-/// (docs/webgpu-curve-dicing-design_ja.md §2.2).
+/// (gpu/optix/aggregate.cpp) with r4's per-curve `nu`/`nv` resolutions:
+/// ribbons subdivide across their width and interpolate shading normals from
+/// the `N` endpoint normals, and flat/cylinder curves both become
+/// radial-normal tubes, as in pbrt-v4. Defaults are nu=1 per logical curve
+/// segment, nv=4 around tubes, and nv=1 across ribbons.
+/// The triangle representation also splits quads and bakes ribbon vertex
+/// normals, since the triangle pipeline interpolates vertex normals where a
+/// bilinear patch derives its face normal (docs/webgpu-curve-dicing-design_ja.md §2.2).
 fn curves_to_mesh(curves: &CurvesShape) -> Result<TriangleMeshShape, PbrtError> {
     let mut positions: Vec<Vec3f> = Vec::new();
     let mut normals: Vec<Vec3f> = Vec::new();
@@ -440,12 +445,37 @@ fn dice_curve_to_mesh(
     // Shared with the CPU path: parameter validation and the cubic Bezier
     // control points of every logical segment.
     let geometry = curve_geometry_from_params(params)?;
-    let n_dice_u = DEFAULT_CURVE_DICE_SLICES;
-    let n_dice_v = DEFAULT_CURVE_DICE_VERTICES;
-    let slice_vertex_count = match geometry.curve_type {
-        CurveType::Ribbon => 2,
-        CurveType::Flat | CurveType::Cylinder => n_dice_v + 1,
+    // `nu` and `nv` are r4 WebGPU dicing controls. Unlike pbrt-v4's fixed
+    // 5x5 dicing, nu is applied per logical Bezier segment.
+    let default_nv = if geometry.curve_type == CurveType::Ribbon {
+        DEFAULT_RIBBON_DICE_NV
+    } else {
+        DEFAULT_CURVE_DICE_NV
     };
+    let nu = params.get_one_int("nu", DEFAULT_CURVE_DICE_NU as i32);
+    let nv = params.get_one_int("nv", default_nv as i32);
+    if nu < 1 {
+        return Err(PbrtError::error(
+            "Curve dicing parameter \"nu\" must be positive.",
+        ));
+    }
+    let minimum_nv = if geometry.curve_type == CurveType::Ribbon {
+        1
+    } else {
+        3
+    };
+    if nv < minimum_nv {
+        return Err(PbrtError::error(&format!(
+            "Curve dicing parameter \"nv\" must be at least {minimum_nv} for this curve type."
+        )));
+    }
+    let n_dice_u = usize::try_from(nu)
+        .ok()
+        .and_then(|nu| nu.checked_mul(geometry.n_segments))
+        .ok_or_else(|| PbrtError::error("Curve dicing resolution \"nu\" is too large."))?;
+    let n_dice_v = usize::try_from(nv)
+        .map_err(|_| PbrtError::error("Curve dicing resolution \"nv\" is too large."))?;
+    let slice_vertex_count = n_dice_v + 1;
 
     for slice in 0..=n_dice_u {
         let u = slice as Float / n_dice_u as Float;
@@ -489,30 +519,27 @@ fn dice_curve_to_mesh(
 
                 // v = 0 at p - dpdv/2 and v = 1 at p + dpdv/2; the per-slice v
                 // feeds the hair model's h = -1 + 2v later on.
-                positions.push(to_vec3f(p - dpdv * 0.5));
-                positions.push(to_vec3f(p + dpdv * 0.5));
-                // pbrt-v4 stores no vertex normals for diced ribbons (the
-                // bilinear patch derives its face normal); the triangle
-                // pipeline instead interpolates vertex normals, so bake the
-                // interpolated ribbon normal here.
                 let baked = to_vec3f(nu.normalize());
-                normals.push(baked);
-                normals.push(baked);
-                uvs.push(Vec2f([u as f32, 0.0]));
-                uvs.push(Vec2f([u as f32, 1.0]));
+                for v in 0..=n_dice_v {
+                    let v_fraction = v as Float / n_dice_v as Float;
+                    positions.push(to_vec3f(p + dpdv * (v_fraction - 0.5)));
+                    // pbrt-v4 stores no vertex normals for diced ribbons (the
+                    // bilinear patch derives its face normal); the triangle
+                    // pipeline instead interpolates vertex normals here.
+                    normals.push(baked);
+                    uvs.push(Vec2f([u as f32, v_fraction as f32]));
+                }
 
                 if slice > 0 {
-                    // Quad in diceCurveToBLP's order
-                    // [p(v=0, i-1), p(v=1, i-1), p(v=0, i), p(v=1, i)].
-                    // It splits along the p(0, i-1)–p(1, i) diagonal like
-                    // TriQuadMesh::convert_to_only_triangles, but wound so
-                    // that the geometric normal stays on the same side as
-                    // the baked +nu shading normals.
-                    let a = base - slice_vertex_count as u32;
-                    let b = a + 1;
-                    let c = base;
-                    let d = base + 1;
-                    indices.extend_from_slice(&[a, c, d, a, d, b]);
+                    for v in 0..n_dice_v {
+                        let a = base - slice_vertex_count as u32 + v as u32;
+                        let b = a + 1;
+                        let c = base + v as u32;
+                        let d = c + 1;
+                        // Split each ribbon strip so the geometric normal
+                        // stays on the same side as the baked +nu normal.
+                        indices.extend_from_slice(&[a, c, d, a, d, b]);
+                    }
                 }
             }
             CurveType::Flat | CurveType::Cylinder => {

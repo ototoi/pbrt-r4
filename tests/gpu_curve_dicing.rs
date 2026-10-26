@@ -4,7 +4,8 @@ use pbrt_r4::gpu::flat::flatten_node;
 use pbrt_r4::gpu::flat::SourceShape;
 use pbrt_r4::gpu::node::{
     prepare_triangle_meshes, tessellate_shapes, Component, CurvesShape, Node, Shape,
-    ShapeComponent, TriangleMeshShape, DEFAULT_CURVE_DICE_SLICES, DEFAULT_CURVE_DICE_VERTICES,
+    ShapeComponent, TriangleMeshShape, DEFAULT_CURVE_DICE_NU, DEFAULT_CURVE_DICE_NV,
+    DEFAULT_RIBBON_DICE_NV,
 };
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::parser::parse_string;
@@ -63,25 +64,28 @@ fn tessellated_mesh(curve_type: &str) -> TriangleMeshShape {
     (**mesh).clone()
 }
 
-#[test]
-fn curve_dicing_matches_pbrt_v4_vertex_and_index_counts() {
-    // pbrt-v4 diceCurveToBLP(shape, 5 /* nseg */, 5 /* nvert */) produces
-    // (nDiceV + 1) * (nDiceU + 1) tube vertices and nDiceU * nDiceV * 4
-    // bilinear patches; 2 * (nDiceU + 1) ribbon vertices and nDiceU patches.
-    let tube_vertices = (DEFAULT_CURVE_DICE_VERTICES + 1) * (DEFAULT_CURVE_DICE_SLICES + 1);
-    let tube_indices = DEFAULT_CURVE_DICE_SLICES * DEFAULT_CURVE_DICE_VERTICES * 6;
-    let ribbon_vertices = 2 * (DEFAULT_CURVE_DICE_SLICES + 1);
-    let ribbon_indices = DEFAULT_CURVE_DICE_SLICES * 6;
+fn dicing_resolution(curve_type: &str) -> (usize, usize) {
+    let nv = if curve_type == "ribbon" {
+        DEFAULT_RIBBON_DICE_NV
+    } else {
+        DEFAULT_CURVE_DICE_NV
+    };
+    (DEFAULT_CURVE_DICE_NU, nv)
+}
 
-    for curve_type in ["flat", "cylinder"] {
+#[test]
+fn curve_dicing_uses_expected_vertex_and_index_counts() {
+    // nu is per logical curve segment. nv divides the tube circumference or
+    // ribbon width; these defaults intentionally differ from pbrt-v4's 5x5.
+    for curve_type in ["flat", "cylinder", "ribbon"] {
         let mesh = tessellated_mesh(curve_type);
+        let (n_dice_u, n_dice_v) = dicing_resolution(curve_type);
+        let tube_vertices = (n_dice_v + 1) * (n_dice_u + 1);
+        let tube_indices = n_dice_u * n_dice_v * 6;
         assert_eq!(mesh.positions.len(), tube_vertices, "{curve_type}");
         assert_eq!(mesh.indices.len(), tube_indices, "{curve_type}");
         assert_eq!(mesh.source_shape, "curves");
     }
-    let ribbon = tessellated_mesh("ribbon");
-    assert_eq!(ribbon.positions.len(), ribbon_vertices);
-    assert_eq!(ribbon.indices.len(), ribbon_indices);
 }
 
 #[test]
@@ -102,10 +106,11 @@ fn curve_dicing_uv_v_spans_the_width_for_the_hair_model() {
     // while carrying uv.y = 0 and 1, as in pbrt-v4 (up to the sin(2*pi)
     // round-off).
     let tube = tessellated_mesh("cylinder");
-    let ring = DEFAULT_CURVE_DICE_VERTICES + 1;
-    for slice in 1..=DEFAULT_CURVE_DICE_SLICES {
+    let (n_dice_u, n_dice_v) = dicing_resolution("cylinder");
+    let ring = n_dice_v + 1;
+    for slice in 1..=n_dice_u {
         let first = slice * ring;
-        let last = first + DEFAULT_CURVE_DICE_VERTICES;
+        let last = first + n_dice_v;
         for axis in 0..3 {
             assert!(
                 (tube.positions[first].0[axis] - tube.positions[last].0[axis]).abs() < 1e-5,
@@ -119,9 +124,11 @@ fn curve_dicing_uv_v_spans_the_width_for_the_hair_model() {
     // Ribbon: v = 1 lies on the +dpdv/2 side of the curve, so h keeps the
     // same orientation as the CPU curve intersection.
     let ribbon = tessellated_mesh("ribbon");
-    for slice in 0..=DEFAULT_CURVE_DICE_SLICES {
-        let v0 = slice * 2;
-        let v1 = v0 + 1;
+    let (n_dice_u, n_dice_v) = dicing_resolution("ribbon");
+    let ring = n_dice_v + 1;
+    for slice in 0..=n_dice_u {
+        let v0 = slice * ring;
+        let v1 = v0 + n_dice_v;
         let (p0, p1) = (ribbon.positions[v0].0, ribbon.positions[v1].0);
         assert!(
             p1[1] > p0[1],
@@ -175,19 +182,18 @@ fn diced_curve_positions_follow_the_bezier_centerline() {
     // vertices average to the Bezier point (the vertices around a full
     // circle sum to the center, like pbrt-v4's duplicated seam vertex).
     let ribbon = tessellated_mesh("ribbon");
-    for (slice, expected) in [
-        (0usize, [0.0, 0.0, 0.0]),
-        (DEFAULT_CURVE_DICE_SLICES, [1.0, 0.0, 0.0]),
-    ] {
-        let (a, b) = (
-            ribbon.positions[slice * 2].0,
-            ribbon.positions[slice * 2 + 1].0,
-        );
-        let center = [
-            (a[0] + b[0]) / 2.0,
-            (a[1] + b[1]) / 2.0,
-            (a[2] + b[2]) / 2.0,
-        ];
+    let (ribbon_nu, ribbon_nv) = dicing_resolution("ribbon");
+    let ribbon_ring = ribbon_nv + 1;
+    for (slice, expected) in [(0usize, [0.0, 0.0, 0.0]), (ribbon_nu, [1.0, 0.0, 0.0])] {
+        let mut center = [0.0f32; 3];
+        for vertex in &ribbon.positions[slice * ribbon_ring..(slice + 1) * ribbon_ring] {
+            for axis in 0..3 {
+                center[axis] += vertex.0[axis];
+            }
+        }
+        for value in &mut center {
+            *value /= ribbon_ring as f32;
+        }
         for axis in 0..3 {
             assert!(
                 (center[axis] - expected[axis]).abs() < 1e-5,
@@ -198,20 +204,18 @@ fn diced_curve_positions_follow_the_bezier_centerline() {
 
     for curve_type in ["flat", "cylinder"] {
         let mesh = tessellated_mesh(curve_type);
-        let ring = DEFAULT_CURVE_DICE_VERTICES + 1;
-        for (slice, expected) in [
-            (0usize, [0.0, 0.0, 0.0]),
-            (DEFAULT_CURVE_DICE_SLICES, [1.0, 0.0, 0.0]),
-        ] {
+        let (n_dice_u, n_dice_v) = dicing_resolution(curve_type);
+        let ring = n_dice_v + 1;
+        for (slice, expected) in [(0usize, [0.0, 0.0, 0.0]), (n_dice_u, [1.0, 0.0, 0.0])] {
             let start = slice * ring;
             let mut center = [0.0f32; 3];
-            for vertex in &mesh.positions[start..start + DEFAULT_CURVE_DICE_VERTICES] {
+            for vertex in &mesh.positions[start..start + n_dice_v] {
                 for axis in 0..3 {
                     center[axis] += vertex.0[axis];
                 }
             }
             for axis in 0..3 {
-                center[axis] /= DEFAULT_CURVE_DICE_VERTICES as f32;
+                center[axis] /= n_dice_v as f32;
                 assert!(
                     (center[axis] - expected[axis]).abs() < 1e-3,
                     "{curve_type} centerline at slice {slice}: {center:?}"
@@ -343,12 +347,10 @@ Shape "curve" "string type" "cylinder" "float width" [0.2]
         scene.geometry.geometries[0].source_shape,
         SourceShape::Curves
     );
-    let tube_vertices = (DEFAULT_CURVE_DICE_VERTICES + 1) * (DEFAULT_CURVE_DICE_SLICES + 1);
+    let (n_dice_u, n_dice_v) = dicing_resolution("cylinder");
+    let tube_vertices = (n_dice_v + 1) * (n_dice_u + 1);
     assert_eq!(scene.geometry.vertices.len(), 2 * tube_vertices);
-    assert_eq!(
-        scene.geometry.indices.len(),
-        2 * DEFAULT_CURVE_DICE_SLICES * DEFAULT_CURVE_DICE_VERTICES * 6
-    );
+    assert_eq!(scene.geometry.indices.len(), 2 * n_dice_u * n_dice_v * 6);
 }
 
 #[test]
@@ -400,10 +402,10 @@ fn gpu_builder_reports_curve_validation_errors_at_tessellation() {
 fn ribbon_interpolation_keeps_obtuse_endpoint_normal_angles() {
     // v4's AngleBetween preserves endpoint normal angles above 90 degrees
     // (dot < 0 takes pi - 2 SafeASin(|n0 + n1| / 2)). Clamping the dot
-    // product caps the spherical interpolation at 90 degrees, so 120
-    // degree endpoints rotate the slice normals ~18.6 degrees at u = 0.2
-    // instead of the 24 degrees v4 produces.
+    // product caps the spherical interpolation at 90 degrees. With two
+    // longitudinal divisions, the center slice is at u = 0.5.
     let mut params = curve_params("ribbon");
+    params.add_int("nu", 2);
     params.remove_parameter("N");
     params.add_point("N", &[0.0, 0.0, 1.0, 0.0, 0.8660254037844386, -0.5]);
     let mut node = Node::new("obtuse-ribbon-node");
@@ -421,16 +423,17 @@ fn ribbon_interpolation_keeps_obtuse_endpoint_normal_angles() {
         panic!("curve should be tessellated to a triangle mesh");
     };
     let normals = mesh.normals.as_ref().expect("diced ribbon normals");
-    // Slice 1 sits at u = 1/5; both of its vertices share the baked
-    // interpolated normal.
-    let baked = normals[2];
+    // Every vertex across the center slice shares the baked interpolated
+    // normal.
+    let (_, nv) = dicing_resolution("ribbon");
+    let baked = normals[nv + 1];
     let length =
         (baked.0[0] * baked.0[0] + baked.0[1] * baked.0[1] + baked.0[2] * baked.0[2]).sqrt();
     let angle = (baked.0[2] / length).acos();
-    let expected = 0.2 * (2.0 * std::f32::consts::PI / 3.0);
+    let expected = 0.5 * (2.0 * std::f32::consts::PI / 3.0);
     assert!(
         (angle - expected).abs() < 1e-3,
-        "slice 1 normal must rotate u * 120 degrees ({expected} rad), got {angle}"
+        "center slice normal must rotate u * 120 degrees ({expected} rad), got {angle}"
     );
 }
 
