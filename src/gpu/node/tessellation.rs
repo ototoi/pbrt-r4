@@ -20,7 +20,7 @@ pub const DEFAULT_CURVE_DICE_NU: usize = 1;
 /// Default WebGPU curve dicing resolution around a tube's circumference.
 pub const DEFAULT_CURVE_DICE_NV: usize = 4;
 /// Default WebGPU curve dicing resolution across a ribbon's width.
-pub const DEFAULT_RIBBON_DICE_NV: usize = 2;
+pub const DEFAULT_RIBBON_DICE_NV: usize = 1;
 /// pbrt-v4 OptiX dicing reference resolution along and around a curve.
 pub const DEFAULT_CURVE_DICE_SLICES: usize = 5;
 pub const DEFAULT_CURVE_DICE_VERTICES: usize = 5;
@@ -412,7 +412,7 @@ fn nurbs_to_mesh(shape: &NurbsShape) -> Result<TriangleMeshShape, PbrtError> {
 /// ribbons subdivide across their width and interpolate shading normals from
 /// the `N` endpoint normals, and flat/cylinder curves both become
 /// radial-normal tubes, as in pbrt-v4. Defaults are nu=1 per logical curve
-/// segment, nv=4 around tubes, and nv=2 across ribbons.
+/// segment, nv=4 around tubes, and nv=1 across ribbons.
 /// The triangle representation also splits quads and bakes ribbon vertex
 /// normals, since the triangle pipeline interpolates vertex normals where a
 /// bilinear patch derives its face normal (docs/webgpu-curve-dicing-design_ja.md §2.2).
