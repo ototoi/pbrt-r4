@@ -405,6 +405,7 @@ fn ribbon_interpolation_keeps_obtuse_endpoint_normal_angles() {
     // product caps the spherical interpolation at 90 degrees. With two
     // longitudinal divisions, the center slice is at u = 0.5.
     let mut params = curve_params("ribbon");
+    params.add_int("nu", 2);
     params.remove_parameter("N");
     params.add_point("N", &[0.0, 0.0, 1.0, 0.0, 0.8660254037844386, -0.5]);
     let mut node = Node::new("obtuse-ribbon-node");
