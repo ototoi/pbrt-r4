@@ -75,6 +75,14 @@ impl InfiniteLightBuilder {
     }
 
     pub fn append_mipmap(&mut self, mipmap: Arc<Mipmap>) -> Result<u32, PbrtError> {
+        if let Some(index) = self
+            .mipmaps
+            .iter()
+            .position(|existing| Arc::ptr_eq(existing, &mipmap))
+        {
+            return u32::try_from(index)
+                .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."));
+        }
         let index = u32::try_from(self.mipmaps.len())
             .map_err(|_| PbrtError::error("Infinite light image table exceeds u32."))?;
         self.mipmaps.push(mipmap);

@@ -31,7 +31,7 @@ pub mod light;
 pub mod medium;
 pub mod spectrum;
 mod texture;
-mod upload;
+pub mod upload;
 
 pub use texture::{
     color_space_id, lower_texture_library_records, resolve_infinite_image_bindings,

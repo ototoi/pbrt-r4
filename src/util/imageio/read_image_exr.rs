@@ -78,9 +78,24 @@ pub fn read_raw_image_exr_with_channels(path: &Path) -> Result<(RawImage, Vec<St
 pub fn read_raw_image_exr_with_channels_and_metadata(
     path: &Path,
 ) -> Result<(RawImage, Vec<String>, ImageMetadata), PbrtError> {
+    read_raw_image_exr_storage(path, false)
+}
+
+/// Reads source half storage for GPU compilation without changing the CPU reader contract.
+pub fn read_raw_image_exr_with_storage(
+    path: &Path,
+) -> Result<(RawImage, Vec<String>, ImageMetadata), PbrtError> {
+    read_raw_image_exr_storage(path, true)
+}
+
+fn read_raw_image_exr_storage(
+    path: &Path,
+    preserve_storage: bool,
+) -> Result<(RawImage, Vec<String>, ImageMetadata), PbrtError> {
     let (width, height, channels, _metadata) = read_exr_channels(path)?;
     let total = width * height;
     let channel_names = channels.names.clone();
+    let half_channels = channels.half_names.clone();
     // For Y-only inputs (luminance / displacement / alpha) we keep a
     // single channel so downstream consumers like `scalarize_raw_image`
     // don't waste work on duplicated lanes.
@@ -143,9 +158,22 @@ pub fn read_raw_image_exr_with_channels_and_metadata(
                 vec!["R".to_string(), "G".to_string(), "B".to_string()],
             )
         };
+    let storage = if preserve_storage
+        && channel_names
+            .iter()
+            .all(|name| half_channels.contains(name))
+    {
+        RawImageData::F16(
+            data.into_iter()
+                .map(|value| half::f16::from_f32(value as f32))
+                .collect(),
+        )
+    } else {
+        RawImageData::F32(data)
+    };
     Ok((
         RawImage {
-            data: RawImageData::F32(data),
+            data: storage,
             resolution: Point2i::from((width as i32, height as i32)),
             channels: ch_count,
         },
@@ -162,6 +190,7 @@ struct ExrChannels {
     y: Option<Vec<Float>>,
     names: Vec<String>,
     other: Vec<Vec<Float>>,
+    half_names: Vec<String>,
 }
 
 /// Chromaticities attribute extracted from an EXR header, used to
@@ -217,9 +246,13 @@ fn read_exr_channels(path: &Path) -> Result<(usize, usize, ExrChannels, ImageMet
     let mut y = None;
     let mut names = Vec::new();
     let mut other = Vec::new();
+    let mut half_names = Vec::new();
     for chan in layer.channel_data.list.iter() {
         let name = chan.name.to_string();
         names.push(name.clone());
+        if matches!(chan.sample_data, FlatSamples::F16(_)) {
+            half_names.push(name.clone());
+        }
         let samples = flat_samples_to_floats(&chan.sample_data, total);
         match name.as_str() {
             "R" => r = Some(samples),
@@ -241,6 +274,7 @@ fn read_exr_channels(path: &Path) -> Result<(usize, usize, ExrChannels, ImageMet
             y,
             names,
             other,
+            half_names,
         },
         metadata,
     ))

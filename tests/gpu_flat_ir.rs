@@ -1513,6 +1513,35 @@ fn flattened_image_infinite_lights_keep_distinct_cdfs_and_light_transforms() {
 }
 
 #[test]
+fn repeated_image_lights_share_compiled_texture_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("shared.exr");
+    exr::prelude::write_rgb_file(&path, 2, 2, |_, _| (0.25f32, 0.5f32, 0.75f32)).unwrap();
+    let mut root = Node::new("root");
+    add_camera_and_film(&mut root, Default::default());
+    for name in ["first", "second"] {
+        let mut params = ParameterDictionary::default();
+        params.add_string("string filename", path.to_str().unwrap());
+        root.add_child(light_node(name, "infinite", params));
+    }
+    let scene = flatten_node(Arc::new(RwLock::new(root))).unwrap();
+    let images: Vec<_> = scene
+        .lights
+        .infinite_lights
+        .iter()
+        .map(|light| &scene.texture_library.mipmaps[light.image_index as usize])
+        .collect();
+    assert_eq!(images.len(), 2);
+    assert_eq!(
+        scene.lights.infinite_lights[0].image_index,
+        scene.lights.infinite_lights[1].image_index
+    );
+    assert!(Arc::ptr_eq(images[0], images[1]));
+    assert!(matches!(images[0].levels[0].data, MipmapLevelData::F16(_)));
+    assert_eq!(scene.lights.infinite_sampling.image_records.len(), 2);
+}
+
+#[test]
 fn flatten_node_accepts_portal_infinite_image() {
     let directory = tempfile::tempdir().unwrap();
     let image_path = directory.path().join("environment.png");
@@ -3083,8 +3112,8 @@ fn flatten_node_packs_multiple_portal_and_image_distributions_independently() {
             scene.lights.sampling_models[portal_light.sampling_model as usize].geometry_index,
             index as u32
         );
-        assert_eq!(image_light.image_index, (index * 2) as u32);
-        assert_eq!(portal_light.image_index, (index * 2 + 1) as u32);
+        assert_eq!(image_light.image_index, 0);
+        assert_eq!(portal_light.image_index, (index + 1) as u32);
     }
     assert_eq!(sampling.portal_distribution.len(), portal_offset as usize);
     assert_eq!(sampling.image_distribution.len(), image_offset as usize);

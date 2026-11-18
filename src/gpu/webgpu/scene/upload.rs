@@ -2,75 +2,105 @@ use std::sync::Arc;
 
 use crate::gpu::flat;
 use crate::gpu::flat::texture::{
-    ImageValueType, ImageView, Mipmap, MipmapEncoding, MipmapLevel, MipmapLevelData,
+    validate_mipmap, ImageValueType, ImageView, Mipmap, MipmapEncoding, MipmapLevel,
+    MipmapLevelData,
 };
 use crate::util::error::PbrtError;
 
-fn mip_level_rgba(
-    level: &MipmapLevel,
-    value_type: ImageValueType,
-    encoding: MipmapEncoding,
-) -> Result<(u32, u32, Vec<f32>), PbrtError> {
-    let width = level.resolution[0];
-    let height = level.resolution[1];
-    if width == 0 || height == 0 {
-        return Err(PbrtError::error(
-            "Texture mipmap has an invalid resolution.",
-        ));
-    }
-    if encoding != MipmapEncoding::Linear {
-        return Err(PbrtError::error(
-            "WebGPU texture upload requires linear Flat IR mipmaps.",
-        ));
-    }
-    let expected_channels = match value_type {
-        ImageValueType::Float => 1,
-        ImageValueType::LinearRgb => 3,
-    };
-    if level.channels != expected_channels {
-        return Err(PbrtError::error(&format!(
-            "WebGPU texture upload expected {expected_channels} channels, got {}.",
-            level.channels
-        )));
-    }
-    let values = match &level.data {
-        MipmapLevelData::F32(values) => values.clone(),
-        MipmapLevelData::F16(values) => values
-            .iter()
-            .map(|value| half::f16::from_bits(*value).to_f32())
-            .collect(),
-        MipmapLevelData::U8(values) => values
-            .iter()
-            .map(|value| f32::from(*value) / 255.0)
-            .collect(),
-    };
-    let pixel_count = usize::try_from(width)
-        .ok()
-        .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
-        .ok_or_else(|| PbrtError::error("Texture mipmap resolution overflowed."))?;
-    let channels = usize::try_from(level.channels)
-        .map_err(|_| PbrtError::error("Texture channel count does not fit usize."))?;
-    if values.len() != pixel_count.saturating_mul(channels) {
-        return Err(PbrtError::error(
-            "Texture mipmap data size is inconsistent.",
-        ));
-    }
-    let mut rgba = vec![0.0f32; pixel_count * 4];
-    for pixel in 0..pixel_count {
-        let source = pixel * channels;
-        let rgb = match value_type {
-            ImageValueType::Float => [values[source]; 3],
-            ImageValueType::LinearRgb => [values[source], values[source + 1], values[source + 2]],
-        };
-        for (channel, value) in rgb.into_iter().enumerate() {
-            rgba[pixel * 4 + channel] = value;
-        }
-        rgba[pixel * 4 + 3] = 1.0;
-    }
-    Ok((width, height, rgba))
+/// Validated format and byte layout for one Flat IR image.
+#[derive(Clone, Copy, Debug)]
+pub struct ImageUploadFormat {
+    pub format: wgpu::TextureFormat,
+    pub bytes_per_texel: u32,
 }
 
-pub(super) fn upload_texture_images(
+impl ImageUploadFormat {
+    pub fn select(mipmap: &Mipmap, value_type: ImageValueType) -> Result<Self, PbrtError> {
+        validate_mipmap(mipmap)?;
+        let level = &mipmap.levels[0];
+        let max_levels = 32 - level.resolution[0].max(level.resolution[1]).leading_zeros();
+        if mipmap.levels.len() > max_levels as usize {
+            return Err(PbrtError::error("Texture mipmap has too many levels."));
+        }
+        let channels = match value_type {
+            ImageValueType::Float => 1,
+            ImageValueType::LinearRgb => 3,
+        };
+        if level.channels != channels {
+            return Err(PbrtError::error(&format!(
+                "WebGPU texture upload expected {channels} channels, got {}.",
+                level.channels
+            )));
+        }
+        use wgpu::TextureFormat as F;
+        let format = match (&level.data, channels, mipmap.encoding) {
+            (MipmapLevelData::F16(_), 1, MipmapEncoding::Linear) => F::R16Float,
+            (MipmapLevelData::F16(_), 3, MipmapEncoding::Linear) => F::Rgba16Float,
+            (MipmapLevelData::F32(_), 1, MipmapEncoding::Linear) => F::R32Float,
+            (MipmapLevelData::F32(_), 3, MipmapEncoding::Linear) => F::Rgba32Float,
+            (MipmapLevelData::U8(_), 1, MipmapEncoding::Linear | MipmapEncoding::U8Normalized) => {
+                F::R8Unorm
+            }
+            (MipmapLevelData::U8(_), 3, MipmapEncoding::Linear | MipmapEncoding::U8Normalized) => {
+                F::Rgba8Unorm
+            }
+            (MipmapLevelData::U8(_), 3, MipmapEncoding::SrgbEncoded) => F::Rgba8UnormSrgb,
+            _ => {
+                return Err(PbrtError::error(
+                    "Unsupported WebGPU texture storage/encoding combination.",
+                ))
+            }
+        };
+        let bytes_per_texel = match format {
+            F::R8Unorm => 1,
+            F::R16Float => 2,
+            F::R32Float | F::Rgba8Unorm | F::Rgba8UnormSrgb => 4,
+            F::Rgba16Float => 8,
+            F::Rgba32Float => 16,
+            _ => return Err(PbrtError::error("Invalid image upload format.")),
+        };
+        Ok(Self {
+            format,
+            bytes_per_texel,
+        })
+    }
+
+    pub fn bytes_per_row(&self, width: u32) -> Result<u32, PbrtError> {
+        width
+            .checked_mul(self.bytes_per_texel)
+            .ok_or_else(|| PbrtError::error("Texture row byte size overflowed."))
+    }
+}
+
+/// Packs validated image storage without changing its precision or encoding.
+pub fn pack_image_level(level: &MipmapLevel) -> Vec<u8> {
+    fn pad<T: Copy>(values: &[T], channels: u32, alpha: T) -> Vec<T> {
+        if channels == 1 {
+            return values.to_vec();
+        }
+        values
+            .chunks_exact(3)
+            .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], alpha])
+            .collect()
+    }
+    match &level.data {
+        MipmapLevelData::F32(values) if level.channels == 1 => {
+            bytemuck::cast_slice(values).to_vec()
+        }
+        MipmapLevelData::F16(values) if level.channels == 1 => {
+            bytemuck::cast_slice(values).to_vec()
+        }
+        MipmapLevelData::F32(values) => {
+            bytemuck::cast_slice(&pad(values, level.channels, 1.0)).to_vec()
+        }
+        MipmapLevelData::F16(values) => {
+            bytemuck::cast_slice(&pad(values, level.channels, half::f16::ONE.to_bits())).to_vec()
+        }
+        MipmapLevelData::U8(values) => pad(values, level.channels, 255),
+    }
+}
+
+pub fn upload_texture_images(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     mipmaps: &[Arc<Mipmap>],
@@ -89,19 +119,32 @@ pub(super) fn upload_texture_images(
             .levels
             .first()
             .ok_or_else(|| PbrtError::error("WebGPU texture upload received an empty mipmap."))?;
-        let (width, height, _) = mip_level_rgba(base_level, view.value_type, mipmap.encoding)?;
+        let upload = ImageUploadFormat::select(mipmap, view.value_type)?;
+        let [width, height] = base_level.resolution;
+        let features = upload.format.guaranteed_format_features(device.features());
+        let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+        if !features.allowed_usages.contains(usage)
+            || !features
+                .flags
+                .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE)
+        {
+            return Err(PbrtError::error(
+                "Device does not support the required filterable image format.",
+            ));
+        }
         let mip_level_count = u32::try_from(mipmap.levels.len())
             .map_err(|_| PbrtError::error("Texture mipmap has too many levels."))?;
-        for (level_index, level) in mipmap.levels.iter().enumerate() {
-            let expected_width = (width >> level_index).max(1);
-            let expected_height = (height >> level_index).max(1);
-            if level.resolution != [expected_width, expected_height] {
-                return Err(PbrtError::error(&format!(
-                    "Texture mipmap level {level_index} has resolution {:?}, expected [{expected_width}, {expected_height}].",
-                    level.resolution
-                )));
-            }
-        }
+        let logical_bytes = mipmap.levels.iter().try_fold(0u64, |total, level| {
+            let row = upload.bytes_per_row(level.resolution[0])?;
+            total
+                .checked_add(u64::from(row) * u64::from(level.resolution[1]))
+                .ok_or_else(|| PbrtError::error("Texture byte size overflowed."))
+        })?;
+        log::debug!(
+            "GPU image: {width}x{height}, {} levels, {:?}, {logical_bytes} texel bytes",
+            mipmap.levels.len(),
+            upload.format
+        );
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("pbrt-r4 image texture"),
             size: wgpu::Extent3d {
@@ -112,13 +155,13 @@ pub(super) fn upload_texture_images(
             mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
+            format: upload.format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         for (mip_level, level) in mipmap.levels.iter().enumerate() {
-            let (level_width, level_height, rgba) =
-                mip_level_rgba(level, view.value_type, mipmap.encoding)?;
+            let [level_width, level_height] = level.resolution;
+            let bytes = pack_image_level(level);
             let mip_level = u32::try_from(mip_level)
                 .map_err(|_| PbrtError::error("Texture mipmap level index overflowed."))?;
             queue.write_texture(
@@ -128,10 +171,10 @@ pub(super) fn upload_texture_images(
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                bytemuck::cast_slice(&rgba),
+                &bytes,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(level_width * 16),
+                    bytes_per_row: Some(upload.bytes_per_row(level_width)?),
                     rows_per_image: Some(level_height),
                 },
                 wgpu::Extent3d {
@@ -205,51 +248,4 @@ pub(super) fn upload_measured_atlas(
             Ok(texture)
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::mip_level_rgba;
-
-    use crate::gpu::flat::texture::{ImageValueType, MipmapEncoding, MipmapLevel, MipmapLevelData};
-
-    #[test]
-    fn upload_rejects_unprojected_spectrum_mipmap() {
-        let level = MipmapLevel {
-            resolution: [1, 1],
-            channels: 2,
-            data: MipmapLevelData::F32(vec![0.2, 0.75]),
-        };
-        let error =
-            mip_level_rgba(&level, ImageValueType::LinearRgb, MipmapEncoding::Linear).unwrap_err();
-        assert!(error.to_string().contains("expected 3 channels"));
-    }
-
-    #[test]
-    fn spectrum_upload_preserves_rgb_and_alpha() {
-        let rgb = MipmapLevel {
-            resolution: [1, 1],
-            channels: 3,
-            data: MipmapLevelData::F32(vec![0.0, 0.3, 0.6]),
-        };
-        let (_, _, rgba) =
-            mip_level_rgba(&rgb, ImageValueType::LinearRgb, MipmapEncoding::Linear).unwrap();
-        assert_eq!(rgba, vec![0.0, 0.3, 0.6, 1.0]);
-    }
-
-    #[test]
-    fn upload_rejects_non_linear_flat_mipmap() {
-        let rgba_level = MipmapLevel {
-            resolution: [1, 1],
-            channels: 3,
-            data: MipmapLevelData::F32(vec![0.1, 0.2, 0.3]),
-        };
-        let error = mip_level_rgba(
-            &rgba_level,
-            ImageValueType::LinearRgb,
-            MipmapEncoding::SrgbEncoded,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("requires linear"));
-    }
 }
