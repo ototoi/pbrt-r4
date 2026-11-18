@@ -46,7 +46,7 @@ impl DiagnosticIntegrator {
 }
 
 impl Integrator for DiagnosticIntegrator {
-    fn render(&mut self) {
+    fn render(&mut self) -> Result<(), PbrtError> {
         let film = self.camera.get_film();
         let film = film.read().unwrap();
         let bounds = film.pixel_bounds();
@@ -101,7 +101,7 @@ impl Integrator for DiagnosticIntegrator {
                 }
             }
         }
-        let _ = match self.mode {
+        match self.mode {
             DiagnosticMode::Normal => write_image_exr_channels(
                 &self.filename,
                 &bounds,
@@ -111,7 +111,14 @@ impl Integrator for DiagnosticIntegrator {
             DiagnosticMode::THit | DiagnosticMode::MaterialId => {
                 write_image_exr_channels(&self.filename, &bounds, &resolution, &[("Y", output)])
             }
-        };
+        }
+        .map_err(|error| {
+            PbrtError::error(&format!(
+                "Failed to write image \"{}\": {}",
+                self.filename, error
+            ))
+        })?;
+        Ok(())
     }
 
     fn get_camera(&self) -> Arc<Camera> {

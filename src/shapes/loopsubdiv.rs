@@ -809,6 +809,157 @@ fn loop_subdiv(
     return Ok(mesh);
 }
 
+/// Validate the public LoopSubdiv inputs before any signed-to-unsigned
+/// conversion or vertex indexing happens inside `loop_subdiv`.
+fn validate_loop_subdiv_input(
+    indices: &[i32],
+    points: &[Float],
+    n_levels: i32,
+) -> Result<(), PbrtError> {
+    if n_levels < 0 {
+        return Err(PbrtError::error(&format!(
+            "LoopSubdiv \"levels\" must not be negative (got {}).",
+            n_levels
+        )));
+    }
+    if points.is_empty() || points.len() % 3 != 0 {
+        return Err(PbrtError::error(&format!(
+            "LoopSubdiv \"P\" must contain a non-empty multiple of 3 values (got {}).",
+            points.len()
+        )));
+    }
+    if indices.is_empty() || indices.len() % 3 != 0 {
+        return Err(PbrtError::error(&format!(
+            "LoopSubdiv \"indices\" must contain a non-empty multiple of 3 values (got {}).",
+            indices.len()
+        )));
+    }
+
+    let n_vertices = points.len() / 3;
+    let mut referenced = HashSet::with_capacity(n_vertices);
+    // Directed edges must be unique: two faces reusing (a, b) in the same
+    // direction break the neighbor traversal, which expects one face on each
+    // side of a shared edge.
+    let mut directed_edges: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut edge_faces: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut vertex_faces: Vec<Vec<usize>> = vec![Vec::new(); n_vertices];
+
+    fn find(parent: &mut [usize], mut node: usize) -> usize {
+        while parent[node] != node {
+            let next = parent[node];
+            parent[node] = parent[next];
+            node = parent[node];
+        }
+        node
+    }
+    fn union(parent: &mut [usize], a: usize, b: usize) {
+        let root_a = find(parent, a);
+        let root_b = find(parent, b);
+        if root_a != root_b {
+            parent[root_a] = root_b;
+        }
+    }
+
+    for (face_index, face) in indices.chunks_exact(3).enumerate() {
+        if face[0] == face[1] || face[1] == face[2] || face[0] == face[2] {
+            return Err(PbrtError::error(&format!(
+                "LoopSubdiv \"indices\" face {} repeats a vertex: {:?}.",
+                face_index, face
+            )));
+        }
+        let vertices: Vec<usize> = face
+            .iter()
+            .enumerate()
+            .map(|(corner, &index)| {
+                if index < 0 || index as usize >= n_vertices {
+                    Err(PbrtError::error(&format!(
+                        "LoopSubdiv \"indices\" value {} at face {} corner {} is outside [0, {}).",
+                        index, face_index, corner, n_vertices
+                    )))
+                } else {
+                    Ok(index as usize)
+                }
+            })
+            .collect::<Result<_, _>>()?;
+        for &vertex in &vertices {
+            referenced.insert(vertex);
+            vertex_faces[vertex].push(face_index);
+        }
+        for edge in 0..3 {
+            let a = vertices[edge];
+            let b = vertices[(edge + 1) % 3];
+            let directed = directed_edges.entry((a, b)).or_insert(0);
+            *directed += 1;
+            if *directed > 1 {
+                return Err(PbrtError::error(&format!(
+                    "LoopSubdiv \"indices\" directed edge ({}, {}) is reused in face {}.",
+                    a, b, face_index
+                )));
+            }
+            let key = if a < b { (a, b) } else { (b, a) };
+            let uses = edge_faces.entry(key).or_insert_with(Vec::new);
+            uses.push(face_index);
+            if uses.len() > 2 {
+                return Err(PbrtError::error(&format!(
+                    "LoopSubdiv \"indices\" edge ({}, {}) is used by more than two faces.",
+                    key.0, key.1
+                )));
+            }
+        }
+    }
+    if referenced.len() != n_vertices {
+        let missing = (0..n_vertices)
+            .find(|index| !referenced.contains(index))
+            .unwrap();
+        return Err(PbrtError::error(&format!(
+            "LoopSubdiv \"indices\" does not reference vertex {}.",
+            missing
+        )));
+    }
+
+    // Faces around a vertex must form a single fan.  Connectivity is checked
+    // per vertex, using only edges incident to that vertex: two fans that are
+    // joined elsewhere in the mesh are still nonmanifold at the vertex.  A
+    // boundary vertex may have at most two edges with a single incident face.
+    let mut boundary_edges = vec![0usize; n_vertices];
+    let mut local_parent: Vec<Vec<usize>> = vertex_faces
+        .iter()
+        .map(|faces| (0..faces.len()).collect())
+        .collect();
+    let mut local_index: Vec<HashMap<usize, usize>> = vertex_faces
+        .iter()
+        .map(|faces| faces.iter().enumerate().map(|(i, &f)| (f, i)).collect())
+        .collect();
+    for (&(a, b), faces) in &edge_faces {
+        if faces.len() == 1 {
+            boundary_edges[a] += 1;
+            boundary_edges[b] += 1;
+        } else {
+            for &vertex in &[a, b] {
+                let i = local_index[vertex][&faces[0]];
+                let j = local_index[vertex][&faces[1]];
+                union(&mut local_parent[vertex], i, j);
+            }
+        }
+    }
+    for vertex in 0..n_vertices {
+        if boundary_edges[vertex] > 2 {
+            return Err(PbrtError::error(&format!(
+                "LoopSubdiv \"indices\" vertex {} has {} boundary edges; its faces are not a single fan.",
+                vertex, boundary_edges[vertex]
+            )));
+        }
+        let root = find(&mut local_parent[vertex], 0);
+        if (1..vertex_faces[vertex].len()).any(|i| find(&mut local_parent[vertex], i) != root) {
+            return Err(PbrtError::error(&format!(
+                "LoopSubdiv \"indices\" vertex {} has disconnected incident faces.",
+                vertex
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn create_loop_subdiv(
     o2w: &Transform,
     w2o: &Transform,
@@ -820,27 +971,29 @@ pub fn create_loop_subdiv(
     let mut vertex_indices = Vec::new();
     let mut p: Vec<Vector3f> = Vec::new();
 
-    if let Some(vi) = params.get_ints_ref("indices") {
-        vertex_indices.resize(vi.len(), 0);
-        for i in 0..vi.len() {
-            vertex_indices[i] = vi[i] as u32;
-        }
-    } else {
-        return Err(PbrtError::error(
-            "Vertex indices \"indices\" not provided for LoopSubdiv shape.",
-        ));
+    let vi = params.get_ints_ref("indices").ok_or_else(|| {
+        PbrtError::error("Vertex indices \"indices\" not provided for LoopSubdiv shape.")
+    })?;
+    let ps = params.get_points_ref("P").ok_or_else(|| {
+        PbrtError::error("Vertex positions \"P\" not provided for LoopSubdiv shape.")
+    })?;
+
+    validate_loop_subdiv_input(&vi[..], &ps[..], n_levels)?;
+
+    vertex_indices.resize(vi.len(), 0);
+    for (index, &value) in vi.iter().enumerate() {
+        vertex_indices[index] = u32::try_from(value).map_err(|_| {
+            PbrtError::error(&format!(
+                "LoopSubdiv \"indices\" value {} cannot be represented as an index.",
+                value
+            ))
+        })?;
     }
 
-    if let Some(ps) = params.get_points_ref("P") {
-        let sz = ps.len() / 3;
-        p.resize(sz, Point3f::zero());
-        for i in 0..sz {
-            p[i] = Point3f::new(ps[3 * i + 0], ps[3 * i + 1], ps[3 * i + 2]);
-        }
-    } else {
-        return Err(PbrtError::error(
-            "Vertex positions \"P\" not provided for LoopSubdiv shape.",
-        ));
+    let sz = ps.len() / 3;
+    p.resize(sz, Point3f::zero());
+    for i in 0..sz {
+        p[i] = Point3f::new(ps[3 * i + 0], ps[3 * i + 1], ps[3 * i + 2]);
     }
 
     let _scheme = params.get_one_string("scheme", "loop");

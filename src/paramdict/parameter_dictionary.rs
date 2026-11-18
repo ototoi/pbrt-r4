@@ -1,9 +1,11 @@
 use super::wellknown_params;
 use crate::util::base::*;
+use crate::util::error::*;
 use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, SRGB};
 use crate::util::spectrum::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -14,6 +16,17 @@ pub struct SampledSpectrumParam {
 
 pub type ParameterReadGuard<'a, T> = RwLockReadGuard<'a, Vec<T>>;
 pub type ParameterWriteGuard<'a, T> = RwLockWriteGuard<'a, Vec<T>>;
+
+#[derive(Default)]
+struct ParameterUsage {
+    /// Full "type name" keys that a factory has actually looked up.
+    used: HashSet<String>,
+    /// Keys inherited from an `Attribute` block, which v4 marks mayBeUnused.
+    may_be_unused: HashSet<String>,
+    /// Cardinality errors raised by single-value getters, kept until the
+    /// generation boundary returns them to the caller.
+    cardinality_errors: Vec<String>,
+}
 
 type SharedValues<T> = RwLock<Vec<T>>;
 
@@ -48,6 +61,9 @@ pub struct ParameterDictionary {
     points: HashMap<String, SharedValues<Float>>,
     keys: Vec<String>,
     color_space: &'static RGBColorSpace,
+    // Clones are the dictionaries actually handed to factories, so usage and
+    // cardinality state must be shared with them until the boundary check.
+    usage: Arc<RwLock<ParameterUsage>>,
 }
 
 fn get_key_type(key: &str) -> String {
@@ -236,7 +252,100 @@ impl ParameterDictionary {
             points: HashMap::new(),
             keys: Vec::<String>::new(),
             color_space: &SRGB,
+            usage: Arc::new(RwLock::new(ParameterUsage::default())),
         }
+    }
+
+    fn usage(&self) -> std::sync::RwLockWriteGuard<'_, ParameterUsage> {
+        self.usage
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Record that a factory looked up this key. Only full "type name" keys
+    /// are tracked, so a `string` and a `texture` with the same name stay
+    /// distinct entries.
+    fn mark_lookup(&self, key: &str, type_filter: Option<&str>) {
+        if key.split_ascii_whitespace().count() > 1 {
+            self.usage().used.insert(key.to_string());
+            return;
+        }
+        let name = get_key_name(key);
+        let canonical = self
+            .keys
+            .iter()
+            .find(|stored| {
+                get_key_name(stored) == name
+                    && type_filter.is_none_or(|kind| get_key_type(stored) == kind)
+            })
+            .or_else(|| self.keys.iter().find(|stored| get_key_name(stored) == name))
+            .cloned()
+            .unwrap_or_else(|| key.to_string());
+        self.usage().used.insert(canonical);
+    }
+
+    fn check_single(&self, key: &str, actual: usize, expected: usize) {
+        if actual != expected {
+            let message = format!(
+                "Parameter \"{}\" has {} values; expected {}.",
+                get_key_name(key),
+                actual,
+                expected
+            );
+            self.usage().cardinality_errors.push(message);
+        }
+    }
+
+    /// Take the cardinality errors recorded by single-value getters. Called
+    /// at the scene-generation boundary so an invalid scene cannot succeed.
+    pub fn take_cardinality_errors(&self) -> Vec<String> {
+        std::mem::take(&mut self.usage().cardinality_errors)
+    }
+
+    /// Mark a key inherited from an `Attribute` block as mayBeUnused (v4
+    /// `ParsedParameter::mayBeUnused`), so it is not reported as a typo.
+    pub fn mark_may_be_unused(&self, key: &str) {
+        let name = get_key_name(key);
+        let canonical = self
+            .keys
+            .iter()
+            .find(|stored| stored == &key || get_key_name(stored) == name)
+            .cloned()
+            .unwrap_or_else(|| key.to_string());
+        self.usage().may_be_unused.insert(canonical);
+    }
+
+    /// Report parameters that were never looked up and were not shadowed by
+    /// a looked-up parameter of the same type and name (v4 `ReportUnused`).
+    pub fn report_unused(&self) -> Result<(), PbrtError> {
+        self.report_unused_with(&[])
+    }
+
+    /// Like `report_unused`, but additionally treats the named parameters as
+    /// mayBeUnused. Used by r4 factories that deliberately tolerate a known
+    /// legacy alias without applying it.
+    pub fn report_unused_with(&self, ignored_names: &[&str]) -> Result<(), PbrtError> {
+        let usage = self.usage();
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        for key in &self.keys {
+            let name = get_key_name(key);
+            if usage.may_be_unused.contains(key) || ignored_names.contains(&name.as_str()) {
+                continue;
+            }
+            let identity = (get_key_type(key), get_key_name(key));
+            let have_seen = seen.contains(&identity);
+            if usage.used.contains(key) {
+                if !have_seen {
+                    seen.insert(identity);
+                }
+            } else if !have_seen {
+                return Err(PbrtError::error(&format!(
+                    "\"{}\": unused parameter.",
+                    get_key_name(key)
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn color_space(&self) -> &'static RGBColorSpace {
@@ -515,55 +624,68 @@ impl ParameterDictionary {
     //--------------------
 
     pub fn get_bools(&self, key: &str) -> Vec<bool> {
+        self.mark_lookup(key, Some("bool"));
         return get_values(&self.bools, key);
     }
 
     pub fn get_ints(&self, key: &str) -> Vec<i32> {
+        self.mark_lookup(key, Some("integer"));
         return get_values(&self.ints, key);
     }
 
     pub fn get_floats(&self, key: &str) -> Vec<Float> {
+        self.mark_lookup(key, Some("float"));
         return get_values(&self.floats, key);
     }
 
     pub fn get_strings(&self, key: &str) -> Vec<String> {
+        self.mark_lookup(key, Some("string"));
         return get_values(&self.strings, key);
     }
 
     pub fn get_spectrums(&self, key: &str) -> Vec<Spectrum> {
+        self.mark_lookup(key, Some("spectrum"));
         return get_values(&self.spectrums, key);
     }
 
     pub fn get_sampled_spectra(&self, key: &str) -> Vec<SampledSpectrumParam> {
+        self.mark_lookup(key, None);
         return get_values(&self.sampled_spectra, key);
     }
 
     pub fn get_points(&self, key: &str) -> Vec<Float> {
+        self.mark_lookup(key, None);
         return get_values(&self.points, key);
     }
 
     //--------------------
     pub fn get_bools_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, bool>> {
+        self.mark_lookup(key, Some("bool"));
         return get_values_ref(&self.bools, key);
     }
 
     pub fn get_ints_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, i32>> {
+        self.mark_lookup(key, Some("integer"));
         return get_values_ref(&self.ints, key);
     }
 
     pub fn get_floats_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, Float>> {
+        self.mark_lookup(key, Some("float"));
         return get_values_ref(&self.floats, key);
     }
 
     pub fn get_strings_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, String>> {
+        self.mark_lookup(key, Some("string"));
         return get_values_ref(&self.strings, key);
     }
 
     pub fn get_textures_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, String>> {
+        self.mark_lookup(key, Some("texture"));
         return get_values_ref(&self.strings, key);
     }
 
     pub fn get_spectrums_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, Spectrum>> {
+        self.mark_lookup(key, Some("spectrum"));
         return get_values_ref(&self.spectrums, key);
     }
 
@@ -571,10 +693,12 @@ impl ParameterDictionary {
         &self,
         key: &str,
     ) -> Option<ParameterReadGuard<'_, SampledSpectrumParam>> {
+        self.mark_lookup(key, None);
         return get_values_ref(&self.sampled_spectra, key);
     }
 
     pub fn get_points_ref(&self, key: &str) -> Option<ParameterReadGuard<'_, Float>> {
+        self.mark_lookup(key, None);
         return get_values_ref(&self.points, key);
     }
 
@@ -596,7 +720,10 @@ impl ParameterDictionary {
     pub fn get_one_bool(&self, key: &str, value: bool) -> bool {
         let r = self.get_bools_ref(key);
         match r {
-            Some(v) => v[0],
+            Some(v) => {
+                self.check_single(key, v.len(), 1);
+                v.first().copied().unwrap_or(value)
+            }
             None => value,
         }
     }
@@ -604,7 +731,10 @@ impl ParameterDictionary {
     pub fn get_one_int(&self, key: &str, value: i32) -> i32 {
         let r = self.get_ints_ref(key);
         match r {
-            Some(v) => v[0],
+            Some(v) => {
+                self.check_single(key, v.len(), 1);
+                v.first().copied().unwrap_or(value)
+            }
             None => value,
         }
     }
@@ -612,7 +742,10 @@ impl ParameterDictionary {
     pub fn get_one_float(&self, key: &str, value: Float) -> Float {
         let r = self.get_floats_ref(key);
         match r {
-            Some(v) => v[0],
+            Some(v) => {
+                self.check_single(key, v.len(), 1);
+                v.first().copied().unwrap_or(value)
+            }
             None => value,
         }
     }
@@ -620,17 +753,16 @@ impl ParameterDictionary {
     pub fn get_one_string(&self, key: &str, value: &str) -> String {
         let r = self.get_strings_ref(key);
         match r {
-            Some(v) => v[0].clone(),
+            Some(v) => {
+                self.check_single(key, v.len(), 1);
+                v.first().cloned().unwrap_or_else(|| String::from(value))
+            }
             None => String::from(value),
         }
     }
 
     pub fn get_one_filename(&self, key: &str, value: &str) -> String {
-        let r = self.get_strings_ref(key);
-        match r {
-            Some(v) => v[0].clone(),
-            None => String::from(value),
-        }
+        self.get_one_string(key, value)
     }
 
     fn is_blackbody_parameter(&self, key: &str) -> bool {
@@ -651,6 +783,7 @@ impl ParameterDictionary {
     ) -> Spectrum {
         if let Some(r) = self.get_points_ref(key) {
             if r.len() >= 3 {
+                self.check_single(key, r.len(), 3);
                 return Spectrum::from_rgb_in_color_space(
                     self.color_space(),
                     &[r[0], r[1], r[2]],
@@ -658,25 +791,30 @@ impl ParameterDictionary {
                 );
             } else if r.len() == 1 {
                 return Spectrum::from(r[0]);
+            } else {
+                self.check_single(key, r.len(), 3);
             }
         } else if let Some(r) = self.get_sampled_spectra_ref(key) {
-            if !r.is_empty() {
-                return Spectrum::from_sampled(&r[0].lambda, &r[0].values);
+            self.check_single(key, r.len(), 1);
+            if let Some(first) = r.first() {
+                return Spectrum::from_sampled(&first.lambda, &first.values);
             }
         } else if let Some(r) = self.get_spectrums_ref(key) {
-            if !r.is_empty() {
-                return r[0].clone();
+            self.check_single(key, r.len(), 1);
+            if let Some(first) = r.first() {
+                return first.clone();
             }
         } else if let Some(r) = self.get_floats_ref(key) {
-            if !r.is_empty() {
+            self.check_single(key, r.len(), 1);
+            if let Some(&first) = r.first() {
                 if self.is_blackbody_parameter(key) {
                     return blackbody_spectrum(&r);
                 }
-                return Spectrum::from(r[0]);
+                return Spectrum::from(first);
             }
         } else if let Some(r) = self.get_strings_ref(key) {
-            if !r.is_empty() {
-                let name = &r[0];
+            self.check_single(key, r.len(), 1);
+            if let Some(name) = r.first() {
                 if let Some(alias) = self.get_sampled_spectra_ref(name) {
                     if !alias.is_empty() {
                         return Spectrum::from_sampled(&alias[0].lambda, &alias[0].values);
@@ -715,18 +853,27 @@ impl ParameterDictionary {
 
     pub fn get_one_point3f(&self, key: &str, value: &Point3f) -> Point3f {
         let v = vec![value.x, value.y, value.z];
+        if let Some(points) = self.get_points_ref(key) {
+            self.check_single(key, points.len(), 3);
+        }
         let a: &[Float] = &self.get_one_point(key, &v);
         return Point3f::from(a);
     }
 
     pub fn get_one_vector3f(&self, key: &str, value: &Vector3f) -> Vector3f {
         let v = vec![value.x, value.y, value.z];
+        if let Some(points) = self.get_points_ref(key) {
+            self.check_single(key, points.len(), 3);
+        }
         let a: &[Float] = &self.get_one_point(key, &v);
         return Vector3f::from(a);
     }
 
     pub fn get_one_normal3f(&self, key: &str, value: &Normal3f) -> Normal3f {
         let v = vec![value.x, value.y, value.z];
+        if let Some(points) = self.get_points_ref(key) {
+            self.check_single(key, points.len(), 3);
+        }
         let a: &[Float] = &self.get_one_point(key, &v);
         return Normal3f::from(a);
     }
@@ -803,8 +950,15 @@ impl ParameterDictionary {
     /// Adds every parameter from `other` that is not already present in
     /// `self`. Parameters already set on `self` take precedence, mirroring
     /// pbrt-v4 where a directive's own parameters win over inherited
-    /// `Attribute` parameters.
-    pub fn merge_missing(&mut self, other: &ParameterDictionary) {
+    /// `Attribute` parameters. Returns the full keys that were actually
+    /// inserted, so callers can give only inherited entries their
+    /// mayBeUnused exemption (a directive-owned value must not inherit it).
+    pub fn merge_missing(&mut self, other: &ParameterDictionary) -> Vec<String> {
+        let (other_used, other_may_be_unused) = {
+            let usage = other.usage();
+            (usage.used.clone(), usage.may_be_unused.clone())
+        };
+        let mut inserted_keys = Vec::new();
         for key in other.keys.iter() {
             let name = get_key_name(key);
             if self.has_key_name(&name) {
@@ -835,7 +989,16 @@ impl ParameterDictionary {
                 continue;
             }
             self.keys.push(key.clone());
+            let mut usage = self.usage();
+            if other_used.contains(key) {
+                usage.used.insert(key.clone());
+            }
+            if other_may_be_unused.contains(key) {
+                usage.may_be_unused.insert(key.clone());
+            }
+            inserted_keys.push(key.clone());
         }
+        inserted_keys
     }
     //--------------------
 
@@ -1073,12 +1236,18 @@ impl ParameterDictionary {
 
     pub fn get_one_point2f(&self, key: &str, value: &Point2f) -> Point2f {
         let v = vec![value.x, value.y];
+        if let Some(points) = self.get_points_ref(key) {
+            self.check_single(key, points.len(), 2);
+        }
         let a: &[Float] = &self.get_one_point(key, &v);
         return Point2f::from(a);
     }
 
     pub fn get_one_vector2f(&self, key: &str, value: &Vector2f) -> Vector2f {
         let v = vec![value.x, value.y];
+        if let Some(points) = self.get_points_ref(key) {
+            self.check_single(key, points.len(), 2);
+        }
         let a: &[Float] = &self.get_one_point(key, &v);
         return Vector2f::from(a);
     }
@@ -1096,6 +1265,7 @@ impl Clone for ParameterDictionary {
             points: clone_values_map(&self.points),
             keys: self.keys.clone(),
             color_space: self.color_space,
+            usage: Arc::clone(&self.usage),
         }
     }
 }

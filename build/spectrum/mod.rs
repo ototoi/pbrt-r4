@@ -10,6 +10,7 @@ mod rgb2spec_data;
 mod rgb2spec_opt;
 mod rgb_data;
 mod spectrum_config;
+mod table_cache;
 mod to_string;
 mod utils;
 

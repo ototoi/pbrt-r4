@@ -1404,8 +1404,8 @@ impl BDPTIntegrator {
 }
 
 impl Integrator for BDPTIntegrator {
-    fn render(&mut self) {
-        RayIntegratorBase::render(self);
+    fn render(&mut self) -> Result<(), PbrtError> {
+        RayIntegratorBase::render(self)
     }
     fn get_camera(&self) -> Arc<Camera> {
         self.base.camera.clone()

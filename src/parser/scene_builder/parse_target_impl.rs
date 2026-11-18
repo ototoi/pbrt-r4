@@ -127,7 +127,15 @@ impl SceneBuilder {
         attrs: &ParameterDictionary,
     ) -> ParameterDictionary {
         let mut p = params;
-        p.merge_missing(attrs);
+        // v4 marks parameters inherited from an `Attribute` block as
+        // mayBeUnused: they may be consumed by a different factory than the
+        // one that reports unused parameters. Only keys that actually survive
+        // the merge (i.e. are not shadowed by a directive parameter) get the
+        // exemption; a directive-owned typo must still be reported.
+        let inherited_keys = p.merge_missing(attrs);
+        for key in inherited_keys {
+            p.mark_may_be_unused(&key);
+        }
         if !p.has_parameter("displacement") {
             p.rename_parameter("bumpmap", "displacement");
         }

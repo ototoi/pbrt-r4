@@ -58,8 +58,8 @@ impl AOIntegrator {
 }
 
 impl Integrator for AOIntegrator {
-    fn render(&mut self) {
-        RayIntegratorBase::render(self);
+    fn render(&mut self) -> Result<(), PbrtError> {
+        RayIntegratorBase::render(self)
     }
 
     fn get_camera(&self) -> Arc<Camera> {

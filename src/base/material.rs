@@ -72,11 +72,15 @@ impl Material {
         // Handle deprecated/special cases
         if name.is_empty() || name == "none" {
             log::warn!("Material \"{}\" is deprecated; using \"interface\".", name);
-            return Ok(Material::Interface(InterfaceMaterial::create(params)?));
+            let material = Material::Interface(InterfaceMaterial::create(params)?);
+            params.params.report_unused()?;
+            return Ok(material);
         }
 
         if name == "interface" {
-            return Ok(Material::Interface(InterfaceMaterial::create(params)?));
+            let material = Material::Interface(InterfaceMaterial::create(params)?);
+            params.params.report_unused()?;
+            return Ok(material);
         }
 
         if let Some(hint) = legacy_material_hint(name) {
@@ -116,6 +120,16 @@ impl Material {
             }
         };
 
+        // r4 deliberately tolerates a few legacy/unprefixed inputs without
+        // applying them (existing material_create tests pin that behaviour).
+        // They are mayBeUnused here, not declared as valid material inputs.
+        let ignored: &[&str] = match name {
+            "diffuse" | "subsurface" => &["albedo"],
+            "dielectric" => &["index"],
+            "coatedconductor" => &["eta", "k"],
+            _ => &[],
+        };
+        params.params.report_unused_with(ignored)?;
         Ok(material)
     }
 

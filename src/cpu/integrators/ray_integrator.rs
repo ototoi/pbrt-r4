@@ -18,6 +18,7 @@ use crate::interaction::*;
 use crate::options::PbrtOptions;
 use crate::scene::*;
 use crate::util::base::*;
+use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::memory::*;
 use crate::util::misc::*;
@@ -305,7 +306,7 @@ impl RayIntegratorBase {
         }
     }
 
-    pub fn render(integrator: &mut dyn RayIntegrator) {
+    pub fn render(integrator: &mut dyn RayIntegrator) -> Result<(), PbrtError> {
         let acamera = integrator.get_camera();
         let camera = acamera.as_ref();
         let sampler = integrator.get_sampler();
@@ -315,7 +316,7 @@ impl RayIntegratorBase {
         }
 
         let film = camera.get_film();
-        SampleIntegratorCore::render(integrator, camera, &film, &sampler);
+        SampleIntegratorCore::render(integrator, camera, &film, &sampler)
     }
 }
 
@@ -399,7 +400,7 @@ impl SampleIntegratorCore {
         camera: &Camera,
         film: &Arc<RwLock<Film>>,
         sampler: &Arc<RwLock<Sampler>>,
-    ) {
+    ) -> Result<(), PbrtError> {
         let mut tile_indices = Vec::new();
         {
             let film_r = film.as_ref().read().unwrap();
@@ -462,13 +463,14 @@ impl SampleIntegratorCore {
             if let Some(splat_scale) = integrator.splat_scale() {
                 film_r.merge_splats(splat_scale);
             }
-            film_r.write_image();
+            film_r.write_image()?;
             if PbrtOptions::get().record_pixel_statistics {
                 if let Err(error) = pixel_stats::write() {
                     error!("Failed to write pixel statistics: {}", error);
                 }
             }
         }
+        Ok(())
     }
 }
 

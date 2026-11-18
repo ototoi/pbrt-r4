@@ -72,6 +72,9 @@ impl SceneBuilder {
         // Lower the IR node to a flat scene representation.
         log::info!("GPU build: flattening Node IR");
         let flat_scene = flatten_node(ir_node)?;
+        // GPU IR pre-checks use the same dictionaries; cardinality errors must
+        // not be mistaken for valid input on this path either.
+        self.check_cardinality()?;
         log::info!("GPU build: flatten complete; creating WebGPU integrator");
 
         // Create the WavefrontPathIntegrator from the flat scene.
@@ -194,6 +197,7 @@ impl SceneBuilder {
             root_node.add_child(self.build_instance_node(instance, &definitions)?);
         }
 
+        self.check_cardinality()?;
         return Ok(Arc::new(RwLock::new(root_node)));
     }
 

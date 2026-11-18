@@ -6,6 +6,7 @@ use super::film_tile::FilmTile;
 use super::splat_tile::*;
 use crate::displays::DisplayTile;
 use crate::util::base::*;
+use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::image::Image;
 use crate::util::imageio::*;
@@ -235,20 +236,17 @@ impl RGBFilm {
         self.base.push_display_tile(display_tile);
     }
 
-    pub fn write_image(&self) {
+    pub fn write_image(&self) -> Result<(), PbrtError> {
         info!("Converting image to RGB and computing final weighted pixel values");
         let (pixel_bounds, rgb) = self.final_rgb_pixels();
-        info!(
-            "Writing image {} with bounds {:?}",
-            self.base.filename(),
-            pixel_bounds
-        );
-        let _ = write_image(
-            self.base.filename(),
-            &rgb,
-            &pixel_bounds,
-            &self.base.full_resolution(),
-        );
+        let filename = self.base.filename();
+        info!("Writing image {} with bounds {:?}", filename, pixel_bounds);
+        write_image(&filename, &rgb, &pixel_bounds, &self.base.full_resolution()).map_err(|error| {
+            PbrtError::error(&format!(
+                "Failed to write image \"{}\": {}",
+                filename, error
+            ))
+        })
     }
 
     pub fn to_image(&self) -> Image {

@@ -141,14 +141,59 @@ impl SceneBuilder {
         if scene.lights.is_empty() {
             warn!("No light sources defined in scene; rendering a black image.");
         }
-        create_integrator(
+        let integrator = create_integrator(
             &self.integrator_name,
             &self.integrator_params,
             &sampler,
             &camera,
             scene.as_ref(),
         )
-        .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))
+        .map_err(|e| PbrtError::error(&format!("create_integrator failed: {}", e.msg)))?;
+        // Single-value cardinality errors are collected only after every
+        // factory has had a chance to look up its parameters.
+        self.check_cardinality()?;
+        Ok(integrator)
+    }
+
+    /// Single-value getters record cardinality errors at the point of use;
+    /// collect them now so an invalid scene cannot be rendered successfully.
+    pub fn check_cardinality(&self) -> Result<(), PbrtError> {
+        let mut errors = Vec::new();
+        let mut collect = |params: &ParameterDictionary| {
+            errors.extend(params.take_cardinality_errors());
+        };
+        collect(&self.filter_params);
+        collect(&self.film_params);
+        collect(&self.sampler_params);
+        collect(&self.accelerator_params);
+        collect(&self.integrator_params);
+        collect(&self.camera_params);
+        for shape in self.shapes.iter().chain(self.animated_shapes.iter()) {
+            collect(&shape.base.params);
+        }
+        for material in &self.materials {
+            collect(&material.base.params);
+        }
+        for texture in self
+            .float_textures
+            .iter()
+            .chain(self.spectrum_textures.iter())
+        {
+            collect(&texture.base.params);
+        }
+        for light in &self.lights {
+            collect(&light.base.base.params);
+        }
+        for light in &self.area_lights {
+            collect(&light.base.params);
+        }
+        for medium in self.media.values() {
+            collect(&medium.base.params);
+        }
+        if !errors.is_empty() {
+            return Err(PbrtError::error(&errors.join("; ")));
+        }
+        Ok(())
     }
 
     /// Realizes and preprocesses lights and geometry without creating an integrator.
@@ -157,8 +202,9 @@ impl SceneBuilder {
             return Err(PbrtError::error(error));
         }
         let camera_transform = self.build_camera_transform()?;
-        self.realize_scene(&camera_transform.render_from_world())
-            .map(|(scene, _)| scene)
+        let (scene, _) = self.realize_scene(&camera_transform.render_from_world())?;
+        self.check_cardinality()?;
+        Ok(scene)
     }
 
     fn realize_scene(
@@ -1417,7 +1463,10 @@ fn build_material(
             ))
         })?;
         match MixMaterial::create(mp, &mat1, &mat2) {
-            Ok(m) => return Ok(Arc::new(Material::Mix(m))),
+            Ok(m) => {
+                mp.params.report_unused()?;
+                return Ok(Arc::new(Material::Mix(m)));
+            }
             Err(e) => return Err(e),
         }
     }

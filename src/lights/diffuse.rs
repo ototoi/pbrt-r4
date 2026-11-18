@@ -16,7 +16,6 @@ use crate::util::spectrum::rgb_to_spectrum::RGBColorSpace;
 use crate::util::spectrum::*;
 use crate::util::transform::*;
 
-use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -105,33 +104,72 @@ impl DiffuseAreaLight {
         // v4 lights.cpp:868-940 `DiffuseAreaLight::Create`. "scale" is a Float
         // (not a Spectrum) in v4. r4 honors that signature change here.
         let color_space = params.color_space();
-        let white = Spectrum::from(color_space.illuminant.to_dense());
-        let l = params.get_one_spectrum_typed("L", &white, SpectrumType::Illuminant);
-        // v4 lights.cpp:909-910: scale /= SpectrumToPhotometric(L). Together
-        // with the v4-aligned PixelSensor (`src/film/pixel_sensor.rs`) this
-        // makes emission units 1 nit per default scale=1. SpectrumToPhotometric
-        // is ∫Y(λ)·L(λ) dλ, computed as `spectrum_to_photometric` in r4.
-        let photometric = spectrum_to_photometric(&l);
-        let mut scale =
-            params.get_one_float("scale", 1.0) / if photometric > 0.0 { photometric } else { 1.0 };
+        let illuminant = Spectrum::from(color_space.illuminant.to_dense());
+        // v4 uses a null spectrum pointer to detect whether "L" was supplied;
+        // a value equal to Spectrum::one() is a valid explicit L=1 and must
+        // still conflict with "filename".
+        let l_specified = params
+            .get_keys()
+            .iter()
+            .find(|key| params.get_key_name(key) == "L")
+            .map(|key| {
+                params.get_one_spectrum_typed(key, &Spectrum::zero(), SpectrumType::Illuminant)
+            });
+        let l = l_specified.clone().unwrap_or_else(|| illuminant.clone());
         let mi = MediumInterface::from(medium);
         let two_sided = params.get_one_bool("twosided", false);
+
+        // v4 lights.cpp:909-910: scale /= SpectrumToPhotometric(L), using the
+        // colour-space illuminant when L is absent. No clamp is applied: the
+        // v4 expression is divided by the photometric value directly.
+        let photometric = spectrum_to_photometric(l_specified.as_ref().unwrap_or(&illuminant));
+        let mut scale = params.get_one_float("scale", 1.0) / photometric;
+
         let filename = params.get_one_string("filename", "");
-        let (image, color_space) = if filename.is_empty() {
+        let (image, image_color_space) = if filename.is_empty() {
             (None, color_space)
         } else {
-            if l != Spectrum::one() {
+            if l_specified.is_some() {
                 return Err(PbrtError::error(
                     "Both \"L\" and \"filename\" specified for DiffuseAreaLight.",
                 ));
             }
-            let texname = Path::new(&filename);
-            let (texels, resolution, cs) = read_image_exr_with_metadata(texname)?;
+            let (texels, resolution, cs) = read_image_with_metadata(&filename)?;
+            for rgb in &texels {
+                let rgb = rgb.to_rgb();
+                if !rgb.iter().all(|value| value.is_finite()) {
+                    return Err(PbrtError::error(&format!(
+                        "{}: image has infinite or not-a-number pixel values and so is not suitable as a light.",
+                        filename
+                    )));
+                }
+            }
             (
                 Some(Image::try_with_color_space(resolution, texels, cs)?),
                 cs,
             )
         };
+
+        // v4 lights.cpp:912-936: normalize to the requested emitted power.
+        let power = params.get_one_float("power", -1.0);
+        if power > 0.0 {
+            let mut k_e = if let Some(image) = &image {
+                let luminance = image_color_space.luminance_vector();
+                let mut sum = 0.0;
+                for rgb in image.texels() {
+                    let rgb = rgb.to_rgb();
+                    for channel in 0..3 {
+                        sum += rgb[channel] * luminance[channel];
+                    }
+                }
+                sum / (image.width() as Float * image.height() as Float)
+            } else {
+                1.0
+            };
+            k_e *= (if two_sided { 2.0 } else { 1.0 }) * shape.area() * PI;
+            scale *= power / k_e;
+        }
+
         let mut n_samples = params.get_one_int("nsamples", 1) as u32;
         {
             let options = PbrtOptions::get();
@@ -151,7 +189,7 @@ impl DiffuseAreaLight {
             l,
             scale,
             image,
-            color_space,
+            image_color_space,
             shape,
             two_sided,
         ))
