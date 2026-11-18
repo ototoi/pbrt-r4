@@ -386,6 +386,7 @@ struct LightBuilder {
 struct InfiniteLightBuilder {
     mipmaps: Vec<Arc<super::texture::Mipmap>>,
     image_decoder: super::texture::ImageDecoder,
+    image_compiler: super::texture::ImageCompiler,
     portal_records: Vec<PortalImageInfiniteLight>,
     portal_distribution: Vec<PortalDistributionTexel>,
     image_records: Vec<ImageInfiniteSamplingRecord>,

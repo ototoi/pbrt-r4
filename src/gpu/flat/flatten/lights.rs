@@ -20,7 +20,10 @@ use crate::util::vecmath::Frame;
 
 use super::super::image_infinite::ImageInfiniteDistribution;
 use super::super::portal::prepare_portal_image;
-use super::super::texture::{build_linear_rgb_mipmap, ColorSpace, Mipmap, MipmapLevelData};
+use super::super::texture::{
+    build_linear_rgb_mipmap, project_linear_rgb_mipmap, ColorSpace, ImageCompiler, ImageValueType,
+    Mipmap, MipmapLevelData,
+};
 use super::power::{
     area_power, distant_power, point_power, spot_power, uniform_infinite_power, ImagePowerSum,
 };
@@ -459,7 +462,7 @@ pub fn flatten_light(
                 ));
             }
             let encoding = light.params.get_one_string("encoding", "srgb");
-            let mipmap = if filename.is_empty() {
+            let source_mipmap = if filename.is_empty() {
                 let rgb = intensity.to_rgb();
                 build_linear_rgb_mipmap(
                     [1, 1],
@@ -471,8 +474,9 @@ pub fn flatten_light(
                     .lights
                     .infinite_resources
                     .image_decoder
-                    .decode_linear_rgb(std::path::Path::new(&filename), &encoding)?
+                    .decode_rgb_storage(std::path::Path::new(&filename), &encoding)?
             };
+            let mipmap = project_linear_rgb_mipmap(&source_mipmap)?;
             let base_level = mipmap.levels.first().ok_or_else(|| {
                 PbrtError::error("Image infinite light image has no mipmap levels.")
             })?;
@@ -565,6 +569,20 @@ pub fn flatten_light(
                 )
             } else {
                 (mipmap, LightGeometryKind::Direction, INVALID_INDEX, None)
+            };
+            let upload_source = if kind == LightKind::PortalImageInfinite {
+                &mipmap
+            } else {
+                &source_mipmap
+            };
+            let mipmap = if kind == LightKind::PortalImageInfinite || filename.is_empty() {
+                ImageCompiler::default().compile(upload_source, ImageValueType::LinearRgb)?
+            } else {
+                builder
+                    .lights
+                    .infinite_resources
+                    .image_compiler
+                    .compile(upload_source, ImageValueType::LinearRgb)?
             };
             let index = builder.lights.infinite_resources.append_mipmap(mipmap)?;
             (

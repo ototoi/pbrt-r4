@@ -246,6 +246,9 @@ fn sample_texture_leaf(texture_index: u32, uv: vec2<f32>) -> vec3<f32> {
             image, texture_samplers[node.sampler], image_uv, sample_level,
         ).rgb;
     }
+    if (node.kind == 0u) {
+        value = vec3<f32>(value.r);
+    }
     value *= node.constant_value.x;
     if (node.constant_value.y > 0.5) {
         value = max(vec3<f32>(0.0), vec3<f32>(1.0) - value);

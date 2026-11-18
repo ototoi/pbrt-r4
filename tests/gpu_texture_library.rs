@@ -102,15 +102,10 @@ fn image_compiler_projects_luminance_alpha_to_linear_rgb() {
         .compile(&source, ImageValueType::LinearRgb)
         .unwrap();
     assert_eq!(projected.levels[0].channels, 3);
-    assert_eq!(projected.encoding, MipmapEncoding::Linear);
+    assert_eq!(projected.encoding, MipmapEncoding::U8Normalized);
     assert_eq!(
         projected.levels[0].data,
-        MipmapLevelData::F32(
-            vec![64.0 / 255.0; 3]
-                .into_iter()
-                .chain(vec![128.0 / 255.0; 3])
-                .collect()
-        )
+        MipmapLevelData::U8(vec![64, 64, 64, 128, 128, 128])
     );
 }
 

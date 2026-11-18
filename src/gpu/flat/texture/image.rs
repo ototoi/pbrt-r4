@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use crate::util::base::inverse_gamma_correct;
 use crate::util::error::PbrtError;
-use crate::util::imageio::{read_raw_image_with_encoding, ColorEncoding};
+use crate::util::imageio::read_image_exr::read_raw_image_exr_with_storage;
+use crate::util::imageio::{read_raw_image_with_encoding, ColorEncoding, RawImage, RawImageData};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ColorSpace {
@@ -78,7 +79,7 @@ impl ImageDecoder {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("exr"))
         {
-            let (raw, _, metadata) = crate::util::imageio::read_image_exr::read_raw_image_exr_with_channels_and_metadata(&path)?;
+            let (raw, _, metadata) = read_raw_image_exr_with_storage(&path)?;
             let color_space = metadata
                 .color_space
                 .map(|space| match space.name {
@@ -96,40 +97,7 @@ impl ImageDecoder {
                 ColorSpace::Srgb,
             )
         };
-        let mut data = raw.data_f32();
-        let mut channel_count = raw.channels;
-        // pbrt-v4 MIPMap::CreateFromFile and the CPU imagemap loader drop an
-        // all-ones alpha channel, so Float textures read color, not alpha.
-        if channel_count == 4 && data.chunks_exact(4).all(|pixel| pixel[3] == 1.0) {
-            data = data
-                .chunks_exact(4)
-                .flat_map(|pixel| pixel[..3].iter().copied())
-                .collect();
-            channel_count = 3;
-        }
-        let channels = u32::try_from(channel_count)
-            .map_err(|_| PbrtError::error("Texture channel count exceeds u32."))?;
-        let mut resolution = [raw.resolution.x as u32, raw.resolution.y as u32];
-        let mut levels = Vec::new();
-        loop {
-            levels.push(MipmapLevel {
-                resolution,
-                channels,
-                data: MipmapLevelData::F32(data.clone()),
-            });
-            if resolution == [1, 1] {
-                break;
-            }
-            let next_resolution = [(resolution[0] / 2).max(1), (resolution[1] / 2).max(1)];
-            let next = downsample_level(&data, resolution, next_resolution, channels as usize);
-            resolution = next_resolution;
-            data = next;
-        }
-        let mipmap = Arc::new(Mipmap {
-            levels,
-            color_space,
-            encoding: MipmapEncoding::Linear,
-        });
+        let mipmap = build_source_mipmap(&raw, color_space)?;
         self.decoded.insert(key, mipmap.clone());
         Ok(mipmap)
     }
@@ -137,6 +105,15 @@ impl ImageDecoder {
     /// Decode an image for an RGB light, selecting channels by their semantic
     /// names rather than relying on their storage order.
     pub fn decode_linear_rgb(
+        &mut self,
+        path: &Path,
+        encoding_name: &str,
+    ) -> Result<Arc<Mipmap>, PbrtError> {
+        project_linear_rgb_mipmap(&self.decode_rgb_storage(path, encoding_name)?)
+    }
+
+    /// Selects named RGB channels while retaining the source storage and encoding.
+    pub fn decode_rgb_storage(
         &mut self,
         path: &Path,
         encoding_name: &str,
@@ -158,7 +135,7 @@ impl ImageDecoder {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("exr"))
         {
-            let (raw, names, metadata) = crate::util::imageio::read_image_exr::read_raw_image_exr_with_channels_and_metadata(&path)?;
+            let (raw, names, metadata) = read_raw_image_exr_with_storage(&path)?;
             let color_space = metadata
                 .color_space
                 .map(|space| match space.name {
@@ -186,26 +163,159 @@ impl ImageDecoder {
                 path.display()
             )));
         };
-        let values = raw.data_f32();
-        let channels = raw.channels;
-        let pixels = (raw.resolution.x as usize)
-            .checked_mul(raw.resolution.y as usize)
-            .ok_or_else(|| PbrtError::error("Texture resolution overflowed."))?;
-        let mut rgb = Vec::with_capacity(pixels * 3);
-        for pixel in 0..pixels {
-            let offset = pixel * channels;
-            rgb.extend_from_slice(&[values[offset + r], values[offset + g], values[offset + b]]);
-        }
-        let mipmap = build_linear_rgb_mipmap(
-            [raw.resolution.x as u32, raw.resolution.y as u32],
-            &rgb.chunks_exact(3)
-                .map(|v| [v[0], v[1], v[2]])
-                .collect::<Vec<_>>(),
+        let indices = [r, g, b];
+        let select = |values: &[f32]| {
+            values
+                .chunks_exact(raw.channels)
+                .flat_map(|pixel| indices.map(|index| pixel[index]))
+                .collect::<Vec<_>>()
+        };
+        let data = match &raw.data {
+            RawImageData::U8 { data, encoding } => RawImageData::U8 {
+                data: data
+                    .chunks_exact(raw.channels)
+                    .flat_map(|pixel| indices.map(|index| pixel[index]))
+                    .collect(),
+                encoding: *encoding,
+            },
+            RawImageData::F16(data) => RawImageData::F16(
+                data.chunks_exact(raw.channels)
+                    .flat_map(|pixel| indices.map(|index| pixel[index]))
+                    .collect(),
+            ),
+            RawImageData::F32(data) => RawImageData::F32(select(data)),
+        };
+        let mipmap = build_source_mipmap(
+            &RawImage {
+                data,
+                resolution: raw.resolution,
+                channels: 3,
+            },
             color_space,
         )?;
         self.decoded.insert(key, mipmap.clone());
         Ok(mipmap)
     }
+}
+
+fn build_source_mipmap(raw: &RawImage, color_space: ColorSpace) -> Result<Arc<Mipmap>, PbrtError> {
+    let mut data = raw.data_f32();
+    let channels = if raw.channels == 4 && data.chunks_exact(4).all(|pixel| pixel[3] == 1.0) {
+        data = data
+            .chunks_exact(4)
+            .flat_map(|pixel| pixel[..3].iter().copied())
+            .collect();
+        3
+    } else {
+        raw.channels
+    };
+    let source_encoding = match raw.data {
+        RawImageData::U8 { encoding, .. } => encoding,
+        _ => ColorEncoding::Linear,
+    };
+    let retain_u8 = matches!(
+        &raw.data,
+        RawImageData::U8 {
+            encoding: ColorEncoding::Linear | ColorEncoding::SRgb,
+            ..
+        }
+    );
+    let encoding = if retain_u8 && source_encoding == ColorEncoding::SRgb {
+        MipmapEncoding::SrgbEncoded
+    } else {
+        MipmapEncoding::Linear
+    };
+    let mut resolution = [raw.resolution.x as u32, raw.resolution.y as u32];
+    let mut levels = Vec::new();
+    loop {
+        let storage = if retain_u8 {
+            MipmapLevelData::U8(
+                data.iter()
+                    .map(|&value| (source_encoding.from_linear(value) * 255.0).round() as u8)
+                    .collect(),
+            )
+        } else if matches!(raw.data, RawImageData::F16(_)) {
+            MipmapLevelData::F16(
+                data.iter()
+                    .map(|&value| half::f16::from_f32(value).to_bits())
+                    .collect(),
+            )
+        } else {
+            MipmapLevelData::F32(data.clone())
+        };
+        levels.push(MipmapLevel {
+            resolution,
+            channels: channels as u32,
+            data: storage,
+        });
+        if resolution == [1, 1] {
+            break;
+        }
+        let next_resolution = [(resolution[0] / 2).max(1), (resolution[1] / 2).max(1)];
+        data = downsample_level(&data, resolution, next_resolution, channels);
+        resolution = next_resolution;
+    }
+    let mipmap = Arc::new(Mipmap {
+        levels,
+        color_space,
+        encoding,
+    });
+    validate_mipmap(&mipmap)?;
+    Ok(mipmap)
+}
+
+// Channel selection preserves source precision; color averaging and sRGB scalar
+// conversion use the linear projection path instead.
+fn project_source_storage(source: &Arc<Mipmap>, value_type: ImageValueType) -> Option<Arc<Mipmap>> {
+    let channels = source.levels.first()?.channels as usize;
+    let indices: Vec<usize> = match value_type {
+        ImageValueType::Float
+            if channels == 4 && source.encoding != MipmapEncoding::SrgbEncoded =>
+        {
+            vec![3]
+        }
+        ImageValueType::Float
+            if channels <= 2 && source.encoding != MipmapEncoding::SrgbEncoded =>
+        {
+            vec![0]
+        }
+        ImageValueType::LinearRgb if channels <= 2 => vec![0; 3],
+        ImageValueType::LinearRgb => vec![0, 1, 2],
+        _ => return None,
+    };
+    let mut levels = Vec::new();
+    for level in &source.levels {
+        let data = match &level.data {
+            MipmapLevelData::U8(values) => MipmapLevelData::U8(
+                values
+                    .chunks_exact(channels)
+                    .flat_map(|pixel| indices.iter().map(|&index| pixel[index]))
+                    .collect(),
+            ),
+            MipmapLevelData::F16(values) => MipmapLevelData::F16(
+                values
+                    .chunks_exact(channels)
+                    .flat_map(|pixel| indices.iter().map(|&index| pixel[index]))
+                    .collect(),
+            ),
+            _ => return None,
+        };
+        levels.push(MipmapLevel {
+            resolution: level.resolution,
+            channels: indices.len() as u32,
+            data,
+        });
+    }
+    let encoding = if value_type == ImageValueType::Float {
+        MipmapEncoding::Linear
+    } else {
+        source.encoding
+    };
+    Some(Arc::new(Mipmap {
+        levels,
+        color_space: source.color_space,
+        encoding,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -295,6 +405,10 @@ impl ImageCompiler {
         let key = (Arc::as_ptr(source) as usize, value_type);
         if let Some(mipmap) = self.compiled.get(&key) {
             return Ok(mipmap.clone());
+        }
+        if let Some(projected) = project_source_storage(source, value_type) {
+            self.compiled.insert(key, projected.clone());
+            return Ok(projected);
         }
         let projected = match value_type {
             ImageValueType::Float => project_float_mipmap(source)?,
@@ -463,8 +577,8 @@ pub fn project_float_mipmap(mipmap: &Arc<Mipmap>) -> Result<Arc<Mipmap>, PbrtErr
         }
         if matches!(mipmap.encoding, MipmapEncoding::SrgbEncoded) {
             for pixel in values.chunks_exact_mut(channels) {
-                let color_channels = if channels == 4 { 3 } else { channels };
-                for value in pixel.iter_mut().take(color_channels) {
+                // pbrt-v4 Image applies the image encoding to every channel, including alpha.
+                for value in pixel.iter_mut() {
                     *value = inverse_gamma_correct(*value);
                 }
             }
