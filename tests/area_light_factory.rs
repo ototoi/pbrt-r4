@@ -145,3 +145,28 @@ fn power_normalizes_emission_by_v4_formula() {
         );
     }
 }
+
+#[test]
+fn png_texels_are_srgb_decoded() {
+    let dir = tempfile::tempdir().unwrap();
+    let filename = png(dir.path(), "image.png", [128, 128, 128]);
+    let (texels, _, _) = read_image_with_metadata(&filename).unwrap();
+    let r = texels[0].to_rgb()[0];
+    assert!((r - 0.2158).abs() < 1e-3, "{}", r);
+}
+
+#[test]
+fn zero_l_is_black_not_nan() {
+    let mut params = ParameterDictionary::new();
+    params.add_float("L", 0.0);
+    let light = create(&params).unwrap();
+    let lambda = SampledWavelengths::sample_visible(0.5);
+    let emitted = light.l(
+        Point3f::new(0.0, 0.0, 1.0),
+        Normal3f::new(0.0, 0.0, 1.0),
+        Point2f::new(0.5, 0.5),
+        Vector3f::new(0.0, 0.0, 1.0),
+        &lambda,
+    );
+    assert!(emitted.values().iter().all(|value| *value == 0.0));
+}

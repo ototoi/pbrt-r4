@@ -118,7 +118,8 @@ impl DiffuseAreaLight {
 
         // v4 lights.cpp:909-910
         let photometric = spectrum_to_photometric(l_specified.as_ref().unwrap_or(&illuminant));
-        let mut scale = params.get_one_float("scale", 1.0) / photometric;
+        let mut scale =
+            params.get_one_float("scale", 1.0) / if photometric > 0.0 { photometric } else { 1.0 };
 
         let filename = params.get_one_string("filename", "");
         let (image, image_color_space) = if filename.is_empty() {

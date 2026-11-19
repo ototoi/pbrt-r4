@@ -438,7 +438,7 @@ pub fn read_image_with_metadata(
     if has_extension(path, "exr") {
         return super::read_image_exr::read_image_exr_with_metadata(path);
     }
-    let raw = read_raw_image_with_encoding(name, ColorEncoding::Linear)?;
+    let raw = read_raw_image_with_encoding(name, ColorEncoding::SRgb)?;
     let names = raw.channel_names();
     let channel = |channel_name: &str| names.iter().position(|name| name == channel_name);
     let (Some(r), Some(g), Some(b)) = (channel("R"), channel("G"), channel("B")) else {
