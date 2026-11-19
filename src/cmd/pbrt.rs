@@ -227,6 +227,10 @@ struct CommandOptions {
     #[arg(long, default_value = "false")]
     pub gpu: bool,
 
+    /// Print the GPU profile of CPU phases and GPU stages on stderr.
+    #[arg(long = "gpu-profile", default_value = "false")]
+    pub gpu_profile: bool,
+
     /// GPU wavefront tile side length in pixels (square tiles). Tiles are
     /// processed sequentially to bound per-pixel wavefront buffer sizes;
     /// this does not affect rendering speed. Defaults to 512.
@@ -647,6 +651,9 @@ fn render_device(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtErr
 }
 
 fn render_scene(input_path: &Path, opts: &CommandOptions) -> i32 {
+    if opts.gpu_profile && !opts.gpu {
+        warn!("--gpu-profile requires --gpu; ignoring.");
+    }
     if !opts.quiet {
         let nthreads = match available_parallelism() {
             Ok(value) => value.get(),
@@ -697,6 +704,7 @@ pub fn main() {
         options.parallel_scene_build = opts.scene_build.parallel();
         options.scene_build_jobs = opts.scene_build_jobs;
         options.displacement_edge_scale = opts.displacement_edge_scale;
+        options.gpu_profile = opts.gpu_profile;
         PbrtOptions::set(options);
     }
     init_logger(&opts);

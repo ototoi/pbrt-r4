@@ -14,6 +14,7 @@ pub mod measured;
 pub mod noise;
 pub mod output;
 pub mod pipeline;
+pub mod profile;
 pub mod queue;
 pub mod render_settings;
 pub mod sampler;
