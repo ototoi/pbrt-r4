@@ -395,6 +395,7 @@ fn read_pts_files(npoints: usize, max_sets: usize) -> Result<Vec<Vec<Point2f>>, 
     if files.is_empty() {
         return Err(CliError::new("No *.dat files found in current directory."));
     }
+    files.sort();
     let mut sets = Vec::new();
     for path in files {
         let input = fs::read_to_string(&path)
