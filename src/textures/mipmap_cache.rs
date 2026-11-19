@@ -12,8 +12,7 @@ use crate::util::error::PbrtError;
 use crate::util::imageio::ColorEncoding;
 use crate::util::spectrum::RGBSpectrum;
 
-use crypto::digest::Digest;
-use crypto::md5::Md5;
+use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
 pub const MIPMAP_CACHE_FORMAT_VERSION: u32 = 1;
@@ -56,9 +55,7 @@ struct CacheMetadata {
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
-    let mut md5 = Md5::new();
-    md5.input(bytes);
-    md5.result_str()
+    format!("{:x}", Md5::digest(bytes))
 }
 
 fn hash(s: &str) -> String {
@@ -147,7 +144,7 @@ fn write_level(file: &mut File, image: &F32MIPMapImage) -> Result<(usize, String
                 for value in values {
                     bytes.extend_from_slice(&value.to_le_bytes());
                 }
-                digest.input(&bytes);
+                digest.update(&bytes);
                 file.write_all(&bytes)?;
             }
             data.len()
@@ -161,7 +158,7 @@ fn write_level(file: &mut File, image: &F32MIPMapImage) -> Result<(usize, String
                 for value in values {
                     bytes.extend_from_slice(&value.to_bits().to_le_bytes());
                 }
-                digest.input(&bytes);
+                digest.update(&bytes);
                 file.write_all(&bytes)?;
             }
             data.len()
@@ -169,13 +166,13 @@ fn write_level(file: &mut File, image: &F32MIPMapImage) -> Result<(usize, String
                 .ok_or_else(|| PbrtError::error("MIPMap cache level is too large."))?
         }
         MIPMapLevelStorage::U8 { data, .. } => {
-            digest.input(data);
+            digest.update(data);
             file.write_all(data)?;
             data.len()
         }
     };
 
-    Ok((byte_length, digest.result_str()))
+    Ok((byte_length, format!("{:x}", digest.finalize())))
 }
 
 fn cache_layout<T>(mipmap: &MIPMap<T>) -> Result<(CacheStorageKind, usize, String), PbrtError> {
@@ -486,4 +483,13 @@ pub fn save_spectrum_mipmap_cache(
     mipmap: &MIPMap<RGBSpectrum>,
 ) -> Result<(), PbrtError> {
     write_cache(dir, texinfo, file_hash, CacheView::Spectrum, mipmap)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn hash_matches_rust_crypto_result_str() {
+        assert_eq!(super::hash(""), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(super::hash("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    }
 }
