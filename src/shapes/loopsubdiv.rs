@@ -843,6 +843,12 @@ pub fn create_loop_subdiv(
         ));
     }
 
+    if vertex_indices.len() % 3 != 0 || vertex_indices.iter().any(|&i| i as usize >= p.len()) {
+        return Err(PbrtError::error(
+            "Invalid vertex indices \"indices\" for LoopSubdiv shape.",
+        ));
+    }
+
     let _scheme = params.get_one_string("scheme", "loop");
     return loop_subdiv(
         o2w,

@@ -232,7 +232,7 @@ impl MLTIntegrator {
 }
 
 impl Integrator for MLTIntegrator {
-    fn render(&mut self) {
+    fn render(&mut self) -> Result<(), PbrtError> {
         let film = self.get_film();
         film.read().unwrap().render_start();
 
@@ -243,8 +243,8 @@ impl Integrator for MLTIntegrator {
                 log::warn!("MLTIntegrator: {:?}", e);
                 let f = film.read().unwrap();
                 f.render_end();
-                f.write_image();
-                return;
+                f.write_image()?;
+                return Ok(());
             }
         };
         self.light_sampler = Some(light_sampler.clone());
@@ -283,8 +283,8 @@ impl Integrator for MLTIntegrator {
             log::warn!("MLTIntegrator: bootstrap weights all zero -- rendering black image");
             let f = film.read().unwrap();
             f.render_end();
-            f.write_image();
-            return;
+            f.write_image()?;
+            return Ok(());
         }
         let bootstrap_distrib = Distribution1D::new(&bootstrap_weights);
         let b = (self.max_depth + 1) as Float / bootstrap_weights.len() as Float * sum_w;
@@ -411,7 +411,7 @@ impl Integrator for MLTIntegrator {
         f.merge_splats(splat_scale);
         f.update_display(&pixel_bounds);
         f.render_end();
-        f.write_image();
+        f.write_image()
     }
 
     fn get_camera(&self) -> Arc<Camera> {

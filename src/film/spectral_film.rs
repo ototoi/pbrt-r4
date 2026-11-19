@@ -6,6 +6,7 @@ use super::film_tile::{FilmTile, SpectralTileConfig};
 use super::splat_tile::*;
 use crate::displays::DisplayTile;
 use crate::util::base::*;
+use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::imageio::*;
 use crate::util::spectrum::*;
@@ -314,7 +315,7 @@ impl SpectralFilm {
         self.base.push_display_tile(display_tile);
     }
 
-    pub fn write_image(&self) {
+    pub fn write_image(&self) -> Result<(), PbrtError> {
         info!("Converting image to RGB + spectral channels for SpectralFilm output");
         let pixel_bounds = self.base.cropped_pixel_bounds();
         let area = pixel_bounds.area() as usize;
@@ -382,13 +383,20 @@ impl SpectralFilm {
             ("emissiveUnits", "W.m^-2.sr^-1"),
         ];
         let total_resolution = self.base.full_resolution();
-        let _ = write_image_exr_channels_with_attrs(
-            self.base.filename(),
+        let filename = self.base.filename();
+        write_image_exr_channels_with_attrs(
+            &filename,
             &pixel_bounds,
             &total_resolution,
             &channels,
             attrs,
-        );
+        )
+        .map_err(|error| {
+            PbrtError::error(&format!(
+                "Failed to write image \"{}\": {}",
+                filename, error
+            ))
+        })
     }
 
     pub fn to_image(&self) -> crate::util::image::Image {

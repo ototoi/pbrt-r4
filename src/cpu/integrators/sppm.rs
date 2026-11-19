@@ -173,7 +173,7 @@ impl SPPMIntegrator {
 }
 
 impl Integrator for SPPMIntegrator {
-    fn render(&mut self) {
+    fn render(&mut self) -> Result<(), PbrtError> {
         let film = self.get_film();
         film.read().unwrap().render_start();
 
@@ -182,8 +182,8 @@ impl Integrator for SPPMIntegrator {
         if n_pixels == 0 {
             let f = film.read().unwrap();
             f.render_end();
-            f.write_image();
-            return;
+            f.write_image()?;
+            return Ok(());
         }
         let width = (pixel_bounds.max.x - pixel_bounds.min.x) as usize;
 
@@ -709,7 +709,7 @@ impl Integrator for SPPMIntegrator {
 
         let f = film.read().unwrap();
         f.render_end();
-        f.write_image();
+        f.write_image()
     }
 
     fn get_camera(&self) -> Arc<Camera> {

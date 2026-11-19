@@ -7,6 +7,7 @@ use super::splat_tile::*;
 use crate::base::film::GBufferCoordinateSystem;
 use crate::displays::DisplayTile;
 use crate::util::base::*;
+use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::imageio::*;
 use crate::util::spectrum::*;
@@ -264,7 +265,7 @@ impl GBufferFilm {
         self.base.push_display_tile(display_tile);
     }
 
-    pub fn write_image(&self) {
+    pub fn write_image(&self) -> Result<(), PbrtError> {
         info!(
             "Converting gbuffer image {} with bounds {:?}",
             self.base.filename(),
@@ -365,13 +366,20 @@ impl GBufferFilm {
         ];
         let total_resolution = self.base.full_resolution();
         let meta = ExrExtraMeta::default();
-        let _ = write_image_exr_channels_half(
-            self.base.filename(),
+        let filename = self.base.filename();
+        write_image_exr_channels_half(
+            &filename,
             &pixel_bounds,
             &total_resolution,
             &channels,
             &meta,
-        );
+        )
+        .map_err(|error| {
+            PbrtError::error(&format!(
+                "Failed to write image \"{}\": {}",
+                filename, error
+            ))
+        })
     }
 
     pub fn to_image(&self) -> crate::util::image::Image {

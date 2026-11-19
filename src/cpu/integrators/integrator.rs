@@ -19,6 +19,7 @@ use crate::displays::Display;
 use crate::interaction::{Interaction, ShapeIntersection};
 use crate::scene::*;
 use crate::util::base::*;
+use crate::util::error::*;
 use crate::util::geometry::*;
 use crate::util::rng::RNG;
 use crate::util::spectrum::*;
@@ -146,7 +147,7 @@ impl IntegratorBase {
 unsafe impl Sync for IntegratorBase {}
 
 pub trait Integrator {
-    fn render(&mut self);
+    fn render(&mut self) -> Result<(), PbrtError>;
     fn get_camera(&self) -> Arc<Camera>;
     fn add_display(&self, display: &Arc<RwLock<dyn Display>>) {
         let camera = self.get_camera();

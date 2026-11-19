@@ -2,13 +2,23 @@ use super::super::utils::*;
 use super::rgb2spec_opt::{self, Gamut};
 use std::env;
 use std::fs;
+use std::hash::{DefaultHasher, Hasher};
 use std::path::Path;
 
+const SOURCES: [&str; 4] = [
+    "build/spectrum/build_rgb_to_spectrum.rs",
+    "build/spectrum/rgb2spec_opt.rs",
+    "build/spectrum/rgb2spec_data.rs",
+    "build/spectrum/assets/rgb_to_spectrum_meta.rs",
+];
+
 pub fn build() {
-    println!("cargo:rerun-if-changed=build/spectrum/build_rgb_to_spectrum.rs");
-    println!("cargo:rerun-if-changed=build/spectrum/rgb2spec_opt.rs");
-    println!("cargo:rerun-if-changed=build/spectrum/rgb2spec_data.rs");
-    println!("cargo:rerun-if-changed=build/spectrum/assets/rgb_to_spectrum_meta.rs");
+    let mut hasher = DefaultHasher::new();
+    for source in SOURCES {
+        println!("cargo:rerun-if-changed={}", source);
+        hasher.write(&fs::read(source).unwrap());
+    }
+    let stamp = format!("{:016x}", hasher.finish());
 
     let out_dir = env::var("OUT_DIR").unwrap();
 
@@ -25,11 +35,14 @@ pub fn build() {
     ];
     let expected_bytes =
         (RESOLUTION + 3 * RESOLUTION * RESOLUTION * RESOLUTION * 3) * std::mem::size_of::<f32>();
-    if specifications.iter().all(|(name, _)| {
-        fs::metadata(Path::new(&out_dir).join(format!("rgb_to_spectrum_{name}.bin")))
-            .map(|metadata| metadata.len() as usize == expected_bytes)
-            .unwrap_or(false)
-    }) {
+    let stamp_path = Path::new(&out_dir).join("rgb_to_spectrum.stamp");
+    if fs::read_to_string(&stamp_path).is_ok_and(|s| s == stamp)
+        && specifications.iter().all(|(name, _)| {
+            fs::metadata(Path::new(&out_dir).join(format!("rgb_to_spectrum_{name}.bin")))
+                .map(|metadata| metadata.len() as usize == expected_bytes)
+                .unwrap_or(false)
+        })
+    {
         return;
     }
 
@@ -68,4 +81,5 @@ pub fn build() {
         fs::rename(&tmp, &dst)
             .unwrap_or_else(|error| panic!("rgb2spec_opt: install {:?}: {}", dst, error));
     }
+    fs::write(&stamp_path, stamp).unwrap();
 }
