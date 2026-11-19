@@ -374,12 +374,18 @@ impl Default for ImageOptimizationPolicy {
     }
 }
 
+struct CompiledImage {
+    // Keeps the source address (the cache key) from being reused.
+    _source: Arc<Mipmap>,
+    compiled: Arc<Mipmap>,
+}
+
 /// Compiles one decoded mipmap into optimized Flat IR storage. The decoded
 /// image and its interpretation are interned separately from image views, so
 /// sampling settings do not duplicate texel storage.
 pub struct ImageCompiler {
     policy: ImageOptimizationPolicy,
-    compiled: HashMap<(usize, ImageValueType), Arc<Mipmap>>,
+    compiled: HashMap<(usize, ImageValueType), CompiledImage>,
 }
 
 impl Default for ImageCompiler {
@@ -403,11 +409,17 @@ impl ImageCompiler {
     ) -> Result<Arc<Mipmap>, PbrtError> {
         validate_mipmap(source)?;
         let key = (Arc::as_ptr(source) as usize, value_type);
-        if let Some(mipmap) = self.compiled.get(&key) {
-            return Ok(mipmap.clone());
+        if let Some(entry) = self.compiled.get(&key) {
+            return Ok(entry.compiled.clone());
         }
         if let Some(projected) = project_source_storage(source, value_type) {
-            self.compiled.insert(key, projected.clone());
+            self.compiled.insert(
+                key,
+                CompiledImage {
+                    _source: source.clone(),
+                    compiled: projected.clone(),
+                },
+            );
             return Ok(projected);
         }
         let projected = match value_type {
@@ -415,7 +427,13 @@ impl ImageCompiler {
             ImageValueType::LinearRgb => project_linear_rgb_mipmap(source)?,
         };
         let optimized = self.optimize_storage(&projected)?;
-        self.compiled.insert(key, optimized.clone());
+        self.compiled.insert(
+            key,
+            CompiledImage {
+                _source: source.clone(),
+                compiled: optimized.clone(),
+            },
+        );
         Ok(optimized)
     }
 

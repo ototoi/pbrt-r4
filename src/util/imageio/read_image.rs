@@ -2,6 +2,7 @@ use super::color_encoding::ColorEncoding;
 use super::read_image_pfm::*;
 use crate::util::base::*;
 use crate::util::error::*;
+use crate::util::spectrum::rgb_to_spectrum::{RGBColorSpace, SRGB};
 use crate::util::spectrum::*;
 
 use image::*;
@@ -425,6 +426,37 @@ pub fn read_raw_image_with_encoding(
 
 pub fn read_image(name: &str) -> Result<(Vec<RGBSpectrum>, Point2i), PbrtError> {
     read_image_with_encoding(name, ColorEncoding::Linear)
+}
+
+pub fn read_image_with_metadata(
+    name: &str,
+) -> Result<(Vec<RGBSpectrum>, Point2i, &'static RGBColorSpace), PbrtError> {
+    let path = Path::new(name);
+    if !path.exists() {
+        return Err(PbrtError::from(format!("File not found: {}", name)));
+    }
+    if has_extension(path, "exr") {
+        return super::read_image_exr::read_image_exr_with_metadata(path);
+    }
+    let raw = read_raw_image_with_encoding(name, ColorEncoding::SRgb)?;
+    let names = raw.channel_names();
+    let channel = |channel_name: &str| names.iter().position(|name| name == channel_name);
+    let (Some(r), Some(g), Some(b)) = (channel("R"), channel("G"), channel("B")) else {
+        return Err(PbrtError::error(&format!(
+            "{}: Image must have R, G, and B channels.",
+            name
+        )));
+    };
+    let pixels = (raw.resolution.x * raw.resolution.y) as usize;
+    let mut texels = Vec::with_capacity(pixels);
+    for pixel in 0..pixels {
+        texels.push(RGBSpectrum::rgb_from_rgb(&[
+            raw.channel(pixel, r),
+            raw.channel(pixel, g),
+            raw.channel(pixel, b),
+        ]));
+    }
+    Ok((texels, raw.resolution, &SRGB))
 }
 
 fn convert_f32_from_rgba32f(img: &image::Rgb32FImage) -> (Vec<f32>, Point2i) {

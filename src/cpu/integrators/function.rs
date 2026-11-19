@@ -147,7 +147,7 @@ impl FunctionIntegrator {
 }
 
 impl Integrator for FunctionIntegrator {
-    fn render(&mut self) {
+    fn render(&mut self) -> Result<(), PbrtError> {
         let bounds = self.pixel_bounds();
         if !self.image_filename.is_empty() {
             let resolution = bounds.diagonal();
@@ -168,14 +168,18 @@ impl Integrator for FunctionIntegrator {
                     rgb[i..i + 3].fill(value);
                 }
             }
-            if let Err(err) = write_image(
+            write_image(
                 &self.image_filename,
                 &rgb,
                 &Bounds2i::from(((0, 0), (resolution.x, resolution.y))),
                 &resolution,
-            ) {
-                log::error!("Could not write FunctionIntegrator image: {}", err);
-            }
+            )
+            .map_err(|error| {
+                PbrtError::error(&format!(
+                    "Failed to write FunctionIntegrator image \"{}\": {}",
+                    self.image_filename, error
+                ))
+            })?;
         }
         let mut sampler = self.sampler.write().unwrap();
         let spp = sampler.samples_per_pixel();
@@ -209,13 +213,13 @@ impl Integrator for FunctionIntegrator {
             }
         }
 
-        if let Err(err) = fs::write(&self.output_filename, results) {
-            log::error!(
-                "Could not write FunctionIntegrator output \"{}\": {}",
-                self.output_filename,
-                err
-            );
-        }
+        fs::write(&self.output_filename, results).map_err(|error| {
+            PbrtError::error(&format!(
+                "Failed to write FunctionIntegrator output \"{}\": {}",
+                self.output_filename, error
+            ))
+        })?;
+        Ok(())
     }
 
     fn get_camera(&self) -> Arc<Camera> {

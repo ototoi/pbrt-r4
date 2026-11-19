@@ -203,12 +203,12 @@ impl LightPathIntegrator {
 }
 
 impl Integrator for LightPathIntegrator {
-    fn render(&mut self) {
+    fn render(&mut self) -> Result<(), PbrtError> {
         match LightSampler::create(&self.light_sample_strategy, &self.base.base) {
             Ok(ls) => self.light_sampler = Some(ls),
             Err(e) => {
                 log::warn!("LightPathIntegrator: {:?}", e);
-                return;
+                return Ok(());
             }
         }
         // pbrt-v4 ImageTileIntegrator::Render (integrators.cpp:66): tile
@@ -221,7 +221,7 @@ impl Integrator for LightPathIntegrator {
         let camera = self.base.camera.clone();
         let film = camera.get_film();
         let sampler = Arc::clone(&self.base.sampler);
-        SampleIntegratorCore::render(self, camera.as_ref(), &film, &sampler);
+        SampleIntegratorCore::render(self, camera.as_ref(), &film, &sampler)
     }
 
     fn get_camera(&self) -> Arc<Camera> {

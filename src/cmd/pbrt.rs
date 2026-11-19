@@ -591,7 +591,7 @@ fn render_cpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
 
     {
         let mut integrator = integrator.write().unwrap();
-        integrator.render();
+        integrator.render()?;
     }
 
     {

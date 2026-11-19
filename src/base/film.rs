@@ -504,7 +504,7 @@ impl Film {
         self.base().render_end();
     }
 
-    pub fn write_image(&self) {
+    pub fn write_image(&self) -> Result<(), PbrtError> {
         match self {
             Self::Rgb(film) => film.write_image(),
             Self::GBuffer(film) => film.write_image(),
