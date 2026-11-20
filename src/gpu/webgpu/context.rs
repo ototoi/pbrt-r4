@@ -1,6 +1,8 @@
 use crate::util::error::PbrtError;
+use std::path::PathBuf;
 
 use super::binding_report::{BindingHeadroom, BindingReport};
+use super::pipeline_cache;
 use super::profile;
 use super::stages::RequiredLimits;
 
@@ -9,6 +11,7 @@ pub struct Context {
     pub queue: wgpu::Queue,
     pub adapter_name: String,
     pub timestamps: bool,
+    pub pipeline_cache_path: Option<PathBuf>,
 }
 
 pub struct AdapterContext {
@@ -130,6 +133,12 @@ impl Context {
         if timestamps {
             required_features |= wgpu::Features::TIMESTAMP_QUERY;
         }
+        let pipeline_cache_path = if adapter.features.contains(wgpu::Features::PIPELINE_CACHE) {
+            required_features |= wgpu::Features::PIPELINE_CACHE;
+            pipeline_cache::default_path(&adapter.info)
+        } else {
+            None
+        };
         if geometry_page_count > 1 {
             required_features |= wgpu::Features::BUFFER_BINDING_ARRAY;
         } else if let Some(report) = report {
@@ -243,6 +252,7 @@ impl Context {
             queue,
             adapter_name: adapter.info.name.clone(),
             timestamps,
+            pipeline_cache_path,
         })
     }
 
