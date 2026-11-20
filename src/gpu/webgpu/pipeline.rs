@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -73,7 +74,6 @@ impl Pipeline {
                 "WebGPU pipeline requires at least one geometry page.",
             ));
         }
-        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let cache = cache_path
             .filter(|_| device.features().contains(wgpu::Features::PIPELINE_CACHE))
             .map(|path| {
@@ -88,7 +88,7 @@ impl Pipeline {
             });
         let canonical_bindings = canonical_wavefront_bindings();
         let stages: Result<HashMap<ComputeStageId, StagePipeline>, PbrtError> = COMPUTE_STAGES
-            .iter()
+            .par_iter()
             .map(|stage| {
                 let t = Instant::now();
                 log::info!("GPU pipeline: creating {}", stage.label);
@@ -121,79 +121,21 @@ impl Pipeline {
                     stage.label,
                     source.len()
                 );
-                let bindings = shader::resolve_resource_bindings(
-                    &canonical_bindings,
+                let stage_pipeline = StagePipeline::create(
+                    device,
+                    stage.label,
                     stage.entry_point,
-                    &source,
+                    source,
+                    &canonical_bindings,
+                    texture_image_count,
+                    texture_sampler_count,
+                    geometry_page_count,
+                    cache.as_ref(),
                 )?;
-                let used_bindings = bindings
-                    .iter()
-                    .map(|binding| (binding.group, binding.binding))
-                    .collect();
-                let bind_group_layouts = (0..WAVEFRONT_BIND_GROUP_COUNT)
-                    .map(|group| {
-                        let layout_entries = bindings
-                            .iter()
-                            .filter(|binding| binding.group == group)
-                            .map(|binding| {
-                                layout_entry(
-                                    binding,
-                                    texture_image_count,
-                                    texture_sampler_count,
-                                    geometry_page_count,
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                            label: Some(stage.label),
-                            entries: &layout_entries,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                log::info!("GPU pipeline: {} bind group layouts created", stage.label);
-                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(stage.label),
-                    bind_group_layouts: bind_group_layouts
-                        .iter()
-                        .map(Some)
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    immediate_size: 0,
-                });
-                log::info!("GPU pipeline: {} pipeline layout created", stage.label);
-                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(stage.label),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
-                });
-                log::info!("GPU pipeline: {} shader module created", stage.label);
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(stage.label),
-                    layout: Some(&layout),
-                    module: &module,
-                    entry_point: Some(stage.entry_point),
-                    compilation_options: Default::default(),
-                    cache: cache.as_ref(),
-                });
-                log::info!("GPU pipeline: created {}", stage.label);
                 profile::record_phase(&format!("pipeline: {}", stage.label), t.elapsed());
-                Ok((
-                    stage.id,
-                    StagePipeline {
-                        pipeline,
-                        label: stage.label,
-                        profiler: None,
-                        bind_group_layouts,
-                        used_bindings,
-                    },
-                ))
+                Ok((stage.id, stage_pipeline))
             })
             .collect();
-        let validation_error = pollster::block_on(error_scope.pop());
-        if let Some(error) = validation_error {
-            return Err(PbrtError::error(&format!(
-                "WebGPU primary-ray pipeline creation failed: {error}"
-            )));
-        }
         let stages = stages?;
         if let Some(cache) = cache {
             match cache.get_data() {
@@ -210,6 +152,84 @@ impl Pipeline {
 }
 
 impl StagePipeline {
+    /// Validation errors are scoped to the calling thread, so this can run on any worker.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        device: &wgpu::Device,
+        label: &'static str,
+        entry_point: &str,
+        source: String,
+        canonical_bindings: &[BindingSpec],
+        texture_image_count: u32,
+        texture_sampler_count: u32,
+        geometry_page_count: u32,
+        cache: Option<&wgpu::PipelineCache>,
+    ) -> Result<Self, PbrtError> {
+        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let bindings = shader::resolve_resource_bindings(canonical_bindings, entry_point, &source)?;
+        let used_bindings = bindings
+            .iter()
+            .map(|binding| (binding.group, binding.binding))
+            .collect();
+        let bind_group_layouts = (0..WAVEFRONT_BIND_GROUP_COUNT)
+            .map(|group| {
+                let layout_entries = bindings
+                    .iter()
+                    .filter(|binding| binding.group == group)
+                    .map(|binding| {
+                        layout_entry(
+                            binding,
+                            texture_image_count,
+                            texture_sampler_count,
+                            geometry_page_count,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some(label),
+                    entries: &layout_entries,
+                })
+            })
+            .collect::<Vec<_>>();
+        log::info!("GPU pipeline: {} bind group layouts created", label);
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: bind_group_layouts
+                .iter()
+                .map(Some)
+                .collect::<Vec<_>>()
+                .as_slice(),
+            immediate_size: 0,
+        });
+        log::info!("GPU pipeline: {} pipeline layout created", label);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
+        });
+        log::info!("GPU pipeline: {} shader module created", label);
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&layout),
+            module: &module,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            cache,
+        });
+        if let Some(error) = pollster::block_on(error_scope.pop()) {
+            return Err(PbrtError::error(&format!(
+                "WebGPU {label} pipeline creation failed: {error}"
+            )));
+        }
+        log::info!("GPU pipeline: created {label}");
+        Ok(Self {
+            pipeline,
+            label,
+            profiler: None,
+            bind_group_layouts,
+            used_bindings,
+        })
+    }
+
     pub fn used_bindings(&self) -> &[(u32, u32)] {
         &self.used_bindings
     }
