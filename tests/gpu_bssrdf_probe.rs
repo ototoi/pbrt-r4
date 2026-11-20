@@ -12,6 +12,7 @@ use pbrt_r4::gpu::webgpu::abi::{
 use pbrt_r4::gpu::webgpu::bssrdf::{probe_shader_source, BSSRDFProbePipeline, BSSRDFTableData};
 use pbrt_r4::gpu::webgpu::context::Context;
 use pbrt_r4::gpu::webgpu::scene::Scene;
+use pbrt_r4::gpu::webgpu::shader::specialize_geometry_page_bindings;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
 use pbrt_r4::paramdict::ParameterDictionary;
 use pbrt_r4::util::base::{Float, Normal3f, Point3f, Vector3f};
@@ -205,7 +206,7 @@ fn gpu_bssrdf_probe_samples_segments_and_same_material_reservoir() {
             storage_buffers_per_shader_stage: 9,
             uniform_buffers_per_shader_stage: 0,
             buffers_and_acceleration_structures_per_shader_stage: 10,
-            bind_groups: 1,
+            bind_groups: 2,
         },
         0,
         0,
@@ -388,7 +389,7 @@ fn gpu_bssrdf_sp_pdf_and_normalized_fresnel_match_cpu() {
             storage_buffers_per_shader_stage: 9,
             uniform_buffers_per_shader_stage: 0,
             buffers_and_acceleration_structures_per_shader_stage: 10,
-            bind_groups: 1,
+            bind_groups: 2,
         },
         0,
         0,
@@ -428,7 +429,7 @@ fn gpu_bssrdf_sp_pdf_and_normalized_fresnel_match_cpu() {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-    let probe_source = probe_shader_source();
+    let probe_source = specialize_geometry_page_bindings(probe_shader_source(), 1);
     let source = probe_source.split("fn bssrdf_segment_seed").next().unwrap();
     let scattering = include_str!("../src/gpu/webgpu/shaders/lib/scattering.wgsl");
     let fresnel = scattering

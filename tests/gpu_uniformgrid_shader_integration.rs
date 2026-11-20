@@ -198,7 +198,7 @@ fn uniform_grid_lookup_and_dda_match_reference_values() {
             storage_buffers_per_shader_stage: 4,
             uniform_buffers_per_shader_stage: 0,
             buffers_and_acceleration_structures_per_shader_stage: 4,
-            bind_groups: 1,
+            bind_groups: 2,
         },
         0,
         0,

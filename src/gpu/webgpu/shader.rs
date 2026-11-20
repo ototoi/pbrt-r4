@@ -82,7 +82,8 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
-    compose_source_with_noise(stage_source, true)
+    // Match the single-page bindings Pipeline uses, so test devices need no binding arrays.
+    specialize_geometry_page_bindings(compose_source_with_noise(stage_source, true), 1)
 }
 
 pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> String {

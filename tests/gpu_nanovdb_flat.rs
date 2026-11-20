@@ -312,7 +312,10 @@ fn majorant_includes_background_between_sparse_roots() {
 #[ignore = "requires local pbrt-v4-scenes assets"]
 fn converts_real_cloud_asset() {
     let mut params = ParameterDictionary::new();
-    let asset = std::env::var("NANOVDB_ASSET").expect("NANOVDB_ASSET");
+    let Ok(asset) = std::env::var("NANOVDB_ASSET") else {
+        eprintln!("skipped: NANOVDB_ASSET is not set");
+        return;
+    };
     params.add_string("filename", &asset);
     let medium = create_nanovdb(&params).unwrap();
     assert_eq!(medium.majorant.len(), 64usize.pow(3));
@@ -349,7 +352,10 @@ fn converts_real_cloud_asset() {
 #[test]
 #[ignore = "exports fixtures for the local v4 reader check"]
 fn export_v4_fixtures() {
-    let directory = std::env::var("NANOVDB_FIXTURE_OUTPUT").unwrap();
+    let Ok(directory) = std::env::var("NANOVDB_FIXTURE_OUTPUT") else {
+        eprintln!("skipped: NANOVDB_FIXTURE_OUTPUT is not set");
+        return;
+    };
     for negative in [false, true] {
         for zip in [false, true] {
             let (bytes, _) = full_tree(negative);

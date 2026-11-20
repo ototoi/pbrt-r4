@@ -91,7 +91,7 @@ fn portal_shader_matches_v4_mapping_and_windowed_distribution() {
             storage_buffers_per_shader_stage: 3,
             uniform_buffers_per_shader_stage: 0,
             buffers_and_acceleration_structures_per_shader_stage: 3,
-            bind_groups: 1,
+            bind_groups: 2,
         },
         0,
         0,
