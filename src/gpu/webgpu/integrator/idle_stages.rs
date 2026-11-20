@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::gpu::flat::MaterialKind;
+use crate::gpu::flat::{LightKind, MaterialKind};
 
 use super::super::stage::ComputeStageId;
 
@@ -36,9 +36,29 @@ fn scatter_stage(kind: MaterialKind) -> Option<ComputeStageId> {
     }
 }
 
+const LIGHT_SAMPLE_STAGES: [ComputeStageId; 3] = [
+    ComputeStageId::SampleAreaLight,
+    ComputeStageId::SampleImageInfiniteLight,
+    ComputeStageId::SampleOtherLight,
+];
+
+/// Mirrors the routing in append_light_sample_work (lib/light_sampling.wgsl).
+fn light_sample_stage(kind: LightKind) -> ComputeStageId {
+    match kind {
+        LightKind::Area => ComputeStageId::SampleAreaLight,
+        LightKind::ImageInfinite | LightKind::PortalImageInfinite => {
+            ComputeStageId::SampleImageInfiniteLight
+        }
+        LightKind::Point | LightKind::Spot | LightKind::Distant | LightKind::UniformInfinite => {
+            ComputeStageId::SampleOtherLight
+        }
+    }
+}
+
 /// Stages whose queues can never receive work for this scene.
 pub(super) fn idle_stages(
     material_kinds: impl IntoIterator<Item = MaterialKind>,
+    light_kinds: impl IntoIterator<Item = LightKind>,
     have_media: bool,
     debug_material: bool,
 ) -> HashSet<ComputeStageId> {
@@ -48,9 +68,11 @@ pub(super) fn idle_stages(
     let used: HashSet<_> = material_kinds
         .into_iter()
         .filter_map(scatter_stage)
+        .chain(light_kinds.into_iter().map(light_sample_stage))
         .collect();
     let mut idle: HashSet<_> = SCATTER_STAGES
         .into_iter()
+        .chain(LIGHT_SAMPLE_STAGES)
         .filter(|stage| !used.contains(stage))
         .collect();
     if !have_media {
@@ -63,6 +85,16 @@ pub(super) fn idle_stages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ALL_LIGHTS: [LightKind; 7] = [
+        LightKind::Point,
+        LightKind::Spot,
+        LightKind::Area,
+        LightKind::Distant,
+        LightKind::UniformInfinite,
+        LightKind::ImageInfinite,
+        LightKind::PortalImageInfinite,
+    ];
 
     const ALL_KINDS: [MaterialKind; 12] = [
         MaterialKind::Diffuse,
@@ -146,7 +178,12 @@ mod tests {
 
     #[test]
     fn unused_material_stages_are_idle() {
-        let idle = idle_stages([MaterialKind::Diffuse, MaterialKind::Mix], true, false);
+        let idle = idle_stages(
+            [MaterialKind::Diffuse, MaterialKind::Mix],
+            ALL_LIGHTS,
+            true,
+            false,
+        );
         let expected: HashSet<_> = SCATTER_STAGES
             .into_iter()
             .filter(|stage| *stage != ComputeStageId::ScatterDiffuse)
@@ -156,13 +193,13 @@ mod tests {
 
     #[test]
     fn every_kind_keeps_its_stage() {
-        let idle = idle_stages(ALL_KINDS, true, false);
+        let idle = idle_stages(ALL_KINDS, ALL_LIGHTS, true, false);
         assert!(idle.is_empty(), "{idle:?}");
     }
 
     #[test]
     fn media_stages_are_idle_without_media() {
-        let idle = idle_stages(ALL_KINDS, false, false);
+        let idle = idle_stages(ALL_KINDS, ALL_LIGHTS, false, false);
         assert_eq!(
             idle,
             HashSet::from([
@@ -174,6 +211,35 @@ mod tests {
 
     #[test]
     fn debug_material_keeps_every_stage() {
-        assert!(idle_stages([], false, true).is_empty());
+        assert!(idle_stages([], [], false, true).is_empty());
+    }
+
+    #[test]
+    fn unused_light_sample_stages_are_idle() {
+        let idle = idle_stages(ALL_KINDS, [LightKind::Area], true, false);
+        assert_eq!(
+            idle,
+            HashSet::from([
+                ComputeStageId::SampleImageInfiniteLight,
+                ComputeStageId::SampleOtherLight
+            ])
+        );
+        let idle = idle_stages(ALL_KINDS, [LightKind::PortalImageInfinite], true, false);
+        assert_eq!(
+            idle,
+            HashSet::from([
+                ComputeStageId::SampleAreaLight,
+                ComputeStageId::SampleOtherLight
+            ])
+        );
+    }
+
+    #[test]
+    fn light_mapping_matches_the_wgsl_routing() {
+        let source = include_str!("../shaders/lib/light_sampling.wgsl");
+        let routing = &source[source.find("fn append_light_sample_work").unwrap()..];
+        let routing = &routing[..routing.find("var index").unwrap()];
+        let compact: String = routing.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(compact.contains("var slot = 2u; if (light_kind == LIGHT_KIND_AREA) { slot = 0u; } else if (light_kind == LIGHT_KIND_IMAGE_INFINITE || light_kind == LIGHT_KIND_PORTAL_IMAGE_INFINITE) { slot = 1u; } else if (light_kind != LIGHT_KIND_POINT && light_kind != LIGHT_KIND_SPOT && light_kind != LIGHT_KIND_DISTANT && light_kind != LIGHT_KIND_UNIFORM_INFINITE) { return; }"), "{compact}");
     }
 }

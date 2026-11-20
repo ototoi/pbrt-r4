@@ -47,6 +47,9 @@ impl super::WavefrontPathIntegrator {
                 QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT,
             ),
         ] {
+            if self.idle_stages.contains(&stage_id) {
+                continue;
+            }
             dispatch_indirect(
                 encoder,
                 self.pipeline.stage(stage_id),
