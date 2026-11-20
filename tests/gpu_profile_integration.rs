@@ -31,6 +31,33 @@ fn gpu_profile_prints_phase_and_stage_tables() {
     for phase in ["parse", "flatten", "pipeline create", "render loop"] {
         assert!(stderr.contains(phase), "missing {phase}: {stderr}");
     }
+    assert!(
+        stderr.contains("pbrt-r4 shade surface"),
+        "missing shade surface: {stderr}"
+    );
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn reserve_allocates_new_set_when_full() {
+    use pbrt_r4::gpu::webgpu::context::Context;
+    use pbrt_r4::gpu::webgpu::profile::GpuProfiler;
+
+    let adapter = Context::request_adapter(None).unwrap();
+    let (device, _queue) =
+        pollster::block_on(adapter.adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::TIMESTAMP_QUERY,
+            ..Default::default()
+        }))
+        .unwrap();
+    let profiler = GpuProfiler::new(&device);
+    let mut last = profiler.reserve("first");
+    let first = last.0.clone();
+    for _ in 1..2049 {
+        last = profiler.reserve("pass");
+    }
+    assert_eq!(last.1, 0);
+    assert_ne!(last.0, first);
 }
 
 #[test]

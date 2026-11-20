@@ -1,15 +1,18 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::util::error::PbrtError;
 
-use super::profile;
+use super::profile::{self, GpuProfiler};
 use super::shader;
 use super::stage::{ComputeStageId, COMPUTE_STAGES, WAVEFRONT_BIND_GROUP_COUNT};
 use super::stages::{canonical_wavefront_bindings, BindingClass, BindingSpec, ResourceId};
 
 pub struct StagePipeline {
     pub pipeline: wgpu::ComputePipeline,
+    pub label: &'static str,
+    pub profiler: Option<Arc<GpuProfiler>>,
     pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     used_bindings: Vec<(u32, u32)>,
 }
@@ -19,6 +22,12 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    pub fn set_profiler(&mut self, profiler: Arc<GpuProfiler>) {
+        for stage in self.stages.values_mut() {
+            stage.profiler = Some(profiler.clone());
+        }
+    }
+
     pub fn stage(&self, id: ComputeStageId) -> &StagePipeline {
         // Pipeline::new installs every ID emitted by the shared stage definition.
         self.stages
@@ -151,6 +160,8 @@ impl Pipeline {
                     stage.id,
                     StagePipeline {
                         pipeline,
+                        label: stage.label,
+                        profiler: None,
                         bind_group_layouts,
                         used_bindings,
                     },

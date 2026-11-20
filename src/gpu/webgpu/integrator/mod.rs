@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::bssrdf::BSSRDFProbePipeline;
 use super::context::Context;
 use super::film::Film;
 use super::noise::NoiseRuntimeResources;
 use super::pipeline::Pipeline;
+use super::profile::GpuProfiler;
 use super::queue::Queues;
 use super::scene::Scene;
 use super::stage::ComputeStageId;
@@ -25,6 +27,7 @@ pub struct WavefrontPathIntegrator {
     film: Film,
     noise_resources: NoiseRuntimeResources,
     pipeline: Pipeline,
+    profiler: Option<Arc<GpuProfiler>>,
     bind_groups: HashMap<ComputeStageId, [wgpu::BindGroup; 2]>,
     rendered: bool,
     show_progress: bool,

@@ -1,12 +1,14 @@
 use crate::util::error::PbrtError;
 
 use super::binding_report::{BindingHeadroom, BindingReport};
+use super::profile;
 use super::stages::RequiredLimits;
 
 pub struct Context {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter_name: String,
+    pub timestamps: bool,
 }
 
 pub struct AdapterContext {
@@ -120,6 +122,14 @@ impl Context {
             | wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
             | wgpu::Features::FLOAT32_FILTERABLE;
+        let gpu_profile = profile::enabled();
+        let timestamps = gpu_profile && adapter.features.contains(wgpu::Features::TIMESTAMP_QUERY);
+        if gpu_profile && !timestamps {
+            log::warn!("--gpu-profile: adapter lacks TIMESTAMP_QUERY; reporting CPU phases only.");
+        }
+        if timestamps {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+        }
         if geometry_page_count > 1 {
             required_features |= wgpu::Features::BUFFER_BINDING_ARRAY;
         } else if let Some(report) = report {
@@ -232,6 +242,7 @@ impl Context {
             device,
             queue,
             adapter_name: adapter.info.name.clone(),
+            timestamps,
         })
     }
 

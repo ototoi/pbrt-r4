@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use bytemuck::bytes_of;
@@ -17,6 +18,7 @@ use super::super::material::MaterialKind;
 use super::super::noise::NoiseRuntimeResources;
 use super::super::pipeline::Pipeline;
 use super::super::profile;
+use super::super::profile::GpuProfiler;
 use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
 use super::super::stage::{ComputeStageSpec, COMPUTE_STAGES};
@@ -230,7 +232,7 @@ impl super::WavefrontPathIntegrator {
         )?;
         profile::record_phase("scene resources", t.elapsed());
         let t = Instant::now();
-        let pipeline = Pipeline::new_with_geometry_page_count(
+        let mut pipeline = Pipeline::new_with_geometry_page_count(
             device,
             scene.texture_images.len() as u32,
             scene.texture_samplers.len() as u32,
@@ -240,6 +242,13 @@ impl super::WavefrontPathIntegrator {
             scene.geometry_page_count,
         )?;
         profile::record_phase("pipeline create", t.elapsed());
+        let profiler = if context.timestamps {
+            let profiler = Arc::new(GpuProfiler::new(device));
+            pipeline.set_profiler(profiler.clone());
+            Some(profiler)
+        } else {
+            None
+        };
         log::info!("GPU create: compute pipelines ready");
         let texture_image_views: Vec<&wgpu::TextureView> =
             scene.texture_image_views.iter().collect();
@@ -346,6 +355,7 @@ impl super::WavefrontPathIntegrator {
             film,
             noise_resources,
             pipeline,
+            profiler,
             bind_groups,
             rendered: false,
             show_progress,
@@ -363,11 +373,16 @@ impl super::WavefrontPathIntegrator {
             return None;
         }
         let phases = profile::take_phases();
+        let stages = self
+            .profiler
+            .as_ref()
+            .map(|profiler| profiler.stage_totals())
+            .unwrap_or_default();
         Some(profile::format_report(
             &self.context.adapter_name,
             self.scene.render_settings.samples_per_pixel,
             &phases,
-            &[],
+            &stages,
         ))
     }
 }
