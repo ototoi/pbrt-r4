@@ -41,7 +41,7 @@ fn two_geometry_page_pipeline_compiles() {
             .unwrap();
     required.bind_groups = required.bind_groups.max(2);
     let context = Context::new_with_geometry_page_count(required, 1, 1, 2).unwrap();
-    Pipeline::new_with_geometry_page_count(&context.device, 1, 1, 1, false, false, 2, None)
+    Pipeline::new_with_geometry_page_count(&context.device, 1, 1, 1, false, false, 2, None, None)
         .unwrap();
 }
 

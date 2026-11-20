@@ -163,6 +163,7 @@ impl SamplerConfiguration {
 }
 
 pub struct SamplerResources {
+    kind: u32,
     params_buffer: wgpu::Buffer,
     _table_texture: wgpu::Texture,
     table_view: wgpu::TextureView,
@@ -257,10 +258,15 @@ impl SamplerResources {
             started.elapsed()
         );
         Ok(Self {
+            kind: uniform.kind,
             params_buffer,
             _table_texture: table_texture,
             table_view,
         })
+    }
+
+    pub fn kind(&self) -> u32 {
+        self.kind
     }
 
     pub fn bindings(&self) -> SamplerBindings<'_> {

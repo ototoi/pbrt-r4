@@ -9,6 +9,13 @@ const SAMPLER_RANDOMIZATION_NONE: u32 = 0u;
 const SAMPLER_RANDOMIZATION_PERMUTE_DIGITS: u32 = 1u;
 const SAMPLER_RANDOMIZATION_FAST_OWEN: u32 = 2u;
 const SAMPLER_RANDOMIZATION_OWEN: u32 = 3u;
+const SAMPLER_KIND_SELECTED: u32 = 0xffffffffu;
+
+fn active_sampler_kind() -> u32 {
+    if (SAMPLER_KIND_SELECTED != 0xffffffffu) { return SAMPLER_KIND_SELECTED; }
+    return sampler_params.kind;
+}
+
 const HALTON_ONE_MINUS_EPSILON: f32 = 0.9999999403953552;
 
 fn halton_base_scales() -> vec2<u32> { return sampler_params.variant_words[0].xy; }
@@ -528,25 +535,25 @@ fn sampler_pixel_from_index(pixel_index: u32) -> vec2<u32> {
 
 fn sampler_get_1d(pixel_index: u32, dimension_in: u32) -> f32 {
     let pixel = sampler_pixel_from_index(pixel_index);
-    if (sampler_params.kind == SAMPLER_KIND_HALTON) {
+    if (active_sampler_kind() == SAMPLER_KIND_HALTON) {
         let dimension = select(dimension_in, 2u, dimension_in == 0u);
         return halton_sampler_sample_dimension(dimension, halton_index(pixel, viewport.sample_index));
     }
-    if (sampler_params.kind == SAMPLER_KIND_SOBOL) {
+    if (active_sampler_kind() == SAMPLER_KIND_SOBOL) {
         let dimension = select(dimension_in, 2u, dimension_in == 0u);
         let index = sobol_interval_to_index(pixel, viewport.sample_index);
         return sobol_sample(index, dimension, sobol_dimension_hash(dimension));
     }
-    if (sampler_params.kind == SAMPLER_KIND_PADDED_SOBOL) {
+    if (active_sampler_kind() == SAMPLER_KIND_PADDED_SOBOL) {
         return padded_sobol_sampler_get_1d(pixel, dimension_in);
     }
-    if (sampler_params.kind == SAMPLER_KIND_Z_SOBOL) {
+    if (active_sampler_kind() == SAMPLER_KIND_Z_SOBOL) {
         return z_sobol_sampler_get_1d(pixel, dimension_in);
     }
-    if (sampler_params.kind == SAMPLER_KIND_PMJ02BN) {
+    if (active_sampler_kind() == SAMPLER_KIND_PMJ02BN) {
         return pmj02bn_sampler_get_1d(pixel, max(2u, dimension_in));
     }
-    if (sampler_params.kind == SAMPLER_KIND_STRATIFIED) {
+    if (active_sampler_kind() == SAMPLER_KIND_STRATIFIED) {
         return stratified_sampler_get_1d(pixel, dimension_in);
     }
     return independent_sampler_get_1d(pixel, dimension_in);
@@ -554,19 +561,19 @@ fn sampler_get_1d(pixel_index: u32, dimension_in: u32) -> f32 {
 
 fn sampler_get_2d(pixel_index: u32, dimension: u32) -> vec2<f32> {
     let pixel = sampler_pixel_from_index(pixel_index);
-    if (sampler_params.kind == SAMPLER_KIND_PADDED_SOBOL) {
+    if (active_sampler_kind() == SAMPLER_KIND_PADDED_SOBOL) {
         return padded_sobol_sampler_get_2d(pixel, dimension);
     }
-    if (sampler_params.kind == SAMPLER_KIND_Z_SOBOL) {
+    if (active_sampler_kind() == SAMPLER_KIND_Z_SOBOL) {
         return z_sobol_sampler_get_2d(pixel, dimension);
     }
-    if (sampler_params.kind == SAMPLER_KIND_PMJ02BN) {
+    if (active_sampler_kind() == SAMPLER_KIND_PMJ02BN) {
         return pmj02bn_sampler_get_2d(pixel, max(2u, dimension));
     }
-    if (sampler_params.kind == SAMPLER_KIND_STRATIFIED) {
+    if (active_sampler_kind() == SAMPLER_KIND_STRATIFIED) {
         return stratified_sampler_get_2d(pixel, dimension);
     }
-    if (sampler_params.kind == SAMPLER_KIND_INDEPENDENT) {
+    if (active_sampler_kind() == SAMPLER_KIND_INDEPENDENT) {
         return independent_sampler_get_2d(pixel, dimension);
     }
     return vec2<f32>(
@@ -577,19 +584,19 @@ fn sampler_get_2d(pixel_index: u32, dimension: u32) -> vec2<f32> {
 
 fn sampler_get_pixel_2d(pixel_index: u32) -> vec2<f32> {
     let pixel = sampler_pixel_from_index(pixel_index);
-    if (sampler_params.kind == SAMPLER_KIND_HALTON) {
+    if (active_sampler_kind() == SAMPLER_KIND_HALTON) {
         let index = halton_index(pixel, viewport.sample_index);
         return vec2<f32>(
             radical_inverse(0u, index >> halton_base_exponents().x),
             radical_inverse(1u, index / halton_base_scales().y),
         );
     }
-    if (sampler_params.kind == SAMPLER_KIND_SOBOL) {
+    if (active_sampler_kind() == SAMPLER_KIND_SOBOL) {
         let index = sobol_interval_to_index(pixel, viewport.sample_index);
         let raw = vec2<f32>(sobol_raw_sample(index, 0u, 0u), sobol_raw_sample(index, 1u, 0u));
         return clamp(raw * f32(sobol_scale()) - vec2<f32>(pixel), vec2<f32>(0.0), vec2<f32>(HALTON_ONE_MINUS_EPSILON));
     }
-    if (sampler_params.kind == SAMPLER_KIND_PMJ02BN) {
+    if (active_sampler_kind() == SAMPLER_KIND_PMJ02BN) {
         let tile_size = pmj_pixel_tile_size();
         let x = pixel.x % tile_size;
         let y = pixel.y % tile_size;

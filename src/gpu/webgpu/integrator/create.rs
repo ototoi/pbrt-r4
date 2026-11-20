@@ -241,6 +241,7 @@ impl super::WavefrontPathIntegrator {
             nanovdb_enabled,
             scene.geometry_page_count,
             context.pipeline_cache_path.as_deref(),
+            Some(scene.sampler.kind()),
         )?;
         profile::record_phase("pipeline create", t.elapsed());
         let profiler = if context.timestamps {

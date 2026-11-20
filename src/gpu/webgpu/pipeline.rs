@@ -53,6 +53,7 @@ impl Pipeline {
             nanovdb_enabled,
             1,
             None,
+            None,
         )
     }
 
@@ -65,6 +66,7 @@ impl Pipeline {
         nanovdb_enabled: bool,
         geometry_page_count: u32,
         cache_path: Option<&Path>,
+        sampler_kind: Option<u32>,
     ) -> Result<Self, PbrtError> {
         if geometry_page_count == 0 {
             return Err(PbrtError::error(
@@ -90,18 +92,21 @@ impl Pipeline {
             .map(|stage| {
                 let t = Instant::now();
                 log::info!("GPU pipeline: creating {}", stage.label);
-                let source = shader::specialize_geometry_page_bindings(
-                    shader::specialize_source(
-                        shader::compose_source_with_features(
-                            stage.source,
-                            texture_noise_enabled,
-                            nanovdb_enabled,
+                let source = shader::specialize_sampler_kind(
+                    shader::specialize_geometry_page_bindings(
+                        shader::specialize_source(
+                            shader::compose_source_with_features(
+                                stage.source,
+                                texture_noise_enabled,
+                                nanovdb_enabled,
+                            ),
+                            texture_image_count,
+                            texture_sampler_count,
+                            texture_program_capacity,
                         ),
-                        texture_image_count,
-                        texture_sampler_count,
-                        texture_program_capacity,
+                        geometry_page_count,
                     ),
-                    geometry_page_count,
+                    sampler_kind,
                 )
                 .replace(
                     "binding_array<texture_2d<f32>>",
