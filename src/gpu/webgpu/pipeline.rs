@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -51,6 +52,7 @@ impl Pipeline {
             texture_noise_enabled,
             nanovdb_enabled,
             1,
+            None,
         )
     }
 
@@ -62,6 +64,7 @@ impl Pipeline {
         texture_noise_enabled: bool,
         nanovdb_enabled: bool,
         geometry_page_count: u32,
+        cache_path: Option<&Path>,
     ) -> Result<Self, PbrtError> {
         if geometry_page_count == 0 {
             return Err(PbrtError::error(
@@ -69,6 +72,18 @@ impl Pipeline {
             ));
         }
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let cache = cache_path
+            .filter(|_| device.features().contains(wgpu::Features::PIPELINE_CACHE))
+            .map(|path| {
+                let loaded = super::pipeline_cache::load(path);
+                unsafe {
+                    device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                        label: Some("pbrt-r4 pipeline cache"),
+                        data: loaded.as_deref(),
+                        fallback: true,
+                    })
+                }
+            });
         let canonical_bindings = canonical_wavefront_bindings();
         let stages: Result<HashMap<ComputeStageId, StagePipeline>, PbrtError> = COMPUTE_STAGES
             .iter()
@@ -152,7 +167,7 @@ impl Pipeline {
                     module: &module,
                     entry_point: Some(stage.entry_point),
                     compilation_options: Default::default(),
-                    cache: None,
+                    cache: cache.as_ref(),
                 });
                 log::info!("GPU pipeline: created {}", stage.label);
                 profile::record_phase(&format!("pipeline: {}", stage.label), t.elapsed());
@@ -168,12 +183,24 @@ impl Pipeline {
                 ))
             })
             .collect();
-        if let Some(error) = pollster::block_on(error_scope.pop()) {
+        let validation_error = pollster::block_on(error_scope.pop());
+        if let Some(error) = validation_error {
             return Err(PbrtError::error(&format!(
                 "WebGPU primary-ray pipeline creation failed: {error}"
             )));
         }
-        Ok(Self { stages: stages? })
+        let stages = stages?;
+        if let Some(cache) = cache {
+            match cache.get_data() {
+                Some(data) => {
+                    if let Err(error) = super::pipeline_cache::save(cache_path.unwrap(), &data) {
+                        log::warn!("Could not save WebGPU pipeline cache: {error}");
+                    }
+                }
+                None => log::warn!("WebGPU pipeline cache returned no data to save."),
+            }
+        }
+        Ok(Self { stages })
     }
 }
 
