@@ -620,7 +620,10 @@ fn sparse_grid_lookup_and_interpolation_match_flat_values() {
 #[test]
 #[ignore = "requires a WebGPU adapter and NANOVDB_ASSET"]
 fn actual_asset_gpu_samples_match_flat_grid_samples() {
-    let asset = std::env::var("NANOVDB_ASSET").expect("NANOVDB_ASSET");
+    let Ok(asset) = std::env::var("NANOVDB_ASSET") else {
+        eprintln!("skipped: NANOVDB_ASSET is not set");
+        return;
+    };
     let mut params = ParameterDictionary::new();
     params.add_string("filename", &asset);
     let nanovdb = create_nanovdb(&params).unwrap();
