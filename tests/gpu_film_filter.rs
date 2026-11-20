@@ -76,7 +76,7 @@ fn context() -> Context {
         RequiredLimits {
             storage_buffers_per_shader_stage: 3,
             buffers_and_acceleration_structures_per_shader_stage: 3,
-            bind_groups: 1,
+            bind_groups: 2,
             ..Default::default()
         },
         1,
