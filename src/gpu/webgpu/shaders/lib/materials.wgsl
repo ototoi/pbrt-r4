@@ -77,10 +77,14 @@ fn load_material_spectrum(material_node: u32, ordinal: u32, lambda: vec4<f32>) -
         if (texture_nodes[root.texture_node + root.result].kind == 0u) {
             return vec4<f32>(rgb.x);
         }
+        // One conversion call site: each inlined copy of the table lookup costs driver compile time.
+        var scale = 1.0;
         if (root.spectrum_type == 1u) {
-            return rgb_to_unbounded_spectrum4(rgb, lambda, texture_nodes[root.texture_node + root.result].color_space);
+            let max_value = max(max(rgb.x, rgb.y), rgb.z);
+            if (max_value <= 0.0) { return vec4<f32>(0.0); }
+            scale = 2.0 * max_value;
         }
-        return rgb_to_spectrum4(rgb, lambda, texture_nodes[root.texture_node + root.result].color_space);
+        return scale * rgb_to_spectrum4(rgb / scale, lambda, texture_nodes[root.texture_node + root.result].color_space);
     }
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
