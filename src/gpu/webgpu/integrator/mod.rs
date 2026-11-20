@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::bssrdf::BSSRDFProbePipeline;
@@ -13,6 +13,7 @@ use super::stage::ComputeStageId;
 
 mod create;
 mod dispatch;
+mod idle_stages;
 mod render;
 mod tiles;
 
@@ -34,6 +35,7 @@ pub struct WavefrontPathIntegrator {
     tile_width: u32,
     tile_height: u32,
     has_interface_only_instances: bool,
+    idle_stages: HashSet<ComputeStageId>,
     bssrdf_work: wgpu::Buffer,
     _bssrdf_results: wgpu::Buffer,
     bssrdf_probe: Option<(BSSRDFProbePipeline, wgpu::BindGroup)>,

@@ -370,78 +370,110 @@ impl super::WavefrontPathIntegrator {
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
             );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::SelectMediumLight),
-                self.bind_groups(ComputeStageId::SelectMediumLight),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
-            );
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::SelectMediumLight)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::SelectMediumLight),
+                    self.bind_groups(ComputeStageId::SelectMediumLight),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
+                );
+            }
             self.sample_queued_lights(&mut encoder);
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterMedium),
-                self.bind_groups(ComputeStageId::ScatterMedium),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterDiffuse),
-                self.bind_groups(ComputeStageId::ScatterDiffuse),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline
-                    .stage(ComputeStageId::ScatterDiffuseTransmission),
-                self.bind_groups(ComputeStageId::ScatterDiffuseTransmission),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterConductor),
-                self.bind_groups(ComputeStageId::ScatterConductor),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterDielectric),
-                self.bind_groups(ComputeStageId::ScatterDielectric),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterThinDielectric),
-                self.bind_groups(ComputeStageId::ScatterThinDielectric),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterMeasured),
-                self.bind_groups(ComputeStageId::ScatterMeasured),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterCoated),
-                self.bind_groups(ComputeStageId::ScatterCoated),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_COATED,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                self.pipeline.stage(ComputeStageId::ScatterHair),
-                self.bind_groups(ComputeStageId::ScatterHair),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_HAIR,
-            );
+            if !self.idle_stages.contains(&ComputeStageId::ScatterMedium) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterMedium),
+                    self.bind_groups(ComputeStageId::ScatterMedium),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterDiffuse) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterDiffuse),
+                    self.bind_groups(ComputeStageId::ScatterDiffuse),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
+                );
+            }
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::ScatterDiffuseTransmission)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline
+                        .stage(ComputeStageId::ScatterDiffuseTransmission),
+                    self.bind_groups(ComputeStageId::ScatterDiffuseTransmission),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterConductor) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterConductor),
+                    self.bind_groups(ComputeStageId::ScatterConductor),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
+                );
+            }
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::ScatterDielectric)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterDielectric),
+                    self.bind_groups(ComputeStageId::ScatterDielectric),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
+                );
+            }
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::ScatterThinDielectric)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterThinDielectric),
+                    self.bind_groups(ComputeStageId::ScatterThinDielectric),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterMeasured) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterMeasured),
+                    self.bind_groups(ComputeStageId::ScatterMeasured),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterCoated) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterCoated),
+                    self.bind_groups(ComputeStageId::ScatterCoated),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_COATED,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterHair) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterHair),
+                    self.bind_groups(ComputeStageId::ScatterHair),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_HAIR,
+                );
+            }
             // The scatter stages have just finished appending this
             // depth's shadow rays and next-depth bounce rays.
             dispatch(
