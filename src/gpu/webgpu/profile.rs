@@ -91,6 +91,7 @@ struct ProfilerSlot {
 
 struct ProfilerState {
     slots: Vec<ProfilerSlot>,
+    active: usize,
     totals: BTreeMap<&'static str, (u64, f64)>,
 }
 
@@ -105,6 +106,7 @@ impl GpuProfiler {
             device: device.clone(),
             state: Mutex::new(ProfilerState {
                 slots: Vec::new(),
+                active: 0,
                 totals: BTreeMap::new(),
             }),
         }
@@ -114,9 +116,12 @@ impl GpuProfiler {
         let mut state = self.state.lock().unwrap();
         if state
             .slots
-            .last()
-            .map_or(true, |slot| slot.next_index + 2 > QUERY_SET_CAPACITY)
+            .get(state.active)
+            .is_some_and(|slot| slot.next_index + 2 > QUERY_SET_CAPACITY)
         {
+            state.active += 1;
+        }
+        if state.active == state.slots.len() {
             state.slots.push(ProfilerSlot {
                 query_set: self.device.create_query_set(&wgpu::QuerySetDescriptor {
                     label: Some("pbrt-r4 GPU profiler query set"),
@@ -127,7 +132,8 @@ impl GpuProfiler {
                 labels: Vec::new(),
             });
         }
-        let slot = state.slots.last_mut().unwrap();
+        let active = state.active;
+        let slot = &mut state.slots[active];
         let begin = slot.next_index;
         slot.next_index += 2;
         slot.labels.push(label);
@@ -151,6 +157,7 @@ impl GpuProfiler {
             slot.next_index = 0;
             slot.labels.clear();
         }
+        state.active = 0;
         Ok(())
     }
 

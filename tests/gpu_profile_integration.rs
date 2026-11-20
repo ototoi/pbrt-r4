@@ -62,6 +62,30 @@ fn reserve_allocates_new_set_when_full() {
 
 #[test]
 #[ignore = "requires a WebGPU adapter with experimental ray-query support"]
+fn collect_reuses_existing_query_sets() {
+    use pbrt_r4::gpu::webgpu::context::Context;
+    use pbrt_r4::gpu::webgpu::profile::GpuProfiler;
+
+    let adapter = Context::request_adapter(None).unwrap();
+    let (device, queue) =
+        pollster::block_on(adapter.adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::TIMESTAMP_QUERY,
+            ..Default::default()
+        }))
+        .unwrap();
+    let profiler = GpuProfiler::new(&device);
+    let first = profiler.reserve("first").0;
+    for _ in 1..2049 {
+        profiler.reserve("pass");
+    }
+    profiler.collect(&device, &queue).unwrap();
+    let (query_set, begin) = profiler.reserve("again");
+    assert_eq!(begin, 0);
+    assert_eq!(query_set, first);
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter with experimental ray-query support"]
 fn gpu_profile_does_not_change_the_image() {
     let dir = tempfile::tempdir().unwrap();
     let profiled = dir.path().join("profiled.exr");

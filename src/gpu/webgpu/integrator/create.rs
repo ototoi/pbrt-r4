@@ -202,7 +202,7 @@ impl super::WavefrontPathIntegrator {
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let bssrdf_probe = if scene.material_table.have_subsurface != 0 {
+        let mut bssrdf_probe = if scene.material_table.have_subsurface != 0 {
             let pipeline = BSSRDFProbePipeline::new_with_geometry_page_count(
                 device,
                 scene.geometry_page_count,
@@ -245,6 +245,9 @@ impl super::WavefrontPathIntegrator {
         let profiler = if context.timestamps {
             let profiler = Arc::new(GpuProfiler::new(device));
             pipeline.set_profiler(profiler.clone());
+            if let Some((probe, _)) = bssrdf_probe.as_mut() {
+                probe.profiler = Some(profiler.clone());
+            }
             Some(profiler)
         } else {
             None

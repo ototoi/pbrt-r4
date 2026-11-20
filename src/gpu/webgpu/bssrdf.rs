@@ -1,7 +1,10 @@
 use bytemuck::{cast_slice, Zeroable};
 use wgpu::util::DeviceExt;
 
+use std::sync::Arc;
+
 use super::abi::{BSSRDFMaterialRecord, BSSRDFTableRecord, ALPHA_MASK_OPAQUE};
+use super::profile::GpuProfiler;
 use super::scene::Scene;
 use crate::gpu::flat::{self, TabulatedBSSRDFTable, BSSRDF};
 use crate::util::error::PbrtError;
@@ -142,6 +145,7 @@ pub struct BSSRDFTableResources {
 
 pub struct BSSRDFProbePipeline {
     pub pipeline: wgpu::ComputePipeline,
+    pub profiler: Option<Arc<GpuProfiler>>,
 }
 
 pub fn probe_shader_source() -> String {
@@ -197,7 +201,10 @@ impl BSSRDFProbePipeline {
                 "BSSRDF probe pipeline creation failed: {error}"
             )));
         }
-        Ok(Self { pipeline })
+        Ok(Self {
+            pipeline,
+            profiler: None,
+        })
     }
 
     pub fn bind_group(
@@ -292,7 +299,20 @@ impl BSSRDFProbePipeline {
         if count == 0 {
             return;
         }
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        let reservation = self
+            .profiler
+            .as_ref()
+            .map(|profiler| profiler.reserve("pbrt-r4 sample subsurface probe"));
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: reservation.as_ref().map(|(query_set, begin)| {
+                wgpu::ComputePassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: Some(*begin),
+                    end_of_pass_write_index: Some(*begin + 1),
+                }
+            }),
+        });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, group, &[]);
         let groups = count.div_ceil(64);

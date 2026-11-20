@@ -474,6 +474,7 @@ fn gpu_bssrdf_sp_pdf_and_normalized_fresnel_match_cpu() {
                 compilation_options: Default::default(),
                 cache: None,
             }),
+        profiler: None,
     };
     let tables = [tabulate_bssrdf(0.0, 1.33), tabulate_bssrdf(0.4, 1.5)];
     let mut items = Vec::new();
