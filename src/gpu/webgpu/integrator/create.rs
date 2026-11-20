@@ -122,6 +122,11 @@ impl super::WavefrontPathIntegrator {
         let device = &context.device;
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
+        let idle_stages = super::idle_stages::idle_stages(
+            flat_scene.materials.nodes.iter().map(|node| node.kind),
+            !flat_scene.media.is_empty(),
+            debug_material.is_some(),
+        );
         let mut scene = Scene::from_flat_with_geometry_page_plan(
             device,
             queue,
@@ -367,6 +372,7 @@ impl super::WavefrontPathIntegrator {
             tile_width,
             tile_height,
             has_interface_only_instances,
+            idle_stages,
             bssrdf_work,
             _bssrdf_results: bssrdf_results,
             bssrdf_probe,
