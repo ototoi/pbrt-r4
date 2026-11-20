@@ -23,7 +23,7 @@ fn create_pipeline(
     context: &Context,
     path: Option<&std::path::Path>,
 ) -> Result<Pipeline, pbrt_r4::util::error::PbrtError> {
-    Pipeline::new_with_geometry_page_count(&context.device, 1, 1, 1, false, false, 1, path)
+    Pipeline::new_with_geometry_page_count(&context.device, 1, 1, 1, false, false, 1, path, None)
 }
 
 #[test]
