@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub const MAX_PIPELINE_CACHE_BYTES: u64 = 256 * 1024 * 1024;
@@ -7,8 +7,8 @@ pub const MAX_PIPELINE_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 pub fn default_path(info: &wgpu::AdapterInfo) -> Option<PathBuf> {
     let key = wgpu::util::pipeline_cache_key(info)?;
     Some(
-        std::env::temp_dir()
-            .join("pbrt")
+        dirs::cache_dir()?
+            .join("pbrt-r4")
             .join("pipelines")
             .join(format!("{key}.bin")),
     )
@@ -42,16 +42,19 @@ pub fn load(path: &Path) -> Option<Vec<u8>> {
 }
 
 pub fn save(path: &Path, data: &[u8]) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(parent)?;
 
-    let mut temporary_name = path.as_os_str().to_os_string();
-    temporary_name.push(format!(".{}.tmp", std::process::id()));
-    let temporary_path = PathBuf::from(temporary_name);
-
-    fs::write(&temporary_path, data)?;
-    fs::rename(temporary_path, path)
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(data)?;
+    temporary
+        .persist(path)
+        .map(|_| ())
+        .map_err(|error| error.error)
 }
 
 fn within_limit(len: u64) -> bool {
@@ -92,7 +95,23 @@ mod tests {
     }
 
     #[test]
-    fn default_path_uses_temp_dir_and_key() {
+    fn concurrent_saves_publish_one_complete_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.bin");
+        let payloads: Vec<Vec<u8>> = (0..8u8).map(|i| vec![i; 1 << 20]).collect();
+        std::thread::scope(|scope| {
+            for payload in &payloads {
+                let path = &path;
+                scope.spawn(move || save(path, payload).unwrap());
+            }
+        });
+        let saved = load(&path).unwrap();
+        assert!(payloads.contains(&saved));
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn default_path_uses_user_cache_dir_and_key() {
         let info = wgpu::AdapterInfo {
             backend: wgpu::Backend::Vulkan,
             vendor: 0x10de,
@@ -100,7 +119,7 @@ mod tests {
             ..test_info()
         };
         let path = default_path(&info).unwrap();
-        assert!(path.starts_with(std::env::temp_dir().join("pbrt").join("pipelines")));
+        assert!(path.starts_with(dirs::cache_dir().unwrap().join("pbrt-r4").join("pipelines")));
         assert_eq!(
             path.file_name().unwrap(),
             format!("{}.bin", wgpu::util::pipeline_cache_key(&info).unwrap()).as_str()

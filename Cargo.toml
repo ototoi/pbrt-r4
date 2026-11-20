@@ -18,7 +18,7 @@ default = ["webgpu"]
 stats = []
 float-as-double = []
 cuda = []
-webgpu = ["dep:bytemuck", "dep:glam", "dep:pollster", "dep:wgpu"]
+webgpu = ["dep:bytemuck", "dep:dirs", "dep:glam", "dep:pollster", "dep:wgpu"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -45,6 +45,7 @@ serde = { version = "1.0.194", features = ["derive"] }
 serde_json = "=1.0.104"
 tar = "=0.4.46"
 tempfile = "=3.19.1"
+dirs = { version = "=6.0.0", optional = true }
 
 # webgpu
 
