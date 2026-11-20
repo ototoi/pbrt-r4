@@ -124,6 +124,12 @@ impl super::WavefrontPathIntegrator {
         let debug_material = MaterialKind::from_debug_environment()?;
         let idle_stages = super::idle_stages::idle_stages(
             flat_scene.materials.nodes.iter().map(|node| node.kind),
+            flat_scene
+                .lights
+                .lights
+                .iter()
+                .chain(&flat_scene.lights.infinite_lights)
+                .map(|light| light.kind),
             !flat_scene.media.is_empty(),
             debug_material.is_some(),
         );
