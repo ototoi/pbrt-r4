@@ -10,7 +10,9 @@ use std::sync::mpsc;
 
 use pbrt_r4::gpu::webgpu::abi::{RenderError, TextureNodeRecord, TEXTURE_OPERATION_IMAGE};
 use pbrt_r4::gpu::webgpu::context::Context;
-use pbrt_r4::gpu::webgpu::shader::{compose_source_with_noise, resource_bindings};
+use pbrt_r4::gpu::webgpu::shader::{
+    compose_source_with_noise, resource_bindings, specialize_geometry_page_bindings,
+};
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
 use pbrt_r4::util::imageio::read_image::read_image;
 use wgpu::util::DeviceExt;
@@ -230,8 +232,6 @@ fn non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture() {
                 },
                 count: None,
             },
-            storage_layout(3, true),
-            storage_layout(4, true),
             storage_layout(5, true),
             storage_layout(6, true),
             wgpu::BindGroupLayoutEntry {
@@ -280,14 +280,6 @@ fn non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture() {
                 resource: wgpu::BindingResource::AccelerationStructure(&tlas),
             },
             wgpu::BindGroupEntry {
-                binding: 3,
-                resource: unused_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: unused_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
                 binding: 5,
                 resource: unused_buffer.as_entire_binding(),
             },
@@ -331,7 +323,7 @@ fn non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture() {
             },
         ],
     });
-    let source = compose_source_with_noise(SHADER, false)
+    let source = specialize_geometry_page_bindings(compose_source_with_noise(SHADER, false), 1)
         .replace(
             "binding_array<texture_2d<f32>>",
             "binding_array<texture_2d<f32>, 2u>",
@@ -341,8 +333,6 @@ fn non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture() {
         resource_bindings(&source),
         [
             (0, 2),
-            (0, 3),
-            (0, 4),
             (0, 5),
             (0, 6),
             (0, 11),
@@ -352,6 +342,8 @@ fn non_opaque_candidates_can_be_rejected_or_confirmed_using_a_texture() {
             (0, 60),
             (1, 0),
             (1, 1),
+            (1, 3),
+            (1, 4),
         ]
     );
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {

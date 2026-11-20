@@ -70,7 +70,7 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
     let source = fixed_random_source(PRIMARY_SHADER);
     let bindings = probe_bindings(&source);
     let context = Context::new(RequiredLimits::from_bindings(&bindings).unwrap(), 0, 0).unwrap();
-    let (layout, pipeline) = probe_pipeline(&context.device, &source, &bindings, "sample_medium");
+    let (layouts, pipeline) = probe_pipeline(&context.device, &source, &bindings, "sample_medium");
     let a = [0.25, 0.5, 0.75, 1.0];
     let s = [0.75, 0.5, 1.0, 1.5];
     let first_distance = 1.0 - (-0.2_f32).exp();
@@ -83,7 +83,7 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
             ..Default::default()
         };
         let ProbeResult { ray, counters, .. } =
-            run_stage(&context, &layout, &pipeline, &bindings, &input);
+            run_stage(&context, &layouts, &pipeline, &bindings, &input);
         if mode < 0.125 {
             assert_eq!(ray.beta, [0.0; 4]);
             assert_eq!(counters.medium_scatter.count, 0);
@@ -113,7 +113,7 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
                 assert_close(ray.r_l[lane], t_maj * sigma_maj / pr * tail_ratio);
             }
         }
-        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        let nanovdb_result = run_nanovdb_stage(&context, &layouts, &pipeline, &bindings, input);
         assert_eq!(nanovdb_result.ray.beta, ray.beta);
         assert_eq!(nanovdb_result.ray.r_u, ray.r_u);
         assert_eq!(nanovdb_result.ray.r_l, ray.r_l);
@@ -144,7 +144,7 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
             ..Default::default()
         };
         let ProbeResult { ray, counters, .. } =
-            run_stage(&context, &layout, &pipeline, &bindings, &input);
+            run_stage(&context, &layouts, &pipeline, &bindings, &input);
         assert_eq!(counters.medium_scatter.count, 0);
         for lane in 0..4 {
             let expected = (distance * majorant * (a[0] + s[0] - a[lane] - s[lane])).exp();
@@ -152,7 +152,7 @@ fn primary_uniform_grid_events_match_v4_spectral_weights() {
             assert_close(ray.r_u[lane], expected);
             assert_close(ray.r_l[lane], expected);
         }
-        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        let nanovdb_result = run_nanovdb_stage(&context, &layouts, &pipeline, &bindings, input);
         assert_eq!(nanovdb_result.ray.beta, ray.beta);
         assert_eq!(nanovdb_result.ray.r_u, ray.r_u);
         assert_eq!(nanovdb_result.ray.r_l, ray.r_l);
@@ -191,7 +191,7 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
     let source = fixed_random_source(&stage);
     let bindings = probe_bindings(&source);
     let context = Context::new(RequiredLimits::from_bindings(&bindings).unwrap(), 0, 0).unwrap();
-    let (layout, pipeline) =
+    let (layouts, pipeline) =
         probe_pipeline(&context.device, &source, &bindings, "intersect_shadow");
     let a = [0.25, 0.5, 0.75, 1.0];
     let s = [0.75, 0.5, 1.0, 1.5];
@@ -205,7 +205,7 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             infinite,
             ..Default::default()
         };
-        let result = run_stage(&context, &layout, &pipeline, &bindings, &input);
+        let result = run_stage(&context, &layouts, &pipeline, &bindings, &input);
         for lane in 0..4 {
             let sigma_t = a[lane] + s[lane];
             let sigma_maj = 2.0 * sigma_t;
@@ -223,7 +223,7 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
         }
         assert_shadow_radiance(&result);
 
-        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        let nanovdb_result = run_nanovdb_stage(&context, &layouts, &pipeline, &bindings, input);
         assert_shadow_tracking_matches(&nanovdb_result, &result);
     }
 
@@ -238,7 +238,7 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             shadow_weight_scale: 1e-4,
             ..Default::default()
         };
-        let result = run_stage(&context, &layout, &pipeline, &bindings, &input);
+        let result = run_stage(&context, &layouts, &pipeline, &bindings, &input);
         let ratio = (majorant - 1.0) / majorant;
         for lane in 0..4 {
             assert_close(result.shadow.inv_w_u[lane], ratio);
@@ -249,7 +249,7 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             );
         }
         assert_shadow_radiance(&result);
-        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        let nanovdb_result = run_nanovdb_stage(&context, &layouts, &pipeline, &bindings, input);
         assert_shadow_tracking_matches(&nanovdb_result, &result);
         if roulette < 0.75 {
             let boundary_input = ProbeInput {
@@ -258,13 +258,13 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
                 ..input
             };
             let boundary_result =
-                run_stage(&context, &layout, &pipeline, &bindings, &boundary_input);
+                run_stage(&context, &layouts, &pipeline, &bindings, &boundary_input);
             assert_eq!(boundary_result.shadow.transmittance, [0.0; 4]);
             assert_eq!(boundary_result.shadow.segment_index, 0);
             assert_eq!(boundary_result.counters.shadow_continuation.count, 0);
             assert_eq!(boundary_result.pixel.radiance, [0.0; 4]);
             let nanovdb_boundary =
-                run_nanovdb_stage(&context, &layout, &pipeline, &bindings, boundary_input);
+                run_nanovdb_stage(&context, &layouts, &pipeline, &bindings, boundary_input);
             assert_eq!(
                 nanovdb_boundary.shadow.transmittance,
                 boundary_result.shadow.transmittance
@@ -301,7 +301,7 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             draws: [u, 0.9, u, 0.9],
             ..Default::default()
         };
-        let result = run_stage(&context, &layout, &pipeline, &bindings, &input);
+        let result = run_stage(&context, &layouts, &pipeline, &bindings, &input);
         for lane in 0..4 {
             let expected = (distance * majorant * (a[0] + s[0] - a[lane] - s[lane])).exp();
             assert_close(result.shadow.transmittance[lane], expected);
@@ -309,21 +309,21 @@ fn shadow_uniform_grid_ratio_tracking_and_roulette_match_v4() {
             assert_close(result.shadow.inv_w_l[lane], expected);
         }
         assert_shadow_radiance(&result);
-        let nanovdb_result = run_nanovdb_stage(&context, &layout, &pipeline, &bindings, input);
+        let nanovdb_result = run_nanovdb_stage(&context, &layouts, &pipeline, &bindings, input);
         assert_shadow_tracking_matches(&nanovdb_result, &result);
     }
 }
 
 fn run_nanovdb_stage(
     context: &Context,
-    layout: &wgpu::BindGroupLayout,
+    layouts: &[wgpu::BindGroupLayout],
     pipeline: &wgpu::ComputePipeline,
     bindings: &[BindingSpec],
     input: ProbeInput,
 ) -> ProbeResult {
     run_stage(
         context,
-        layout,
+        layouts,
         pipeline,
         bindings,
         &ProbeInput {
@@ -399,7 +399,6 @@ fn probe_bindings(source: &str) -> Vec<BindingSpec> {
     resource_bindings(source)
         .into_iter()
         .map(|(group, binding)| {
-            assert_eq!(group, 0);
             *canonical
                 .iter()
                 .find(|spec| spec.group == group && spec.binding == binding)
@@ -413,9 +412,43 @@ fn probe_pipeline(
     source: &str,
     bindings: &[BindingSpec],
     entry_point: &str,
-) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+) -> (Vec<wgpu::BindGroupLayout>, wgpu::ComputePipeline) {
+    let group_count = bindings
+        .iter()
+        .map(|spec| spec.group + 1)
+        .max()
+        .unwrap_or(1);
+    let layouts: Vec<_> = (0..group_count)
+        .map(|group| layout_for_group(device, bindings, group))
+        .collect();
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("uniform grid tracking probe"),
+        bind_group_layouts: &layouts.iter().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
+    });
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("uniform grid tracking probe"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("uniform grid tracking probe"),
+        layout: Some(&pipeline_layout),
+        module: &module,
+        entry_point: Some(entry_point),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    (layouts, pipeline)
+}
+
+fn layout_for_group(
+    device: &wgpu::Device,
+    bindings: &[BindingSpec],
+    group: u32,
+) -> wgpu::BindGroupLayout {
     let entries: Vec<_> = bindings
         .iter()
+        .filter(|spec| spec.group == group)
         .map(|spec| wgpu::BindGroupLayoutEntry {
             binding: spec.binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -445,33 +478,15 @@ fn probe_pipeline(
             count: None,
         })
         .collect();
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("uniform grid tracking probe"),
         entries: &entries,
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("uniform grid tracking probe"),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("uniform grid tracking probe"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("uniform grid tracking probe"),
-        layout: Some(&pipeline_layout),
-        module: &module,
-        entry_point: Some(entry_point),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    (layout, pipeline)
+    })
 }
 
 fn run_stage(
     context: &Context,
-    layout: &wgpu::BindGroupLayout,
+    layouts: &[wgpu::BindGroupLayout],
     pipeline: &wgpu::ComputePipeline,
     bindings: &[BindingSpec],
     input: &ProbeInput,
@@ -584,8 +599,9 @@ fn run_stage(
         .iter()
         .filter(|spec| spec.class != BindingClass::IntegerTexture)
         .map(|spec| {
-            let data = values
-                .remove(&spec.binding)
+            let data = (spec.group == 0)
+                .then(|| values.remove(&spec.binding))
+                .flatten()
                 .unwrap_or_else(|| vec![0; 1024]);
             let usage = if spec.class == BindingClass::Uniform {
                 wgpu::BufferUsages::UNIFORM
@@ -593,7 +609,7 @@ fn run_stage(
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC
             };
             (
-                spec.binding,
+                (spec.group, spec.binding),
                 context
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -604,29 +620,37 @@ fn run_stage(
             )
         })
         .collect();
-    let mut entries: Vec<_> = buffers
+    let groups: Vec<_> = layouts
         .iter()
-        .map(|(binding, buffer)| wgpu::BindGroupEntry {
-            binding: *binding,
-            resource: buffer.as_entire_binding(),
+        .enumerate()
+        .map(|(group, layout)| {
+            let group = group as u32;
+            let mut entries: Vec<_> = buffers
+                .iter()
+                .filter(|((buffer_group, _), _)| *buffer_group == group)
+                .map(|((_, binding), buffer)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: buffer.as_entire_binding(),
+                })
+                .collect();
+            for spec in bindings
+                .iter()
+                .filter(|spec| spec.group == group && spec.class == BindingClass::IntegerTexture)
+            {
+                entries.push(wgpu::BindGroupEntry {
+                    binding: spec.binding,
+                    resource: wgpu::BindingResource::TextureView(&noise_resources.view),
+                });
+            }
+            context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("uniform grid tracking probe"),
+                    layout,
+                    entries: &entries,
+                })
         })
         .collect();
-    for spec in bindings
-        .iter()
-        .filter(|spec| spec.class == BindingClass::IntegerTexture)
-    {
-        entries.push(wgpu::BindGroupEntry {
-            binding: spec.binding,
-            resource: wgpu::BindingResource::TextureView(&noise_resources.view),
-        });
-    }
-    let group = context
-        .device
-        .create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("uniform grid tracking probe"),
-            layout,
-            entries: &entries,
-        });
     let ray_size = size_of::<RayWorkItem>() as u64;
     let counter_size = size_of::<QueueCounters>() as u64;
     let shadow_size = size_of::<ShadowRayWorkItem>() as u64;
@@ -642,7 +666,9 @@ fn run_stage(
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
+        for (index, group) in groups.iter().enumerate() {
+            pass.set_bind_group(index as u32, group, &[]);
+        }
         pass.dispatch_workgroups(1, 1, 1);
     }
     let mut offset = 0;
@@ -653,7 +679,7 @@ fn run_stage(
         (12, pixel_size),
         (11, 16),
     ] {
-        if let Some(buffer) = buffers.get(&binding) {
+        if let Some(buffer) = buffers.get(&(0, binding)) {
             encoder.copy_buffer_to_buffer(buffer, 0, &readback, offset, size);
         }
         offset += size;
@@ -705,7 +731,7 @@ fn primary_nanovdb_temperature_emission_precedes_each_event() {
     let source = fixed_random_source(PRIMARY_SHADER);
     let bindings = probe_bindings(&source);
     let context = Context::new(RequiredLimits::from_bindings(&bindings).unwrap(), 0, 0).unwrap();
-    let (layout, pipeline) = probe_pipeline(&context.device, &source, &bindings, "sample_medium");
+    let (layouts, pipeline) = probe_pipeline(&context.device, &source, &bindings, "sample_medium");
     let a = [0.25_f32, 0.5, 0.75, 1.0];
     let s = [0.75_f32, 0.5, 1.0, 1.5];
     let blackbody = [0.0725499615_f32, 0.261518776, 0.520067334, 0.75420779];
@@ -726,7 +752,7 @@ fn primary_nanovdb_temperature_emission_precedes_each_event() {
             draws: [1.0 - (-0.2_f32).exp(), mode, 0.9, 0.9],
             ..Default::default()
         };
-        let result = run_stage(&context, &layout, &pipeline, &bindings, &input);
+        let result = run_stage(&context, &layouts, &pipeline, &bindings, &input);
         for lane in 0..4 {
             let expected = a[lane] * t_maj[lane] * 2.0 * blackbody[lane] / (pr * r_e_average);
             assert_close(result.pixel.radiance[lane], expected);
@@ -740,7 +766,7 @@ fn primary_nanovdb_temperature_emission_precedes_each_event() {
         ] {
             let result = run_stage(
                 &context,
-                &layout,
+                &layouts,
                 &pipeline,
                 &bindings,
                 &ProbeInput {
