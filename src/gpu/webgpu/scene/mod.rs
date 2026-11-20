@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bytemuck::cast_slice;
 use wgpu::util::DeviceExt;
 
@@ -21,6 +23,7 @@ use super::material::MaterialKind;
 use super::material::MaterialTable;
 use super::measured::MeasuredBsdfRecords;
 use super::output::Output;
+use super::profile;
 use super::render_settings::RenderSettings;
 use super::sampler::SamplerResources;
 use super::stages::ResourceId;
@@ -644,6 +647,7 @@ impl Scene {
             contents: buffer_contents(&light_bvh_data.handle_to_leaf),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let t = Instant::now();
         let acceleration = acceleration::build(
             device,
             queue,
@@ -655,6 +659,7 @@ impl Scene {
             &flat.lights.lights,
             &flat.lights.sampling_models,
         )?;
+        profile::record_phase("acceleration build", t.elapsed());
         Ok(Self {
             camera,
             viewport,

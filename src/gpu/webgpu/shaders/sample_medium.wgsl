@@ -5,6 +5,15 @@ fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ray_index = active_medium_indices[queue_index];
     var ray = load_current_ray(ray_index);
     let pixel_index = ray.pixel_index;
+    // A live ray outside any medium that did not hit an interface-only instance
+    // only needs the escaped-ray append; skip the full surface load and ray store.
+    let hit = surfaces[pixel_index].hit;
+    if (ray.medium_id == 0xffffffffu && any(ray.beta != vec4<f32>(0.0))
+        && (hit == 0u
+            || instances[surfaces[pixel_index].instance_custom_data].material_root != 0xffffffffu)) {
+        if (hit == 0u) { append_escaped_ray(ray_index); }
+        return;
+    }
     let surface = surfaces[pixel_index];
     let infinite = surface.hit == 0u;
     let distance = select(surface.t * length(ray.direction.xyz), 0.0, infinite);

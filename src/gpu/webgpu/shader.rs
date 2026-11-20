@@ -82,7 +82,8 @@ pub fn create_module(device: &wgpu::Device, label: &str, stage_source: &str) -> 
 
 #[doc(hidden)]
 pub fn compose_source(stage_source: &str) -> String {
-    compose_source_with_noise(stage_source, true)
+    // Match the single-page bindings Pipeline uses, so test devices need no binding arrays.
+    specialize_geometry_page_bindings(compose_source_with_noise(stage_source, true), 1)
 }
 
 pub fn compose_source_with_noise(stage_source: &str, noise_enabled: bool) -> String {
@@ -157,6 +158,19 @@ pub fn specialize_source(
             "binding_array<sampler>",
             &format!("binding_array<sampler, {texture_sampler_count}u>"),
         )
+}
+
+const SAMPLER_KIND_SELECTED_DEFAULT: &str = "const SAMPLER_KIND_SELECTED: u32 = 0xffffffffu;";
+
+/// Fixes the sampler kind so the driver can drop the other sampler implementations.
+pub fn specialize_sampler_kind(source: String, sampler_kind: Option<u32>) -> String {
+    match sampler_kind {
+        Some(kind) => source.replace(
+            SAMPLER_KIND_SELECTED_DEFAULT,
+            &format!("const SAMPLER_KIND_SELECTED: u32 = {kind}u;"),
+        ),
+        None => source,
+    }
 }
 
 /// Use scalar storage bindings when geometry fits in one page. Buffer binding
@@ -462,6 +476,23 @@ fn function_calls(source: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sampler_kind_specialization_replaces_the_default_constant() {
+        let source = include_str!("shaders/sampler.wgsl");
+        assert_eq!(source.matches(SAMPLER_KIND_SELECTED_DEFAULT).count(), 1);
+        let specialized = specialize_sampler_kind(source.to_string(), Some(1));
+        assert!(specialized.contains("const SAMPLER_KIND_SELECTED: u32 = 1u;"));
+        assert!(!specialized.contains(SAMPLER_KIND_SELECTED_DEFAULT));
+        assert_eq!(specialize_sampler_kind(source.to_string(), None), source);
+    }
+
+    #[test]
+    fn sampler_kind_is_read_only_through_active_sampler_kind() {
+        let source = include_str!("shaders/sampler.wgsl");
+        assert_eq!(source.matches("sampler_params.kind").count(), 1);
+        assert!(source.contains("return sampler_params.kind;"));
+    }
 
     // prune_common_source resolves calls by name, so a second definition in
     // another library file would silently shadow the first one.

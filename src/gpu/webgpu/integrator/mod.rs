@@ -1,16 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use super::bssrdf::BSSRDFProbePipeline;
 use super::context::Context;
 use super::film::Film;
 use super::noise::NoiseRuntimeResources;
 use super::pipeline::Pipeline;
+use super::profile::GpuProfiler;
 use super::queue::Queues;
 use super::scene::Scene;
 use super::stage::ComputeStageId;
 
 mod create;
 mod dispatch;
+mod idle_stages;
 mod render;
 mod tiles;
 
@@ -25,12 +28,14 @@ pub struct WavefrontPathIntegrator {
     film: Film,
     noise_resources: NoiseRuntimeResources,
     pipeline: Pipeline,
+    profiler: Option<Arc<GpuProfiler>>,
     bind_groups: HashMap<ComputeStageId, [wgpu::BindGroup; 2]>,
     rendered: bool,
     show_progress: bool,
     tile_width: u32,
     tile_height: u32,
     has_interface_only_instances: bool,
+    idle_stages: HashSet<ComputeStageId>,
     bssrdf_work: wgpu::Buffer,
     _bssrdf_results: wgpu::Buffer,
     bssrdf_probe: Option<(BSSRDFProbePipeline, wgpu::BindGroup)>,

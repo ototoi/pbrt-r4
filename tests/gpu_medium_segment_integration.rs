@@ -29,6 +29,7 @@ MediumInterface "fog" "fog"
 LookAt 0 0 5  0 0 0  0 1 0
 Camera "perspective" "float fov" [35]
 Film "rgb" "integer xresolution" [8] "integer yresolution" [8]
+PixelFilter "box"
 Sampler "independent" "integer pixelsamples" [1]
 Integrator "volpath" "integer maxdepth" [1]
 WorldBegin

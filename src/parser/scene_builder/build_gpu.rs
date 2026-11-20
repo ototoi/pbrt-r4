@@ -16,6 +16,8 @@ use crate::gpu::node::{
 // Uncomment together with the diagnostic blocks below when Node IR JSON output is needed.
 // use crate::gpu::node::node_ref_to_json_string;
 use crate::gpu::wavefront::WavefrontPathIntegrator;
+#[cfg(feature = "webgpu")]
+use crate::gpu::webgpu::profile;
 use crate::paramdict::ParameterDictionary;
 use crate::util::error::PbrtError;
 use crate::util::spectrum::Spectrum;
@@ -25,6 +27,8 @@ use super::SceneBuilder;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+#[cfg(feature = "webgpu")]
+use std::time::Instant;
 
 impl SceneBuilder {
     /// Realise the accumulated entities directly into an `Integrator` on GPU.
@@ -46,7 +50,11 @@ impl SceneBuilder {
 
         // Build the declarative GPU Node IR for the scene.
         log::info!("GPU build: building Node IR");
+        #[cfg(feature = "webgpu")]
+        let t = Instant::now();
         let ir_node = self.build_gpu_ir_node()?;
+        #[cfg(feature = "webgpu")]
+        profile::record_phase("node ir build", t.elapsed());
         // Keep this diagnostic available when inspecting the pre-tessellation Node IR.
         // log::info!("GPU build: Node IR built; serializing before tessellation");
         // match node_ref_to_json_string(&ir_node) {
@@ -56,12 +64,16 @@ impl SceneBuilder {
         // Tessellate shapes in the IR node to ensure all shapes are represented as triangle meshes.
         {
             log::info!("GPU build: tessellating shapes");
+            #[cfg(feature = "webgpu")]
+            let t = Instant::now();
             let mut ir_node = ir_node
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             tessellate_shapes(&mut ir_node)?;
             log::info!("GPU build: preparing triangle meshes in Node IR");
             prepare_triangle_meshes(&mut ir_node)?;
+            #[cfg(feature = "webgpu")]
+            profile::record_phase("tessellation", t.elapsed());
         }
         // Keep this diagnostic available when inspecting the post-tessellation Node IR.
         // log::info!("GPU build: tessellation complete; serializing after tessellation");
@@ -71,7 +83,11 @@ impl SceneBuilder {
         // }
         // Lower the IR node to a flat scene representation.
         log::info!("GPU build: flattening Node IR");
+        #[cfg(feature = "webgpu")]
+        let t = Instant::now();
         let flat_scene = flatten_node(ir_node)?;
+        #[cfg(feature = "webgpu")]
+        profile::record_phase("flatten", t.elapsed());
         log::info!("GPU build: flatten complete; creating WebGPU integrator");
 
         // Create the WavefrontPathIntegrator from the flat scene.

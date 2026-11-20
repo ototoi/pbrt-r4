@@ -49,6 +49,7 @@ pub struct PbrtOptions {
     pub displacement_edge_scale: Float,
     pub seed: u32,
     pub record_pixel_statistics: bool,
+    pub gpu_profile: bool,
     pub mse_reference_image: Option<String>,
     pub mse_reference_output: Option<String>,
 }
@@ -70,6 +71,7 @@ impl Default for PbrtOptions {
             displacement_edge_scale: 1.0,
             seed: 0,
             record_pixel_statistics: false,
+            gpu_profile: false,
             mse_reference_image: None,
             mse_reference_output: None,
             //crop_window: [0.0, 1.0, 0.0, 1.0],

@@ -19,6 +19,7 @@ use super::super::abi::{
     QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
 use super::super::material::MaterialKind;
+use super::super::profile;
 use super::super::stage::ComputeStageId;
 use super::dispatch::{dispatch, dispatch_count, dispatch_indirect};
 use super::tiles::{compute_tiles, tile_grid_dims, DEFAULT_DISPLAY_UPDATE_INTERVAL};
@@ -27,10 +28,7 @@ impl super::WavefrontPathIntegrator {
     fn sample_queued_lights(&self, encoder: &mut wgpu::CommandEncoder) {
         dispatch(
             encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::PrepareQueueDispatch)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
             self.bind_groups(ComputeStageId::PrepareQueueDispatch),
             1,
             1,
@@ -49,9 +47,12 @@ impl super::WavefrontPathIntegrator {
                 QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT,
             ),
         ] {
+            if self.idle_stages.contains(&stage_id) {
+                continue;
+            }
             dispatch_indirect(
                 encoder,
-                &self.pipeline.stage(stage_id).pipeline,
+                self.pipeline.stage(stage_id),
                 self.bind_groups(stage_id),
                 &self.queues.queue_dispatch_args,
                 slot,
@@ -69,10 +70,8 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch_indirect(
             &mut initialize_shadow_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::InitializeShadowSegments)
-                .pipeline,
+            self.pipeline
+                .stage(ComputeStageId::InitializeShadowSegments),
             self.bind_groups(ComputeStageId::InitializeShadowSegments),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_SHADOW,
@@ -92,20 +91,14 @@ impl super::WavefrontPathIntegrator {
             if let Some(count) = active_shadow_count {
                 dispatch_count(
                     &mut shadow_encoder,
-                    &self
-                        .pipeline
-                        .stage(ComputeStageId::IntersectShadow)
-                        .pipeline,
+                    self.pipeline.stage(ComputeStageId::IntersectShadow),
                     self.bind_groups(ComputeStageId::IntersectShadow),
                     count,
                 );
             } else {
                 dispatch_indirect(
                     &mut shadow_encoder,
-                    &self
-                        .pipeline
-                        .stage(ComputeStageId::IntersectShadow)
-                        .pipeline,
+                    self.pipeline.stage(ComputeStageId::IntersectShadow),
                     self.bind_groups(ComputeStageId::IntersectShadow),
                     &self.queues.queue_dispatch_args,
                     QUEUE_DISPATCH_SLOT_SHADOW,
@@ -179,20 +172,15 @@ impl super::WavefrontPathIntegrator {
                     });
             dispatch(
                 &mut reset_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ResetShadowQueue)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::ResetShadowQueue),
                 self.bind_groups(ComputeStageId::ResetShadowQueue),
                 1,
                 1,
             );
             dispatch(
                 &mut reset_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ResetClassificationQueues)
-                    .pipeline,
+                self.pipeline
+                    .stage(ComputeStageId::ResetClassificationQueues),
                 self.bind_groups(ComputeStageId::ResetClassificationQueues),
                 1,
                 1,
@@ -211,10 +199,8 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch_indirect(
             &mut initialize_medium_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::InitializeMediumSegments)
-                .pipeline,
+            self.pipeline
+                .stage(ComputeStageId::InitializeMediumSegments),
             self.bind_groups(ComputeStageId::InitializeMediumSegments),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_CURRENT_RAY,
@@ -233,33 +219,27 @@ impl super::WavefrontPathIntegrator {
                     });
             dispatch(
                 &mut segment_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareQueueDispatch)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
                 self.bind_groups(ComputeStageId::PrepareQueueDispatch),
                 1,
                 1,
             );
-            for (pipeline, groups) in [
+            for (stage, groups) in [
                 (
-                    &self
-                        .pipeline
-                        .stage(ComputeStageId::IntersectPrimaryRays)
-                        .pipeline,
+                    self.pipeline.stage(ComputeStageId::IntersectPrimaryRays),
                     self.bind_groups(ComputeStageId::IntersectPrimaryRays),
                 ),
                 (
-                    &self.pipeline.stage(ComputeStageId::SampleMedium).pipeline,
+                    self.pipeline.stage(ComputeStageId::SampleMedium),
                     self.bind_groups(ComputeStageId::SampleMedium),
                 ),
             ] {
                 if let Some(count) = active_medium_count {
-                    dispatch_count(&mut segment_encoder, pipeline, groups, count);
+                    dispatch_count(&mut segment_encoder, stage, groups, count);
                 } else {
                     dispatch_indirect(
                         &mut segment_encoder,
-                        pipeline,
+                        stage,
                         groups,
                         &self.queues.queue_dispatch_args,
                         QUEUE_DISPATCH_SLOT_CURRENT_RAY,
@@ -268,10 +248,7 @@ impl super::WavefrontPathIntegrator {
             }
             dispatch(
                 &mut segment_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareQueueDispatch)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
                 self.bind_groups(ComputeStageId::PrepareQueueDispatch),
                 1,
                 1,
@@ -320,10 +297,7 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch_indirect(
             &mut encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::HandleEscapedRays)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::HandleEscapedRays),
             self.bind_groups(ComputeStageId::HandleEscapedRays),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_ESCAPED,
@@ -333,7 +307,7 @@ impl super::WavefrontPathIntegrator {
         // reuse that same slot.
         dispatch_indirect(
             &mut encoder,
-            &self.pipeline.stage(ComputeStageId::ShadeSurface).pipeline,
+            self.pipeline.stage(ComputeStageId::ShadeSurface),
             self.bind_groups(ComputeStageId::ShadeSurface),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_CURRENT_RAY,
@@ -342,40 +316,29 @@ impl super::WavefrontPathIntegrator {
         // and material-eval queues for this depth.
         dispatch(
             &mut encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::PrepareQueueDispatch)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
             self.bind_groups(ComputeStageId::PrepareQueueDispatch),
             1,
             1,
         );
         dispatch_indirect(
             &mut encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::HandleEmissiveIntersection)
-                .pipeline,
+            self.pipeline
+                .stage(ComputeStageId::HandleEmissiveIntersection),
             self.bind_groups(ComputeStageId::HandleEmissiveIntersection),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_HIT_AREA,
         );
         dispatch_indirect(
             &mut encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::EvaluateTextures)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::EvaluateTextures),
             self.bind_groups(ComputeStageId::EvaluateTextures),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
         );
         dispatch_indirect(
             &mut encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::EvaluateAttributes)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::EvaluateAttributes),
             self.bind_groups(ComputeStageId::EvaluateAttributes),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
@@ -390,10 +353,7 @@ impl super::WavefrontPathIntegrator {
         if depth < self.scene.render_settings.max_depth {
             dispatch_indirect(
                 &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ClassifySurfaceScatter)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::ClassifySurfaceScatter),
                 self.bind_groups(ComputeStageId::ClassifySurfaceScatter),
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_MATERIAL_EVAL,
@@ -401,121 +361,127 @@ impl super::WavefrontPathIntegrator {
             // The surface and medium input queue counts are final now.
             dispatch(
                 &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareQueueDispatch)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
                 self.bind_groups(ComputeStageId::PrepareQueueDispatch),
                 1,
                 1,
             );
             dispatch_indirect(
                 &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::SelectSurfaceLight)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::SelectSurfaceLight),
                 self.bind_groups(ComputeStageId::SelectSurfaceLight),
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
             );
-            dispatch_indirect(
-                &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::SelectMediumLight)
-                    .pipeline,
-                self.bind_groups(ComputeStageId::SelectMediumLight),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
-            );
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::SelectMediumLight)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::SelectMediumLight),
+                    self.bind_groups(ComputeStageId::SelectMediumLight),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
+                );
+            }
             self.sample_queued_lights(&mut encoder);
-            dispatch_indirect(
-                &mut encoder,
-                &self.pipeline.stage(ComputeStageId::ScatterMedium).pipeline,
-                self.bind_groups(ComputeStageId::ScatterMedium),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self.pipeline.stage(ComputeStageId::ScatterDiffuse).pipeline,
-                self.bind_groups(ComputeStageId::ScatterDiffuse),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ScatterDiffuseTransmission)
-                    .pipeline,
-                self.bind_groups(ComputeStageId::ScatterDiffuseTransmission),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ScatterConductor)
-                    .pipeline,
-                self.bind_groups(ComputeStageId::ScatterConductor),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ScatterDielectric)
-                    .pipeline,
-                self.bind_groups(ComputeStageId::ScatterDielectric),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ScatterThinDielectric)
-                    .pipeline,
-                self.bind_groups(ComputeStageId::ScatterThinDielectric),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ScatterMeasured)
-                    .pipeline,
-                self.bind_groups(ComputeStageId::ScatterMeasured),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self.pipeline.stage(ComputeStageId::ScatterCoated).pipeline,
-                self.bind_groups(ComputeStageId::ScatterCoated),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_COATED,
-            );
-            dispatch_indirect(
-                &mut encoder,
-                &self.pipeline.stage(ComputeStageId::ScatterHair).pipeline,
-                self.bind_groups(ComputeStageId::ScatterHair),
-                &self.queues.queue_dispatch_args,
-                QUEUE_DISPATCH_SLOT_SCATTER_HAIR,
-            );
+            if !self.idle_stages.contains(&ComputeStageId::ScatterMedium) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterMedium),
+                    self.bind_groups(ComputeStageId::ScatterMedium),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterDiffuse) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterDiffuse),
+                    self.bind_groups(ComputeStageId::ScatterDiffuse),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE,
+                );
+            }
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::ScatterDiffuseTransmission)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline
+                        .stage(ComputeStageId::ScatterDiffuseTransmission),
+                    self.bind_groups(ComputeStageId::ScatterDiffuseTransmission),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_DIFFUSE_TRANSMISSION,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterConductor) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterConductor),
+                    self.bind_groups(ComputeStageId::ScatterConductor),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_CONDUCTOR,
+                );
+            }
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::ScatterDielectric)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterDielectric),
+                    self.bind_groups(ComputeStageId::ScatterDielectric),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_DIELECTRIC,
+                );
+            }
+            if !self
+                .idle_stages
+                .contains(&ComputeStageId::ScatterThinDielectric)
+            {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterThinDielectric),
+                    self.bind_groups(ComputeStageId::ScatterThinDielectric),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterMeasured) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterMeasured),
+                    self.bind_groups(ComputeStageId::ScatterMeasured),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_MEASURED,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterCoated) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterCoated),
+                    self.bind_groups(ComputeStageId::ScatterCoated),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_COATED,
+                );
+            }
+            if !self.idle_stages.contains(&ComputeStageId::ScatterHair) {
+                dispatch_indirect(
+                    &mut encoder,
+                    self.pipeline.stage(ComputeStageId::ScatterHair),
+                    self.bind_groups(ComputeStageId::ScatterHair),
+                    &self.queues.queue_dispatch_args,
+                    QUEUE_DISPATCH_SLOT_SCATTER_HAIR,
+                );
+            }
             // The scatter stages have just finished appending this
             // depth's shadow rays and next-depth bounce rays.
             dispatch(
                 &mut encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareQueueDispatch)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
                 self.bind_groups(ComputeStageId::PrepareQueueDispatch),
                 1,
                 1,
@@ -536,20 +502,15 @@ impl super::WavefrontPathIntegrator {
                     });
             dispatch(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ResetShadowQueue)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::ResetShadowQueue),
                 self.bind_groups(ComputeStageId::ResetShadowQueue),
                 1,
                 1,
             );
             dispatch(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ResetClassificationQueues)
-                    .pipeline,
+                self.pipeline
+                    .stage(ComputeStageId::ResetClassificationQueues),
                 self.bind_groups(ComputeStageId::ResetClassificationQueues),
                 1,
                 1,
@@ -558,29 +519,20 @@ impl super::WavefrontPathIntegrator {
             probe.encode(&mut sss_encoder, bindings, capacity);
             dispatch_count(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareSubsurfaceExit)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareSubsurfaceExit),
                 self.bind_groups(ComputeStageId::PrepareSubsurfaceExit),
                 capacity,
             );
             dispatch(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareQueueDispatch)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
                 self.bind_groups(ComputeStageId::PrepareQueueDispatch),
                 1,
                 1,
             );
             dispatch_indirect(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::SelectSurfaceLight)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::SelectSurfaceLight),
                 self.bind_groups(ComputeStageId::SelectSurfaceLight),
                 &self.queues.queue_dispatch_args,
                 QUEUE_DISPATCH_SLOT_DIRECT_EVAL,
@@ -588,19 +540,13 @@ impl super::WavefrontPathIntegrator {
             self.sample_queued_lights(&mut sss_encoder);
             dispatch_count(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::ScatterSubsurfaceExit)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::ScatterSubsurfaceExit),
                 self.bind_groups(ComputeStageId::ScatterSubsurfaceExit),
                 capacity,
             );
             dispatch(
                 &mut sss_encoder,
-                &self
-                    .pipeline
-                    .stage(ComputeStageId::PrepareQueueDispatch)
-                    .pipeline,
+                self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
                 self.bind_groups(ComputeStageId::PrepareQueueDispatch),
                 1,
                 1,
@@ -620,17 +566,14 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch_indirect(
             &mut next_encoder,
-            &self.pipeline.stage(ComputeStageId::SwapRayQueues).pipeline,
+            self.pipeline.stage(ComputeStageId::SwapRayQueues),
             self.bind_groups(ComputeStageId::SwapRayQueues),
             &self.queues.queue_dispatch_args,
             QUEUE_DISPATCH_SLOT_NEXT_RAY,
         );
         dispatch(
             &mut next_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::ResetNextRayQueue)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::ResetNextRayQueue),
             self.bind_groups(ComputeStageId::ResetNextRayQueue),
             1,
             1,
@@ -639,10 +582,7 @@ impl super::WavefrontPathIntegrator {
         // depth's current-ray count.
         dispatch(
             &mut next_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::PrepareQueueDispatch)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
             self.bind_groups(ComputeStageId::PrepareQueueDispatch),
             1,
             1,
@@ -659,17 +599,14 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch(
             &mut sample_encoder,
-            &self.pipeline.stage(ComputeStageId::PrepareSample).pipeline,
+            self.pipeline.stage(ComputeStageId::PrepareSample),
             self.bind_groups(ComputeStageId::PrepareSample),
             workgroups_x,
             workgroups_y,
         );
         dispatch(
             &mut sample_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::GenerateCameraRays)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::GenerateCameraRays),
             self.bind_groups(ComputeStageId::GenerateCameraRays),
             workgroups_x,
             workgroups_y,
@@ -678,10 +615,7 @@ impl super::WavefrontPathIntegrator {
         // count is final as soon as generate_camera_rays completes.
         dispatch(
             &mut sample_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::PrepareQueueDispatch)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::PrepareQueueDispatch),
             self.bind_groups(ComputeStageId::PrepareQueueDispatch),
             1,
             1,
@@ -698,10 +632,7 @@ impl super::WavefrontPathIntegrator {
                 });
         dispatch(
             &mut accumulate_encoder,
-            &self
-                .pipeline
-                .stage(ComputeStageId::AccumulateSample)
-                .pipeline,
+            self.pipeline.stage(ComputeStageId::AccumulateSample),
             self.bind_groups(ComputeStageId::AccumulateSample),
             workgroups_x,
             workgroups_y,
@@ -761,6 +692,7 @@ impl super::WavefrontPathIntegrator {
             self.tile_width,
             self.tile_height,
         );
+        let t_loop = Instant::now();
         for (tile_index, tile) in tiles.enumerate() {
             self.scene.viewport.tile_x = tile.x;
             self.scene.viewport.tile_y = tile.y;
@@ -792,6 +724,9 @@ impl super::WavefrontPathIntegrator {
                     }
                 }
                 self.accumulate_sample(workgroups_x, workgroups_y);
+                if let Some(p) = &self.profiler {
+                    p.collect(&self.context.device, &self.context.queue)?;
+                }
                 log::info!(
                     "GPU render: submitted sample {sample_index}; waiting for film completion"
                 );
@@ -827,6 +762,8 @@ impl super::WavefrontPathIntegrator {
                 }
             }
         }
+        profile::record_phase("render loop", t_loop.elapsed());
+        let t_readback = Instant::now();
         let mut encoder =
             self.context
                 .device
@@ -853,6 +790,7 @@ impl super::WavefrontPathIntegrator {
             log::warn!("WebGPU Film display end failed: {error}");
         }
         self.film.write_output(&self.scene.output)?;
+        profile::record_phase("readback + output", t_readback.elapsed());
         self.rendered = true;
         Ok(())
     }
