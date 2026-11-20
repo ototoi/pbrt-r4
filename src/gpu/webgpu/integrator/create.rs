@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
@@ -15,6 +16,7 @@ use super::super::film::Film;
 use super::super::material::MaterialKind;
 use super::super::noise::NoiseRuntimeResources;
 use super::super::pipeline::Pipeline;
+use super::super::profile;
 use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
 use super::super::stage::{ComputeStageSpec, COMPUTE_STAGES};
@@ -98,6 +100,7 @@ impl super::WavefrontPathIntegrator {
         log::info!(
             "GPU create: requesting WebGPU context (texture_images={texture_image_count}, texture_samplers={texture_sampler_count})"
         );
+        let t = Instant::now();
         let adapter = Context::request_adapter(Some(&binding_report))?;
         let geometry_page_plan = Scene::geometry_page_plan(&flat_scene, &adapter.limits, None)?;
         let geometry_page_count = u32::try_from(geometry_page_plan.pages.len())
@@ -111,7 +114,9 @@ impl super::WavefrontPathIntegrator {
             !flat_scene.materials.bssrdfs.is_empty(),
             Some(&binding_report),
         )?;
+        profile::record_phase("context", t.elapsed());
         log::info!("GPU create: WebGPU context ready");
+        let t = Instant::now();
         let device = &context.device;
         let queue = &context.queue;
         let debug_material = MaterialKind::from_debug_environment()?;
@@ -223,6 +228,8 @@ impl super::WavefrontPathIntegrator {
             scene.film_scale,
             scene.film.mode != 0,
         )?;
+        profile::record_phase("scene resources", t.elapsed());
+        let t = Instant::now();
         let pipeline = Pipeline::new_with_geometry_page_count(
             device,
             scene.texture_images.len() as u32,
@@ -232,6 +239,7 @@ impl super::WavefrontPathIntegrator {
             nanovdb_enabled,
             scene.geometry_page_count,
         )?;
+        profile::record_phase("pipeline create", t.elapsed());
         log::info!("GPU create: compute pipelines ready");
         let texture_image_views: Vec<&wgpu::TextureView> =
             scene.texture_image_views.iter().collect();
@@ -320,10 +328,12 @@ impl super::WavefrontPathIntegrator {
                 };
                 Ok([create_group(0)?, create_group(1)?])
             };
+        let t = Instant::now();
         let bind_groups = COMPUTE_STAGES
             .iter()
             .map(|stage| Ok((stage.id, make_bind_group(stage)?)))
             .collect::<Result<HashMap<_, _>, PbrtError>>()?;
+        profile::record_phase("bind groups", t.elapsed());
         log::info!("GPU create: bind groups ready");
         Ok(Self {
             context,
@@ -346,5 +356,18 @@ impl super::WavefrontPathIntegrator {
             _bssrdf_results: bssrdf_results,
             bssrdf_probe,
         })
+    }
+
+    pub fn profile_report(&self) -> Option<String> {
+        if !profile::enabled() {
+            return None;
+        }
+        let phases = profile::take_phases();
+        Some(profile::format_report(
+            &self.context.adapter_name,
+            self.scene.render_settings.samples_per_pixel,
+            &phases,
+            &[],
+        ))
     }
 }

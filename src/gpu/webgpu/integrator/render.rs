@@ -19,6 +19,7 @@ use super::super::abi::{
     QUEUE_DISPATCH_SLOT_SCATTER_THIN_DIELECTRIC, QUEUE_DISPATCH_SLOT_SHADOW, WORKGROUP_SIZE,
 };
 use super::super::material::MaterialKind;
+use super::super::profile;
 use super::super::stage::ComputeStageId;
 use super::dispatch::{dispatch, dispatch_count, dispatch_indirect};
 use super::tiles::{compute_tiles, tile_grid_dims, DEFAULT_DISPLAY_UPDATE_INTERVAL};
@@ -761,6 +762,7 @@ impl super::WavefrontPathIntegrator {
             self.tile_width,
             self.tile_height,
         );
+        let t_loop = Instant::now();
         for (tile_index, tile) in tiles.enumerate() {
             self.scene.viewport.tile_x = tile.x;
             self.scene.viewport.tile_y = tile.y;
@@ -827,6 +829,8 @@ impl super::WavefrontPathIntegrator {
                 }
             }
         }
+        profile::record_phase("render loop", t_loop.elapsed());
+        let t_readback = Instant::now();
         let mut encoder =
             self.context
                 .device
@@ -853,6 +857,7 @@ impl super::WavefrontPathIntegrator {
             log::warn!("WebGPU Film display end failed: {error}");
         }
         self.film.write_output(&self.scene.output)?;
+        profile::record_phase("readback + output", t_readback.elapsed());
         self.rendered = true;
         Ok(())
     }

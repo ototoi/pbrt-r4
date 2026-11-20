@@ -6,6 +6,7 @@ use super::stages::RequiredLimits;
 pub struct Context {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    pub adapter_name: String,
 }
 
 pub struct AdapterContext {
@@ -227,7 +228,11 @@ impl Context {
                 ))
             })?;
         log::info!("GPU context: device created");
-        Ok(Self { device, queue })
+        Ok(Self {
+            device,
+            queue,
+            adapter_name: adapter.info.name.clone(),
+        })
     }
 
     fn create(

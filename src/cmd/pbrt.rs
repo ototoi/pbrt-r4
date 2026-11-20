@@ -2,6 +2,8 @@ use clap::*;
 
 use pbrt_r4::displays::SequentialDisplay;
 use pbrt_r4::displays::TevDisplay;
+#[cfg(feature = "webgpu")]
+use pbrt_r4::gpu::webgpu::profile;
 use pbrt_r4::prelude::*;
 use pbrt_r4::util::image::Image;
 use pbrt_r4::util::imageio::{read_image, write_image};
@@ -15,6 +17,8 @@ use std::process;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::thread::available_parallelism;
+#[cfg(feature = "webgpu")]
+use std::time::Instant;
 
 use log::*;
 /*
@@ -480,7 +484,11 @@ fn create_gpu_integrator(
     // The optional Node IR JSON dump remains commented out in build_gpu.rs for future diagnostics.
     let mut builder = SceneBuilder::new();
     let path = path_to_string(input_path)?;
+    #[cfg(feature = "webgpu")]
+    let t = Instant::now();
     parse_file(&path, &mut builder)?;
+    #[cfg(feature = "webgpu")]
+    profile::record_phase("parse", t.elapsed());
     if let Some(pixelsamples) = opts.spp.or(opts.pixelsamples) {
         builder
             .sampler_params
@@ -637,6 +645,13 @@ fn render_gpu(input_path: &Path, opts: &CommandOptions) -> Result<(), PbrtError>
     {
         let mut integrator = integrator.write().unwrap();
         integrator.render()?;
+    }
+
+    #[cfg(feature = "webgpu")]
+    {
+        if let Some(report) = integrator.read().unwrap().profile_report() {
+            eprintln!("{report}");
+        }
     }
 
     return Ok(());

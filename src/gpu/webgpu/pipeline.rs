@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::util::error::PbrtError;
 
+use super::profile;
 use super::shader;
 use super::stage::{ComputeStageId, COMPUTE_STAGES, WAVEFRONT_BIND_GROUP_COUNT};
 use super::stages::{canonical_wavefront_bindings, BindingClass, BindingSpec, ResourceId};
@@ -62,6 +64,7 @@ impl Pipeline {
         let stages: Result<HashMap<ComputeStageId, StagePipeline>, PbrtError> = COMPUTE_STAGES
             .iter()
             .map(|stage| {
+                let t = Instant::now();
                 log::info!("GPU pipeline: creating {}", stage.label);
                 let source = shader::specialize_geometry_page_bindings(
                     shader::specialize_source(
@@ -143,6 +146,7 @@ impl Pipeline {
                     cache: None,
                 });
                 log::info!("GPU pipeline: created {}", stage.label);
+                profile::record_phase(&format!("pipeline: {}", stage.label), t.elapsed());
                 Ok((
                     stage.id,
                     StagePipeline {

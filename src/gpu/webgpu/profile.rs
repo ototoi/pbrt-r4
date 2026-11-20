@@ -38,10 +38,13 @@ pub fn format_report(
     if !phases.is_empty() {
         out.push_str("phases:\n");
         for (name, elapsed) in phases {
-            out.push_str(&format!(
-                "  {name:<24} {:.1} ms\n",
-                elapsed.as_secs_f64() * 1000.0
-            ));
+            let ms = elapsed.as_secs_f64() * 1000.0;
+            let mut line = format!("  {name:<24} {ms:.1} ms");
+            if name == "render loop" && spp > 0 {
+                line.push_str(&format!("  ({:.1} / sample)", ms / f64::from(spp)));
+            }
+            out.push_str(&line);
+            out.push('\n');
         }
     }
     if stages.is_empty() {
