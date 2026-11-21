@@ -97,9 +97,11 @@ fn include_sources_preserve_directive_order_and_work_directories() {
 #[test]
 fn file_parameters_are_resolved_in_their_included_scene_before_entity_creation() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
-    let root = directory.path().join("root.pbrt");
-    let first_dir = directory.path().join("first");
-    let second_dir = directory.path().join("second");
+    // Paths are canonicalized; on Windows that adds the verbatim prefix.
+    let base = directory.path().canonicalize().unwrap();
+    let root = base.join("root.pbrt");
+    let first_dir = base.join("first");
+    let second_dir = base.join("second");
     fs::create_dir(&first_dir).expect("first include directory should be created");
     fs::create_dir(&second_dir).expect("second include directory should be created");
 
@@ -144,9 +146,11 @@ fn file_parameters_are_resolved_in_their_included_scene_before_entity_creation()
 #[test]
 fn spectrum_file_arrays_resolve_each_element_without_reordering() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
-    let root = directory.path().join("root.pbrt");
-    let first_file = directory.path().join("first.spd");
-    let second_file = directory.path().join("second.spd");
+    // Paths are canonicalized; on Windows that adds the verbatim prefix.
+    let base = directory.path().canonicalize().unwrap();
+    let root = base.join("root.pbrt");
+    let first_file = base.join("first.spd");
+    let second_file = base.join("second.spd");
     fs::write(&first_file, "400 1 700 1").expect("first spectrum should be written");
     fs::write(&second_file, "400 2 700 2").expect("second spectrum should be written");
     fs::write(
