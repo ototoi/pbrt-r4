@@ -6,14 +6,14 @@ use super::pipeline_cache;
 use super::profile;
 use super::stages::RequiredLimits;
 
-const BASE_REQUIRED_FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
+pub const BASE_REQUIRED_FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
     .union(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY)
     .union(wgpu::Features::TEXTURE_BINDING_ARRAY)
     .union(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
     .union(wgpu::Features::FLOAT32_FILTERABLE);
 
 /// Picks the first adapter with the base features, preferring discrete GPUs.
-fn preferred_adapter(candidates: &[(wgpu::Features, wgpu::DeviceType)]) -> Option<usize> {
+pub fn preferred_adapter(candidates: &[(wgpu::Features, wgpu::DeviceType)]) -> Option<usize> {
     let rank = |device_type: wgpu::DeviceType| match device_type {
         wgpu::DeviceType::DiscreteGpu => 0,
         wgpu::DeviceType::IntegratedGpu => 1,
@@ -333,30 +333,4 @@ pub fn validate_binding_limits(
         available.max_bind_groups,
         report.map(|report| format!("\n{}", report.format(Some(available), true))).unwrap_or_default(),
     )))
-}
-
-#[cfg(test)]
-mod adapter_selection_tests {
-    use super::*;
-    use wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu};
-
-    #[test]
-    fn prefers_a_capable_adapter_then_a_discrete_one() {
-        let none = wgpu::Features::empty();
-        let all = BASE_REQUIRED_FEATURES;
-        assert_eq!(preferred_adapter(&[]), None);
-        assert_eq!(preferred_adapter(&[(none, DiscreteGpu)]), None);
-        assert_eq!(
-            preferred_adapter(&[(all, IntegratedGpu), (none, DiscreteGpu)]),
-            Some(0)
-        );
-        assert_eq!(
-            preferred_adapter(&[(all, Cpu), (all, IntegratedGpu), (all, DiscreteGpu)]),
-            Some(2)
-        );
-        assert_eq!(
-            preferred_adapter(&[(all, DiscreteGpu), (all, DiscreteGpu)]),
-            Some(0)
-        );
-    }
 }
