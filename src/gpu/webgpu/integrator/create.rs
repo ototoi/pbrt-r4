@@ -23,7 +23,6 @@ use super::super::queue::Queues;
 use super::super::scene::{texture_binding_counts, Scene};
 use super::super::stage::{ComputeStageSpec, COMPUTE_STAGES};
 use super::super::stages::{canonical_wavefront_bindings, BindingSpec, ResourceId};
-use super::sample_retry::{continuation_rounds_from_environment, SampleRetry};
 use super::tiles::DEFAULT_GPU_TILE_SIZE;
 
 impl super::WavefrontPathIntegrator {
@@ -36,10 +35,6 @@ impl super::WavefrontPathIntegrator {
         show_progress: bool,
         tile_size: Option<u32>,
     ) -> Result<Self, PbrtError> {
-        let has_interface_only_instances = flat_scene
-            .instances
-            .iter()
-            .any(|instance| instance.material_root == flat::INVALID_INDEX);
         let attributes_eval_stride =
             u64::from(flat::max_attributes_eval_work_items_per_surface(&flat_scene)?.max(1));
         let texture_eval_stride =
@@ -231,8 +226,6 @@ impl super::WavefrontPathIntegrator {
         } else {
             None
         };
-        let sample_retry = SampleRetry::new(device, scene.render_settings.samples_per_pixel);
-        let continuation_rounds = continuation_rounds_from_environment()?;
         let noise_resources = NoiseRuntimeResources::new(device, queue);
         log::info!("GPU create: queues and film resources ready");
         let film = Film::new(
@@ -320,7 +313,6 @@ impl super::WavefrontPathIntegrator {
                     ResourceId::Index => Some(wgpu::BindingResource::BufferArray(&index_buffers)),
                     ResourceId::BSSRDFWork => Some(bssrdf_work.as_entire_binding()),
                     ResourceId::BSSRDFResults => Some(bssrdf_results.as_entire_binding()),
-                    ResourceId::SampleRetry => Some(sample_retry.binding_resource()),
                     _ => None,
                 })
                 .ok_or_else(|| {
@@ -381,10 +373,6 @@ impl super::WavefrontPathIntegrator {
             show_progress,
             tile_width,
             tile_height,
-            has_interface_only_instances,
-            continuation_rounds,
-            observed_continuation_rounds: std::cell::Cell::new(0),
-            sample_retry,
             idle_stages,
             bssrdf_work,
             _bssrdf_results: bssrdf_results,

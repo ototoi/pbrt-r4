@@ -4,30 +4,6 @@ fn intersect_primary_rays(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (queue_index >= atomicLoad(&queue_counters.medium_active.count)) {
         return;
     }
-    let ray_index = active_medium_indices[queue_index];
-    let ray = load_current_ray(ray_index);
-    let pixel_index = ray.pixel_index;
-    var query: ray_query;
-    rayQueryInitialize(
-        &query,
-        tlas,
-        RayDesc(0u, 0xffu, 0.0, RAY_T_MAX, ray.origin.xyz, ray.direction.xyz),
-    );
-    while (rayQueryProceed(&query)) {
-        let candidate = rayQueryGetCandidateIntersection(&query);
-        if (candidate.kind == RAY_QUERY_INTERSECTION_TRIANGLE
-            && alpha_mask_candidate_accept(ray.origin.xyz, ray.direction.xyz, candidate)) {
-            rayQueryConfirmIntersection(&query);
-        }
-    }
-    let intersection = rayQueryGetCommittedIntersection(&query);
-    if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
-        surfaces[pixel_index].hit = 0u;
-    } else {
-        surfaces[pixel_index].t = intersection.t;
-        surfaces[pixel_index].hit = 1u;
-        surfaces[pixel_index].instance_custom_data = intersection.instance_custom_data;
-        surfaces[pixel_index].primitive_index = intersection.primitive_index;
-        surfaces[pixel_index].barycentric = vec4<f32>(intersection.barycentrics, 0.0, 0.0);
-    }
+    let ray = load_current_ray(active_medium_indices[queue_index]);
+    trace_closest_surface(ray.origin.xyz, ray.direction.xyz, ray.pixel_index);
 }
