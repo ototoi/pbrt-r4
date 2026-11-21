@@ -154,3 +154,5 @@ var<storage, read> sparse_grid_roots: array<SparseGridRootRecord>;
 var<storage, read> sparse_grid_entries: array<SparseGridEntryRecord>;
 @group(0) @binding(80)
 var<storage, read_write> light_sample_work: array<LightSampleWorkItem>;
+@group(0) @binding(82)
+var<storage, read_write> sample_retry: SampleRetry;

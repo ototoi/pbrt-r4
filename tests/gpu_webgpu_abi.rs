@@ -213,7 +213,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, y), 4);
     assert_eq!(std::mem::offset_of!(DispatchIndirectArgs, z), 8);
     // The scatter_hair dispatch slot grew the queue dispatch table.
-    assert_eq!(QUEUE_DISPATCH_SLOT_COUNT, 19);
+    assert_eq!(QUEUE_DISPATCH_SLOT_COUNT, 21);
     assert_eq!(std::mem::size_of::<RenderError>(), 16);
     assert_eq!(std::mem::offset_of!(RenderError, value), 0);
     assert_eq!(std::mem::offset_of!(RenderError, padding), 4);

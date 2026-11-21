@@ -90,6 +90,7 @@ pub enum ResourceId {
     BSSRDFWork,
     BSSRDFResults,
     LightSampleWork,
+    SampleRetry,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,6 +171,12 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
     push(
         80,
         ResourceId::LightSampleWork,
+        BindingClass::Storage,
+        Access::ReadWrite,
+    );
+    push(
+        82,
+        ResourceId::SampleRetry,
         BindingClass::Storage,
         Access::ReadWrite,
     );
