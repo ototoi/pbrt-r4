@@ -2,7 +2,10 @@
 
 use bytemuck::{cast_slice, Zeroable};
 use pbrt_r4::gpu::flat::flatten::nanovdb::{create_nanovdb, decode_density_grid};
-use pbrt_r4::gpu::flat::sparse_grid::{SparseGridEntry, SparseGridRoot, SparseScalarGrid};
+use pbrt_r4::gpu::flat::sparse_grid::{
+    SparseGridEntry, SparseGridRoot, SparseScalarGrid, SPARSE_LEAF_SIZE, SPARSE_LOWER_SIZE,
+    SPARSE_UPPER_SIZE,
+};
 use pbrt_r4::gpu::flat::{
     identity_transform, Medium, MediumData, NanoVDBMedium, NanoVDBScalarGrid,
 };
@@ -10,7 +13,7 @@ use pbrt_r4::gpu::webgpu::abi::{
     RenderError, SparseGridEntryRecord, SparseGridRootRecord, VolumeMediumRecord,
 };
 use pbrt_r4::gpu::webgpu::context::Context;
-use pbrt_r4::gpu::webgpu::scene::medium::convert_media;
+use pbrt_r4::gpu::webgpu::scene::medium::{convert_media, ConvertedMedia};
 use pbrt_r4::gpu::webgpu::shader::compose_source;
 use pbrt_r4::gpu::webgpu::stages::RequiredLimits;
 use pbrt_r4::paramdict::ParameterDictionary;
@@ -637,7 +640,6 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
         data: MediumData::NanoVDB(nanovdb.clone()),
     };
     let converted = convert_media(&[medium], 1).unwrap();
-    let volume = converted.volumes[0];
     let mut grids = vec![(
         &nanovdb.density,
         nanovdb.index_bbox_min,
@@ -683,6 +685,119 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
             }
         }
     }
+    let actual = gpu_sample_points(&converted, &points);
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
+            "GPU {actual} differs from Flat {expected}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a WebGPU adapter"]
+fn trilinear_samples_across_leaf_tile_and_root_boundaries_match_flat_grid() {
+    let tile = |value| SparseGridEntry {
+        child_index: None,
+        value,
+    };
+    let child = |index| SparseGridEntry {
+        child_index: Some(index),
+        value: 0.0,
+    };
+    let mut upper_entries = vec![tile(4.0); 2 * SPARSE_UPPER_SIZE];
+    upper_entries[0] = child(0);
+    upper_entries[SPARSE_UPPER_SIZE + 31 * 1024] = child(1);
+    let mut lower_entries = vec![tile(3.0); 2 * SPARSE_LOWER_SIZE];
+    for (leaf, [x, y, z]) in [
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 1, 0],
+        [1, 0, 1],
+        [0, 1, 1],
+        [1, 1, 1],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        lower_entries[x * 256 + y * 16 + z] = child(leaf as u32);
+    }
+    lower_entries[SPARSE_LOWER_SIZE + 15 * 256] = child(8);
+    let density = SparseScalarGrid {
+        background: 0.5,
+        roots: vec![
+            SparseGridRoot {
+                block: [0; 3],
+                entry: child(0),
+            },
+            SparseGridRoot {
+                block: [-1, 0, 0],
+                entry: child(1),
+            },
+            SparseGridRoot {
+                block: [0, -1, 0],
+                entry: tile(6.0),
+            },
+        ],
+        upper_entries,
+        lower_entries,
+        leaf_values: (0..9 * SPARSE_LEAF_SIZE)
+            .map(|index| 1.0 + index as f32 * 0.125)
+            .collect(),
+    };
+    let medium = Medium {
+        name: "sparse grid boundary probe".to_owned(),
+        sigma_a: 0,
+        sigma_s: 0,
+        le: 0,
+        g: 0.0,
+        transform: identity_transform(),
+        data: MediumData::NanoVDB(NanoVDBMedium {
+            temperature: None,
+            temperature_offset: 0.0,
+            temperature_scale: 1.0,
+            le_scale: 1.0,
+            density: density.clone(),
+            index_bbox_min: [-16; 3],
+            index_bbox_max: [24; 3],
+            inverse_map_f: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            translation_f: [0.0; 3],
+            bounds_min: [-16.0; 3],
+            bounds_max: [24.0; 3],
+            majorant_resolution: [64; 3],
+            majorant: vec![1.0 + (9 * SPARSE_LEAF_SIZE) as f32 * 0.125; 64usize.pow(3)],
+        }),
+    };
+    let converted = convert_media(&[medium], 1).unwrap();
+
+    // Every base in the range, so each axis hits in-leaf, leaf-leaf, leaf-tile and root crossings.
+    let mut points = Vec::new();
+    let mut expected = Vec::new();
+    for x in -10..18 {
+        for y in -10..18 {
+            for z in -10..18 {
+                let point = [x as f32 + 0.25, y as f32 + 0.5, z as f32 + 0.75];
+                expected.push(sample_sparse_grid(&density, point));
+                points.push([point[0], point[1], point[2], 0.0]);
+            }
+        }
+    }
+    let point = [127.5, 3.5, 2.5];
+    expected.push(sample_sparse_grid(&density, point));
+    points.push([point[0], point[1], point[2], 0.0]);
+
+    let actual = gpu_sample_points(&converted, &points);
+    for ((actual, expected), point) in actual.iter().zip(expected).zip(points) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
+            "GPU {actual} differs from Flat {expected} at {point:?}"
+        );
+    }
+}
+
+fn gpu_sample_points(converted: &ConvertedMedia, points: &[[f32; 4]]) -> Vec<f32> {
     let sample_count = points.len();
 
     let context = Context::new(
@@ -719,7 +834,11 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
         );
         assert!(byte_size as u64 <= device.limits().max_buffer_size);
     }
-    let volume_buffer = storage_buffer(device, "NanoVDB asset volume record", &[volume]);
+    let volume_buffer = storage_buffer(
+        device,
+        "NanoVDB asset volume record",
+        &converted.volumes[..1],
+    );
     let roots_buffer = storage_buffer(
         device,
         "NanoVDB asset roots",
@@ -741,7 +860,7 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
         "NanoVDB asset render error",
         std::slice::from_ref(&render_error),
     );
-    let points_buffer = storage_buffer(device, "NanoVDB asset sample points", points.as_slice());
+    let points_buffer = storage_buffer(device, "NanoVDB asset sample points", points);
     let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("NanoVDB asset sample output"),
         size: (sample_count * 4) as u64,
@@ -822,12 +941,7 @@ fn actual_asset_gpu_samples_match_flat_grid_samples() {
     let actual = read_f32_buffer(device, &readback);
     let render_error = read_u32_buffer(device, &error_readback);
     assert_eq!(render_error[0], 0);
-    for (actual, expected) in actual.iter().zip(expected) {
-        assert!(
-            (actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0),
-            "GPU {actual} differs from Flat {expected}"
-        );
-    }
+    actual
 }
 
 fn sample_sparse_grid(grid: &SparseScalarGrid, point: [f32; 3]) -> f32 {

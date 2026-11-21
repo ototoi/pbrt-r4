@@ -104,14 +104,22 @@ fn sparse_grid_sample(grid: SparseScalarGridRecord, position_medium: vec3<f32>) 
         return 0.0;
     }
     let fraction = index - vec3<f32>(base);
-    let v000 = sparse_grid_get_value(grid, base);
-    let v001 = sparse_grid_get_value(grid, base + vec3<i32>(0, 0, 1));
-    let v010 = sparse_grid_get_value(grid, base + vec3<i32>(0, 1, 0));
-    let v011 = sparse_grid_get_value(grid, base + vec3<i32>(0, 1, 1));
-    let v100 = sparse_grid_get_value(grid, base + vec3<i32>(1, 0, 0));
-    let v101 = sparse_grid_get_value(grid, base + vec3<i32>(1, 0, 1));
-    let v110 = sparse_grid_get_value(grid, base + vec3<i32>(1, 1, 0));
-    let v111 = sparse_grid_get_value(grid, base + vec3<i32>(1, 1, 1));
+    var values: array<f32, 8>;
+    var block = base >> vec3<u32>(3);
+    var lookup = sparse_grid_find_leaf(grid, base);
+    for (var corner = 0u; corner < 8u; corner += 1u) {
+        let coordinate = base + vec3<i32>(
+            i32(corner >> 2u), i32((corner >> 1u) & 1u), i32(corner & 1u),
+        );
+        let corner_block = coordinate >> vec3<u32>(3);
+        if (any(corner_block != block)) {
+            block = corner_block;
+            lookup = sparse_grid_find_leaf(grid, coordinate);
+        }
+        values[corner] = sparse_grid_leaf_value(lookup, coordinate);
+    }
+    let v000 = values[0]; let v001 = values[1]; let v010 = values[2]; let v011 = values[3];
+    let v100 = values[4]; let v101 = values[5]; let v110 = values[6]; let v111 = values[7];
     let z00 = v000 + fraction.z * (v001 - v000);
     let z01 = v010 + fraction.z * (v011 - v010);
     let z10 = v100 + fraction.z * (v101 - v100);
