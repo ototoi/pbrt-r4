@@ -1,8 +1,7 @@
 @compute @workgroup_size(64, 1, 1)
 fn sample_medium(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
-    if (queue_index >= atomicLoad(&queue_counters.medium_active.count)) { return; }
-    let ray_index = active_medium_indices[queue_index];
+    let ray_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
+    if (ray_index >= current_ray_count()) { return; }
     for (var crossing = 0u; ; crossing += 1u) {
         if (crossing > MAX_INTERFACE_CROSSINGS) {
             set_render_error();

@@ -1,10 +1,9 @@
 @compute @workgroup_size(64, 1, 1)
 fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let queue_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
-    if (queue_index >= atomicLoad(&queue_counters.shadow_active.count)) {
+    let ray_index = global_id.y * INDIRECT_ROW_ITEMS + global_id.x;
+    if (ray_index >= shadow_ray_count()) {
         return;
     }
-    let ray_index = active_shadow_indices[queue_index];
     var shadow = shadow_rays[ray_index];
     for (var crossing = 0u; ; crossing += 1u) {
         if (crossing > MAX_INTERFACE_CROSSINGS) {

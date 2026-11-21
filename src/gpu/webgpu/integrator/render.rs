@@ -61,19 +61,17 @@ impl super::WavefrontPathIntegrator {
     }
 
     fn trace_shadow_rays(&self) {
-        self.queues.reset_shadow_active(&self.context.queue);
         let mut encoder =
             self.context
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pbrt-r4 shadow segment encoder"),
                 });
-        for id in [
-            ComputeStageId::InitializeShadowSegments,
+        self.dispatch_queue(
+            &mut encoder,
             ComputeStageId::IntersectShadow,
-        ] {
-            self.dispatch_queue(&mut encoder, id, QUEUE_DISPATCH_SLOT_SHADOW);
-        }
+            QUEUE_DISPATCH_SLOT_SHADOW,
+        );
         self.context.queue.submit(Some(encoder.finish()));
     }
 
@@ -128,19 +126,12 @@ impl super::WavefrontPathIntegrator {
     }
 
     fn trace_medium_segments(&self) {
-        self.queues.reset_medium_active(&self.context.queue);
         let mut encoder =
             self.context
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pbrt-r4 medium segment encoder"),
                 });
-        self.dispatch_queue(
-            &mut encoder,
-            ComputeStageId::InitializeMediumSegments,
-            QUEUE_DISPATCH_SLOT_CURRENT_RAY,
-        );
-        self.dispatch_single(&mut encoder, ComputeStageId::PrepareQueueDispatch);
         for id in [
             ComputeStageId::IntersectPrimaryRays,
             ComputeStageId::SampleMedium,

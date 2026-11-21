@@ -100,7 +100,7 @@ fn homogeneous_medium_stage_tracks_path_medium_and_spectral_weights() {
     );
     assert!(source.contains("crossing > MAX_INTERFACE_CROSSINGS"));
     assert!(source.contains("append_escaped_ray(ray_index);"));
-    assert!(source.contains("active_medium_indices[queue_index]"));
+    assert!(source.contains("ray_index >= current_ray_count()"));
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
     assert!(shadow.contains("shadow.infinite_distance"));
     assert!(shadow.contains("shadow.depth"));
     assert!(shadow.contains("crossing > MAX_INTERFACE_CROSSINGS"));
-    assert!(shadow.contains("active_shadow_indices[queue_index]"));
+    assert!(shadow.contains("ray_index >= shadow_ray_count()"));
     assert!(shadow.contains("random01_stream("));
 
     let thin_dielectric = compose_source(SCATTER_THIN_DIELECTRIC_SHADER);
