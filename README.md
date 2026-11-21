@@ -116,7 +116,8 @@ integrator, such as `bdpt`, `mlt`, or `sppm`, the GPU renderer warns and uses
 matches pbrt-v4's GPU integrator selection behavior.
 
 `--gpu-tile-size` controls the square tile size and defaults to 512 pixels.
-Reduce it to limit memory used by per-pixel rendering buffers. Scene geometry,
+Reduce it to limit memory used by per-pixel rendering buffers, at some cost in
+rendering speed. Scene geometry,
 textures, and acceleration structures must still fit in available GPU memory.
 
 The WebGPU backend requires an adapter that provides experimental ray-query
