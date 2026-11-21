@@ -1,5 +1,16 @@
 @compute @workgroup_size(8, 8, 1)
 fn accumulate_sample(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (sample_retry.pending != 0u) {
+        if (all(global_id.xy == vec2<u32>(0u))) {
+            let index = atomicAdd(&sample_retry.count, 1u);
+            if (index < arrayLength(&sample_retry.samples)) {
+                sample_retry.samples[index] = viewport.sample_index;
+            } else {
+                set_render_error();
+            }
+        }
+        return;
+    }
     if (global_id.x >= viewport.tile_width || global_id.y >= viewport.tile_height) {
         return;
     }

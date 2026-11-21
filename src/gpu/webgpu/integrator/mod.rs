@@ -15,6 +15,7 @@ mod create;
 mod dispatch;
 mod idle_stages;
 mod render;
+mod sample_retry;
 mod tiles;
 
 pub struct WavefrontPathIntegrator {
@@ -35,6 +36,9 @@ pub struct WavefrontPathIntegrator {
     tile_width: u32,
     tile_height: u32,
     has_interface_only_instances: bool,
+    continuation_rounds: u32,
+    observed_continuation_rounds: std::cell::Cell<u32>,
+    sample_retry: sample_retry::SampleRetry,
     idle_stages: HashSet<ComputeStageId>,
     bssrdf_work: wgpu::Buffer,
     _bssrdf_results: wgpu::Buffer,

@@ -30,7 +30,9 @@ const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u32 = 14u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u32 = 15u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u32 = 16u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u32 = 17u;
-const QUEUE_DISPATCH_SLOT_COUNT: u32 = 19u;
+const QUEUE_DISPATCH_SLOT_SHADOW_CONTINUATION: u32 = 19u;
+const QUEUE_DISPATCH_SLOT_MEDIUM_CONTINUATION: u32 = 20u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 21u;
 const LIGHT_SAMPLE_SOURCE_SURFACE: u32 = 0u;
 const LIGHT_SAMPLE_SOURCE_MEDIUM: u32 = 1u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
@@ -569,6 +571,16 @@ struct DispatchIndirectArgs {
     x: u32,
     y: u32,
     z: u32,
+};
+
+// A sample whose continuations outlasted the GPU rounds is left out of the
+// film and listed here so the host can render it again.
+struct SampleRetry {
+    pending: u32,
+    count: atomic<u32>,
+    _padding0: u32,
+    _padding1: u32,
+    samples: array<u32>,
 };
 
 struct RenderError {
