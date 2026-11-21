@@ -282,6 +282,7 @@ pub struct TextureEvalResult {
     pub texture_root: u32,
     pub valid: u32,
     pub value: [f32; 4],
+    pub spectrum: [f32; 4],
 }
 
 #[repr(C)]

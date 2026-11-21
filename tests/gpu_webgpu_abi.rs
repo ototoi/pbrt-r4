@@ -173,7 +173,7 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     assert_eq!(std::mem::offset_of!(RayWorkItem, medium_segment_index), 168);
     assert_eq!(std::mem::size_of::<ShadowRayWorkItem>(), 176);
     assert_eq!(std::mem::size_of::<SurfaceWorkItem>(), 256);
-    assert_eq!(std::mem::size_of::<TextureEvalResult>(), 32);
+    assert_eq!(std::mem::size_of::<TextureEvalResult>(), 48);
     assert_eq!(std::mem::size_of::<LightRecord>(), 16);
     assert_eq!(
         std::mem::size_of::<pbrt_r4::gpu::webgpu::abi::LightSamplingModel>(),

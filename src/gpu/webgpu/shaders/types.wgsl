@@ -148,6 +148,7 @@ struct TextureEvalResult {
     texture_root: u32,
     valid: u32,
     value: vec4<f32>,
+    spectrum: vec4<f32>,
 };
 
 struct LayeredParams {

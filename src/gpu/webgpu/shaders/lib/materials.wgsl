@@ -53,7 +53,7 @@ fn load_texture_eval_result(material_node: u32, ordinal: u32, texture_root: u32)
         }
     }
     set_render_error();
-    return TextureEvalResult(0u, 0u, 0u, 0u, vec4<f32>(0.0));
+    return TextureEvalResult(0u, 0u, 0u, 0u, vec4<f32>(0.0), vec4<f32>(0.0));
 }
 
 fn load_material_scalar(material_node: u32, ordinal: u32) -> f32 {
@@ -68,23 +68,7 @@ fn load_material_scalar(material_node: u32, ordinal: u32) -> f32 {
 fn load_material_spectrum(material_node: u32, ordinal: u32, lambda: vec4<f32>) -> vec4<f32> {
     let attr_ref = load_material_attribute(material_node, ordinal);
     if (attr_ref.kind == 2u) {
-        let result = load_texture_eval_result(material_node, ordinal, attr_ref.index);
-        if (result.valid == 0u || result.texture_root >= arrayLength(&texture_roots)) {
-            return vec4<f32>(0.0);
-        }
-        let root = texture_roots[result.texture_root];
-        let rgb = result.value.rgb;
-        if (texture_nodes[root.texture_node + root.result].kind == 0u) {
-            return vec4<f32>(rgb.x);
-        }
-        // One conversion call site: each inlined copy of the table lookup costs driver compile time.
-        var scale = 1.0;
-        if (root.spectrum_type == 1u) {
-            let max_value = max(max(rgb.x, rgb.y), rgb.z);
-            if (max_value <= 0.0) { return vec4<f32>(0.0); }
-            scale = 2.0 * max_value;
-        }
-        return scale * rgb_to_spectrum4(rgb / scale, lambda, texture_nodes[root.texture_node + root.result].color_space);
+        return load_texture_eval_result(material_node, ordinal, attr_ref.index).spectrum;
     }
     if (attr_ref.kind != 1u) { set_render_error(); return vec4<f32>(0.0); }
     return evaluate_spectrum(attr_ref.index, lambda);
