@@ -79,8 +79,6 @@ pub enum ResourceId {
     VolumeData,
     SparseGridRoots,
     SparseGridEntries,
-    ActiveMediumIndices,
-    ActiveShadowIndices,
     MediumScatterQueue,
     BSSRDFMaterial,
     BSSRDFTable,
@@ -171,12 +169,6 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::Storage,
         Access::ReadWrite,
     );
-    for (binding, resource) in [
-        (62, ResourceId::ActiveMediumIndices),
-        (64, ResourceId::ActiveShadowIndices),
-    ] {
-        push(binding, resource, BindingClass::Storage, Access::ReadWrite);
-    }
     push(
         1,
         ResourceId::SampleParams,

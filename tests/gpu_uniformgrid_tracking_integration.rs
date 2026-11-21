@@ -523,8 +523,8 @@ fn run_stage(
     surface.t = distance;
     values.insert(8, bytes_of(&surface).to_vec());
     let mut counters = QueueCounters::zeroed();
-    counters.medium_active.count = 1;
-    counters.shadow_active.count = 1;
+    counters.current.count = 1;
+    counters.shadow.count = 1;
     counters.medium_scatter.capacity = 1;
     values.insert(10, bytes_of(&counters).to_vec());
     values.insert(11, bytes_of(&RenderError::zeroed()).to_vec());

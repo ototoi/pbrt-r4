@@ -33,7 +33,7 @@ fn duplicate_bindings_are_rejected_before_device_creation() {
 #[test]
 fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
     let bindings = canonical_wavefront_bindings();
-    assert_eq!(bindings.len(), 78);
+    assert_eq!(bindings.len(), 76);
     for (index, left) in bindings.iter().enumerate() {
         for right in &bindings[index + 1..] {
             assert!(!(left.group == right.group && left.binding == right.binding));
@@ -100,13 +100,13 @@ fn canonical_wavefront_layout_has_unique_bindings_and_named_resources() {
 #[test]
 fn canonical_layout_drives_required_limits() {
     let limits = RequiredLimits::from_bindings(&canonical_wavefront_bindings()).unwrap();
-    // Binding 81 (scatter_hair queue) extends the wavefront layout; 63 and 65
-    // went with the continuation queues.
-    assert_eq!(limits.storage_buffers_per_shader_stage, 65);
+    // Binding 81 (scatter_hair queue) extends the wavefront layout; 62 to 65
+    // went with the segment and continuation queues.
+    assert_eq!(limits.storage_buffers_per_shader_stage, 63);
     assert_eq!(limits.uniform_buffers_per_shader_stage, 6);
     assert_eq!(
         limits.buffers_and_acceleration_structures_per_shader_stage,
-        72
+        70
     );
     assert_eq!(limits.bind_groups, 2);
 }

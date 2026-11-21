@@ -550,8 +550,6 @@ struct QueueCounters {
     scatter_measured: QueueState,
     scatter_coated: QueueState,
     scatter_hair: QueueState,
-    medium_active: QueueState,
-    shadow_active: QueueState,
     medium_scatter: QueueState,
     sample_area_light: QueueState,
     sample_image_infinite_light: QueueState,

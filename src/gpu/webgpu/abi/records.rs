@@ -391,8 +391,6 @@ pub struct QueueCounters {
     pub scatter_measured: QueueState,
     pub scatter_coated: QueueState,
     pub scatter_hair: QueueState,
-    pub medium_active: QueueState,
-    pub shadow_active: QueueState,
     pub medium_scatter: QueueState,
     pub sample_area_light: QueueState,
     pub sample_image_infinite_light: QueueState,

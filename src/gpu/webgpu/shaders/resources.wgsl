@@ -126,10 +126,6 @@ var<storage, read> light_positions: array<vec4<f32>>;
 var<storage, read_write> queue_dispatch_args: array<DispatchIndirectArgs, QUEUE_DISPATCH_SLOT_COUNT>;
 @group(0) @binding(61)
 var<storage, read> media: array<MediumRecord>;
-@group(0) @binding(62)
-var<storage, read_write> active_medium_indices: array<u32>;
-@group(0) @binding(64)
-var<storage, read_write> active_shadow_indices: array<u32>;
 
 @group(0) @binding(66) var<storage, read> bssrdf_materials: array<BSSRDFMaterialRecord>;
 @group(0) @binding(67) var<storage, read> bssrdf_tables: array<BSSRDFTableRecord>;

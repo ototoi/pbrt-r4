@@ -183,17 +183,15 @@ fn webgpu_storage_struct_sizes_match_shader_layout() {
     // QueueCounters grew with the scatter_hair queue (diced-curve hair
     // material); the tail entries shifted by one QueueState.
     // Interface crossings loop inside the shaders, so there are no
-    // continuation queues between the hair queue and the active queues.
-    assert_eq!(std::mem::size_of::<QueueCounters>(), 336);
-    assert_eq!(std::mem::offset_of!(QueueCounters, medium_active), 240);
-    assert_eq!(std::mem::offset_of!(QueueCounters, shadow_active), 256);
-    assert_eq!(std::mem::offset_of!(QueueCounters, medium_scatter), 272);
-    assert_eq!(std::mem::offset_of!(QueueCounters, sample_area_light), 288);
+    // continuation or active-segment queues after the hair queue.
+    assert_eq!(std::mem::size_of::<QueueCounters>(), 304);
+    assert_eq!(std::mem::offset_of!(QueueCounters, medium_scatter), 240);
+    assert_eq!(std::mem::offset_of!(QueueCounters, sample_area_light), 256);
     assert_eq!(
         std::mem::offset_of!(QueueCounters, sample_image_infinite_light),
-        304
+        272
     );
-    assert_eq!(std::mem::offset_of!(QueueCounters, sample_other_light), 320);
+    assert_eq!(std::mem::offset_of!(QueueCounters, sample_other_light), 288);
     assert_eq!(std::mem::size_of::<LightSampleWorkItem>(), 16);
     assert_eq!(std::mem::align_of::<LightSampleWorkItem>(), 4);
     assert_eq!(std::mem::offset_of!(LightSampleWorkItem, source_kind), 4);

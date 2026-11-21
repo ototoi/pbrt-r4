@@ -41,8 +41,6 @@ pub struct TypedQueueSizes {
     pub scatter_measured_ray_indices: u64,
     pub scatter_coated_ray_indices: u64,
     pub scatter_hair_ray_indices: u64,
-    pub active_medium_indices: u64,
-    pub active_shadow_indices: u64,
     pub medium_scatter_indices: u64,
 }
 
@@ -136,8 +134,6 @@ impl TypedQueueSizes {
             )?,
             scatter_coated_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter coated queue")?,
             scatter_hair_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter hair queue")?,
-            active_medium_indices: bytes(std::mem::size_of::<u32>(), "active medium queue")?,
-            active_shadow_indices: bytes(std::mem::size_of::<u32>(), "active shadow queue")?,
             medium_scatter_indices: bytes(std::mem::size_of::<u32>(), "medium scatter queue")?,
         })
     }
@@ -167,8 +163,6 @@ pub struct Queues {
     pub scatter_measured_ray_indices: wgpu::Buffer,
     pub scatter_coated_ray_indices: wgpu::Buffer,
     pub scatter_hair_ray_indices: wgpu::Buffer,
-    pub active_medium_indices: wgpu::Buffer,
-    pub active_shadow_indices: wgpu::Buffer,
     pub medium_scatter_indices: wgpu::Buffer,
     pub queue_dispatch_args: wgpu::Buffer,
     state_readback: wgpu::Buffer,
@@ -220,8 +214,6 @@ impl Queues {
             scatter_measured: state,
             scatter_coated: state,
             scatter_hair: state,
-            medium_active: state,
-            shadow_active: state,
             medium_scatter: state,
             sample_area_light: state,
             sample_image_infinite_light: state,
@@ -317,18 +309,6 @@ impl Queues {
                 "pbrt-r4 scatter hair ray index queue",
                 sizes.scatter_hair_ray_indices,
             ),
-            active_medium_indices: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pbrt-r4 active medium segment indices"),
-                size: sizes.active_medium_indices,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            active_shadow_indices: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pbrt-r4 active shadow segment indices"),
-                size: sizes.active_shadow_indices,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
             medium_scatter_indices: storage(
                 "pbrt-r4 medium scatter indices",
                 sizes.medium_scatter_indices,
@@ -349,20 +329,12 @@ impl Queues {
         })
     }
 
-    pub fn reset_medium_active(&self, queue: &wgpu::Queue) {
-        self.write_count(queue, std::mem::offset_of!(QueueCounters, medium_active), 0);
-    }
-
     pub fn reset_medium_scatter(&self, queue: &wgpu::Queue) {
         self.write_count(
             queue,
             std::mem::offset_of!(QueueCounters, medium_scatter),
             0,
         );
-    }
-
-    pub fn reset_shadow_active(&self, queue: &wgpu::Queue) {
-        self.write_count(queue, std::mem::offset_of!(QueueCounters, shadow_active), 0);
     }
 
     fn write_count(&self, queue: &wgpu::Queue, offset: usize, count: u32) {
@@ -450,8 +422,6 @@ impl Queues {
                 Some(self.scatter_coated_ray_indices.as_entire_binding())
             }
             ResourceId::ScatterHairQueue => Some(self.scatter_hair_ray_indices.as_entire_binding()),
-            ResourceId::ActiveMediumIndices => Some(self.active_medium_indices.as_entire_binding()),
-            ResourceId::ActiveShadowIndices => Some(self.active_shadow_indices.as_entire_binding()),
             ResourceId::MediumScatterQueue => Some(self.medium_scatter_indices.as_entire_binding()),
             ResourceId::QueueDispatchArgs => Some(self.queue_dispatch_args.as_entire_binding()),
             _ => None,
