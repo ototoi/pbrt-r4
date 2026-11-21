@@ -237,7 +237,7 @@ struct CommandOptions {
 
     /// GPU wavefront tile side length in pixels (square tiles). Tiles are
     /// processed sequentially to bound per-pixel wavefront buffer sizes;
-    /// this does not affect rendering speed. Defaults to 512.
+    /// smaller tiles use less memory but render slower. Defaults to 1024.
     #[arg(long = "gpu-tile-size", value_name = "pixels")]
     pub gpu_tile_size: Option<u32>,
 

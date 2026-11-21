@@ -6,7 +6,7 @@ pub(super) const DEFAULT_DISPLAY_UPDATE_INTERVAL: Duration = Duration::from_mill
 /// strictly sequentially (never in parallel); the goal is bounding the size
 /// of every per-pixel wavefront buffer, not speed. See
 /// `docs/webgpu-tile-rendering-design_ja.md` in the devkit repo.
-pub(super) const DEFAULT_GPU_TILE_SIZE: u32 = 512;
+pub(super) const DEFAULT_GPU_TILE_SIZE: u32 = 1024;
 
 /// One rectangular sub-region of the rendered region, in full-image
 /// coordinates.
