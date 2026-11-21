@@ -131,17 +131,24 @@ fn apply_surface_bump(pixel: u32, surface: SurfaceWorkItem, material_root: Mater
     material_texture_dpdy = surface.dpdy.xyz;
     material_texture_normal = surface.normal.xyz;
 
-    material_texture_position = surface.position.xyz + du * surface.dpdu.xyz;
-    material_texture_uv = surface.uv + vec2<f32>(du, 0.0);
-    let u_displacement = sample_texture_program(texture_roots[texture_root], material_texture_uv).x;
-
-    material_texture_position = surface.position.xyz + dv * surface.dpdv.xyz;
-    material_texture_uv = surface.uv + vec2<f32>(0.0, dv);
-    let v_displacement = sample_texture_program(texture_roots[texture_root], material_texture_uv).x;
-
-    material_texture_position = surface.position.xyz;
-    material_texture_uv = surface.uv;
-    let displacement = sample_texture_program(texture_roots[texture_root], surface.uv).x;
+    // One call site: the driver inlines the texture program at each call.
+    var displacements: array<f32, 3>;
+    for (var i = 0u; i < 3u; i++) {
+        if (i == 0u) {
+            material_texture_position = surface.position.xyz + du * surface.dpdu.xyz;
+            material_texture_uv = surface.uv + vec2<f32>(du, 0.0);
+        } else if (i == 1u) {
+            material_texture_position = surface.position.xyz + dv * surface.dpdv.xyz;
+            material_texture_uv = surface.uv + vec2<f32>(0.0, dv);
+        } else {
+            material_texture_position = surface.position.xyz;
+            material_texture_uv = surface.uv;
+        }
+        displacements[i] = sample_texture_program(texture_roots[texture_root], material_texture_uv).x;
+    }
+    let u_displacement = displacements[0];
+    let v_displacement = displacements[1];
+    let displacement = displacements[2];
 
     // Mesh dndu/dndv come from per-triangle vertex-normal differences and
     // carry a component along the shading normal. With a nonzero constant

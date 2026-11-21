@@ -14,10 +14,11 @@ fn evaluate_textures(@builtin(global_invocation_id) global_id: vec3<u32>) {
     material_texture_uv_dy = vec2<f32>(surface.uv_differentials.z, surface.uv_differentials.w);
     material_texture_dpdx = surface.dpdx.xyz;
     material_texture_dpdy = surface.dpdy.xyz;
+    let lambda = load_sample_lambda(ray.pixel_index);
     let result_base = queue_index * material_table.texture_eval_stride;
     for (var slot = 0u; slot < material_table.texture_eval_stride; slot++) {
         texture_eval_results[result_base + slot] =
-            TextureEvalResult(0u, 0u, 0u, 0u, vec4<f32>(0.0));
+            TextureEvalResult(0u, 0u, 0u, 0u, vec4<f32>(0.0), vec4<f32>(0.0));
     }
 
     var result_slot = 0u;
@@ -46,13 +47,25 @@ fn evaluate_textures(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 set_render_error();
                 return;
             }
-            let rgb = sample_texture_program(texture_roots[attribute_ref.index], surface.uv);
+            let root = texture_roots[attribute_ref.index];
+            let rgb = sample_texture_program(root, surface.uv);
+            let result_node = texture_nodes[root.texture_node + root.result];
+            let max_value = max(max(rgb.x, rgb.y), rgb.z);
+            var spectrum = vec4<f32>(rgb.x);
+            if (result_node.kind != 0u) {
+                spectrum = vec4<f32>(0.0);
+                if (root.spectrum_type != 1u || !(max_value <= 0.0)) {
+                    let scale = select(1.0, 2.0 * max_value, root.spectrum_type == 1u);
+                    spectrum = scale * rgb_to_spectrum4(rgb / scale, lambda, result_node.color_space);
+                }
+            }
             texture_eval_results[result_base + result_slot] = TextureEvalResult(
                 material_node_index_value,
                 ordinal,
                 attribute_ref.index,
                 1u,
                 vec4<f32>(rgb, 0.0),
+                spectrum,
             );
             result_slot += 1u;
         }
