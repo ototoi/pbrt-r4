@@ -391,8 +391,6 @@ pub struct QueueCounters {
     pub scatter_measured: QueueState,
     pub scatter_coated: QueueState,
     pub scatter_hair: QueueState,
-    pub medium_continuation: QueueState,
-    pub shadow_continuation: QueueState,
     pub medium_active: QueueState,
     pub shadow_active: QueueState,
     pub medium_scatter: QueueState,
@@ -431,9 +429,7 @@ pub const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u64 = 15;
 pub const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u64 = 16;
 pub const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u64 = 17;
 pub const QUEUE_DISPATCH_SLOT_SCATTER_HAIR: u64 = 18;
-pub const QUEUE_DISPATCH_SLOT_SHADOW_CONTINUATION: u64 = 19;
-pub const QUEUE_DISPATCH_SLOT_MEDIUM_CONTINUATION: u64 = 20;
-pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 21;
+pub const QUEUE_DISPATCH_SLOT_COUNT: u64 = 19;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

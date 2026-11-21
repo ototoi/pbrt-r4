@@ -95,7 +95,10 @@ fn homogeneous_medium_stage_tracks_path_medium_and_spectral_weights() {
     assert!(source.contains("ray.beta *= weight;"));
     assert!(source.contains("ray.r_u *= weight;"));
     assert!(source.contains("ray.r_l *= weight;"));
-    assert!(source.contains("append_medium_continuation(ray_index);"));
+    assert!(
+        source.contains("trace_closest_surface(ray.origin.xyz, ray.direction.xyz, pixel_index);")
+    );
+    assert!(source.contains("crossing > MAX_INTERFACE_CROSSINGS"));
     assert!(source.contains("append_escaped_ray(ray_index);"));
     assert!(source.contains("active_medium_indices[queue_index]"));
 }
@@ -113,7 +116,7 @@ fn surface_bounces_select_the_medium_from_the_outgoing_geometric_side() {
     assert!(shadow.contains("shadow.medium_id"));
     assert!(shadow.contains("shadow.infinite_distance"));
     assert!(shadow.contains("shadow.depth"));
-    assert!(shadow.contains("append_shadow_continuation(ray_index)"));
+    assert!(shadow.contains("crossing > MAX_INTERFACE_CROSSINGS"));
     assert!(shadow.contains("active_shadow_indices[queue_index]"));
     assert!(shadow.contains("random01_stream("));
 
@@ -509,7 +512,6 @@ fn shadow_queue_carries_the_complete_rgb_contribution() {
 
     let shadow = compose_source(INTERSECT_SHADOW_SHADER);
     assert!(shadow.contains("shadow.direct * shadow.transmittance / denom"));
-    assert!(shadow.contains("append_shadow_continuation(ray_index)"));
     assert!(shadow.contains("shadow.endpoint.xyz"));
     assert!(shadow.contains("shadow.r_u * shadow.inv_w_u + shadow.r_l * shadow.inv_w_l"));
     assert!(!shadow.contains("load_current_ray"));

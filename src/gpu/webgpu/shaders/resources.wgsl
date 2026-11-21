@@ -128,12 +128,8 @@ var<storage, read_write> queue_dispatch_args: array<DispatchIndirectArgs, QUEUE_
 var<storage, read> media: array<MediumRecord>;
 @group(0) @binding(62)
 var<storage, read_write> active_medium_indices: array<u32>;
-@group(0) @binding(63)
-var<storage, read_write> next_medium_indices: array<u32>;
 @group(0) @binding(64)
 var<storage, read_write> active_shadow_indices: array<u32>;
-@group(0) @binding(65)
-var<storage, read_write> next_shadow_indices: array<u32>;
 
 @group(0) @binding(66) var<storage, read> bssrdf_materials: array<BSSRDFMaterialRecord>;
 @group(0) @binding(67) var<storage, read> bssrdf_tables: array<BSSRDFTableRecord>;
@@ -154,5 +150,3 @@ var<storage, read> sparse_grid_roots: array<SparseGridRootRecord>;
 var<storage, read> sparse_grid_entries: array<SparseGridEntryRecord>;
 @group(0) @binding(80)
 var<storage, read_write> light_sample_work: array<LightSampleWorkItem>;
-@group(0) @binding(82)
-var<storage, read_write> sample_retry: SampleRetry;

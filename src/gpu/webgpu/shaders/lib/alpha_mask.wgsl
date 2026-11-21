@@ -76,3 +76,25 @@ fn alpha_mask_candidate_accept(origin: vec3<f32>, direction: vec3<f32>, hit: Ray
     if (alpha <= 0.0) { return false; }
     return alpha_mask_hash(origin, direction) <= alpha;
 }
+
+fn trace_closest_surface(origin: vec3<f32>, direction: vec3<f32>, pixel_index: u32) {
+    var query: ray_query;
+    rayQueryInitialize(&query, tlas, RayDesc(0u, 0xffu, 0.0, RAY_T_MAX, origin, direction));
+    while (rayQueryProceed(&query)) {
+        let candidate = rayQueryGetCandidateIntersection(&query);
+        if (candidate.kind == RAY_QUERY_INTERSECTION_TRIANGLE
+            && alpha_mask_candidate_accept(origin, direction, candidate)) {
+            rayQueryConfirmIntersection(&query);
+        }
+    }
+    let intersection = rayQueryGetCommittedIntersection(&query);
+    if (intersection.kind == RAY_QUERY_INTERSECTION_NONE) {
+        surfaces[pixel_index].hit = 0u;
+    } else {
+        surfaces[pixel_index].t = intersection.t;
+        surfaces[pixel_index].hit = 1u;
+        surfaces[pixel_index].instance_custom_data = intersection.instance_custom_data;
+        surfaces[pixel_index].primitive_index = intersection.primitive_index;
+        surfaces[pixel_index].barycentric = vec4<f32>(intersection.barycentrics, 0.0, 0.0);
+    }
+}

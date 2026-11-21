@@ -3,6 +3,8 @@ const INTERSECTION_NORMAL_KIND_TRIANGLE: u32 = 0u;
 const INTERSECTION_NORMAL_KIND_QUADRIC: u32 = 1u;
 const LIGHT_GEOMETRY_KIND_IMAGE_INFINITE: u32 = 4u;
 const RAY_T_MAX: f32 = 3.402823466e+38;
+// Interface-only instances one trace may cross before the render fails.
+const MAX_INTERFACE_CROSSINGS: u32 = 1024u;
 const MACHINE_EPSILON: f32 = 1.1920929e-7;
 const PI: f32 = 3.141592653589793;
 // Indirect-dispatched stages size their dispatch from a queue's element
@@ -30,9 +32,7 @@ const QUEUE_DISPATCH_SLOT_MEDIUM_SCATTER: u32 = 14u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_AREA_LIGHT: u32 = 15u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_IMAGE_INFINITE_LIGHT: u32 = 16u;
 const QUEUE_DISPATCH_SLOT_SAMPLE_OTHER_LIGHT: u32 = 17u;
-const QUEUE_DISPATCH_SLOT_SHADOW_CONTINUATION: u32 = 19u;
-const QUEUE_DISPATCH_SLOT_MEDIUM_CONTINUATION: u32 = 20u;
-const QUEUE_DISPATCH_SLOT_COUNT: u32 = 21u;
+const QUEUE_DISPATCH_SLOT_COUNT: u32 = 19u;
 const LIGHT_SAMPLE_SOURCE_SURFACE: u32 = 0u;
 const LIGHT_SAMPLE_SOURCE_MEDIUM: u32 = 1u;
 const MATERIAL_KIND_NORMAL: u32 = 0u;
@@ -550,8 +550,6 @@ struct QueueCounters {
     scatter_measured: QueueState,
     scatter_coated: QueueState,
     scatter_hair: QueueState,
-    medium_continuation: QueueState,
-    shadow_continuation: QueueState,
     medium_active: QueueState,
     shadow_active: QueueState,
     medium_scatter: QueueState,
@@ -571,16 +569,6 @@ struct DispatchIndirectArgs {
     x: u32,
     y: u32,
     z: u32,
-};
-
-// A sample whose continuations outlasted the GPU rounds is left out of the
-// film and listed here so the host can render it again.
-struct SampleRetry {
-    pending: u32,
-    count: atomic<u32>,
-    _padding0: u32,
-    _padding1: u32,
-    samples: array<u32>,
 };
 
 struct RenderError {

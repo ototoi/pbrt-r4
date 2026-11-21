@@ -80,9 +80,7 @@ pub enum ResourceId {
     SparseGridRoots,
     SparseGridEntries,
     ActiveMediumIndices,
-    NextMediumIndices,
     ActiveShadowIndices,
-    NextShadowIndices,
     MediumScatterQueue,
     BSSRDFMaterial,
     BSSRDFTable,
@@ -90,7 +88,6 @@ pub enum ResourceId {
     BSSRDFWork,
     BSSRDFResults,
     LightSampleWork,
-    SampleRetry,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,17 +171,9 @@ pub fn canonical_wavefront_bindings() -> Vec<BindingSpec> {
         BindingClass::Storage,
         Access::ReadWrite,
     );
-    push(
-        82,
-        ResourceId::SampleRetry,
-        BindingClass::Storage,
-        Access::ReadWrite,
-    );
     for (binding, resource) in [
         (62, ResourceId::ActiveMediumIndices),
-        (63, ResourceId::NextMediumIndices),
         (64, ResourceId::ActiveShadowIndices),
-        (65, ResourceId::NextShadowIndices),
     ] {
         push(binding, resource, BindingClass::Storage, Access::ReadWrite);
     }

@@ -42,9 +42,7 @@ pub struct TypedQueueSizes {
     pub scatter_coated_ray_indices: u64,
     pub scatter_hair_ray_indices: u64,
     pub active_medium_indices: u64,
-    pub next_medium_indices: u64,
     pub active_shadow_indices: u64,
-    pub next_shadow_indices: u64,
     pub medium_scatter_indices: u64,
 }
 
@@ -139,9 +137,7 @@ impl TypedQueueSizes {
             scatter_coated_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter coated queue")?,
             scatter_hair_ray_indices: bytes(std::mem::size_of::<u32>(), "scatter hair queue")?,
             active_medium_indices: bytes(std::mem::size_of::<u32>(), "active medium queue")?,
-            next_medium_indices: bytes(std::mem::size_of::<u32>(), "next medium queue")?,
             active_shadow_indices: bytes(std::mem::size_of::<u32>(), "active shadow queue")?,
-            next_shadow_indices: bytes(std::mem::size_of::<u32>(), "next shadow queue")?,
             medium_scatter_indices: bytes(std::mem::size_of::<u32>(), "medium scatter queue")?,
         })
     }
@@ -172,9 +168,7 @@ pub struct Queues {
     pub scatter_coated_ray_indices: wgpu::Buffer,
     pub scatter_hair_ray_indices: wgpu::Buffer,
     pub active_medium_indices: wgpu::Buffer,
-    pub next_medium_indices: wgpu::Buffer,
     pub active_shadow_indices: wgpu::Buffer,
-    pub next_shadow_indices: wgpu::Buffer,
     pub medium_scatter_indices: wgpu::Buffer,
     pub queue_dispatch_args: wgpu::Buffer,
     state_readback: wgpu::Buffer,
@@ -226,8 +220,6 @@ impl Queues {
             scatter_measured: state,
             scatter_coated: state,
             scatter_hair: state,
-            medium_continuation: state,
-            shadow_continuation: state,
             medium_active: state,
             shadow_active: state,
             medium_scatter: state,
@@ -331,22 +323,10 @@ impl Queues {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            next_medium_indices: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pbrt-r4 next medium segment indices"),
-                size: sizes.next_medium_indices,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
             active_shadow_indices: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pbrt-r4 active shadow segment indices"),
                 size: sizes.active_shadow_indices,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            next_shadow_indices: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pbrt-r4 next shadow segment indices"),
-                size: sizes.next_shadow_indices,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             medium_scatter_indices: storage(
@@ -367,34 +347,6 @@ impl Queues {
             }),
             capacity,
         })
-    }
-
-    pub fn reset_medium_continuation(&self, queue: &wgpu::Queue) {
-        let state = QueueState {
-            count: 0,
-            capacity: self.capacity,
-            overflow: 0,
-            padding: 0,
-        };
-        queue.write_buffer(
-            &self.counters,
-            std::mem::offset_of!(QueueCounters, medium_continuation) as u64,
-            bytes_of(&state),
-        );
-    }
-
-    pub fn reset_shadow_continuation(&self, queue: &wgpu::Queue) {
-        let state = QueueState {
-            count: 0,
-            capacity: self.capacity,
-            overflow: 0,
-            padding: 0,
-        };
-        queue.write_buffer(
-            &self.counters,
-            std::mem::offset_of!(QueueCounters, shadow_continuation) as u64,
-            bytes_of(&state),
-        );
     }
 
     pub fn reset_medium_active(&self, queue: &wgpu::Queue) {
@@ -421,42 +373,6 @@ impl Queues {
             padding: 0,
         };
         queue.write_buffer(&self.counters, offset as u64, bytes_of(&state));
-    }
-
-    pub fn copy_medium_continuations(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
-        encoder.copy_buffer_to_buffer(
-            &self.next_medium_indices,
-            0,
-            &self.active_medium_indices,
-            0,
-            u64::from(count) * std::mem::size_of::<u32>() as u64,
-        );
-    }
-
-    pub fn copy_shadow_continuations(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
-        encoder.copy_buffer_to_buffer(
-            &self.next_shadow_indices,
-            0,
-            &self.active_shadow_indices,
-            0,
-            u64::from(count) * std::mem::size_of::<u32>() as u64,
-        );
-    }
-
-    pub fn set_medium_active_count(&self, queue: &wgpu::Queue, count: u32) {
-        self.write_count(
-            queue,
-            std::mem::offset_of!(QueueCounters, medium_active),
-            count,
-        );
-    }
-
-    pub fn set_shadow_active_count(&self, queue: &wgpu::Queue, count: u32) {
-        self.write_count(
-            queue,
-            std::mem::offset_of!(QueueCounters, shadow_active),
-            count,
-        );
     }
 
     pub fn copy_state_to_readback(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -486,42 +402,10 @@ impl Queues {
             .copied()
             .unwrap_or(0)
             != 0;
-        if words
-            .get(std::mem::offset_of!(QueueCounters, medium_continuation) / 4 + 2)
-            .copied()
-            .unwrap_or(0)
-            != 0
-        {
-            log::error!("WebGPU medium-boundary continuation queue overflowed.");
-        }
-        if words
-            .get(std::mem::offset_of!(QueueCounters, shadow_continuation) / 4 + 2)
-            .copied()
-            .unwrap_or(0)
-            != 0
-        {
-            log::error!("WebGPU shadow-boundary continuation queue overflowed.");
-        }
         if overflowed || render_error {
             log::error!("WebGPU queue counters and render error: {words:?}");
         }
         Ok(overflowed || render_error)
-    }
-
-    pub fn read_medium_continuation_count(&self, device: &wgpu::Device) -> Result<u32, PbrtError> {
-        let words = self.read_words(device)?;
-        Ok(words
-            .get(std::mem::offset_of!(QueueCounters, medium_continuation) / 4)
-            .copied()
-            .unwrap_or(0))
-    }
-
-    pub fn read_shadow_continuation_count(&self, device: &wgpu::Device) -> Result<u32, PbrtError> {
-        let words = self.read_words(device)?;
-        Ok(words
-            .get(std::mem::offset_of!(QueueCounters, shadow_continuation) / 4)
-            .copied()
-            .unwrap_or(0))
     }
 
     pub fn binding_resource(&self, resource: ResourceId) -> Option<wgpu::BindingResource<'_>> {
@@ -567,9 +451,7 @@ impl Queues {
             }
             ResourceId::ScatterHairQueue => Some(self.scatter_hair_ray_indices.as_entire_binding()),
             ResourceId::ActiveMediumIndices => Some(self.active_medium_indices.as_entire_binding()),
-            ResourceId::NextMediumIndices => Some(self.next_medium_indices.as_entire_binding()),
             ResourceId::ActiveShadowIndices => Some(self.active_shadow_indices.as_entire_binding()),
-            ResourceId::NextShadowIndices => Some(self.next_shadow_indices.as_entire_binding()),
             ResourceId::MediumScatterQueue => Some(self.medium_scatter_indices.as_entire_binding()),
             ResourceId::QueueDispatchArgs => Some(self.queue_dispatch_args.as_entire_binding()),
             _ => None,
