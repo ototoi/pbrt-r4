@@ -8,8 +8,10 @@ use pbrt_r4::parser::{parse_file, SceneBuilder};
 #[test]
 fn gpu_texture_paths_resolve_against_their_own_included_scene() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
-    let first_dir = directory.path().join("first");
-    let second_dir = directory.path().join("second");
+    // Paths are canonicalized; on Windows that adds the verbatim prefix.
+    let base = directory.path().canonicalize().unwrap();
+    let first_dir = base.join("first");
+    let second_dir = base.join("second");
     std::fs::create_dir(&first_dir).expect("first include directory should be created");
     std::fs::create_dir(&second_dir).expect("second include directory should be created");
 
@@ -27,7 +29,7 @@ fn gpu_texture_paths_resolve_against_their_own_included_scene() {
         "Texture \"secondTexture\" \"spectrum\" \"imagemap\" \"string filename\" [\"shared.png\"]\n",
     )
     .expect("second include should be written");
-    let root_path = directory.path().join("root.pbrt");
+    let root_path = base.join("root.pbrt");
     std::fs::write(
         &root_path,
         "WorldBegin\nInclude \"first/first.pbrt\"\nInclude \"second/second.pbrt\"\nWorldEnd\n",

@@ -89,16 +89,18 @@ fn parameter_array_can_continue_after_included_file_eof() {
 #[test]
 fn continued_shape_retains_its_directory_before_next_parent_shape() {
     let directory = tempfile::tempdir().unwrap();
-    let child_dir = directory.path().join("child");
+    // Paths are canonicalized; on Windows that adds the verbatim prefix.
+    let base = directory.path().canonicalize().unwrap();
+    let child_dir = base.join("child");
     fs::create_dir(&child_dir).unwrap();
     fs::write(child_dir.join("shared.ply"), "child").unwrap();
-    fs::write(directory.path().join("shared.ply"), "parent").unwrap();
+    fs::write(base.join("shared.ply"), "parent").unwrap();
     fs::write(
         child_dir.join("mesh.pbrt"),
         "Shape \"plymesh\" \"string filename\" \"shared.ply\"\n",
     )
     .unwrap();
-    let root = directory.path().join("root.pbrt");
+    let root = base.join("root.pbrt");
     fs::write(&root, "WorldBegin\nInclude \"child/mesh.pbrt\"\n\"bool reverse\" [true]\nShape \"plymesh\" \"string filename\" \"shared.ply\"\n").unwrap();
     let mut builder = SceneBuilder::new();
     parse_file(root.to_str().unwrap(), &mut builder).unwrap();
@@ -108,7 +110,7 @@ fn continued_shape_retains_its_directory_before_next_parent_shape() {
     );
     assert_eq!(
         builder.shapes[1].base.params.get_one_string("filename", ""),
-        directory.path().join("shared.ply").to_string_lossy()
+        base.join("shared.ply").to_string_lossy()
     );
     assert!(builder.shapes[0].base.params.get_one_bool("reverse", false));
 }

@@ -99,12 +99,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache.bin");
         let payloads: Vec<Vec<u8>> = (0..8u8).map(|i| vec![i; 1 << 20]).collect();
-        std::thread::scope(|scope| {
-            for payload in &payloads {
-                let path = &path;
-                scope.spawn(move || save(path, payload).unwrap());
-            }
+        let results: Vec<io::Result<()>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = payloads
+                .iter()
+                .map(|payload| {
+                    let path = &path;
+                    scope.spawn(move || save(path, payload))
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
+        // Windows may deny a replace while another one is in progress.
+        #[cfg(not(windows))]
+        assert!(results.iter().all(Result::is_ok));
+        assert!(results.iter().any(Result::is_ok));
         let saved = load(&path).unwrap();
         assert!(payloads.contains(&saved));
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
