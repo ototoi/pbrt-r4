@@ -6,6 +6,29 @@ use super::pipeline_cache;
 use super::profile;
 use super::stages::RequiredLimits;
 
+pub const BASE_REQUIRED_FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
+    .union(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY)
+    .union(wgpu::Features::TEXTURE_BINDING_ARRAY)
+    .union(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
+    .union(wgpu::Features::FLOAT32_FILTERABLE);
+
+/// Picks the first adapter with the base features, preferring discrete GPUs.
+pub fn preferred_adapter(candidates: &[(wgpu::Features, wgpu::DeviceType)]) -> Option<usize> {
+    let rank = |device_type: wgpu::DeviceType| match device_type {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        wgpu::DeviceType::VirtualGpu => 2,
+        wgpu::DeviceType::Other => 3,
+        wgpu::DeviceType::Cpu => 4,
+    };
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, (features, _))| features.contains(BASE_REQUIRED_FEATURES))
+        .min_by_key(|(_, (_, device_type))| rank(*device_type))
+        .map(|(index, _)| index)
+}
+
 pub struct Context {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -83,16 +106,25 @@ impl Context {
 
     pub fn request_adapter(report: Option<&BindingReport>) -> Result<AdapterContext, PbrtError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .map_err(|error| {
-                PbrtError::error(&format!(
-                    "Could not request a WebGPU adapter: {error}{}",
-                    report
-                        .map(|report| format!("\n{}", report.format(None, false)))
-                        .unwrap_or_default()
-                ))
-            })?;
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let candidates: Vec<_> = adapters
+            .iter()
+            .map(|adapter| (adapter.features(), adapter.get_info().device_type))
+            .collect();
+        let adapter = match preferred_adapter(&candidates) {
+            Some(index) => Ok(adapters.swap_remove(index)),
+            None => pollster::block_on(
+                instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+            ),
+        }
+        .map_err(|error| {
+            PbrtError::error(&format!(
+                "Could not request a WebGPU adapter: {error}{}",
+                report
+                    .map(|report| format!("\n{}", report.format(None, false)))
+                    .unwrap_or_default()
+            ))
+        })?;
         let info = adapter.get_info();
         log::info!("GPU context: adapter selected: {info:?}");
         let limits = adapter.limits();
@@ -120,11 +152,7 @@ impl Context {
         subsurface_enabled: bool,
         report: Option<&BindingReport>,
     ) -> Result<Self, PbrtError> {
-        let mut required_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
-            | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
-            | wgpu::Features::TEXTURE_BINDING_ARRAY
-            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-            | wgpu::Features::FLOAT32_FILTERABLE;
+        let mut required_features = BASE_REQUIRED_FEATURES;
         let gpu_profile = profile::enabled();
         let timestamps = gpu_profile && adapter.features.contains(wgpu::Features::TIMESTAMP_QUERY);
         if gpu_profile && !timestamps {
