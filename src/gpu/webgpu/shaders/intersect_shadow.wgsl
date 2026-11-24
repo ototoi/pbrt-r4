@@ -5,6 +5,9 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     var shadow = shadow_rays[ray_index];
+    // Naga emits a default-value assignment for loop-local variables, but
+    // Metal ray queries are not assignable. Reinitialize this query below.
+    var query: ray_query;
     for (var crossing = 0u; ; crossing += 1u) {
         if (crossing > MAX_INTERFACE_CROSSINGS) {
             set_render_error();
@@ -18,7 +21,6 @@ fn intersect_shadow(@builtin(global_invocation_id) global_id: vec3<u32>) {
             shadow_rays[ray_index] = shadow;
             return;
         }
-        var query: ray_query;
         rayQueryInitialize(
             &query,
             tlas,
