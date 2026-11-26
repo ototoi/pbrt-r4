@@ -4,6 +4,7 @@ use crate::interaction::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 #[cfg(target_arch = "x86")]
@@ -280,14 +281,14 @@ fn intersect_primitives_p(primitives: &[Arc<Primitive>], r: &Ray, t_max: Float) 
 }
 
 #[inline]
-unsafe fn intersect_simd(
-    primitives: &[Arc<Primitive>],
+unsafe fn intersect_simd<H>(
     nodes: &[SIMDBVHNode],
     r: &Ray,
     tmin: Float,
     tmax: Float,
     original_t_max: Float,
-) -> Option<ShapeIntersection> {
+    leaf: &mut impl FnMut(Range<usize>, Float) -> Option<(Float, H)>,
+) -> Option<H> {
     let mut isect = None;
     let mut nodes_to_visit: Vec<usize> = Vec::with_capacity(16);
 
@@ -334,11 +335,10 @@ unsafe fn intersect_simd(
         } else {
             let start = node.children[0] as usize;
             let end = start + node.children[1] as usize;
-            if let Some(isect_n) = intersect_primitives(&primitives[start..end], r, ftmax) {
-                let t_hit = isect_n.t_hit;
+            if let Some((t_hit, hit)) = leaf(start..end, ftmax) {
                 tmax = _mm_set1_ps(t_hit as f32);
                 ftmax = t_hit;
-                isect = Some(isect_n);
+                isect = Some(hit);
             }
         }
     }
@@ -347,12 +347,12 @@ unsafe fn intersect_simd(
 
 #[inline]
 unsafe fn intersect_simd_p(
-    primitives: &[Arc<Primitive>],
     nodes: &[SIMDBVHNode],
     r: &Ray,
     tmin: Float,
     tmax: Float,
     original_t_max: Float,
+    leaf: &mut impl FnMut(Range<usize>, Float) -> bool,
 ) -> bool {
     let mut nodes_to_visit: Vec<usize> = Vec::with_capacity(16);
 
@@ -395,7 +395,7 @@ unsafe fn intersect_simd_p(
         } else {
             let start = node.children[0] as usize;
             let end = start + node.children[1] as usize;
-            if intersect_primitives_p(&primitives[start..end], r, ftmax) {
+            if leaf(start..end, ftmax) {
                 return true;
             }
         }
@@ -404,10 +404,67 @@ unsafe fn intersect_simd_p(
 }
 
 #[derive(Clone)]
-pub struct QBVHAccel {
-    pub primitives: Vec<Arc<Primitive>>,
+pub struct QBVHTree {
     pub nodes: Vec<SIMDBVHNode>,
     pub bounds: Bounds3f,
+}
+
+impl QBVHTree {
+    pub fn new(
+        bounds: &[Bounds3f],
+        max_prims_in_node: usize,
+        split_method: SplitMethod,
+    ) -> (Self, Vec<usize>) {
+        let max_prims_in_node = usize::min(max_prims_in_node, 255);
+        let mut order = Vec::new();
+        let root = create_bvh_node_from_bounds(&mut order, bounds, max_prims_in_node, split_method);
+        let tree_bounds = root.bounds;
+        let mut nodes = Vec::with_capacity(root.node_count());
+        flatten_qbvh_tree(&mut nodes, root);
+        (
+            Self {
+                nodes,
+                bounds: tree_bounds,
+            },
+            order,
+        )
+    }
+
+    pub fn bounds(&self) -> Bounds3f {
+        self.bounds
+    }
+
+    pub fn intersect<H>(
+        &self,
+        r: &Ray,
+        t_max: Float,
+        mut leaf: impl FnMut(Range<usize>, Float) -> Option<(Float, H)>,
+    ) -> Option<H> {
+        if let Some((tmin, tmax)) = self.bounds.intersect_p(r, t_max) {
+            unsafe { intersect_simd(&self.nodes, r, tmin, tmax, t_max, &mut leaf) }
+        } else {
+            None
+        }
+    }
+
+    pub fn intersect_p(
+        &self,
+        r: &Ray,
+        t_max: Float,
+        mut leaf: impl FnMut(Range<usize>, Float) -> bool,
+    ) -> bool {
+        if let Some((tmin, tmax)) = self.bounds.intersect_p(r, t_max) {
+            unsafe { intersect_simd_p(&self.nodes, r, tmin, tmax, t_max, &mut leaf) }
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct QBVHAccel {
+    pub primitives: Vec<Arc<Primitive>>,
+    pub tree: QBVHTree,
 }
 
 impl QBVHAccel {
@@ -416,39 +473,25 @@ impl QBVHAccel {
         max_prims_in_node: usize,
         split_method: SplitMethod,
     ) -> Self {
-        let max_prims_in_node = usize::min(max_prims_in_node, 255);
-        let mut orderd_prims = Vec::new();
-        let root = create_bvh_node(&mut orderd_prims, prims, max_prims_in_node, split_method);
-        let bounds = root.bounds;
-        let mut nodes = Vec::new();
-        nodes.reserve(root.node_count());
-        flatten_qbvh_tree(&mut nodes, root);
-        QBVHAccel {
-            primitives: orderd_prims,
-            nodes,
-            bounds,
-        }
+        let bounds: Vec<Bounds3f> = prims.iter().map(|p| p.bounds()).collect();
+        let (tree, order) = QBVHTree::new(&bounds, max_prims_in_node, split_method);
+        let primitives = order.iter().map(|i| prims[*i].clone()).collect();
+        QBVHAccel { primitives, tree }
     }
 
     pub fn bounds(&self) -> Bounds3f {
-        return self.bounds;
+        self.tree.bounds()
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        if let Some((tmin, tmax)) = self.bounds.intersect_p(r, t_max) {
-            unsafe {
-                return intersect_simd(&self.primitives, &self.nodes, r, tmin, tmax, t_max);
-            }
-        }
-        return None;
+        self.tree.intersect(r, t_max, |range, max| {
+            intersect_primitives(&self.primitives[range], r, max).map(|hit| (hit.t_hit, hit))
+        })
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        if let Some((tmin, tmax)) = self.bounds.intersect_p(r, t_max) {
-            unsafe {
-                return intersect_simd_p(&self.primitives, &self.nodes, r, tmin, tmax, t_max);
-            }
-        }
-        return false;
+        self.tree.intersect_p(r, t_max, |range, max| {
+            intersect_primitives_p(&self.primitives[range], r, max)
+        })
     }
 }
