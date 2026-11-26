@@ -120,23 +120,21 @@ pub fn recursive_build(
     }
 }
 
-fn create_bvh_node_indices(
+pub fn create_bvh_node_from_bounds(
     ordered_indices: &mut Vec<usize>,
-    prims: &[Arc<Primitive>],
+    count: usize,
+    bounds: impl Fn(usize) -> Bounds3f,
     max_prims_in_node: usize,
     split_method: SplitMethod,
 ) -> Box<BVHBuildNode> {
-    if prims.is_empty() {
+    if count == 0 {
         return Box::new(BVHBuildNode::init_leaf(0, 0, &Bounds3f::default()));
     }
-    let mut primitive_info: Vec<BVHPrimitiveInfo> = prims
-        .iter()
-        .enumerate()
-        .map(|(i, p)| -> BVHPrimitiveInfo {
-            let b = p.bounds();
-            let b = inflate_bound(&b, BOUND_EPS);
+    let mut primitive_info: Vec<BVHPrimitiveInfo> = (0..count)
+        .map(|i| -> BVHPrimitiveInfo {
+            let b = inflate_bound(&bounds(i), BOUND_EPS);
             let c = (b.min + b.max) * 0.5;
-            return BVHPrimitiveInfo::new(i, &b, &c);
+            BVHPrimitiveInfo::new(i, &b, &c)
         })
         .collect();
     match split_method {
@@ -161,8 +159,13 @@ pub fn create_bvh_node(
     split_method: SplitMethod,
 ) -> Box<BVHBuildNode> {
     let mut ordered_indices = Vec::new();
-    let node =
-        create_bvh_node_indices(&mut ordered_indices, prims, max_prims_in_node, split_method);
+    let node = create_bvh_node_from_bounds(
+        &mut ordered_indices,
+        prims.len(),
+        |i| prims[i].bounds(),
+        max_prims_in_node,
+        split_method,
+    );
     for index in ordered_indices {
         ordered_prims.push(prims[index].clone());
     }

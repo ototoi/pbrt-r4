@@ -4,7 +4,7 @@ use crate::interaction::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
 
-use log::*;
+use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
@@ -13,13 +13,6 @@ pub struct LinearBVHNode {
     pub offset: usize,
     pub n_primitives: usize, // 0 -> interior node
     pub axis: u8,            // interior node: xyz
-}
-
-fn to_bounds3f(b: &[[Float; 3]; 2]) -> Bounds3f {
-    return Bounds3f::from((
-        (b[0][0] as Float, b[0][1] as Float, b[0][2] as Float),
-        (b[1][0] as Float, b[1][1] as Float, b[1][2] as Float),
-    ));
 }
 
 fn to_array_bounds3f(b: &Bounds3f) -> [[Float; 3]; 2] {
@@ -69,9 +62,138 @@ fn sign(x: Float) -> usize {
 }
 
 #[derive(Clone)]
+pub struct LBVHTree {
+    pub nodes: Vec<LinearBVHNode>,
+    bounds: Bounds3f,
+}
+
+impl LBVHTree {
+    pub fn new(
+        count: usize,
+        bounds: impl Fn(usize) -> Bounds3f,
+        max_prims_in_node: usize,
+        split_method: SplitMethod,
+    ) -> (Self, Vec<usize>) {
+        let max_prims_in_node = usize::min(max_prims_in_node, 255);
+        let mut order = Vec::new();
+        let root =
+            create_bvh_node_from_bounds(&mut order, count, bounds, max_prims_in_node, split_method);
+        let tree_bounds = root.bounds;
+        let mut nodes = Vec::with_capacity(root.node_count());
+        flatten_bvh_tree(&mut nodes, &root);
+        (
+            Self {
+                nodes,
+                bounds: tree_bounds,
+            },
+            order,
+        )
+    }
+
+    pub fn bounds(&self) -> Bounds3f {
+        self.bounds
+    }
+
+    pub fn intersect<H>(
+        &self,
+        r: &Ray,
+        t_max: Float,
+        mut leaf: impl FnMut(Range<usize>, Float) -> Option<(Float, H)>,
+    ) -> Option<H> {
+        let mut result = None;
+        let mut cutoff = t_max;
+        let mut stack = vec![(0usize, 0.0, t_max)];
+        let org = [r.o.x, r.o.y, r.o.z];
+        let idir = [
+            Float::recip(r.d.x),
+            Float::recip(r.d.y),
+            Float::recip(r.d.z),
+        ];
+        let dir_is_neg = [sign(idir[0]), sign(idir[1]), sign(idir[2])];
+        while let Some((node_index, t0, t1)) = stack.pop() {
+            let t1 = Float::min(cutoff, t1);
+            if t1 < t0 {
+                continue;
+            }
+            let node = &self.nodes[node_index];
+            if let Some((near, far)) = intersect_box_array_i(
+                &node.bounds[0],
+                &node.bounds[1],
+                &org,
+                &idir,
+                &dir_is_neg,
+                t0,
+                t1,
+            ) {
+                if node.n_primitives > 0 {
+                    let start = node.offset;
+                    let end = start + node.n_primitives;
+                    if let Some((hit_t, hit)) = leaf(start..end, cutoff) {
+                        cutoff = hit_t;
+                        result = Some(hit);
+                    }
+                } else {
+                    let children = [node_index + 1, node.offset];
+                    let indices = [
+                        dir_is_neg[node.axis as usize],
+                        1 - dir_is_neg[node.axis as usize],
+                    ];
+                    stack.push((children[indices[1]], near, far));
+                    stack.push((children[indices[0]], near, far));
+                }
+            }
+        }
+        result
+    }
+
+    pub fn intersect_p(
+        &self,
+        r: &Ray,
+        t_max: Float,
+        mut leaf: impl FnMut(Range<usize>, Float) -> bool,
+    ) -> bool {
+        let mut stack = vec![(0usize, 0.0, t_max)];
+        let org = [r.o.x, r.o.y, r.o.z];
+        let idir = [
+            Float::recip(r.d.x),
+            Float::recip(r.d.y),
+            Float::recip(r.d.z),
+        ];
+        let dir_is_neg = [sign(idir[0]), sign(idir[1]), sign(idir[2])];
+        while let Some((node_index, t0, t1)) = stack.pop() {
+            let node = &self.nodes[node_index];
+            if let Some((near, far)) = intersect_box_array_i(
+                &node.bounds[0],
+                &node.bounds[1],
+                &org,
+                &idir,
+                &dir_is_neg,
+                t0,
+                t1,
+            ) {
+                if node.n_primitives > 0 {
+                    if leaf(node.offset..node.offset + node.n_primitives, t_max) {
+                        return true;
+                    }
+                } else {
+                    let children = [node_index + 1, node.offset];
+                    let indices = [
+                        dir_is_neg[node.axis as usize],
+                        1 - dir_is_neg[node.axis as usize],
+                    ];
+                    stack.push((children[indices[1]], near, far));
+                    stack.push((children[indices[0]], near, far));
+                }
+            }
+        }
+        false
+    }
+}
+
+#[derive(Clone)]
 pub struct LBVHAccel {
     pub primitives: Vec<Arc<Primitive>>,
-    pub nodes: Vec<LinearBVHNode>,
+    pub tree: LBVHTree,
 }
 
 impl LBVHAccel {
@@ -80,123 +202,37 @@ impl LBVHAccel {
         max_prims_in_node: usize,
         split_method: SplitMethod,
     ) -> Self {
-        let max_prims_in_node = usize::min(max_prims_in_node, 255);
-        let mut orderd_prims = Vec::new();
-        let root = create_bvh_node(&mut orderd_prims, prims, max_prims_in_node, split_method);
-
-        let total_nodes = root.node_count();
-        let allocated_memory = total_nodes * std::mem::size_of::<LinearBVHNode>();
-        info!(
-            "BVH created with {} nodes for {} primitives ({:.2} MB)",
-            total_nodes,
+        let (tree, order) = LBVHTree::new(
             prims.len(),
-            allocated_memory as Float / (1024.0 * 1024.0)
+            |i| prims[i].bounds(),
+            max_prims_in_node,
+            split_method,
         );
-
-        let mut nodes = Vec::new();
-        nodes.reserve(root.node_count());
-        flatten_bvh_tree(&mut nodes, &root);
-        LBVHAccel {
-            primitives: orderd_prims,
-            nodes,
-        }
+        let primitives = order.iter().map(|i| prims[*i].clone()).collect();
+        LBVHAccel { primitives, tree }
     }
 
     pub fn bounds(&self) -> Bounds3f {
-        return to_bounds3f(&(self.nodes[0].bounds));
+        self.tree.bounds()
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        let mut isect = None;
-        let mut nodes_to_visit: Vec<(usize, Float, Float)> = Vec::with_capacity(16);
-        let mut t_max = t_max;
-        let t0: Float = 0.0;
-        let t1: Float = t_max;
-        let org = [r.o.x, r.o.y, r.o.z];
-        let idir = [
-            Float::recip(r.d.x),
-            Float::recip(r.d.y),
-            Float::recip(r.d.z),
-        ];
-        let dir_is_neg = [sign(idir[0]), sign(idir[1]), sign(idir[2])];
-        nodes_to_visit.push((0, t0, t1));
-        while let Some((current_node_index, t0, mut t1)) = nodes_to_visit.pop() {
-            t1 = Float::min(t_max, t1);
-            if t1 < t0 {
-                continue;
-            }
-            assert!(t0 <= t1);
-            let node = &self.nodes[current_node_index];
-            let min = &node.bounds[0];
-            let max = &node.bounds[1];
-            if let Some((t0, t1)) =
-                intersect_box_array_i(min, max, &org, &idir, &dir_is_neg, t0, t1)
-            {
-                if node.n_primitives > 0 {
-                    let start = node.offset as usize;
-                    let end = start + (node.n_primitives as usize);
-                    for i in start..end {
-                        let prim = self.primitives[i].as_ref();
-                        if let Some(isect_n) = prim.intersect(r, t_max) {
-                            t_max = isect_n.t_hit;
-                            isect = Some(isect_n);
-                        }
-                    }
-                } else {
-                    let index_children = [current_node_index + 1, node.offset as usize];
-                    let indices = [
-                        dir_is_neg[node.axis as usize],
-                        1 - dir_is_neg[node.axis as usize],
-                    ];
-                    nodes_to_visit.push((index_children[indices[1]], t0, t1));
-                    nodes_to_visit.push((index_children[indices[0]], t0, t1));
+        self.tree.intersect(r, t_max, |range, max| {
+            let mut best = None;
+            let mut cutoff = max;
+            for primitive in &self.primitives[range] {
+                if let Some(hit) = primitive.intersect(r, cutoff) {
+                    cutoff = hit.t_hit;
+                    best = Some((hit.t_hit, hit));
                 }
             }
-        }
-        return isect;
+            best
+        })
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        let mut nodes_to_visit: Vec<(usize, Float, Float)> = Vec::with_capacity(16);
-        let t0: Float = 0.0;
-        let t1: Float = t_max;
-        let org = [r.o.x, r.o.y, r.o.z];
-        let idir = [
-            Float::recip(r.d.x),
-            Float::recip(r.d.y),
-            Float::recip(r.d.z),
-        ];
-        let dir_is_neg = [sign(idir[0]), sign(idir[1]), sign(idir[2])];
-        nodes_to_visit.push((0, t0, t1));
-        while let Some((current_node_index, t0, t1)) = nodes_to_visit.pop() {
-            //t1 = Float::min(t_max, t1);
-            //    continue;
-            let node = &self.nodes[current_node_index];
-            let min = &node.bounds[0];
-            let max = &node.bounds[1];
-            if let Some((t0, t1)) =
-                intersect_box_array_i(min, max, &org, &idir, &dir_is_neg, t0, t1)
-            {
-                if node.n_primitives > 0 {
-                    let start = node.offset as usize;
-                    let end = start + (node.n_primitives as usize);
-                    for i in start..end {
-                        let p = self.primitives[i].as_ref();
-                        if p.intersect_p(r, t_max) {
-                            return true;
-                        }
-                    }
-                } else {
-                    let index_children = [current_node_index + 1, node.offset as usize];
-                    let indices = [
-                        dir_is_neg[node.axis as usize],
-                        1 - dir_is_neg[node.axis as usize],
-                    ];
-                    nodes_to_visit.push((index_children[indices[1]], t0, t1));
-                    nodes_to_visit.push((index_children[indices[0]], t0, t1));
-                }
-            }
-        }
-        return false;
+        self.tree.intersect_p(r, t_max, |range, max| {
+            self.primitives[range].iter().any(|p| p.intersect_p(r, max))
+        })
     }
 }

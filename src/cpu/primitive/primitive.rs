@@ -71,6 +71,7 @@ impl Primitive {
     }
 
     /// Ray-primitive intersection test
+    #[inline]
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
         match self {
             Primitive::Simple(p) => p.intersect(r, t_max),
@@ -82,6 +83,7 @@ impl Primitive {
     }
 
     /// Fast ray-primitive intersection test (no surface interaction computed)
+    #[inline]
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
         match self {
             Primitive::Simple(p) => p.intersect_p(r, t_max),

@@ -19,6 +19,7 @@ stats = []
 float-as-double = []
 cuda = []
 webgpu = ["dep:bytemuck", "dep:dirs", "dep:glam", "dep:pollster", "dep:wgpu"]
+mesh-accel = []
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

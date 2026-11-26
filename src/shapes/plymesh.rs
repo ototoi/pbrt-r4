@@ -21,7 +21,7 @@ type FloatTextureMap = HashMap<String, Arc<FloatTexture>>;
 
 pub struct PlyMesh;
 
-pub fn create_ply_mesh(
+pub fn create_ply_mesh_unmasked(
     o2w: &Transform,
     w2o: &Transform,
     reverse_orientation: bool,
@@ -96,23 +96,29 @@ pub fn create_ply_mesh(
         );
         return Ok(mesh);
     }
-    let alpha_mask_info = get_alpha_texture(params, float_textures)?;
-    let shadow_alpha_mask_info = get_shadow_alpha_texture(params, float_textures)?;
-    if alpha_mask_info.is_some() || shadow_alpha_mask_info.is_some() {
-        return Ok(mesh
-            .into_iter()
-            .map(|shape| {
-                let shape = Arc::new(shape);
-                Shape::AlphaMask(Box::new(AlphaMaskShape::new(
-                    &shape,
-                    &alpha_mask_info,
-                    &shadow_alpha_mask_info,
-                )))
-            })
-            .collect());
-    }
-
     Ok(mesh)
+}
+
+pub fn create_ply_mesh(
+    o2w: &Transform,
+    w2o: &Transform,
+    reverse_orientation: bool,
+    params: &ParameterDictionary,
+    float_textures: &FloatTextureMap,
+) -> Result<Vec<Shape>, PbrtError> {
+    let shapes = create_ply_mesh_unmasked(o2w, w2o, reverse_orientation, params, float_textures)?;
+    let alpha = get_alpha_texture(params, float_textures)?;
+    let shadow_alpha = get_shadow_alpha_texture(params, float_textures)?;
+    if alpha.is_none() && shadow_alpha.is_none() {
+        return Ok(shapes);
+    }
+    Ok(shapes
+        .into_iter()
+        .map(|shape| {
+            let shape = Arc::new(shape);
+            Shape::AlphaMask(Box::new(AlphaMaskShape::new(&shape, &alpha, &shadow_alpha)))
+        })
+        .collect())
 }
 
 impl PlyMesh {

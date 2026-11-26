@@ -19,9 +19,7 @@ enum AlphaMaskSource {
     Value(Float),
 }
 
-pub struct AlphaMaskShape {
-    shape: Arc<Shape>,
-    single_intersection: bool,
+pub struct AlphaMaskTest {
     test_intersection: bool,
     test_intersection_p: bool,
     constant_zero_alpha: bool,
@@ -29,18 +27,14 @@ pub struct AlphaMaskShape {
     shadow_alpha_mask: Option<AlphaMaskSource>,
 }
 
-impl AlphaMaskShape {
-    pub fn new(
-        shape: &Arc<Shape>,
-        alpha_mask_info: &Option<AlphaMaskInfo>,
-        shadow_alpha_mask_info: &Option<AlphaMaskInfo>,
-    ) -> Self {
+impl AlphaMaskTest {
+    pub fn new(alpha: &Option<AlphaMaskInfo>, shadow_alpha: &Option<AlphaMaskInfo>) -> Self {
         let mut test_intersection = true;
         let mut test_intersection_p = true;
         let mut constant_zero_alpha = false;
         let mut alpha_mask = None;
         let mut shadow_alpha_mask = None;
-        if let Some(info) = alpha_mask_info.as_ref() {
+        if let Some(info) = alpha.as_ref() {
             match info {
                 AlphaMaskInfo::Texture { texture } => {
                     alpha_mask = Some(AlphaMaskSource::Texture(Arc::clone(texture)));
@@ -51,37 +45,93 @@ impl AlphaMaskShape {
                         constant_zero_alpha = true;
                     }
                 }
-                AlphaMaskInfo::Value { value: alpha } => {
-                    alpha_mask = Some(AlphaMaskSource::Value(*alpha));
-                    if *alpha <= 0.0 {
+                AlphaMaskInfo::Value { value } => {
+                    alpha_mask = Some(AlphaMaskSource::Value(*value));
+                    if *value <= 0.0 {
                         test_intersection = false;
                         test_intersection_p = false;
-                        constant_zero_alpha = *alpha == 0.0;
+                        constant_zero_alpha = *value == 0.0;
                     }
                 }
             }
         }
-        if let Some(info) = shadow_alpha_mask_info.as_ref() {
+        if let Some(info) = shadow_alpha.as_ref() {
             match info {
                 AlphaMaskInfo::Texture { texture } => {
                     shadow_alpha_mask = Some(AlphaMaskSource::Texture(Arc::clone(texture)));
                 }
-                AlphaMaskInfo::Value { value: alpha } => {
-                    shadow_alpha_mask = Some(AlphaMaskSource::Value(*alpha));
-                    if *alpha <= 0.0 {
+                AlphaMaskInfo::Value { value } => {
+                    shadow_alpha_mask = Some(AlphaMaskSource::Value(*value));
+                    if *value <= 0.0 {
                         test_intersection_p = false;
                     }
                 }
             }
         }
-        AlphaMaskShape {
-            shape: Arc::clone(shape),
-            single_intersection: matches!(shape.as_ref(), Shape::Triangle(_)),
+        Self {
             test_intersection,
             test_intersection_p,
             constant_zero_alpha,
             alpha_mask,
             shadow_alpha_mask,
+        }
+    }
+
+    pub fn tests_intersection(&self) -> bool {
+        self.test_intersection
+    }
+    pub fn tests_intersection_p(&self) -> bool {
+        self.test_intersection_p
+    }
+    pub fn has_constant_zero_alpha(&self) -> bool {
+        self.constant_zero_alpha
+    }
+    pub fn accept(&self, intr: &SurfaceInteraction, ray: &Ray) -> bool {
+        self.accept_mask(self.alpha_mask.as_ref(), intr, ray)
+    }
+    pub fn accept_shadow(&self, intr: &SurfaceInteraction, ray: &Ray) -> bool {
+        self.accept_mask(self.shadow_alpha_mask.as_ref(), intr, ray)
+    }
+
+    fn accept_mask(
+        &self,
+        source: Option<&AlphaMaskSource>,
+        intr: &SurfaceInteraction,
+        ray: &Ray,
+    ) -> bool {
+        let alpha = match source {
+            Some(AlphaMaskSource::Texture(texture)) => {
+                texture.evaluate(&TextureEvalContext::from(intr))
+            }
+            Some(AlphaMaskSource::Value(value)) => *value,
+            None => return true,
+        };
+        if alpha <= 0.0 {
+            return false;
+        }
+        if alpha >= 1.0 {
+            return true;
+        }
+        hash_float_ray(ray) <= alpha
+    }
+}
+
+pub struct AlphaMaskShape {
+    shape: Arc<Shape>,
+    single_intersection: bool,
+    test: AlphaMaskTest,
+}
+
+impl AlphaMaskShape {
+    pub fn new(
+        shape: &Arc<Shape>,
+        alpha_mask_info: &Option<AlphaMaskInfo>,
+        shadow_alpha_mask_info: &Option<AlphaMaskInfo>,
+    ) -> Self {
+        Self {
+            shape: Arc::clone(shape),
+            single_intersection: matches!(shape.as_ref(), Shape::Triangle(_)),
+            test: AlphaMaskTest::new(alpha_mask_info, shadow_alpha_mask_info),
         }
     }
 }
@@ -102,7 +152,7 @@ impl AlphaMaskShape {
     }
 
     pub fn has_constant_zero_alpha(&self) -> bool {
-        self.constant_zero_alpha
+        self.test.has_constant_zero_alpha()
     }
 
     pub fn alpha(&self, inter: &Interaction) -> Option<Float> {
@@ -116,13 +166,14 @@ impl AlphaMaskShape {
                 ..TextureEvalContext::default()
             }
         };
-        self.alpha_mask
+        self.test
+            .alpha_mask
             .as_ref()
             .map(|source| match source {
                 AlphaMaskSource::Texture(texture) => texture.evaluate(&ctx),
                 AlphaMaskSource::Value(value) => *value,
             })
-            .or_else(|| self.constant_zero_alpha.then_some(0.0))
+            .or_else(|| self.test.has_constant_zero_alpha().then_some(0.0))
     }
 
     pub fn is_alpha_masked_at_sample(&self, inter: &Interaction) -> bool {
@@ -139,7 +190,7 @@ impl AlphaMaskShape {
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        if !self.test_intersection {
+        if !self.test.tests_intersection() {
             return None;
         }
 
@@ -147,7 +198,7 @@ impl AlphaMaskShape {
         let mut t_offset = 0.0;
         loop {
             let isect = self.shape.intersect(&ray, t_max - t_offset)?;
-            if self.accept_alpha(&isect.intr, &ray) {
+            if self.test.accept(&isect.intr, &ray) {
                 return Some(ShapeIntersection::new(isect.intr, isect.t_hit + t_offset));
             }
 
@@ -167,7 +218,7 @@ impl AlphaMaskShape {
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        if !self.test_intersection_p {
+        if !self.test.tests_intersection_p() {
             return false;
         }
 
@@ -177,7 +228,7 @@ impl AlphaMaskShape {
             let Some(isect) = self.shape.intersect(&ray, t_max - t_offset) else {
                 return false;
             };
-            if self.accept_alpha(&isect.intr, &ray) && self.accept_shadow_alpha(&isect.intr, &ray) {
+            if self.test.accept(&isect.intr, &ray) && self.test.accept_shadow(&isect.intr, &ray) {
                 return true;
             }
 
@@ -194,37 +245,6 @@ impl AlphaMaskShape {
             }
             ray = isect.intr.spawn_ray(&ray.d);
         }
-    }
-
-    fn accept_alpha(&self, intr: &SurfaceInteraction, ray: &Ray) -> bool {
-        self.accept_mask(self.alpha_mask.as_ref(), intr, ray)
-    }
-
-    fn accept_shadow_alpha(&self, intr: &SurfaceInteraction, ray: &Ray) -> bool {
-        self.accept_mask(self.shadow_alpha_mask.as_ref(), intr, ray)
-    }
-
-    fn accept_mask(
-        &self,
-        source: Option<&AlphaMaskSource>,
-        intr: &SurfaceInteraction,
-        ray: &Ray,
-    ) -> bool {
-        let alpha = match source {
-            Some(AlphaMaskSource::Texture(texture)) => {
-                texture.evaluate(&TextureEvalContext::from(intr))
-            }
-            Some(AlphaMaskSource::Value(value)) => *value,
-            None => return true,
-        };
-
-        if alpha <= 0.0 {
-            return false;
-        }
-        if alpha >= 1.0 {
-            return true;
-        }
-        hash_float_ray(ray) <= alpha
     }
 
     pub fn area(&self) -> Float {
