@@ -9,6 +9,15 @@ use crate::util::geometry::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[cfg(feature = "mesh-accel")]
+use crate::cpu::aggregates::bvh::build::SplitMethod;
+
+#[cfg(feature = "mesh-accel")]
+pub struct MeshGrouping {
+    pub split_method: SplitMethod,
+    pub max_prims_in_node: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ShapeSampleContext {
     pub p: Point3f,
@@ -147,6 +156,96 @@ impl Shape {
             shape_sets.push(wrap_alpha_masks(curve_shapes, params, float_textures)?);
         }
         Ok(shape_sets)
+    }
+
+    #[cfg(feature = "mesh-accel")]
+    pub fn create_meshes(
+        name: &str,
+        render_from_object: &Transform,
+        object_from_render: &Transform,
+        reverse_orientation: bool,
+        params: &ParameterDictionary,
+        float_textures: &HashMap<String, Arc<FloatTexture>>,
+        grouping: &MeshGrouping,
+    ) -> Result<Vec<Shape>, PbrtError> {
+        let mut shapes = match name {
+            "trianglemesh" => create_triangle_mesh_shape_unmasked(
+                render_from_object,
+                object_from_render,
+                reverse_orientation,
+                params,
+            )?,
+            "plymesh" => create_ply_mesh_unmasked(
+                render_from_object,
+                object_from_render,
+                reverse_orientation,
+                params,
+                float_textures,
+            )?,
+            "loopsubdiv" => LoopSubdiv::create(
+                render_from_object,
+                object_from_render,
+                reverse_orientation,
+                params,
+            )?,
+            "heightfield" => HeightField::create(
+                render_from_object,
+                object_from_render,
+                reverse_orientation,
+                params,
+            )?,
+            _ => {
+                return Self::create(
+                    name,
+                    render_from_object,
+                    object_from_render,
+                    reverse_orientation,
+                    params,
+                    float_textures,
+                )
+            }
+        };
+
+        let alpha = get_alpha_texture(params, float_textures)?;
+        let shadow_alpha = get_shadow_alpha_texture(params, float_textures)?;
+        let test = if alpha.is_none() && shadow_alpha.is_none() {
+            None
+        } else {
+            Some(AlphaMaskTest::new(&alpha, &shadow_alpha))
+        };
+        let mut mesh = None;
+        let mut faces = Vec::new();
+        let mut remaining = Vec::new();
+        for shape in shapes.drain(..) {
+            if let Shape::Triangle(triangle) = shape {
+                match mesh.as_ref() {
+                    Some(existing) if !Arc::ptr_eq(existing, &triangle.mesh) => {
+                        return Err(PbrtError::error(
+                            "Mesh grouping received triangles from multiple meshes.",
+                        ));
+                    }
+                    None => mesh = Some(triangle.mesh.clone()),
+                    _ => {}
+                }
+                faces.push(triangle.tri_index);
+            } else {
+                remaining.push(shape);
+            }
+        }
+        let mut result = Vec::new();
+        if let Some(mesh) = mesh {
+            if let Some(mesh_shape) = MeshShape::new(
+                mesh,
+                faces,
+                test,
+                grouping.split_method,
+                grouping.max_prims_in_node,
+            ) {
+                result.push(Shape::Mesh(Box::new(mesh_shape)));
+            }
+        }
+        result.extend(wrap_alpha_masks(remaining, params, float_textures)?);
+        Ok(result)
     }
 
     /// Create shapes from shape name and parameters
