@@ -103,20 +103,20 @@ fn intersections(shapes: &[Shape], ray: &Ray, t_max: Float) -> Vec<ShapeIntersec
 fn assert_matches(mesh_shape: &MeshShape, shapes: &[Shape], rays: &[Ray]) {
     for ray in rays {
         let hits = intersections(shapes, ray, 10.0);
-        if hits.len() > 1 && hits[0].t_hit == hits[1].t_hit {
-            continue;
-        }
-        let expected = hits.first();
-        let actual = mesh_shape.intersect(ray, 10.0);
-        match (expected, actual) {
-            (Some(a), Some(b)) => {
-                assert_eq!(a.t_hit, b.t_hit);
-                assert_eq!(a.intr.p, b.intr.p);
-                assert_eq!(a.intr.n, b.intr.n);
-                assert_eq!(a.intr.uv, b.intr.uv);
+        let tied = hits.len() > 1 && hits[0].t_hit == hits[1].t_hit;
+        if !tied {
+            let expected = hits.first();
+            let actual = mesh_shape.intersect(ray, 10.0);
+            match (expected, actual) {
+                (Some(a), Some(b)) => {
+                    assert_eq!(a.t_hit, b.t_hit);
+                    assert_eq!(a.intr.p, b.intr.p);
+                    assert_eq!(a.intr.n, b.intr.n);
+                    assert_eq!(a.intr.uv, b.intr.uv);
+                }
+                (None, None) => {}
+                _ => panic!("mesh and per-triangle intersection differ"),
             }
-            (None, None) => {}
-            _ => panic!("mesh and per-triangle intersection differ"),
         }
         assert_eq!(
             mesh_shape.intersect_p(ray, 10.0),
