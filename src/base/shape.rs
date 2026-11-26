@@ -122,6 +122,8 @@ pub enum Shape {
     BilinearPatch(BilinearPatch),
     Curve(Curve),
     AlphaMask(Box<AlphaMaskShape>),
+    #[cfg(feature = "mesh-accel")]
+    Mesh(Box<MeshShape>),
 }
 
 impl Shape {
@@ -319,6 +321,8 @@ impl Shape {
             Shape::BilinearPatch(s) => s.object_bound(),
             Shape::Curve(s) => s.object_bound(),
             Shape::AlphaMask(s) => s.object_bound(),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(s) => s.object_bound(),
         }
     }
 
@@ -335,6 +339,8 @@ impl Shape {
             Shape::BilinearPatch(s) => s.world_bound(),
             Shape::Curve(s) => s.world_bound(),
             Shape::AlphaMask(s) => s.world_bound(),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(s) => s.world_bound(),
         }
     }
 
@@ -355,12 +361,16 @@ impl Shape {
             Shape::BilinearPatch(s) => s.normal_bounds(),
             Shape::Curve(s) => s.normal_bounds(),
             Shape::AlphaMask(s) => s.normal_bounds(),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(_) => DirectionCone::entire_sphere(),
         }
     }
 
     pub fn has_constant_zero_alpha_mask(&self) -> bool {
         match self {
             Shape::AlphaMask(s) => s.has_constant_zero_alpha(),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(s) => s.has_constant_zero_alpha(),
             _ => false,
         }
     }
@@ -399,6 +409,8 @@ impl Shape {
             Shape::BilinearPatch(s) => s.intersect(r, t_max),
             Shape::Curve(s) => s.intersect(r, t_max),
             Shape::AlphaMask(s) => s.intersect(r, t_max),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(s) => s.intersect(r, t_max),
         }
     }
 
@@ -419,6 +431,8 @@ impl Shape {
             Shape::BilinearPatch(s) => s.intersect_p(r, t_max),
             Shape::Curve(s) => s.intersect_p(r, t_max),
             Shape::AlphaMask(s) => s.intersect_p(r, t_max),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(s) => s.intersect_p(r, t_max),
         }
     }
 
@@ -435,6 +449,8 @@ impl Shape {
             Shape::BilinearPatch(s) => s.area(),
             Shape::Curve(s) => s.area(),
             Shape::AlphaMask(s) => s.area(),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(s) => s.area(),
         }
     }
 
@@ -451,6 +467,11 @@ impl Shape {
             Shape::BilinearPatch(s) => s.sample(u),
             Shape::Curve(s) => s.sample(u),
             Shape::AlphaMask(s) => s.sample(u),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(_) => {
+                debug_assert!(false);
+                None
+            }
         }
     }
 
@@ -467,6 +488,11 @@ impl Shape {
             Shape::BilinearPatch(s) => s.pdf(inter),
             Shape::Curve(s) => s.pdf(inter),
             Shape::AlphaMask(s) => s.pdf(inter),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(_) => {
+                debug_assert!(false);
+                0.0
+            }
         }
     }
 
@@ -493,6 +519,11 @@ impl Shape {
             Shape::BilinearPatch(s) => s.sample_from(&inter, u),
             Shape::Curve(s) => s.sample_from(&inter, u),
             Shape::AlphaMask(s) => s.sample_from(ctx, u),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(_) => {
+                debug_assert!(false);
+                None
+            }
         }
     }
 
@@ -515,6 +546,11 @@ impl Shape {
             Shape::BilinearPatch(s) => s.pdf_from(&inter, wi),
             Shape::Curve(s) => s.pdf_from(&inter, wi),
             Shape::AlphaMask(s) => s.pdf_from(ctx, wi),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(_) => {
+                debug_assert!(false);
+                0.0
+            }
         }
     }
 
@@ -531,6 +567,11 @@ impl Shape {
             Shape::BilinearPatch(s) => s.solid_angle(p, n_samples),
             Shape::Curve(s) => s.solid_angle(p, n_samples),
             Shape::AlphaMask(s) => s.solid_angle(p, n_samples),
+            #[cfg(feature = "mesh-accel")]
+            Shape::Mesh(_) => {
+                debug_assert!(false);
+                0.0
+            }
         }
     }
 }

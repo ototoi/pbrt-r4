@@ -8,6 +8,8 @@ pub mod disk;
 pub mod heightfield;
 pub mod hyperboloid;
 pub mod loopsubdiv;
+#[cfg(feature = "mesh-accel")]
+pub mod mesh;
 pub mod nurbs;
 pub mod paraboloid;
 pub mod plymesh;
@@ -24,6 +26,8 @@ pub use disk::*;
 pub use heightfield::*;
 pub use hyperboloid::*;
 pub use loopsubdiv::*;
+#[cfg(feature = "mesh-accel")]
+pub use mesh::*;
 pub use nurbs::*;
 pub use paraboloid::*;
 pub use plymesh::*;
