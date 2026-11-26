@@ -24,7 +24,7 @@ fn test_ray(x: Float, y: Float) -> Ray {
 #[test]
 fn tree_order_is_a_permutation() {
     let bounds = test_bounds();
-    let (_, order) = BVHTree::new(&bounds, 8, SplitMethod::HLBVH);
+    let (_, order) = BVHTree::new(bounds.len(), |i| bounds[i], 8, SplitMethod::HLBVH);
     let mut sorted = order;
     sorted.sort_unstable();
     assert_eq!(sorted, (0..bounds.len()).collect::<Vec<_>>());
@@ -33,7 +33,7 @@ fn tree_order_is_a_permutation() {
 #[test]
 fn tree_nearest_hit_matches_brute_force() {
     let bounds = test_bounds();
-    let (tree, order) = BVHTree::new(&bounds, 8, SplitMethod::HLBVH);
+    let (tree, order) = BVHTree::new(bounds.len(), |i| bounds[i], 8, SplitMethod::HLBVH);
     for j in 0..50 {
         for i in 0..50 {
             let ray = test_ray(i as Float * 0.1, j as Float * 0.1);
@@ -70,7 +70,7 @@ fn tree_nearest_hit_matches_brute_force() {
 #[test]
 fn tree_respects_t_max() {
     let bounds = test_bounds();
-    let (tree, _) = BVHTree::new(&bounds, 8, SplitMethod::HLBVH);
+    let (tree, _) = BVHTree::new(bounds.len(), |i| bounds[i], 8, SplitMethod::HLBVH);
     let ray = test_ray(0.05, 0.05);
     assert!(tree.intersect(&ray, 1.0, |_, _| Some((2.0, ()))).is_none());
     assert!(!tree.intersect_p(&ray, 1.0, |_, _| true));
@@ -79,7 +79,7 @@ fn tree_respects_t_max() {
 #[test]
 fn tree_clamps_leaf_size() {
     let bounds = test_bounds();
-    let (tree, order) = BVHTree::new(&bounds, 1000, SplitMethod::HLBVH);
+    let (tree, order) = BVHTree::new(bounds.len(), |i| bounds[i], 1000, SplitMethod::HLBVH);
     let ray = test_ray(0.05, 0.05);
     let hit = tree.intersect(&ray, Float::INFINITY, |mut range, limit| {
         range

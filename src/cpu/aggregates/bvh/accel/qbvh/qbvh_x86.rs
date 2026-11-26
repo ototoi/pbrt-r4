@@ -411,13 +411,15 @@ pub struct QBVHTree {
 
 impl QBVHTree {
     pub fn new(
-        bounds: &[Bounds3f],
+        count: usize,
+        bounds: impl Fn(usize) -> Bounds3f,
         max_prims_in_node: usize,
         split_method: SplitMethod,
     ) -> (Self, Vec<usize>) {
         let max_prims_in_node = usize::min(max_prims_in_node, 255);
         let mut order = Vec::new();
-        let root = create_bvh_node_from_bounds(&mut order, bounds, max_prims_in_node, split_method);
+        let root =
+            create_bvh_node_from_bounds(&mut order, count, bounds, max_prims_in_node, split_method);
         let tree_bounds = root.bounds;
         let mut nodes = Vec::with_capacity(root.node_count());
         flatten_qbvh_tree(&mut nodes, root);
@@ -473,8 +475,12 @@ impl QBVHAccel {
         max_prims_in_node: usize,
         split_method: SplitMethod,
     ) -> Self {
-        let bounds: Vec<Bounds3f> = prims.iter().map(|p| p.bounds()).collect();
-        let (tree, order) = QBVHTree::new(&bounds, max_prims_in_node, split_method);
+        let (tree, order) = QBVHTree::new(
+            prims.len(),
+            |i| prims[i].bounds(),
+            max_prims_in_node,
+            split_method,
+        );
         let primitives = order.iter().map(|i| prims[*i].clone()).collect();
         QBVHAccel { primitives, tree }
     }

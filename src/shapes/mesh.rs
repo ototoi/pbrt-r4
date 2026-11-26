@@ -1,7 +1,5 @@
 use super::alphamask::AlphaMaskTest;
-use super::triangle::{
-    intersect_triangle, triangle_interaction, triangle_vertices, TriangleIntersection, TriangleMesh,
-};
+use super::triangle::{intersect_triangle, triangle_interaction, triangle_vertices, TriangleMesh};
 use crate::cpu::aggregates::bvh::accel::BVHTree;
 use crate::cpu::aggregates::bvh::build::SplitMethod;
 use crate::interaction::*;
@@ -28,14 +26,15 @@ impl MeshShape {
         if faces.is_empty() {
             return None;
         }
-        let bounds: Vec<Bounds3f> = faces
-            .iter()
-            .map(|face| {
-                let (p0, p1, p2) = triangle_vertices(&mesh, *face);
+        let (tree, order) = BVHTree::new(
+            faces.len(),
+            |index| {
+                let (p0, p1, p2) = triangle_vertices(&mesh, faces[index]);
                 Bounds3f::new(&p0, &p1).union_p(&p2)
-            })
-            .collect();
-        let (tree, order) = BVHTree::new(&bounds, max_prims_in_node, split_method);
+            },
+            max_prims_in_node,
+            split_method,
+        );
         let faces = order.iter().map(|index| faces[*index]).collect();
         Some(Self {
             mesh,
@@ -77,7 +76,6 @@ impl MeshShape {
         {
             return None;
         }
-        let mut best: Option<(Float, u32, TriangleIntersection, Option<SurfaceInteraction>)> = None;
         let has_alpha = self.alpha.is_some();
         self.tree
             .intersect(ray, t_max, |range: Range<usize>, mut limit| {
@@ -102,13 +100,12 @@ impl MeshShape {
                 }
                 leaf_best.map(|hit| (hit.0, hit))
             })
-            .map(|hit| {
-                best = Some(hit);
-            });
-        let (t, face, ti, intr) = best?;
-        let intr =
-            intr.unwrap_or_else(|| triangle_interaction(&self.mesh, face, ti, ray.time, -ray.d));
-        Some(ShapeIntersection::new(intr, t))
+            .map(|(_, face, ti, intr)| {
+                let intr = intr.unwrap_or_else(|| {
+                    triangle_interaction(&self.mesh, face, ti, ray.time, -ray.d)
+                });
+                ShapeIntersection::new(intr, ti.t)
+            })
     }
 
     pub fn intersect_p(&self, ray: &Ray, t_max: Float) -> bool {
