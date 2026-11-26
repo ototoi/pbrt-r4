@@ -466,6 +466,7 @@ pub fn triangle_interaction(
     isect
 }
 
+#[inline(always)]
 pub fn triangle_vertices(mesh: &TriangleMesh, tri_index: u32) -> (Point3f, Point3f, Point3f) {
     let base = 3 * tri_index as usize;
     (
