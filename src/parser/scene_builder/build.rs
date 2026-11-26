@@ -39,9 +39,11 @@ use crate::base::filter::Filter;
 use crate::base::light::Light;
 use crate::base::material::Material;
 use crate::base::sampler::Sampler;
+#[cfg(feature = "mesh-accel")]
 use crate::base::shape::MeshGrouping;
 use crate::base::shape::Shape;
 use crate::base::texture::typed_spectrum_texture_name;
+#[cfg(feature = "mesh-accel")]
 use crate::cpu::aggregates::bvh::create_bvh_accelerator::bvh_build_options;
 use crate::cpu::aggregates::create_accelerator;
 use crate::cpu::integrators::create_integrator;
@@ -177,6 +179,7 @@ impl SceneBuilder {
         // already-built materials, matching SceneBuilder eager semantics).
         let (materials, named_materials, default_material) =
             self.realize_materials(&float_tex, &spectrum_tex)?;
+        #[cfg(feature = "mesh-accel")]
         let mesh_grouping = {
             let default_params = ParameterDictionary::new();
             let params = if self.accelerator_name == "bvh" {
@@ -203,6 +206,7 @@ impl SceneBuilder {
             &named_materials,
             &default_material,
             &named_media,
+            #[cfg(feature = "mesh-accel")]
             &mesh_grouping,
             scene_build_pool,
         )?;
@@ -216,6 +220,7 @@ impl SceneBuilder {
             &default_material,
             &named_media,
             &render_from_world,
+            #[cfg(feature = "mesh-accel")]
             &mesh_grouping,
             scene_build_pool,
         )?;
@@ -616,7 +621,7 @@ impl SceneBuilder {
         named_materials: &HashMap<String, Arc<Material>>,
         default_material: &Arc<Material>,
         named_media: &MediumMap,
-        mesh_grouping: &MeshGrouping,
+        #[cfg(feature = "mesh-accel")] mesh_grouping: &MeshGrouping,
         scene_build_pool: Option<&ThreadPool>,
     ) -> Result<HashMap<String, Arc<Primitive>>, PbrtError> {
         use rayon::prelude::*;
@@ -640,6 +645,7 @@ impl SceneBuilder {
                         named_materials,
                         default_material,
                         named_media,
+                        #[cfg(feature = "mesh-accel")]
                         &mesh_grouping,
                         &id_transform,
                     )
@@ -655,6 +661,7 @@ impl SceneBuilder {
                         named_materials,
                         default_material,
                         named_media,
+                        #[cfg(feature = "mesh-accel")]
                         &mesh_grouping,
                         &id_transform,
                     )
@@ -688,6 +695,7 @@ impl SceneBuilder {
                         named_materials,
                         default_material,
                         named_media,
+                        #[cfg(feature = "mesh-accel")]
                         &mesh_grouping,
                         &id_transform,
                         &mut prims,
@@ -705,6 +713,7 @@ impl SceneBuilder {
                         named_materials,
                         default_material,
                         named_media,
+                        #[cfg(feature = "mesh-accel")]
                         &mesh_grouping,
                         &id_transform,
                         &mut prims,
@@ -777,7 +786,7 @@ impl SceneBuilder {
         default_material: &Arc<Material>,
         named_media: &MediumMap,
         render_from_world: &Transform,
-        mesh_grouping: &MeshGrouping,
+        #[cfg(feature = "mesh-accel")] mesh_grouping: &MeshGrouping,
         scene_build_pool: Option<&ThreadPool>,
     ) -> Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError> {
         use rayon::prelude::*;
@@ -797,6 +806,7 @@ impl SceneBuilder {
                     named_materials,
                     default_material,
                     named_media,
+                    #[cfg(feature = "mesh-accel")]
                     mesh_grouping,
                     render_from_world,
                 )
@@ -810,6 +820,7 @@ impl SceneBuilder {
                     named_materials,
                     default_material,
                     named_media,
+                    #[cfg(feature = "mesh-accel")]
                     mesh_grouping,
                     render_from_world,
                 )
@@ -852,6 +863,7 @@ impl SceneBuilder {
                     named_materials,
                     default_material,
                     named_media,
+                    #[cfg(feature = "mesh-accel")]
                     &mesh_grouping,
                     render_from_world,
                     &mut prims,
@@ -867,6 +879,7 @@ impl SceneBuilder {
                     named_materials,
                     default_material,
                     named_media,
+                    #[cfg(feature = "mesh-accel")]
                     &mesh_grouping,
                     render_from_world,
                     &mut prims,
@@ -890,7 +903,7 @@ impl SceneBuilder {
         named_materials: &HashMap<String, Arc<Material>>,
         default_material: &Arc<Material>,
         named_media: &MediumMap,
-        mesh_grouping: &MeshGrouping,
+        #[cfg(feature = "mesh-accel")] mesh_grouping: &MeshGrouping,
         render_from_world: &Transform,
     ) -> Result<(Vec<Arc<Primitive>>, Vec<Arc<Light>>), PbrtError> {
         let mut prims = Vec::new();
@@ -903,6 +916,7 @@ impl SceneBuilder {
             named_materials,
             default_material,
             named_media,
+            #[cfg(feature = "mesh-accel")]
             mesh_grouping,
             render_from_world,
             &mut prims,
@@ -970,12 +984,11 @@ impl SceneBuilder {
         named_materials: &HashMap<String, Arc<Material>>,
         default_material: &Arc<Material>,
         named_media: &MediumMap,
-        mesh_grouping: &MeshGrouping,
+        #[cfg(feature = "mesh-accel")] mesh_grouping: &MeshGrouping,
         render_from_world: &Transform,
         out_prims: &mut Vec<Arc<Primitive>>,
         out_area_lights: &mut Vec<Arc<Light>>,
     ) -> Result<(), PbrtError> {
-        let _ = mesh_grouping;
         if shape.base.name == CURVES_SHAPE_NAME && shape.child_params.is_empty() {
             return Err(PbrtError::error(
                 "Shape \"curves\" is reserved for SceneBuilder's internal representation.",
@@ -1037,6 +1050,7 @@ impl SceneBuilder {
                 shape.reverse_orientation,
                 shape_params_for_create,
                 float_tex,
+                #[cfg(feature = "mesh-accel")]
                 mesh_grouping,
             )
         } else {
