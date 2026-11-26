@@ -21,7 +21,7 @@ WorldEnd"#,
 }
 
 #[test]
-fn mesh_instances_build_and_intersect_after_transform() {
+fn three_mesh_instances_are_hit_after_transform() {
     let mut builder = SceneBuilder::new();
     parse_string(
         r#"LookAt 0 0 5  0 0 0  0 1 0
@@ -31,10 +31,18 @@ Shape "trianglemesh"
     "point3 P" [ -0.5 -0.5 0  0.5 -0.5 0  0.5 0.5 0  -0.5 0.5 0 ]
     "integer indices" [ 0 1 2  0 2 3 ]
 ObjectEnd
+AttributeBegin
 Translate -1 0 0
 ObjectInstance "quad"
-Translate 2 0 0
+AttributeEnd
+AttributeBegin
+Translate 0 0 0
 ObjectInstance "quad"
+AttributeEnd
+AttributeBegin
+Translate 1 0 0
+ObjectInstance "quad"
+AttributeEnd
 WorldEnd"#,
         &mut builder,
     )
@@ -43,11 +51,16 @@ WorldEnd"#,
     let scene = builder
         .build_scene()
         .expect("instanced mesh scene should build");
-    let ray = pbrt_r4::util::geometry::ray::Ray::new(
-        &pbrt_r4::util::base::Point3f::new(-1.0, 0.0, 5.0),
-        &pbrt_r4::util::base::Vector3f::new(0.0, 0.0, -1.0),
-        10.0,
-        0.0,
-    );
-    assert!(scene.intersect(&ray, f32::INFINITY).is_some());
+    for x in [-1.0, 0.0, 1.0] {
+        let ray = pbrt_r4::util::geometry::ray::Ray::new(
+            &pbrt_r4::util::base::Point3f::new(x, 0.0, 5.0),
+            &pbrt_r4::util::base::Vector3f::new(0.0, 0.0, -1.0),
+            10.0,
+            0.0,
+        );
+        assert!(
+            scene.intersect(&ray, f32::INFINITY).is_some(),
+            "instance at x={x} was missed"
+        );
+    }
 }
