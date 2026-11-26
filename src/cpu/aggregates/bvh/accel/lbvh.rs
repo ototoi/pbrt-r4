@@ -4,7 +4,6 @@ use crate::interaction::*;
 use crate::util::base::*;
 use crate::util::geometry::*;
 
-use log::*;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -14,13 +13,6 @@ pub struct LinearBVHNode {
     pub offset: usize,
     pub n_primitives: usize, // 0 -> interior node
     pub axis: u8,            // interior node: xyz
-}
-
-fn to_bounds3f(b: &[[Float; 3]; 2]) -> Bounds3f {
-    return Bounds3f::from((
-        (b[0][0] as Float, b[0][1] as Float, b[0][2] as Float),
-        (b[1][0] as Float, b[1][1] as Float, b[1][2] as Float),
-    ));
 }
 
 fn to_array_bounds3f(b: &Bounds3f) -> [[Float; 3]; 2] {
