@@ -9,10 +9,8 @@ use crate::util::geometry::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[cfg(feature = "mesh-accel")]
 use crate::cpu::aggregates::bvh::build::SplitMethod;
 
-#[cfg(feature = "mesh-accel")]
 pub struct MeshGrouping {
     pub split_method: SplitMethod,
     pub max_prims_in_node: usize,
