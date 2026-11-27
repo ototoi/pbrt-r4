@@ -88,6 +88,30 @@ pbrt-r4 has several options as Rust features.
 | `stats` | Enables the pbrt-v4 `pixelstats` scene option. |
 | `float-as-double` | Uses double precision (64-bit) for floating-point calculations. This increases precision but also increases execution time and memory usage. |
 | `webgpu` | Enables the WebGPU renderer. Enabled by default. |
+| `curves-accel` | Enables indexed CPU acceleration for eligible curve groups. |
+
+### Experimental CPU hair BVH
+
+Build the CPU renderer with indexed curves, then compare both BVH layouts
+using the same executable.
+
+```sh
+cargo build --release --no-default-features --features mesh-accel,curves-accel
+PBRT_CURVES_BVH=segments ./target/release/pbrt-r4 --outfile segments.exr scene.pbrt
+PBRT_CURVES_BVH=hair ./target/release/pbrt-r4 --outfile hair.exr scene.pbrt
+```
+
+`segments` is the default layout. It indexes each curve subsegment.
+`hair` indexes whole cubics with the shared AABB hierarchy and stores each
+cubic's subdivision count once. Its leaves test a chord-aligned box when
+that box has less surface area than the object-space AABB. The projected
+Bézier control hull and maximum curve radius bound the cubic in that frame.
+The existing curve intersection routine handles the surviving subsegments.
+
+The whole-cubic layout reduces BVH construction work and storage. A ray
+that reaches one cubic can encounter more subsegments than it would with
+the `segments` layout. The leaf culling is inspired by the oriented bounds
+in the [Woop et al. hair traversal paper](https://embree.github.io/papers/2014-HPG-hair.pdf).
 
 ## GPU rendering
 

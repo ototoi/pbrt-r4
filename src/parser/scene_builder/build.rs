@@ -59,7 +59,7 @@ use crate::options::pbrt_options::{PbrtOptions, RenderingCoordinateSystem};
 use crate::paramdict::{ParameterDictionary, TextureParameterDictionary};
 use crate::scene::Scene;
 #[cfg(feature = "curves-accel")]
-use crate::shapes::curves::CurvesShape;
+use crate::shapes::curves::{CurvesBvh, CurvesShape};
 use crate::textures::{
     FloatImageTexture, FloatTexture, ImageMapMIPMapCache, SpectrumImageTexture, SpectrumTexture,
 };
@@ -961,13 +961,14 @@ impl SceneBuilder {
             })
         }) {
             let (split, max_prims) = bvh_build_options(&self.accelerator_params);
-            if let Some(curves) = CurvesShape::create(
+            if let Some(curves) = CurvesShape::create_with_bvh(
                 &shape_object_to_world,
                 &shape_object_to_world.inverse(),
                 shape.reverse_orientation,
                 &shape.child_params,
                 split,
                 max_prims,
+                CurvesBvh::from_env()?,
             )? {
                 let material =
                     self.shape_material(shape, materials, named_materials, default_material)?;
