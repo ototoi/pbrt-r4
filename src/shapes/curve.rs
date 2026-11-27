@@ -152,6 +152,10 @@ fn transform_lookat(e: &Point3f, l: &Point3f, u: &Vector3f) -> Transform {
 }
 
 impl CurvesCommon {
+    pub(super) fn object_ray(&self, ray: &Ray) -> Ray {
+        self.base.world_to_object.transform_ray(ray).0
+    }
+
     pub(super) fn new(
         o2w: &Transform,
         w2o: &Transform,
@@ -531,15 +535,13 @@ pub(super) struct CurveSegment<'a> {
 impl CurveSegment<'_> {
     fn intersect_common(
         &self,
-        r: &Ray,
+        ray: &Ray,
         t_max: Float,
         is_shadow: bool,
     ) -> Option<(Float, Option<SurfaceInteraction>)> {
         let u_min = self.u_min;
         let u_max = self.u_max;
         let common = self.common;
-        // Transform _Ray_ to object space
-        let (ray, _o_err, _d_err) = self.group.base.world_to_object.transform_ray(r);
         // Compute object-space control points for curve segment, _cpObj_
         let cp_obj = [
             blossom_bezier(&common.cp_obj, u_min, u_min, u_min),
@@ -641,7 +643,7 @@ impl CurveSegment<'_> {
             common,
             self.group,
             is_shadow,
-            &ray,
+            ray,
             &cp,
             &Transform::inverse(&object_to_ray),
             u_min,
@@ -678,7 +680,11 @@ impl CurveSegment<'_> {
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
-        if let Some((t_hit, isect)) = self.intersect_common(r, t_max, false) {
+        self.intersect_object(&self.group.object_ray(r), t_max)
+    }
+
+    pub(super) fn intersect_object(&self, ray: &Ray, t_max: Float) -> Option<ShapeIntersection> {
+        if let Some((t_hit, isect)) = self.intersect_common(ray, t_max, false) {
             return Some(ShapeIntersection::new(isect.unwrap(), t_hit));
         } else {
             return None;
@@ -686,7 +692,11 @@ impl CurveSegment<'_> {
     }
 
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
-        return self.intersect_common(r, t_max, true).is_some();
+        self.intersect_p_object(&self.group.object_ray(r), t_max)
+    }
+
+    pub(super) fn intersect_p_object(&self, ray: &Ray, t_max: Float) -> bool {
+        self.intersect_common(ray, t_max, true).is_some()
     }
 }
 

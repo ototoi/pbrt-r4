@@ -292,3 +292,76 @@ fn curves_shape_matches_direct_hits_and_finite_shadow_rays() {
         }
     }
 }
+
+#[cfg(feature = "curves-accel")]
+#[test]
+fn hair_bvh_matches_direct_intersections_for_diagonal_curves() {
+    use pbrt_r4::cpu::aggregates::bvh::build::SplitMethod;
+    use pbrt_r4::shapes::curves::{CurvesBvh, CurvesShape};
+
+    let transform = Transform::translate(2.0, -1.0, 3.0)
+        * Transform::rotate_y(23.0)
+        * Transform::scale(2.0, 0.5, 1.5);
+    let inverse = transform.inverse();
+    for kind in ["flat", "cylinder", "ribbon"] {
+        let mut params = Vec::new();
+        for z in [0.0, 0.7, 1.4, 2.1, 2.8, 3.5] {
+            let mut param = ParameterDictionary::new();
+            param.add_string("type", kind);
+            param.add_int("splitdepth", 3);
+            param.add_float("width0", 0.12);
+            param.add_float("width1", 0.04);
+            param.add_point(
+                "P",
+                &[0.0, 0.0, z, 0.25, 0.25, z, 0.75, 0.75, z, 1.0, 1.0, z],
+            );
+            if kind == "ribbon" {
+                param.add_point("N", &[0.0, -0.2, 0.98, 0.0, 0.2, 0.98]);
+            }
+            params.push(param);
+        }
+        let direct: Vec<_> = create_curves_shape(&transform, &inverse, false, &params)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        let hair = CurvesShape::create_with_bvh(
+            &transform,
+            &inverse,
+            false,
+            &params,
+            SplitMethod::HLBVH,
+            2,
+            CurvesBvh::Hair,
+        )
+        .unwrap()
+        .unwrap();
+        let mut hits = 0;
+        for (z, dz) in [(-1.0, 1.0), (5.0, -1.0)] {
+            for x in [0.09, 0.29, 0.51, 0.76, 0.95] {
+                for offset in [-0.12, -0.025, 0.0, 0.025, 0.12] {
+                    let ray = Ray::new(
+                        &transform.transform_point(&Point3f::new(x, x + offset, z)),
+                        &transform.transform_vector(&Vector3f::new(0.0, 0.0, dz)),
+                        Float::INFINITY,
+                        0.0,
+                    );
+                    for limit in [0.5, 1.3, Float::INFINITY] {
+                        let expected = direct
+                            .iter()
+                            .filter_map(|curve| curve.intersect(&ray, limit))
+                            .map(|hit| hit.t_hit)
+                            .min_by(Float::total_cmp);
+                        hits += usize::from(expected.is_some());
+                        assert_eq!(hair.intersect(&ray, limit).map(|hit| hit.t_hit), expected);
+                        assert_eq!(
+                            hair.intersect_p(&ray, limit),
+                            direct.iter().any(|curve| curve.intersect_p(&ray, limit))
+                        );
+                    }
+                }
+            }
+        }
+        assert!(hits > 0, "{kind}");
+    }
+}
