@@ -239,3 +239,56 @@ fn ribbon_intersection_interpolates_obtuse_endpoint_normal_angles() {
         hit.intr.uv.x
     );
 }
+
+#[cfg(feature = "curves-accel")]
+#[test]
+fn curves_shape_matches_direct_hits_and_finite_shadow_rays() {
+    use pbrt_r4::cpu::aggregates::bvh::build::SplitMethod;
+    use pbrt_r4::shapes::curves::CurvesShape;
+
+    for curve_type in ["flat", "cylinder", "ribbon"] {
+        let transform = Transform::translate(0.0, 0.0, 1.0);
+        let params = [
+            intersectable_curve_params(curve_type, 3),
+            intersectable_curve_params(curve_type, 2),
+        ];
+        let curves: Vec<_> = create_curves_shape(&transform, &transform.inverse(), false, &params)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        let accel = CurvesShape::create(
+            &transform,
+            &transform.inverse(),
+            false,
+            &params,
+            SplitMethod::HLBVH,
+            8,
+        )
+        .unwrap()
+        .unwrap();
+
+        for (z, direction) in [(-2.0, 1.0), (4.0, -1.0)] {
+            for x in [0.11, 0.43, 0.72, 1.5] {
+                let ray = Ray::new(
+                    &Point3f::new(x, 0.01, z),
+                    &Vector3f::new(0.0, 0.0, direction),
+                    Float::INFINITY,
+                    0.0,
+                );
+                for limit in [1.0, 2.5, Float::INFINITY] {
+                    let expected = curves
+                        .iter()
+                        .filter_map(|curve| curve.intersect(&ray, limit))
+                        .map(|hit| hit.t_hit)
+                        .min_by(Float::total_cmp);
+                    assert_eq!(accel.intersect(&ray, limit).map(|hit| hit.t_hit), expected);
+                    assert_eq!(
+                        accel.intersect_p(&ray, limit),
+                        curves.iter().any(|curve| curve.intersect_p(&ray, limit))
+                    );
+                }
+            }
+        }
+    }
+}
