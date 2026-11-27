@@ -3,6 +3,8 @@ pub mod base_shape;
 pub mod bilinearmesh;
 pub mod cone;
 pub mod curve;
+#[cfg(feature = "curves-accel")]
+pub mod curves;
 pub mod cylinder;
 pub mod disk;
 pub mod heightfield;
@@ -21,6 +23,8 @@ pub use base_shape::*;
 pub use bilinearmesh::*;
 pub use cone::*;
 pub use curve::*;
+#[cfg(feature = "curves-accel")]
+pub use curves::*;
 pub use cylinder::*;
 pub use disk::*;
 pub use heightfield::*;

@@ -16,6 +16,7 @@ include = ["/src/**", "/build/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "
 [features]
 default = ["webgpu", "mesh-accel"]
 stats = []
+curves-accel = []
 float-as-double = []
 cuda = []
 webgpu = ["dep:bytemuck", "dep:dirs", "dep:glam", "dep:pollster", "dep:wgpu"]

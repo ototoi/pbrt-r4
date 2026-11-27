@@ -176,3 +176,35 @@ fn curves_inside_an_object_definition_are_grouped_locally() {
     assert_eq!(definition.shapes.len(), 1);
     assert_eq!(definition.shapes[0].child_params.len(), 2);
 }
+
+#[test]
+fn scene_bvh_groups_opaque_curve_leaves_only_when_enabled() {
+    use pbrt_r4::cpu::aggregates::Accel;
+    use pbrt_r4::cpu::primitive::Primitive;
+
+    let mut builder = SceneBuilder::new();
+    let scene = format!("WorldBegin\n{CURVE}\n{CURVE}\n{CURVE} \"float alpha\" 0.5\nWorldEnd\n");
+    parse_string(&scene, &mut builder).unwrap();
+    let scene = builder.build_scene().unwrap();
+    let Primitive::Accel(Accel::BVH(bvh)) = scene.aggregate.as_ref() else {
+        panic!("expected the default scene BVH");
+    };
+
+    // Each original directive defaults to eight subsegments.
+    assert_eq!(
+        bvh.primitives.len(),
+        if cfg!(feature = "curves-accel") {
+            9
+        } else {
+            24
+        }
+    );
+    #[cfg(feature = "curves-accel")]
+    assert_eq!(
+        bvh.primitives
+            .iter()
+            .filter(|p| matches!(p.as_ref(), Primitive::Accel(Accel::Curves(_))))
+            .count(),
+        1
+    );
+}

@@ -43,9 +43,11 @@ use crate::base::sampler::Sampler;
 use crate::base::shape::MeshGrouping;
 use crate::base::shape::Shape;
 use crate::base::texture::typed_spectrum_texture_name;
-#[cfg(feature = "mesh-accel")]
+#[cfg(any(feature = "mesh-accel", feature = "curves-accel"))]
 use crate::cpu::aggregates::bvh::create_bvh_accelerator::bvh_build_options;
 use crate::cpu::aggregates::create_accelerator;
+#[cfg(feature = "curves-accel")]
+use crate::cpu::aggregates::curves::CurvesAccel;
 use crate::cpu::integrators::create_integrator;
 use crate::cpu::integrators::integrator::Integrator;
 use crate::cpu::primitive::*;
@@ -56,6 +58,8 @@ use crate::media::medium_interface::MediumInterface;
 use crate::options::pbrt_options::{PbrtOptions, RenderingCoordinateSystem};
 use crate::paramdict::{ParameterDictionary, TextureParameterDictionary};
 use crate::scene::Scene;
+#[cfg(feature = "curves-accel")]
+use crate::shapes::curves::CurvesShape;
 use crate::textures::{
     FloatImageTexture, FloatTexture, ImageMapMIPMapCache, SpectrumImageTexture, SpectrumTexture,
 };
@@ -950,6 +954,39 @@ impl SceneBuilder {
         } else {
             object_to_world
         };
+        #[cfg(feature = "curves-accel")]
+        if shape.child_params.iter().all(|params| {
+            ["alpha", "shadowalpha"].into_iter().all(|name| {
+                params.get_textures_ref(name).is_none() && params.get_floats_ref(name).is_none()
+            })
+        }) {
+            let (split, max_prims) = bvh_build_options(&self.accelerator_params);
+            if let Some(curves) = CurvesShape::create(
+                &shape_object_to_world,
+                &shape_object_to_world.inverse(),
+                shape.reverse_orientation,
+                &shape.child_params,
+                split,
+                max_prims,
+            )? {
+                let material =
+                    self.shape_material(shape, materials, named_materials, default_material)?;
+                let medium = build_medium_interface(&shape.medium_interface, named_media);
+                let primitive =
+                    Arc::new(Primitive::from(CurvesAccel::new(curves, material, medium)));
+                if animated {
+                    if let Some(transform) = animated_shape_transform(rfo) {
+                        out_prims.push(Arc::new(Primitive::Transformed(
+                            TransformedPrimitive::new(&primitive, &transform),
+                        )));
+                    }
+                } else {
+                    out_prims.push(primitive);
+                }
+            }
+            return Ok(());
+        }
+
         let shape_sets = Shape::create_curves(
             &shape_object_to_world,
             &shape_object_to_world.inverse(),
@@ -1114,14 +1151,7 @@ impl SceneBuilder {
         }
         let animated = matches!(rfo, RenderFromObject::Animated { .. });
 
-        let material = if shape.material_is_default
-            && shape.material_index == usize::MAX
-            && shape.material_name.is_none()
-        {
-            Some(Arc::clone(default_material))
-        } else {
-            self.resolve_shape_material(shape, materials, named_materials)?
-        };
+        let material = self.shape_material(shape, materials, named_materials, default_material)?;
         let medium_interface = build_medium_interface(&shape.medium_interface, named_media);
 
         if animated {
@@ -1136,20 +1166,8 @@ impl SceneBuilder {
                 ));
                 piece_prims.push(prim);
             }
-            let animated_transform = match rfo {
-                RenderFromObject::Animated {
-                    from,
-                    to,
-                    start_time,
-                    end_time,
-                } => match AnimatedTransform::new(&from, start_time, &to, end_time) {
-                    Some(transform) => transform,
-                    None => {
-                        error!("Skipping shape: animated transform decomposition failed");
-                        return Ok(());
-                    }
-                },
-                _ => unreachable!(),
+            let Some(animated_transform) = animated_shape_transform(rfo) else {
+                return Ok(());
             };
             let final_prim = if piece_prims.len() > 1 {
                 match self.create_shape_accelerator(&piece_prims) {
@@ -1228,6 +1246,23 @@ impl SceneBuilder {
         create_accelerator(&self.accelerator_name, prims, &self.accelerator_params)
             .map(Arc::new)
             .map_err(|e| PbrtError::error(&format!("create_accelerator failed: {}", e.msg)))
+    }
+
+    fn shape_material(
+        &self,
+        shape: &ShapeSceneEntity,
+        materials: &[Arc<Material>],
+        named_materials: &HashMap<String, Arc<Material>>,
+        default_material: &Arc<Material>,
+    ) -> Result<Option<Arc<Material>>, PbrtError> {
+        if shape.material_is_default
+            && shape.material_index == usize::MAX
+            && shape.material_name.is_none()
+        {
+            Ok(Some(Arc::clone(default_material)))
+        } else {
+            self.resolve_shape_material(shape, materials, named_materials)
+        }
     }
 
     fn resolve_shape_material(
@@ -1519,4 +1554,21 @@ fn has_texture_ref(params: &ParameterDictionary) -> bool {
         let parts: Vec<&str> = k.split_ascii_whitespace().collect();
         parts.len() >= 2 && parts[0] == "texture"
     })
+}
+
+fn animated_shape_transform(rfo: RenderFromObject) -> Option<AnimatedTransform> {
+    let RenderFromObject::Animated {
+        from,
+        to,
+        start_time,
+        end_time,
+    } = rfo
+    else {
+        return None;
+    };
+    let transform = AnimatedTransform::new(&from, start_time, &to, end_time);
+    if transform.is_none() {
+        error!("Skipping shape: animated transform decomposition failed");
+    }
+    transform
 }

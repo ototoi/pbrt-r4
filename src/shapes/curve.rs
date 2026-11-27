@@ -25,7 +25,7 @@ pub enum CurveType {
 }
 
 impl CurveType {
-    fn parse(s: &str) -> Result<Self, PbrtError> {
+    pub(super) fn parse(s: &str) -> Result<Self, PbrtError> {
         match s {
             "flat" => Ok(Self::Flat),
             "ribbon" => Ok(Self::Ribbon),
@@ -43,7 +43,7 @@ pub struct CurveNormal {
 }
 
 #[derive(Debug)]
-struct CurvesCommon {
+pub(super) struct CurvesCommon {
     base: BaseShape,
     curve_type: CurveType,
 }
@@ -52,9 +52,28 @@ struct CurvesCommon {
 #[derive(Debug, Clone)]
 pub struct CurveCommon {
     curves: Arc<CurvesCommon>,
+    data: CurveData,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CurveData {
     pub cp_obj: [Point3f; 4],
     pub width: [Float; 2],
     pub normals: Option<CurveNormal>,
+}
+
+impl std::ops::Deref for CurveCommon {
+    type Target = CurveData;
+
+    fn deref(&self) -> &CurveData {
+        &self.data
+    }
+}
+
+impl std::ops::DerefMut for CurveCommon {
+    fn deref_mut(&mut self) -> &mut CurveData {
+        &mut self.data
+    }
 }
 
 // Curve Declarations
@@ -133,7 +152,7 @@ fn transform_lookat(e: &Point3f, l: &Point3f, u: &Vector3f) -> Transform {
 }
 
 impl CurvesCommon {
-    fn new(
+    pub(super) fn new(
         o2w: &Transform,
         w2o: &Transform,
         reverse_orientation: bool,
@@ -168,8 +187,16 @@ impl CurveCommon {
         w1: Float,
         norm: &Option<Vec<Normal3f>>,
     ) -> Self {
-        let cp_obj: Vec<Point3f> = c.to_vec();
-        let cp_obj: [Point3f; 4] = cp_obj.try_into().unwrap();
+        Self {
+            curves: Arc::clone(curves),
+            data: CurveData::new(c, w0, w1, norm),
+        }
+    }
+}
+
+impl CurveData {
+    pub(super) fn new(c: &[Point3f], w0: Float, w1: Float, norm: &Option<Vec<Normal3f>>) -> Self {
+        let cp_obj: [Point3f; 4] = c.try_into().unwrap();
         let width = [w0, w1];
         let normals: Option<CurveNormal> = match norm {
             Some(n) => {
@@ -188,8 +215,7 @@ impl CurveCommon {
             }
             None => None,
         };
-        CurveCommon {
-            curves: Arc::clone(curves),
+        Self {
             cp_obj,
             width,
             normals,
@@ -216,7 +242,8 @@ fn get_bounds(cp: &[Point3f]) -> Bounds3f {
 }
 
 fn recursive_intersect(
-    common: &CurveCommon,
+    common: &CurveData,
+    group: &CurvesCommon,
     is_shadow: bool,
     ray: &Ray,
     cp: &[Point3f],
@@ -228,7 +255,7 @@ fn recursive_intersect(
 ) -> Option<(Float, Option<SurfaceInteraction>)> {
     let mut t_max = t_max;
     let width = &common.width;
-    let t = common.curves.curve_type;
+    let t = group.curve_type;
     let normals = &common.normals;
     let ray_length = ray.d.length();
 
@@ -293,6 +320,7 @@ fn recursive_intersect(
             {
                 let t_t_hit = recursive_intersect(
                     common,
+                    group,
                     is_shadow,
                     ray,
                     cps,
@@ -409,7 +437,7 @@ fn recursive_intersect(
             let p = ray.o + t_hit * ray.d;
             let uv = Point2f::new(u, v); //u, v
             let wo = -ray.d;
-            let mut n = common.curves.base.calc_normal(&dpdu, &dpdv);
+            let mut n = group.base.calc_normal(&dpdu, &dpdv);
             if Vector3f::dot(&ray.d, &n) > 0.0 {
                 n *= -1.0;
             }
@@ -426,8 +454,7 @@ fn recursive_intersect(
                 ray.time,
                 0,
             );
-            let si = common
-                .curves
+            let si = group
                 .base
                 .object_to_world
                 .transform_surface_interaction(&si);
@@ -464,6 +491,44 @@ impl Curve {
         create_curve_shape(o2w, w2o, reverse_orientation, params)
     }
 
+    fn segment(&self) -> CurveSegment<'_> {
+        CurveSegment {
+            common: &self.common.data,
+            group: &self.common.curves,
+            u_min: self.u_min,
+            u_max: self.u_max,
+        }
+    }
+
+    pub fn object_bound(&self) -> Bounds3f {
+        self.segment().object_bound()
+    }
+
+    pub fn world_bound(&self) -> Bounds3f {
+        self.segment().world_bound()
+    }
+
+    pub fn normal_bounds(&self) -> DirectionCone {
+        DirectionCone::entire_sphere()
+    }
+
+    pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
+        self.segment().intersect(r, t_max)
+    }
+
+    pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
+        self.segment().intersect_p(r, t_max)
+    }
+}
+
+pub(super) struct CurveSegment<'a> {
+    pub(super) common: &'a CurveData,
+    pub(super) group: &'a CurvesCommon,
+    pub(super) u_min: Float,
+    pub(super) u_max: Float,
+}
+
+impl CurveSegment<'_> {
     fn intersect_common(
         &self,
         r: &Ray,
@@ -472,9 +537,9 @@ impl Curve {
     ) -> Option<(Float, Option<SurfaceInteraction>)> {
         let u_min = self.u_min;
         let u_max = self.u_max;
-        let common = self.common.as_ref();
+        let common = self.common;
         // Transform _Ray_ to object space
-        let (ray, _o_err, _d_err) = common.curves.base.world_to_object.transform_ray(r);
+        let (ray, _o_err, _d_err) = self.group.base.world_to_object.transform_ray(r);
         // Compute object-space control points for curve segment, _cpObj_
         let cp_obj = [
             blossom_bezier(&common.cp_obj, u_min, u_min, u_min),
@@ -573,7 +638,8 @@ impl Curve {
         let max_depth = i32::clamp(r0, 0, 10); //
 
         return recursive_intersect(
-            &common,
+            common,
+            self.group,
             is_shadow,
             &ray,
             &cp,
@@ -584,13 +650,11 @@ impl Curve {
             max_depth,
         );
     }
-}
 
-impl Curve {
     pub fn object_bound(&self) -> Bounds3f {
         let u_min = self.u_min;
         let u_max = self.u_max;
-        let common = self.common.as_ref();
+        let common = self.common;
         let cp_obj = [
             blossom_bezier(&common.cp_obj, u_min, u_min, u_min),
             blossom_bezier(&common.cp_obj, u_min, u_min, u_max),
@@ -608,14 +672,9 @@ impl Curve {
     }
 
     pub fn world_bound(&self) -> Bounds3f {
-        let common = self.common.as_ref();
         let b = self.object_bound();
-        let b = common.curves.base.object_to_world.transform_bounds(&b);
+        let b = self.group.base.object_to_world.transform_bounds(&b);
         return b;
-    }
-
-    pub fn normal_bounds(&self) -> DirectionCone {
-        DirectionCone::entire_sphere()
     }
 
     pub fn intersect(&self, r: &Ray, t_max: Float) -> Option<ShapeIntersection> {
@@ -629,7 +688,9 @@ impl Curve {
     pub fn intersect_p(&self, r: &Ray, t_max: Float) -> bool {
         return self.intersect_common(r, t_max, true).is_some();
     }
+}
 
+impl Curve {
     pub fn area(&self) -> Float {
         // Compute object-space control points for curve segment, _cpObj_
         let u_min = self.u_min;
@@ -786,11 +847,10 @@ fn create_curve(
     w0: Float,
     w1: Float,
     norm: &Option<Vec<Normal3f>>,
-    split_depth: i32,
-) -> Result<Vec<Curve>, PbrtError> {
+    n_segments: usize,
+) -> Vec<Curve> {
     let mut segments: Vec<Curve> = Vec::new();
     let common = Arc::new(CurveCommon::new_with_common(curves_common, c, w0, w1, norm));
-    let n_segments = (1 << split_depth) as usize;
     segments.reserve(n_segments);
     for i in 0..n_segments {
         let u_min = (i as Float) / (n_segments as Float);
@@ -798,7 +858,7 @@ fn create_curve(
         let curve = Curve::new(&common, u_min, u_max);
         segments.push(curve);
     }
-    return Ok(segments);
+    segments
 }
 
 fn convert_to_point(f: &[Float]) -> Vec<Point3f> {
@@ -1083,31 +1143,33 @@ where
     // match.") is unreachable through grouped "curves" entities, whose
     // members always share the type string.
     let curves_common = make_common(geometry.curve_type)?;
-    let sd = params.get_one_float("splitdepth", 3.0) as i32;
-    let sd = params.get_one_int("splitdepth", sd);
-
-    let mut curves: Vec<Curve> = Vec::new();
-    for seg in 0..geometry.n_segments {
-        let w0 = lerp(
-            (seg as Float) / (geometry.n_segments as Float),
-            geometry.width[0],
-            geometry.width[1],
-        );
-        let w1 = lerp(
-            ((seg + 1) as Float) / (geometry.n_segments as Float),
-            geometry.width[0],
-            geometry.width[1],
-        );
-        let mut c = create_curve(
-            &curves_common,
-            &geometry.seg_cp_bezier[seg],
-            w0,
-            w1,
-            &geometry.normals,
-            sd,
-        )?;
-        curves.append(&mut c);
+    let count = curve_split_count(params)?;
+    let mut curves = Vec::new();
+    for (cp, w0, w1) in geometry.segments() {
+        let mut segments = create_curve(&curves_common, cp, w0, w1, &geometry.normals, count);
+        curves.append(&mut segments);
     }
+    Ok(curves)
+}
 
-    return Ok(curves);
+pub(super) fn curve_split_count(params: &ParameterDictionary) -> Result<usize, PbrtError> {
+    let default = params.get_one_float("splitdepth", 3.0) as i32;
+    let depth = params.get_one_int("splitdepth", default);
+    u32::try_from(depth)
+        .ok()
+        .and_then(|depth| 1_i32.checked_shl(depth))
+        .filter(|&count| count > 0)
+        .map(|count| count as usize)
+        .ok_or_else(|| PbrtError::error("Curve splitdepth must be between 0 and 30."))
+}
+
+impl CurveGeometry {
+    pub(super) fn segments(&self) -> impl Iterator<Item = (&[Point3f; 4], Float, Float)> {
+        self.seg_cp_bezier.iter().enumerate().map(|(index, cp)| {
+            let count = self.n_segments as Float;
+            let w0 = lerp(index as Float / count, self.width[0], self.width[1]);
+            let w1 = lerp((index + 1) as Float / count, self.width[0], self.width[1]);
+            (cp, w0, w1)
+        })
+    }
 }
